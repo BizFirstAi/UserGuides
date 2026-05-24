@@ -128,6 +128,57 @@ ol{margin:10px 0 14px 22px;}li{margin-bottom:6px;font-size:14px;}
       <strong>Payment confirmation:</strong> Invoice payment confirmation arrives via Stripe webhook (<code>invoice.payment_succeeded</code>). Set up a separate WebhookTrigger workflow to handle this event and update your CRM when invoices are paid.
     </div>
   </div>
+
+  <div class="example-block">
+    <h3><i class="fa-solid fa-ban"></i> Example 5 — Cancel Subscription at Period End</h3>
+    <p>When a customer requests cancellation through your app, cancel their Stripe subscription at the end of the current billing period, send a cancellation confirmation, and trigger an offboarding sequence.</p>
+    <ol>
+      <li><strong>WebhookTrigger</strong> — receives cancellation request from app: <code>{ user_id, subscription_id, reason }</code></li>
+      <li><strong>Stripe (cancel_subscription)</strong> — cancel gracefully at period end:<br>
+        <code>subscription_id: $ctx.subscription_id</code><br>
+        <code>cancel_at_period_end: true</code></li>
+      <li><strong>IfCondition</strong> — check <code>cancel_at_period_end == true</code></li>
+      <li><strong>EmailSmtp</strong> — send cancellation confirmation with access end date:<br>
+        <em>"Your subscription is cancelled. You'll retain access until [period end date]."</em></li>
+      <li><strong>MongoDB (update)</strong> — record <code>cancellation_date</code> and <code>access_end_date</code> in user record</li>
+      <li><strong>CRM (update)</strong> — mark customer as churned with cancellation reason</li>
+    </ol>
+    <p>The <code>cancel_at</code> field in the Stripe output gives the Unix timestamp of when the subscription will definitively end — convert this to a human-readable date for the customer email using a DataMapping node.</p>
+    <pre>// DataMapping to format the access end date
+{
+  "access_end": "$datetime.format($ctx.cancel_at, 'MMMM Do, YYYY')"
+}</pre>
+  </div>
+
+  <div class="example-block">
+    <h3><i class="fa-solid fa-arrow-up-right-from-square"></i> Example 6 — Payment Failure Recovery</h3>
+    <p>When Stripe reports a subscription as <code>past_due</code> via webhook, trigger an automated recovery sequence to update the payment method before suspension.</p>
+    <ol>
+      <li><strong>WebhookTrigger</strong> — <code>invoice.payment_failed</code> event from Stripe</li>
+      <li><strong>Stripe (retrieve_payment_intent)</strong> — get the failed PaymentIntent details and decline reason</li>
+      <li><strong>IfCondition</strong> — branch on <code>decline_code</code>:<br>
+        <code>insufficient_funds</code> → send "retry in 3 days" email<br>
+        <code>card_expired</code> → send "update payment method" email with portal link<br>
+        <code>do_not_honor</code> → escalate to billing team</li>
+      <li><strong>EmailSmtp</strong> — personalised recovery email with Stripe Customer Portal link</li>
+      <li><strong>Delay</strong> — wait 3 days</li>
+      <li><strong>Stripe (retrieve_payment_intent)</strong> — check if status is now <code>succeeded</code></li>
+      <li><strong>IfCondition</strong> — if still failed after 7 days: suspend account and notify</li>
+    </ol>
+    <div class="callout info">Stripe automatically retries failed payments on its Smart Retries schedule. This workflow adds a customer communication layer on top of Stripe's automated retries — keeping customers informed and reducing involuntary churn.</div>
+  </div>
+
+  <h2>Common Expression Patterns</h2>
+  <table>
+    <tr><th>Use Case</th><th>Expression</th></tr>
+    <tr><td>Get Stripe customer ID after create_customer</td><td><code>{@ $node.createCustomer.id }</code></td></tr>
+    <tr><td>Get subscription ID after create_subscription</td><td><code>{@ $node.createSub.id }</code></td></tr>
+    <tr><td>Get invoice payment URL</td><td><code>{@ $node.createInvoice.hosted_invoice_url }</code></td></tr>
+    <tr><td>Get PaymentIntent client secret</td><td><code>{@ $node.createPI.client_secret }</code></td></tr>
+    <tr><td>Check if payment succeeded</td><td><code>{@ $node.stripeNode.status } == "succeeded"</code></td></tr>
+    <tr><td>Get refund amount (in dollars from cents)</td><td><code>{@ $node.refundNode.amount } / 100</code></td></tr>
+    <tr><td>Format period end as readable date</td><td><code>{@ $datetime.fromUnix($node.sub.current_period_end) }</code></td></tr>
+  </table>
 </main>
 </body>
 </html>

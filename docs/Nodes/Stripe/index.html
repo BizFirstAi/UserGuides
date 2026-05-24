@@ -115,6 +115,67 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <div class="callout warning">
     <strong>Live vs. Test mode:</strong> Always test workflows using a Stripe test-mode credential before switching to live keys. Charges made with live keys result in real transactions. BizFirst credential management supports separate test and live credential entries.
   </div>
+
+  <h2>Stripe Object Model</h2>
+  <p>Understanding the relationships between Stripe objects helps you design billing workflows correctly.</p>
+  <table>
+    <tr><th>Object</th><th>Stripe ID Prefix</th><th>Description</th><th>Stores Where</th></tr>
+    <tr><td>Customer</td><td><code>cus_</code></td><td>Represents a billing entity (person or company). Holds payment methods and is the anchor for all subscriptions and invoices.</td><td>Your user database — map to your internal user/org ID</td></tr>
+    <tr><td>PaymentIntent</td><td><code>pi_</code></td><td>Represents a single payment transaction. Manages the payment state machine from creation to confirmation.</td><td>Your order/transaction table</td></tr>
+    <tr><td>Subscription</td><td><code>sub_</code></td><td>Recurring billing relationship. Automatically creates invoices on the billing cycle.</td><td>Your subscription table</td></tr>
+    <tr><td>Invoice</td><td><code>in_</code></td><td>A billing document with line items and a total. Can be auto-charged or sent for manual payment.</td><td>Your invoices table or S3 (PDF)</td></tr>
+    <tr><td>Refund</td><td><code>re_</code></td><td>A full or partial reversal of a charge.</td><td>Your refunds/adjustments log</td></tr>
+    <tr><td>Price</td><td><code>price_</code></td><td>Defines the amount and billing interval for a subscription. Created in Stripe dashboard or via API.</td><td>Your product/pricing table</td></tr>
+  </table>
+
+  <h2>Credential Setup</h2>
+  <p>The Stripe node requires a credential stored in BizFirst Credentials Manager with the following fields:</p>
+  <table>
+    <tr><th>Field</th><th>Description</th></tr>
+    <tr><td>Secret Key</td><td>Your Stripe Secret Key (<code>sk_live_...</code> for production, <code>sk_test_...</code> for test). Found in Stripe Dashboard &rarr; Developers &rarr; API keys.</td></tr>
+    <tr><td>Mode</td><td>Select <code>live</code> or <code>test</code> to automatically validate that the key matches the expected mode.</td></tr>
+    <tr><td>Webhook Secret</td><td>Optional. Required if you verify Stripe webhook signatures in BizFirst (recommended for production WebhookTrigger workflows receiving Stripe events).</td></tr>
+  </table>
+
+  <h2>Idempotency Key Best Practices</h2>
+  <p>Stripe supports idempotency keys on all POST operations. When a workflow retries due to a timeout, the same idempotency key ensures Stripe returns the original result rather than creating a duplicate charge, customer, or subscription. Always set <code>idempotency_key</code> on:</p>
+  <ul>
+    <li><code>create_payment_intent</code> — use the order ID</li>
+    <li><code>create_customer</code> — use the internal user ID</li>
+    <li><code>create_subscription</code> — use the user ID + plan ID</li>
+    <li><code>create_refund</code> — use the support ticket ID or refund request ID</li>
+  </ul>
+  <p>Idempotency keys are valid for 24 hours on Stripe. After that, the same key can be reused for a new operation.</p>
+
+  <div class="callout info">
+    <strong>Webhook integration tip:</strong> Most Stripe operations are asynchronous from a business perspective. Payment confirmation, subscription status changes, and invoice payment events arrive as Stripe webhook events. Use a <strong>WebhookTrigger</strong> node configured with your Stripe webhook endpoint to handle events like <code>payment_intent.succeeded</code>, <code>invoice.payment_failed</code>, and <code>customer.subscription.deleted</code> — and trigger the appropriate downstream workflow steps.
+  </div>
+
+  <h2>Key Stripe Webhook Events to Handle in BizFirst</h2>
+  <table>
+    <tr><th>Stripe Event</th><th>Meaning</th><th>Recommended BizFirst Action</th></tr>
+    <tr><td><code>payment_intent.succeeded</code></td><td>Payment collected successfully</td><td>Trigger fulfillment, update order status, send receipt</td></tr>
+    <tr><td><code>payment_intent.payment_failed</code></td><td>Payment attempt failed</td><td>Notify customer, log failure, trigger retry workflow</td></tr>
+    <tr><td><code>invoice.payment_succeeded</code></td><td>Subscription invoice paid</td><td>Update CRM, send receipt, renew access</td></tr>
+    <tr><td><code>invoice.payment_failed</code></td><td>Subscription invoice payment failed</td><td>Send dunning email, restrict access after grace period</td></tr>
+    <tr><td><code>customer.subscription.created</code></td><td>New subscription started</td><td>Provision access, send welcome email</td></tr>
+    <tr><td><code>customer.subscription.deleted</code></td><td>Subscription cancelled</td><td>Revoke access, send offboarding email, update CRM</td></tr>
+    <tr><td><code>customer.subscription.updated</code></td><td>Plan changed, quantity changed, etc.</td><td>Adjust provisioned access, send confirmation</td></tr>
+    <tr><td><code>refund.created</code></td><td>Refund issued</td><td>Log to ERP, send refund confirmation to customer</td></tr>
+  </table>
+  <p>Set up a single BizFirst WebhookTrigger endpoint for all Stripe events. Use a Switch node on the <code>type</code> field of the Stripe webhook payload to route each event type to its own handling workflow branch.</p>
+
+  <h2>Test Mode Cards</h2>
+  <p>When using a test-mode credential, use these Stripe test card numbers to simulate different payment scenarios in your workflow testing:</p>
+  <table>
+    <tr><th>Card Number</th><th>Scenario</th></tr>
+    <tr><td><code>4242 4242 4242 4242</code></td><td>Payment succeeds</td></tr>
+    <tr><td><code>4000 0000 0000 0002</code></td><td>Card always declined</td></tr>
+    <tr><td><code>4000 0027 6000 3184</code></td><td>Requires 3D Secure authentication</td></tr>
+    <tr><td><code>4000 0000 0000 9995</code></td><td>Insufficient funds decline</td></tr>
+    <tr><td><code>4000 0000 0000 0069</code></td><td>Expired card decline</td></tr>
+  </table>
+  <p>Use expiry <code>12/34</code>, CVC <code>123</code>, and any 5-digit postal code for all test cards. Test your error port handling by using a declined card to confirm your workflow handles payment failures gracefully.</p>
 </main>
 </body>
 </html>

@@ -173,6 +173,39 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
     <i class="fa-solid fa-triangle-exclamation"></i>
     <strong>Error port handling:</strong> Always connect a handler to the error port. At minimum, log the <code>error_message</code> and <code>partial_reasoning</code> to your audit system and trigger an alert. For customer-facing workflows, route the error port to a graceful fallback response rather than surfacing the raw error to the end user.
   </div>
+
+  <h2>Using result as a Structured JSON Object</h2>
+  <p>When the agent's <code>system_prompt</code> instructs it to respond in JSON, the <code>result</code> field is automatically parsed into a workflow object. You can then access individual fields directly:</p>
+  <pre><code>// Agent system_prompt: "Your final response must be valid JSON with fields: category, priority, queue_id"
+
+// Access structured fields downstream:
+{@ $node.agentNode.result.category }
+{@ $node.agentNode.result.priority }
+{@ $node.agentNode.result.queue_id }</code></pre>
+  <p>If the agent does not produce valid JSON (e.g. it wraps the JSON in markdown code fences), the <code>result</code> field is returned as a plain string. Add explicit instructions like <em>"Respond with ONLY a JSON object — no markdown, no explanation, just the raw JSON"</em> to ensure reliable parsing.</p>
+
+  <h2>Inspecting tool_calls for Debugging</h2>
+  <p>The <code>tool_calls</code> array is the primary debugging surface for agent workflows. When an agent produces unexpected results, examine:</p>
+  <ul>
+    <li><strong>tool_name sequence</strong> — did the agent call the right tools in the expected order?</li>
+    <li><strong>inputs per tool</strong> — did the agent construct the tool parameters correctly from the available context?</li>
+    <li><strong>output per tool</strong> — did the tool return the expected data? If output is empty or wrong, the issue is likely in the tool's implementation or data, not the agent.</li>
+    <li><strong>success flags</strong> — were any tools marked <code>success: false</code>? The agent may have attempted recovery, or it may have proceeded with incomplete data.</li>
+    <li><strong>turns_used</strong> — if <code>turns_used == max_turns</code>, the agent ran out of turns. Increase <code>max_turns</code> or simplify the goal.</li>
+  </ul>
+
+  <h2>token Usage Monitoring</h2>
+  <table>
+    <tr><th>Field</th><th>What to Watch For</th></tr>
+    <tr><td><code>tokens_input</code></td><td>Grows with each turn as context accumulates. High values (>20,000) indicate the agent is using many turns or has very long tool outputs. Consider summarising tool outputs in the tool definition.</td></tr>
+    <tr><td><code>tokens_output</code></td><td>Reflects the volume of reasoning text and final answer generated. Very high values may mean the agent is over-explaining — tighten the system_prompt to be more concise.</td></tr>
+    <tr><td><code>turns_used</code></td><td>If consistently close to <code>max_turns</code>, either increase the limit or decompose the goal into simpler sub-tasks using multiple agent nodes in sequence.</td></tr>
+  </table>
+
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <strong>Chaining agents:</strong> For very complex goals that require more than 15–20 tool calls, consider decomposing the goal into two sequential FlowAiAgent nodes. The first agent collects and prepares data; the second agent analyses and produces the final output. Pass the first agent's <code>result</code> as the <code>context</code> for the second agent.
+  </div>
 </main>
 </body>
 </html>

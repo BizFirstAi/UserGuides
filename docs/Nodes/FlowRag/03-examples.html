@@ -149,6 +149,51 @@ li{margin-bottom:5px;font-size:14px;}
   }
 }</code></pre>
   <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Claude receives the 5 most relevant contract clauses as context and generates a precise legal research response with specific clause citations — far more accurate and grounded than a general LLM response without RAG context.</div>
+
+  <h3>Example 6: Delete Superseded Knowledge Item</h3>
+  <p class="example-meta">Scenario: A product has been discontinued. Remove its knowledge items from the product catalog collection so they no longer appear in customer-facing AI responses.</p>
+  <pre><code>{
+  "credential_id": "pgvector-prod",
+  "operation": "delete",
+  "collection_name": "product-catalog",
+  "item_id": "product-legacyXR-specs"
+}</code></pre>
+  <p>In practice, use a Loop node to delete multiple items when retiring a set of related knowledge items (e.g. all entries for a discontinued product line). Alternatively, update metadata to <code>status: deprecated</code> and use <code>metadata_filter</code> in queries to exclude them — this preserves the historical data while hiding it from active queries.</p>
+
+  <h3>Example 7: Bulk Insert from a Workflow Variable Array</h3>
+  <p class="example-meta">Scenario: A document processing workflow parses a PDF into individual sections and inserts each section as a separate knowledge item for finer-grained retrieval.</p>
+  <pre><code>// Use a Loop node with items: $node.pdfParser.sections
+// Each iteration runs FlowRag insert with:
+{
+  "credential_id": "pgvector-prod",
+  "operation": "insert",
+  "collection_name": "policy-documents",
+  "item_id": "{{ vars.document_id }}-section-{{ loop.index }}",
+  "knowledge_item": "{{ loop.item.text }}",
+  "metadata": {
+    "document_id": "{{ vars.document_id }}",
+    "document_title": "{{ vars.document_title }}",
+    "section_number": "{{ loop.index }}",
+    "section_heading": "{{ loop.item.heading }}",
+    "page_number": "{{ loop.item.page }}",
+    "ingestion_date": "{{ vars.today }}"
+  }
+}</code></pre>
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <strong>Chunk size guidance:</strong> Split documents into sections of 200–500 tokens for best retrieval quality. Very long sections dilute the embedding — the vector captures a blended average of all the section's topics, reducing precision. Very short sections (one sentence) often lack enough context to retrieve correctly. Paragraph-level chunks with a descriptive heading as metadata tend to work best.
+  </div>
+
+  <h2>Summary: Operation Selection Guide</h2>
+  <table>
+    <tr><th>When you want to…</th><th>Use operation</th></tr>
+    <tr><td>Add a new document, policy, or FAQ entry</td><td><code>insert</code></td></tr>
+    <tr><td>Update a changed policy or product description</td><td><code>update</code></td></tr>
+    <tr><td>Remove a discontinued or superseded entry</td><td><code>delete</code></td></tr>
+    <tr><td>Find relevant content for an AI prompt</td><td><code>query</code></td></tr>
+    <tr><td>Check if a document already exists before inserting</td><td><code>query</code> with <code>min_score: 0.95</code> and the document title as query</td></tr>
+    <tr><td>Refresh all items in a collection</td><td>Loop over items → <code>update</code> each</td></tr>
+  </table>
 </main>
 </body>
 </html>

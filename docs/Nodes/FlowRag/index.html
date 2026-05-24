@@ -126,6 +126,58 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
     <i class="fa-solid fa-triangle-exclamation"></i>
     <strong>Vector backend configuration:</strong> FlowRag requires a configured vector database backend. For PostgreSQL+pgvector, the credential must include a connection string to a database with the pgvector extension installed. For Qdrant, provide the Qdrant endpoint URL and API key. Configure the embedding model (e.g. OpenAI text-embedding-3-small) in the BizFirst AI settings.
   </div>
+
+  <h2>Choosing a Vector Database Backend</h2>
+  <table>
+    <tr><th>Backend</th><th>Best For</th><th>Strengths</th><th>Considerations</th></tr>
+    <tr><td>PostgreSQL + pgvector</td><td>Teams already running PostgreSQL</td><td>Single database, SQL + vector in one system, familiar operational model, ACID transactions</td><td>Requires pgvector extension; performance degrades at very large scale (&gt;10M vectors)</td></tr>
+    <tr><td>Qdrant</td><td>High-scale, high-performance RAG</td><td>Purpose-built, excellent performance at scale, rich payload filtering, REST + gRPC APIs, cloud and self-hosted options</td><td>Additional infrastructure to manage; separate from application database</td></tr>
+  </table>
+
+  <h2>Embedding Model Selection</h2>
+  <table>
+    <tr><th>Model</th><th>Provider</th><th>Dimensions</th><th>Best For</th></tr>
+    <tr><td><code>text-embedding-3-small</code></td><td>OpenAI</td><td>1536</td><td>Default — excellent balance of quality and cost for general business content</td></tr>
+    <tr><td><code>text-embedding-3-large</code></td><td>OpenAI</td><td>3072</td><td>Highest accuracy for technical, legal, or scientific content where precision matters</td></tr>
+    <tr><td><code>text-embedding-ada-002</code></td><td>OpenAI (legacy)</td><td>1536</td><td>Legacy compatibility only — prefer text-embedding-3-small for new collections</td></tr>
+    <tr><td><code>voyage-large-2</code></td><td>Voyage AI</td><td>1536</td><td>Specialised for legal and financial document retrieval — outperforms OpenAI on dense text</td></tr>
+  </table>
+  <p>The embedding model is configured per collection at the BizFirst workspace level. All items in a collection must use the same model — mixing models produces invalid similarity scores. To change the model, delete all items and re-insert with the new model.</p>
+
+  <h2>Knowledge Base Design Tips</h2>
+  <ul>
+    <li>Split long documents into focused, single-topic paragraphs of 200–500 tokens before inserting</li>
+    <li>Use descriptive <code>item_id</code> values (e.g. <code>policy-pto-2025-v3</code>) to enable targeted updates without a full re-index</li>
+    <li>Store rich metadata tags (category, source, date, version, status) to enable precise metadata filtering in queries</li>
+    <li>Use a <code>status</code> metadata field (<code>active</code> / <code>deprecated</code>) to hide outdated content without deleting it — preserving history</li>
+    <li>Test query quality with real user questions before going live — adjust <code>min_score</code> and <code>top_k</code> based on observed results</li>
+    <li>Maintain separate collections per domain (HR, products, legal, support) for better precision and cost control</li>
+  </ul>
+
+  <h2>Common RAG Pipeline Pattern</h2>
+  <p>The most common FlowRag workflow pattern follows these steps:</p>
+  <ol>
+    <li><strong>Trigger</strong> — user submits a question (WebhookTrigger, FormTrigger, or ChatTrigger)</li>
+    <li><strong>FlowRag query</strong> — embed the question and retrieve the top-K most relevant knowledge items from the appropriate collection</li>
+    <li><strong>IfCondition</strong> — check <code>result_count &gt; 0</code> to decide whether to use retrieved context or fall back to a generic answer</li>
+    <li><strong>DataMapping</strong> — format the retrieved context into a prompt template combining question + context + instructions</li>
+    <li><strong>AI Chat or HTTP Request</strong> — send the formatted prompt to Claude or GPT and generate a grounded response</li>
+    <li><strong>Response</strong> — return the AI-generated answer to the user, optionally with citations from <code>sources</code></li>
+  </ol>
+  <p>This pattern ensures AI responses are grounded in your actual business knowledge rather than the model's general training data, dramatically reducing hallucination on domain-specific questions.</p>
+
+  <h2>Combine with FlowAiAgent for Autonomous RAG</h2>
+  <p>Register a FlowRag query as a <strong>tool</strong> in the BizFirst Tool Registry, then give it to a FlowAiAgent node. The agent will autonomously decide when to query the knowledge base — calling it multiple times with different queries if the first retrieval doesn't fully answer the goal. This pattern enables knowledge-augmented agents that can both reason and retrieve, without you needing to hard-code which knowledge base to query at each step.</p>
+
+  <h2>Related Nodes</h2>
+  <table>
+    <tr><th>Node</th><th>Relationship to FlowRag</th></tr>
+    <tr><td><a href="../FlowAiAgent/">FlowAiAgent</a></td><td>Use FlowRag as a registered tool inside the agent's reasoning loop for autonomous knowledge retrieval</td></tr>
+    <tr><td>Chat</td><td>Pass FlowRag <code>context_text</code> as the system or user context to ground chat responses in domain knowledge</td></tr>
+    <tr><td>Loop</td><td>Loop over a document array and call FlowRag insert on each item for bulk knowledge base ingestion</td></tr>
+    <tr><td>IfCondition</td><td>Check <code>result_count &gt; 0</code> after a query to branch between "answer found" and "fallback" paths</td></tr>
+    <tr><td>DataMapping</td><td>Format retrieved results into a structured AI prompt before passing to a Chat or HTTP Request node</td></tr>
+  </table>
 </main>
 </body>
 </html>

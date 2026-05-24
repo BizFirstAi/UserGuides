@@ -117,6 +117,72 @@ pre{background:#1e2736;color:#c8d4e0;border-radius:8px;padding:18px 20px;overflo
     </ol>
     <div class="callout info">This idiomatic pattern ensures each file is processed exactly once and archived before deletion — preventing duplicate processing on retry and maintaining a full audit trail.</div>
   </div>
+
+  <div class="example-block">
+    <h3><i class="fa-solid fa-copy"></i> Example 5 — Backup Before Overwrite</h3>
+    <p>Before overwriting an existing file (e.g. a configuration or template), copy the current version to a versioned backup path, then upload the new version. This gives you a complete history without needing S3 object versioning enabled.</p>
+    <ol>
+      <li><strong>WebhookTrigger</strong> — receives new template file content</li>
+      <li><strong>S3 (copy)</strong> — back up the existing file:<br>
+        <code>source_bucket: bizfirst-assets</code><br>
+        <code>source_key: templates/email-welcome.html</code><br>
+        <code>bucket: bizfirst-assets</code><br>
+        <code>dest_key: templates/backups/email-welcome-$ctx.timestamp.html</code></li>
+      <li><strong>S3 (upload)</strong> — upload new version:<br>
+        <code>key: templates/email-welcome.html</code><br>
+        <code>file_data: $ctx.new_content</code><br>
+        <code>content_type: text/html</code></li>
+      <li><strong>MongoDB (insert)</strong> — log the version event with backup key and author</li>
+    </ol>
+  </div>
+
+  <div class="example-block">
+    <h3><i class="fa-solid fa-robot"></i> Example 6 — Store AI-Generated Report</h3>
+    <p>After a FlowAiAgent node generates a weekly business summary, upload it to S3, then generate a pre-signed URL and include it in a management email.</p>
+    <ol>
+      <li><strong>ScheduledTrigger</strong> — Monday 08:00</li>
+      <li><strong>FlowAiAgent</strong> — generate weekly management summary (markdown format)</li>
+      <li><strong>S3 (upload)</strong>:<br>
+        <code>bucket: bizfirst-reports</code><br>
+        <code>key: reports/$ctx.year/$ctx.month/weekly-summary-$ctx.date.md</code><br>
+        <code>file_data: $node.reportAgent.result</code><br>
+        <code>content_type: text/markdown</code><br>
+        <code>acl: private</code></li>
+      <li><strong>S3 (getPresignedUrl)</strong>:<br>
+        <code>key: $node.uploadReport.key</code><br>
+        <code>method: GET</code><br>
+        <code>expires_in: 604800</code> (7 days)</li>
+      <li><strong>EmailSmtp</strong> — send to management team with download link</li>
+      <li><strong>Slack</strong> — post notification in #management channel with URL</li>
+    </ol>
+    <pre>// Email body snippet
+Weekly summary is ready: <a href="{@ $node.presign.url }">Download Report</a>
+Generated: {@ $ctx.date } | Valid until: {@ $node.presign.expires_at }</pre>
+  </div>
+
+  <h2>IAM Policy for This Workflow (Principle of Least Privilege)</h2>
+  <p>For a workflow that only needs to upload and generate pre-signed download URLs, use this minimal IAM policy:</p>
+  <pre><code>{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": "arn:aws:s3:::bizfirst-reports/*"
+    }
+  ]
+}</code></pre>
+  <p>Do not grant <code>s3:*</code> or bucket-level access. Scope permissions to the specific bucket and only the actions the workflow actually needs.</p>
+
+  <h2>Key Pattern Summary</h2>
+  <table>
+    <tr><th>Pattern</th><th>Operations Used</th><th>Notes</th></tr>
+    <tr><td>Upload and share</td><td>upload → getPresignedUrl</td><td>Always store to private, share via time-limited URL</td></tr>
+    <tr><td>Customer upload</td><td>getPresignedUrl (PUT)</td><td>15-30 min expiry; enforce content-type to prevent arbitrary uploads</td></tr>
+    <tr><td>List and process</td><td>list → Loop → download</td><td>Use continuation_token for buckets with &gt;1000 objects</td></tr>
+    <tr><td>Archive and delete</td><td>copy → delete</td><td>Always copy first — verify success before deleting source</td></tr>
+    <tr><td>Version before overwrite</td><td>copy → upload</td><td>Use timestamp in backup key for a sortable version history</td></tr>
+  </table>
 </main>
 </body>
 </html>

@@ -149,6 +149,78 @@ pre{background:#1e2736;color:#c8d4e0;border-radius:8px;padding:18px 20px;overflo
   <div class="callout info">
     <strong>Accessing output in downstream nodes:</strong> After <code>create_payment_intent</code>, use <code>$ctx.id</code> for the PaymentIntent ID and <code>$ctx.client_secret</code> for the frontend confirmation key. After <code>create_customer</code>, use <code>$ctx.id</code> as the customer ID for subsequent operations.
   </div>
+
+  <h2>cancel_subscription — Output</h2>
+  <pre>{
+  "id": "sub_ABCdefGHIjkl",
+  "object": "subscription",
+  "status": "canceled",
+  "canceled_at": 1716450000,
+  "cancel_at": null,
+  "cancel_at_period_end": false,
+  "customer": "cus_PqRsTuVwXy",
+  "ended_at": 1716450000,
+  "livemode": true
+}</pre>
+  <p>When <code>cancel_at_period_end</code> is <code>true</code>, the status remains <code>active</code> until the period ends. Use the <code>cancel_at</code> timestamp to inform the customer when access will end.</p>
+
+  <h2>retrieve_payment_intent — Output</h2>
+  <pre>{
+  "id": "pi_3NxKL2LkdIwHu7ix0Tg8V2Qw",
+  "object": "payment_intent",
+  "amount": 5000,
+  "amount_received": 5000,
+  "currency": "usd",
+  "status": "succeeded",
+  "customer": "cus_PqRsTuVwXy",
+  "charges": {
+    "data": [{
+      "id": "ch_3NxKL2LkdIwHu7ix0AbCdEfG",
+      "amount": 5000,
+      "captured": true,
+      "receipt_url": "https://pay.stripe.com/receipts/..."
+    }]
+  },
+  "created": 1716400000,
+  "livemode": true
+}</pre>
+  <p>Use <code>retrieve_payment_intent</code> in webhook-triggered workflows to confirm payment status before triggering fulfillment. Check that <code>status == "succeeded"</code> and <code>amount_received == amount</code> before provisioning access or shipping goods.</p>
+
+  <h2>Expression Reference for Downstream Nodes</h2>
+  <table>
+    <tr><th>Expression</th><th>Returns</th><th>Operation</th></tr>
+    <tr><td><code>{@ $node.stripeNode.id }</code></td><td>Stripe object ID (pi_, cus_, sub_, re_, in_)</td><td>All</td></tr>
+    <tr><td><code>{@ $node.stripeNode.status }</code></td><td>Object status string</td><td>All</td></tr>
+    <tr><td><code>{@ $node.stripeNode.client_secret }</code></td><td>PaymentIntent client secret</td><td>create_payment_intent</td></tr>
+    <tr><td><code>{@ $node.stripeNode.amount }</code></td><td>Amount in smallest currency unit</td><td>Payment ops</td></tr>
+    <tr><td><code>{@ $node.stripeNode.hosted_invoice_url }</code></td><td>Stripe payment page URL</td><td>create_invoice</td></tr>
+    <tr><td><code>{@ $node.stripeNode.invoice_pdf }</code></td><td>Invoice PDF download URL</td><td>create_invoice</td></tr>
+    <tr><td><code>{@ $node.stripeNode.current_period_end }</code></td><td>Unix timestamp of billing period end</td><td>create_subscription</td></tr>
+    <tr><td><code>{@ $node.stripeNode.trial_end }</code></td><td>Trial end timestamp (or null)</td><td>create_subscription</td></tr>
+    <tr><td><code>{@ $node.stripeNode.charges.data[0].receipt_url }</code></td><td>Receipt URL for the charge</td><td>retrieve_payment_intent</td></tr>
+  </table>
+
+  <h2>PaymentIntent Status Reference</h2>
+  <table>
+    <tr><th>Status</th><th>Meaning</th><th>Workflow Action</th></tr>
+    <tr><td><code>requires_payment_method</code></td><td>No payment method attached</td><td>Return <code>client_secret</code> to frontend for card entry</td></tr>
+    <tr><td><code>requires_confirmation</code></td><td>Method attached, awaiting confirmation</td><td>Confirm via frontend or API</td></tr>
+    <tr><td><code>requires_action</code></td><td>3D Secure or additional auth needed</td><td>Frontend handles redirect/pop-up auth</td></tr>
+    <tr><td><code>processing</code></td><td>Payment being processed</td><td>Poll or wait for <code>payment_intent.succeeded</code> webhook</td></tr>
+    <tr><td><code>succeeded</code></td><td>Payment collected</td><td>Trigger fulfillment, send receipt</td></tr>
+    <tr><td><code>canceled</code></td><td>PaymentIntent canceled</td><td>Notify customer, optionally restart checkout</td></tr>
+  </table>
+
+  <h2>Subscription Status Reference</h2>
+  <table>
+    <tr><th>Status</th><th>Meaning</th><th>Action Required</th></tr>
+    <tr><td><code>trialing</code></td><td>Within trial period, no charges yet</td><td>Provision full access; schedule trial-ending notification</td></tr>
+    <tr><td><code>active</code></td><td>Current, billing normally</td><td>Full access granted</td></tr>
+    <tr><td><code>past_due</code></td><td>Payment failed, Stripe retrying</td><td>Send payment update request; optionally restrict access</td></tr>
+    <tr><td><code>unpaid</code></td><td>All retries exhausted</td><td>Suspend access; escalate to collections workflow</td></tr>
+    <tr><td><code>canceled</code></td><td>Subscription terminated</td><td>Revoke access; send offboarding email</td></tr>
+    <tr><td><code>incomplete</code></td><td>Initial payment failed</td><td>Prompt customer to update payment method</td></tr>
+  </table>
 </main>
 </body>
 </html>

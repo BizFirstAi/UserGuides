@@ -146,6 +146,51 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
     <i class="fa-solid fa-triangle-exclamation"></i>
     <strong>max_turns safety:</strong> Setting <code>max_turns</code> too high on a misconfigured tool (e.g., a tool that always returns an error) can cause the agent to loop for a long time, consuming significant tokens. Always test with a low <code>max_turns</code> value first and monitor the <code>turns_used</code> output during development. In production, set up a workflow alert if <code>turns_used</code> equals <code>max_turns</code> consistently.
   </div>
+
+  <h2>context Field — Detailed Guidance</h2>
+  <p>The <code>context</code> field is separate from the <code>goal</code> and serves as background data the agent receives at the start of each invocation. Use it to provide:</p>
+  <ul>
+    <li><strong>Structured record data</strong> — the customer record, order details, or incident that the goal refers to, so the agent does not need to call a tool just to fetch basic context</li>
+    <li><strong>Prior conversation history</strong> — if continuing a multi-turn human conversation, pass the prior messages as context</li>
+    <li><strong>Environmental constraints</strong> — current date, time zone, active promotions, or feature flags that the agent may need to reason about</li>
+    <li><strong>Partial data</strong> — results from earlier workflow steps that are too large to embed in the goal string</li>
+  </ul>
+  <p>The context is injected as structured data before the goal in the agent's system context. Keep context focused — only include what the agent actually needs. Excessive context increases token consumption across all turns.</p>
+
+  <h2>Full Configuration Example — Data Enrichment Agent</h2>
+  <pre><code>{
+  "goal": "Enrich this lead record with company intelligence and LinkedIn data: {@ $var.leadRecord }",
+  "context": {
+    "workspace": "{@ $var.workspaceId }",
+    "owner": "{@ $var.salesOwner }",
+    "crm_source": "Salesforce"
+  },
+  "available_tools": [
+    "lookupLinkedIn",
+    "lookupCompanyIntelligence",
+    "queryCRM",
+    "updateCRMRecord"
+  ],
+  "model": "claude-sonnet-4",
+  "max_turns": 6,
+  "temperature": 0.1,
+  "system_prompt": "You are a sales intelligence agent. Gather available data on the lead's company and LinkedIn profile. If a source returns no data, mark that field as 'not_found'. Your final output must be valid JSON with fields: company_size (string), industry (string), linkedin_title (string), linkedin_company (string), crm_interactions (integer), enrichment_confidence (0-100 integer).",
+  "credential_id": "anthropic-prod"
+}</code></pre>
+
+  <h2>Combining goal and context — Best Practices</h2>
+  <table>
+    <tr><th>Scenario</th><th>goal</th><th>context</th></tr>
+    <tr><td>Customer support</td><td>"Resolve: {@ $var.message }"</td><td>Customer record, prior tickets, account tier</td></tr>
+    <tr><td>Lead enrichment</td><td>"Enrich this lead: {@ $var.lead }"</td><td>CRM source, workspace ID, sales owner</td></tr>
+    <tr><td>Intelligent routing</td><td>"Classify and route: {@ $var.request }"</td><td>Business hours, team capacity, SLA tiers</td></tr>
+    <tr><td>Report generation</td><td>"Generate weekly summary for week ending {@ $var.date }"</td><td>Recipients, regions, currency, prior week benchmark</td></tr>
+  </table>
+
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <strong>Choosing between goal and system_prompt:</strong> Put the <em>task description and specific input data</em> in <code>goal</code>. Put <em>persistent instructions about how to behave, format output, and use tools</em> in <code>system_prompt</code>. The goal changes per invocation (driven by workflow data). The system_prompt is typically fixed per workflow node.
+  </div>
 </main>
 </body>
 </html>

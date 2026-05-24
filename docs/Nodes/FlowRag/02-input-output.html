@@ -112,6 +112,73 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
     <i class="fa-solid fa-circle-info"></i>
     <strong>Using context_text in AI prompts:</strong> The <code>context_text</code> field is pre-formatted for direct injection into AI node prompts. Use it as: <code>Based on the following company policies, answer the employee's question.\n\nPolicies:\n{{ nodes.ragQuery.output.context_text }}\n\nQuestion: {{ vars.user_question }}</code>
   </div>
+
+  <h2>Handling Zero Results</h2>
+  <p>When no results meet the <code>min_score</code> threshold, the node routes to the <strong>success</strong> port with <code>result_count: 0</code> and an empty <code>results</code> array. Always check <code>result_count</code> before attempting to access <code>results[0]</code> — accessing an index on an empty array will cause a downstream expression error.</p>
+  <pre><code>// Recommended pattern in downstream IfCondition node:
+{@ $node.ragNode.result_count } > 0
+
+// True path: use retrieved context in AI prompt
+// False path: use a generic fallback response or escalate to human</code></pre>
+
+  <h2>Expression Reference for Downstream Nodes</h2>
+  <table>
+    <tr><th>Expression</th><th>Returns</th></tr>
+    <tr><td><code>{@ $node.ragNode.results }</code></td><td>Full results array</td></tr>
+    <tr><td><code>{@ $node.ragNode.results[0].text }</code></td><td>Text of the most relevant result</td></tr>
+    <tr><td><code>{@ $node.ragNode.results[0].score }</code></td><td>Similarity score of the top result (0.0–1.0)</td></tr>
+    <tr><td><code>{@ $node.ragNode.results[0].item_id }</code></td><td>ID of the top result (for citation)</td></tr>
+    <tr><td><code>{@ $node.ragNode.results[0].metadata.category }</code></td><td>Category metadata of the top result</td></tr>
+    <tr><td><code>{@ $node.ragNode.result_count }</code></td><td>Number of results returned</td></tr>
+    <tr><td><code>{@ $node.ragNode.query_text }</code></td><td>The query that was searched</td></tr>
+    <tr><td><code>{@ $node.ragNode.context_text }</code></td><td>All result texts concatenated for AI prompt injection</td></tr>
+    <tr><td><code>{@ $node.ragNode.sources }</code></td><td>Array of result item IDs for citation</td></tr>
+    <tr><td><code>{@ $node.ragNode.item_id }</code></td><td>ID of item inserted/updated/deleted</td></tr>
+    <tr><td><code>{@ $node.ragNode.operation }</code></td><td>Operation performed: inserted/updated/deleted</td></tr>
+  </table>
+
+  <h2>Example Output — insert</h2>
+  <pre><code>{
+  "item_id": "policy-remote-work-v4",
+  "operation": "inserted",
+  "collection_name": "hr-policies",
+  "embedding_dimensions": 1536,
+  "timestamp": "2026-05-23T09:14:22.481Z"
+}</code></pre>
+
+  <h2>Example Output — query (zero results)</h2>
+  <pre><code>{
+  "query_text": "What is the policy for company vehicles?",
+  "result_count": 0,
+  "results": [],
+  "sources": [],
+  "context_text": "",
+  "collection_name": "hr-policies"
+}</code></pre>
+  <p>When <code>result_count</code> is 0, either no items exist in the collection matching the query above the <code>min_score</code> threshold, or no items matching the <code>metadata_filter</code> were found at all. Handle this in a downstream IfCondition to route to a fallback response.</p>
+
+  <h2>Example: Building a RAG Prompt in a DataMapping Node</h2>
+  <pre><code>// Use a DataMapping node between FlowRag query and AI node
+// to construct a well-formatted prompt:
+{
+  "prompt": "You are an HR assistant for BizFirstGO. Answer the employee's question using the company policies below. If the answer is not covered by the policies, say so clearly.\n\nCompany Policies:\n{@ $node.ragQuery.context_text }\n\nEmployee Question: {@ $var.employeeQuestion }\n\nAnswer in a friendly, professional tone in 2-4 sentences.",
+  "cited_policies": "{@ $node.ragQuery.sources }"
+}</code></pre>
+
+  <div class="callout warning">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <strong>Score interpretation:</strong> A high score does not always mean the retrieved document answers the question — it means the document is semantically similar to the query. A score of 0.85 between "What is the annual leave policy?" and a document about sick leave is plausible. Always instruct the AI downstream to say "I don't know" or "This policy doesn't directly address your question" if the retrieved context doesn't contain the answer, rather than hallucinating one.
+  </div>
+
+  <h2>insert and update — Additional Output Fields</h2>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>item_id</code></td><td>string</td><td>The ID of the knowledge item as stored or updated. Use this to confirm the correct item was written.</td></tr>
+    <tr><td><code>collection_name</code></td><td>string</td><td>The collection that was modified.</td></tr>
+    <tr><td><code>embedding_dimensions</code></td><td>integer</td><td>Dimensionality of the embedding vector generated — confirms which embedding model was active.</td></tr>
+    <tr><td><code>operation</code></td><td>string</td><td><code>inserted</code> or <code>updated</code> — confirms which action was taken.</td></tr>
+    <tr><td><code>timestamp</code></td><td>string</td><td>ISO 8601 timestamp of the write operation for audit logging.</td></tr>
+  </table>
 </main>
 </body>
 </html>
