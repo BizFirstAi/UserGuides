@@ -1,0 +1,220 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How It Works | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">BizFirst Expressions<span>Expression Evaluation Framework</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-how-it-works.html" class="active">How It Works</a>
+  <a href="02-how-to-call.html">Integration Guide</a>
+  <div class="sidebar-section">Directives</div>
+  <a href="04-directive-structure.html">Directive Structure</a>
+  <a href="03-directive-samples.html">Expression Samples</a>
+  <a href="07-options.html">Options Reference</a>
+  <div class="sidebar-section">Directive Reference</div>
+  <a href="directives/ctx.html">$ctx — Context</a>
+  <a href="directives/var.html">$var — Variable</a>
+  <a href="directives/input.html">$input — Node Input</a>
+  <a href="directives/output.html">$output — Node Output</a>
+  <a href="directives/exec.html">$exec — Execution</a>
+  <a href="directives/flow.html">$flow — Workflow</a>
+  <a href="directives/js.html">$js — JavaScript</a>
+  <a href="directives/cs.html">$cs — C# Script</a>
+  <a href="directives/tpl.html">$tpl — Template</a>
+  <a href="directives/api.html">$api — External API</a>
+  <a href="directives/math.html">$math — Math</a>
+  <a href="directives/items.html">$items — Items</a>
+  <a href="directives/canned.html">@ — Canned</a>
+  <div class="sidebar-section">Patterns</div>
+  <a href="08-nested-templates.html">Nested Templates</a>
+  <a href="09-canned-expressions.html">Canned Expressions</a>
+  <a href="06-complex-cases.html">Complex Use Cases</a>
+  <a href="05-edge-cases.html">Edge Cases</a>
+  <div class="sidebar-section">Extending</div>
+  <a href="10-plugin-guide.html">Plugin Guide</a>
+  <a href="13-discovery-api.html">Discovery API</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="12-vocabulary.html">Vocabulary</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst Expression Evaluation</div>
+    <h1>How It Works</h1>
+    <p class="subtitle">End-to-end pipeline: from a raw field string to a resolved, typed, formatted value.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#overview">System Overview</a></li>
+      <li><a href="#pipeline">The Three-Layer Pipeline</a></li>
+      <li><a href="#parsing">Step 1 — Parsing</a></li>
+      <li><a href="#routing">Step 2 — Directive Routing</a></li>
+      <li><a href="#options">Step 3 — Option Application</a></li>
+      <li><a href="#template">Template String Mode</a></li>
+      <li><a href="#context-vs-request">Context vs Request</a></li>
+      <li><a href="#cache">Caching</a></li>
+      <li><a href="#security">Security Model</a></li>
+    </ol>
+  </div>
+
+  <h2 id="overview">System Overview</h2>
+  <p>Every field value in a workflow node can optionally contain one or more expressions. The framework detects these, resolves them at runtime using the correct directive, applies any requested transformations, and returns the final value to the node executor.</p>
+
+  <div class="callout info">
+    <strong>Core Insight</strong>
+    If a field value contains no wildcard syntax, it passes through unchanged (zero overhead). Expression evaluation only triggers when a wildcard is detected.
+  </div>
+
+  <h2 id="pipeline">The Three-Layer Pipeline</h2>
+  <div class="pipeline">
+    <div class="pipeline-box">🔍<br>Parse</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">🧩<br>Directive</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">🔧<br>Options</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">✅<br>Response</div>
+  </div>
+
+  <table>
+    <thead><tr><th>Layer</th><th>Responsible Class</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Orchestration</strong></td><td><code>ExpressionOrchestrator</code></td><td>Entry point — detects wildcards, coordinates parsing, routing, caching, option application</td></tr>
+      <tr><td><strong>Directive</strong></td><td><code>BaseDirectiveEvaluator</code> + implementations</td><td>Resolves a single expression to a raw value using domain-specific logic</td></tr>
+      <tr><td><strong>Options</strong></td><td><code>IDirectiveOption</code> implementations</td><td>Post-resolution transforms (format, validate, encode, cache)</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="parsing">Step 1 — Parsing</h2>
+  <p>The active <code>IWildcardParser</code> inspects the field string and answers three questions:</p>
+  <ol>
+    <li><strong>CanParse?</strong> — Does the string contain any wildcard patterns?</li>
+    <li><strong>IsTemplate?</strong> — Does it contain multiple expressions or surrounding literal text?</li>
+    <li><strong>Parse / FindAllRegions</strong> — Extract directive tokens, path, and option tokens</li>
+  </ol>
+
+  <pre><code><span class="cm">// Input field value</span>
+<span class="st">"{@ $ctx.user.name @uppercase }"</span>
+
+<span class="cm">// After parsing → WildcardParseResult</span>
+<span class="ty">DirectiveToken</span>[] Directives = [
+    <span class="kw">new</span>(<span class="st">"ctx"</span>),       <span class="cm">// first directive (routes to $ctx handler)</span>
+    <span class="cm">// second directive would be data-source qualifier if present</span>
+]
+<span class="ty">string</span> Path    = <span class="st">"user.name"</span>
+<span class="ty">string</span>[] Options = [<span class="st">"uppercase"</span>]
+<span class="ty">string</span> RawExpression = <span class="st">"{@ $ctx.user.name @uppercase }"</span></code></pre>
+
+  <p>Three parsers are registered. The active one is selected via <code>IWildcardParserResolver</code> based on <code>EvaluationContext.ActiveSyntax</code>:</p>
+  <table>
+    <thead><tr><th>Parser</th><th>Syntax</th><th>When to use</th></tr></thead>
+    <tbody>
+      <tr><td><code>AtBraceWildcardParser</code></td><td><code>{@ $dir.path @opt }</code></td><td>Default for all BizFirstGO workflows</td></tr>
+      <tr><td><code>DoubleBraceWildcardParser</code></td><td><code>{{ $dir.path @opt }}</code></td><td>Importing n8n / Handlebars workflows</td></tr>
+      <tr><td><code>AtSignWildcardParser</code></td><td><code>@alias.path</code></td><td>Canned expression short form</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="routing">Step 2 — Directive Routing</h2>
+  <p>The orchestrator looks up <code>Directives[0].Name</code> in the <code>DirectiveServiceRegistry</code> (DI-registered map of name → <code>IExpressionDirectiveService</code>). The matched directive's <code>InvokeAsync</code> is called, which:</p>
+  <ol>
+    <li>Starts a <code>Stopwatch</code> for duration tracking</li>
+    <li>Calls the abstract <code>EvaluateAsync</code> method on the concrete directive class</li>
+    <li>Attaches elapsed milliseconds to the <code>EvaluationResponse</code></li>
+  </ol>
+
+  <div class="callout info">
+    <strong>No $-prefix in DI keys</strong>
+    The parser strips the <code>$</code> character. The DI key for <code>$ctx</code> is <code>"ctx"</code>, for <code>$var</code> is <code>"var"</code>. This keeps registration clean.
+  </div>
+
+  <p>If no directive matches, the <code>IDefaultExpressionDirectiveService</code> fallback is used (typically the <code>$var</code> directive, configurable per host).</p>
+
+  <h2 id="options">Step 3 — Option Application</h2>
+  <p>After the directive returns a raw value, registered options are applied in order:</p>
+  <ol>
+    <li><code>PopulateConstraints(FieldConstraints)</code> — each option records Required/NotEmpty/DefaultValue constraints</li>
+    <li><code>Apply(resolvedValue)</code> — each option transforms the value (uppercase, JSON encode, etc.)</li>
+    <li><code>FormattedValue</code> — lazy string property on <code>EvaluationResponse</code>, computed on first access</li>
+  </ol>
+
+  <div class="callout warn">
+    <strong>Special: ICacheMarkerOption</strong>
+    Options that implement <code>ICacheMarkerOption</code> (e.g., <code>@cache</code>, <code>@cache-thread</code>) are handled by the orchestrator <em>before</em> the directive is called. A cache hit short-circuits the entire directive invocation.
+  </div>
+
+  <h2 id="template">Template String Mode</h2>
+  <p>When <code>IWildcardParser.IsTemplate(text)</code> returns <code>true</code>, the orchestrator enters interpolation mode:</p>
+
+  <pre><code><span class="cm">// Template input</span>
+<span class="st">"Dear {@ $ctx.user.name }, your order {@ $var.orderId } is ready."</span>
+
+<span class="cm">// Process:</span>
+<span class="nu">1</span>. FindAllRegions() → [{start:5, end:28}, {start:43, end:62}]
+<span class="nu">2</span>. Evaluate all regions <span class="kw">in parallel</span> (Task.WhenAll)
+<span class="nu">3</span>. Substitute each FormattedValue into original string
+<span class="nu">4</span>. Scan assembled string <span class="kw">for</span> remaining wildcards
+<span class="nu">5</span>. <span class="kw">If</span> new wildcards found AND Depth &lt; <span class="nu">10</span> → re-enter pipeline
+<span class="nu">6</span>. Return assembled string</code></pre>
+
+  <p>The <code>VisitedKeys</code> set is shared across all passes, preventing infinite loops when a resolved value itself contains a previously-seen expression.</p>
+
+  <h2 id="context-vs-request">Context vs Request — Two Key Objects</h2>
+  <table>
+    <thead><tr><th>Object</th><th>Lifetime</th><th>Created by</th><th>Contains</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>EvaluationContext</code></td>
+        <td>Per node execution</td>
+        <td><code>BaseNodeExecutor</code></td>
+        <td>TenantId, ExecutionId, NodeKey, IsolationLevel, ActiveSyntax, Cache, Memory, NodeExecutionData, CurrentUser</td>
+      </tr>
+      <tr>
+        <td><code>EvaluationRequest</code></td>
+        <td>Per expression call</td>
+        <td><code>ExpressionOrchestrator</code></td>
+        <td>Parsed Directives[], Path, RawExpression, Options[], Depth (chain depth), VisitedKeys, reference to Context</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Key Design Principle</strong>
+    <code>EvaluationContext</code> is created once and reused for all field evaluations within a node execution. <code>EvaluationRequest</code> is immutable — chaining creates a new request via <code>request.Chain()</code> or <code>request.ForSubDirective()</code>.
+  </div>
+
+  <h2 id="cache">Caching</h2>
+  <p>The <code>IExpressionCache</code> is scope-aware. Cache scope is controlled by the <code>@cache</code> option family:</p>
+  <table>
+    <thead><tr><th>Option</th><th>Scope</th><th>Invalidated when</th></tr></thead>
+    <tbody>
+      <tr><td><code>@cache</code> (default)</td><td>Node</td><td>Node execution completes</td></tr>
+      <tr><td><code>@cache-thread</code></td><td>Thread</td><td>Workflow thread completes</td></tr>
+      <tr><td><code>@cache-process</code></td><td>Process</td><td>Process (top-level workflow) completes</td></tr>
+    </tbody>
+  </table>
+  <p>Cache is purely in-memory — no Redis. Cache hits set <code>EvaluationResponse.CacheHit = true</code> and <code>DurationMs = 0</code>.</p>
+
+  <h2 id="security">Security Model</h2>
+  <p>The <code>ExpressionIsolationLevel</code> on the <code>EvaluationContext</code> controls which directives are permitted:</p>
+  <table>
+    <thead><tr><th>Level</th><th>Permitted directives</th><th>Use when</th></tr></thead>
+    <tbody>
+      <tr><td><code>Safe</code></td><td>All data-read directives: <code>$ctx</code>, <code>$var</code>, <code>$input</code>, <code>$output</code>, <code>$exec</code>, <code>$flow</code>, <code>$items</code>, <code>$math</code></td><td>Default for all nodes</td></tr>
+      <tr><td><code>Sandboxed</code></td><td>All Safe + <code>$js</code> (Jint sandbox)</td><td>Nodes that need script logic</td></tr>
+      <tr><td><code>Trusted</code></td><td>All + <code>$cs</code>, <code>$api</code></td><td>Requires <code>EnableTrustedExecutionEnvironment=true</code></td></tr>
+    </tbody>
+  </table>
+  <div class="callout danger">
+    <strong>Hard Error on Violation</strong>
+    Attempting to use a directive that exceeds the context's isolation level returns an <code>EvaluationResponse.Failure</code> with <code>EvaluationErrorCode.IsolationViolation</code> — not a silent null.
+  </div>
+</main>
+</body>
+</html>

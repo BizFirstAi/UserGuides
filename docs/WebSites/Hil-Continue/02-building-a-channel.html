@@ -1,0 +1,263 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Continuation — Building a Channel</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">
+    <h2>BizFirst AI</h2>
+    <h1>HIL Continuation</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-building-a-channel.html" class="active">Building a Channel</a>
+  <div class="section-label">Channels</div>
+  <a href="03-slack.html" class="ch-slack">Slack</a>
+  <a href="04-whatsapp.html" class="ch-whatsapp">WhatsApp</a>
+  <a href="05-facebook.html" class="ch-facebook">Facebook Messenger</a>
+  <a href="06-instagram.html" class="ch-instagram">Instagram</a>
+  <a href="07-telegram.html" class="ch-telegram">Telegram</a>
+  <a href="08-teams.html" class="ch-teams">Microsoft Teams</a>
+  <a href="09-email.html" class="ch-email">Email</a>
+  <a href="10-sms.html" class="ch-sms">SMS / Twilio</a>
+  <a href="11-discord.html" class="ch-discord">Discord</a>
+  <a href="12-line.html" class="ch-line">LINE</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Developer Pattern</div>
+    <h1>Building a Channel Node</h1>
+    <p class="lead">
+      The universal five-step pattern every HIL channel node follows, regardless of
+      which messaging platform it targets.
+    </p>
+  </div>
+
+  <h2>What You Are Building</h2>
+  <p>
+    A HIL channel node is a <strong>node executor</strong> that:
+  </p>
+  <ol>
+    <li>Reads the field manifest to know what to present to the human.</li>
+    <li>Formats those fields for the target channel.</li>
+    <li>Sends the message via the channel's API.</li>
+    <li>Returns <code>"waiting"</code> to suspend the workflow.</li>
+    <li>Has a corresponding <strong>webhook controller</strong> that resumes the workflow when the human responds.</li>
+  </ol>
+  <p>
+    The node executor and the webhook controller are two separate entry points but share the same
+    <code>ExecutionResId</code> as the correlation key between them.
+  </p>
+
+  <h2>Step 1 — Resolve the HIL Fields</h2>
+  <p>
+    In <code>OnProcess</code>, resolve the HIL payload using <code>IHilLabelResolver</code>:
+  </p>
+  <pre><code>// Inject IHilLabelResolver into your executor constructor
+var hilFields = await _hilLabelResolver.ResolveAllAsync(
+    nodeExecutionContext,
+    cancellationToken);
+
+// hilFields is IReadOnlyList&lt;ResolvedHilField&gt;
+// Each entry has:
+//   .FieldKey        — the config field name
+//   .Label           — human-readable label (may be runtime-resolved)
+//   .Description     — additional context
+//   .CurrentValue    — the field's current value (object)
+//   .DisplayMode     — ReadableContext | ReadableMasked | Concealed
+//   .InputMode       — Locked | EditableOptional | RequiredFromHuman | PrefilledEditable
+//   .WasEvaluated    — true if label was a dynamic expression</code></pre>
+
+  <div class="callout info">
+    <strong>Only SendToHil fields are returned</strong>
+    <code>ResolveAllAsync</code> filters out fields where <code>HilPolicy.SendToHil == false</code>.
+    You never need to check this yourself.
+  </div>
+
+  <h2>Step 2 — Apply Display and Input Rules</h2>
+  <p>
+    Before formatting for the channel, apply the policy rules to each field:
+  </p>
+  <pre><code>foreach (var field in hilFields)
+{
+    switch (field.DisplayMode)
+    {
+        case HilDisplayMode.ReadableContext:
+            // Show the value as-is
+            break;
+        case HilDisplayMode.ReadableMasked:
+            // Render value as "••••••••" — never expose the actual value
+            break;
+        case HilDisplayMode.Concealed:
+            // Skip this field entirely — do not render it
+            continue;
+    }
+
+    bool isEditable = field.InputMode is
+        HilInputMode.EditableOptional or
+        HilInputMode.RequiredFromHuman or
+        HilInputMode.PrefilledEditable;
+
+    bool isRequired = field.InputMode == HilInputMode.RequiredFromHuman;
+
+    // Format accordingly for your channel
+}</code></pre>
+
+  <h2>Step 3 — Embed the ExecutionResId</h2>
+  <p>
+    Get the <code>ExecutionResId</code> from the execution context and embed it in the
+    outgoing message payload. The exact mechanism depends on the channel.
+  </p>
+  <pre><code>string resId = nodeExecutionContext
+    .ElementExecutionContext
+    .ExecutionContext
+    .ExecutionResId;</code></pre>
+
+  <table>
+    <thead><tr><th>Channel</th><th>Where to embed</th></tr></thead>
+    <tbody>
+      <tr><td>Slack</td><td><code>action_id</code> on buttons, or <code>private_metadata</code> on a modal</td></tr>
+      <tr><td>WhatsApp</td><td>Short token in a correlation table; token in button payload</td></tr>
+      <tr><td>Facebook / Instagram</td><td>Button <code>payload</code> field (string, up to 1000 chars)</td></tr>
+      <tr><td>Telegram</td><td><code>callback_data</code> on InlineKeyboardButton (up to 64 bytes)</td></tr>
+      <tr><td>Teams</td><td><code>data</code> property of Adaptive Card Action.Submit</td></tr>
+      <tr><td>Email</td><td>Query parameter in a signed resume URL</td></tr>
+      <tr><td>SMS</td><td>Session table keyed by phone number</td></tr>
+      <tr><td>Discord</td><td>Button <code>custom_id</code> field (up to 100 chars)</td></tr>
+      <tr><td>LINE</td><td><code>data</code> field of Postback action (up to 300 chars)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Step 4 — Send and Suspend</h2>
+  <p>
+    Send the formatted message via the channel's API, then return the <code>"waiting"</code>
+    port key. Do this in your <code>OnProcess</code> implementation:
+  </p>
+  <pre><code>protected override async Task&lt;NodeExecutionResult&gt; OnProcess(
+    NodeExecutionContext context,
+    CancellationToken cancellationToken)
+{
+    var hilFields = await _hilLabelResolver.ResolveAllAsync(context, cancellationToken);
+    var message   = BuildChannelMessage(hilFields, resId);  // your formatter
+
+    await _channelClient.SendMessageAsync(recipientId, message, cancellationToken);
+
+    // Return "waiting" — engine serializes memory and suspends
+    return NodeExecutionResult.Suspend("waiting");
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Do everything before returning "waiting"</strong>
+    Once you return the <code>"waiting"</code> port the engine begins tearing down the
+    in-process execution. Do not schedule async work that continues after the return.
+    Send the message, confirm it was accepted, then suspend.
+  </div>
+
+  <h2>Step 5 — The Webhook Handler</h2>
+  <p>
+    This is a separate controller endpoint that the channel calls when the human responds.
+    The handler must:
+  </p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Validate the inbound request</h4>
+        <p>Every channel has a signature verification mechanism. Always validate before processing.</p>
+        <pre><code>// Example: verify HMAC signature from channel header
+if (!_signatureValidator.Validate(request))
+    return Unauthorized();</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Extract the ExecutionResId</h4>
+        <p>Parse the payload using the strategy you chose (direct embed, correlation table, signed URL, etc.).</p>
+        <pre><code>string resId = ExtractResId(payload); // your strategy</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Map the human's response</h4>
+        <p>Convert the channel-specific response format into a <code>Dictionary&lt;string, object&gt;</code>
+        keyed by field name. Use the same field keys that appear in the HIL manifest.</p>
+        <pre><code>var responseData = new Dictionary&lt;string, object&gt;
+{
+    ["approved"]       = payload.Action == "approve",
+    ["reviewerNotes"]  = payload.InputValues["notes"] ?? ""
+};</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Call ContinueAsync</h4>
+        <p>Pass the <code>ExecutionResId</code> and the response data. The engine does everything else.</p>
+        <pre><code>await _continuationOrchestrator.ContinueAsync(
+    executionResId:    resId,
+    responseData:      responseData,
+    cancellationToken: ct);
+
+return Ok(); // acknowledge to the channel — important!</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Acknowledge to the channel (critical)</h4>
+        <p>
+          Most channels require a quick HTTP 200 acknowledgment response within 3 seconds,
+          or they will retry. If <code>ContinueAsync</code> is slow, acknowledge immediately
+          and process the resume in a background task / queue.
+        </p>
+        <pre><code>// Fast-ack pattern for channels with 3-second timeout
+_ = Task.Run(() => _continuationOrchestrator.ContinueAsync(resId, data, CancellationToken.None));
+return Ok();</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <h2>Channel Node Checklist</h2>
+  <table>
+    <thead><tr><th>Requirement</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Inject <code>IHilLabelResolver</code></td><td>Do not build the field list manually</td></tr>
+      <tr><td>Respect <code>DisplayMode.Concealed</code></td><td>Never render concealed fields</td></tr>
+      <tr><td>Respect <code>DisplayMode.ReadableMasked</code></td><td>Never expose the raw value of masked fields</td></tr>
+      <tr><td>Embed <code>ExecutionResId</code></td><td>Cannot resume without it</td></tr>
+      <tr><td>Return <code>"waiting"</code> port</td><td>Any other port skips suspension</td></tr>
+      <tr><td>Validate webhook signature</td><td>All channels provide this — use it</td></tr>
+      <tr><td>Acknowledge webhook within timeout</td><td>Typically 3 seconds — use fast-ack if needed</td></tr>
+      <tr><td>Map response to field key dict</td><td>Keys must match the node's config field names</td></tr>
+      <tr><td>Handle expiry gracefully</td><td>If <code>ExecutionResId</code> is not found, the suspension may have expired or already been resumed</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Settings class tip</strong>
+    Store channel credentials (bot token, page token, webhook secret) as config fields
+    on your node with <code>ExpressionPolicy.AtConfigLoad</code> pointing to
+    <code>@{secret:YourSecretKey}</code>. They are resolved before your executor runs and
+    are never exposed to HIL fields.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-how-it-works.html">← How It Works</a>
+    <a href="03-slack.html">Next: Slack →</a>
+  </div>
+</main>
+
+</div>
+</body>
+</html>

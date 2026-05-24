@@ -1,0 +1,259 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Directive Structure | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">BizFirst Expressions<span>Expression Evaluation Framework</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-how-to-call.html">Integration Guide</a>
+  <div class="sidebar-section">Directives</div>
+  <a href="04-directive-structure.html" class="active">Directive Structure</a>
+  <a href="03-directive-samples.html">Expression Samples</a>
+  <a href="07-options.html">Options Reference</a>
+  <div class="sidebar-section">Directive Reference</div>
+  <a href="directives/ctx.html">$ctx — Context</a>
+  <a href="directives/var.html">$var — Variable</a>
+  <a href="directives/input.html">$input — Node Input</a>
+  <a href="directives/output.html">$output — Node Output</a>
+  <a href="directives/exec.html">$exec — Execution</a>
+  <a href="directives/flow.html">$flow — Workflow</a>
+  <a href="directives/js.html">$js — JavaScript</a>
+  <a href="directives/cs.html">$cs — C# Script</a>
+  <a href="directives/tpl.html">$tpl — Template</a>
+  <a href="directives/api.html">$api — External API</a>
+  <a href="directives/math.html">$math — Math</a>
+  <a href="directives/items.html">$items — Items</a>
+  <a href="directives/canned.html">@ — Canned</a>
+  <div class="sidebar-section">Patterns</div>
+  <a href="08-nested-templates.html">Nested Templates</a>
+  <a href="09-canned-expressions.html">Canned Expressions</a>
+  <a href="06-complex-cases.html">Complex Use Cases</a>
+  <a href="05-edge-cases.html">Edge Cases</a>
+  <div class="sidebar-section">Extending</div>
+  <a href="10-plugin-guide.html">Plugin Guide</a>
+  <a href="13-discovery-api.html">Discovery API</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="12-vocabulary.html">Vocabulary</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst Expression Evaluation</div>
+    <h1>Directive Structure</h1>
+    <p class="subtitle">The anatomy of a directive — interfaces, base class, path resolution, and chaining.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#interface">IExpressionDirectiveService</a></li>
+      <li><a href="#base">BaseDirectiveEvaluator</a></li>
+      <li><a href="#evaluate">EvaluateAsync — The Core Method</a></li>
+      <li><a href="#context">Accessing Context Inside a Directive</a></li>
+      <li><a href="#path">Path Resolution</a></li>
+      <li><a href="#chaining">Chaining to Other Directives</a></li>
+      <li><a href="#options">Reading Options</a></li>
+      <li><a href="#example">Complete Worked Example</a></li>
+    </ol>
+  </div>
+
+  <h2 id="interface">IExpressionDirectiveService</h2>
+  <p>Every directive implements this single interface:</p>
+  <pre><code><span class="kw">public interface</span> <span class="ty">IExpressionDirectiveService</span>
+{
+    <span class="cm">/// The directive name (without $). Used as DI registration key.</span>
+    <span class="ty">string</span> DirectiveName { <span class="kw">get</span>; }
+
+    <span class="cm">/// Resolves an expression to a value.</span>
+    <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">InvokeAsync</span>(
+        <span class="ty">EvaluationRequest</span> request,
+        <span class="ty">CancellationToken</span> cancellationToken);
+}</code></pre>
+
+  <div class="callout info">
+    <strong>IDefaultExpressionDirectiveService</strong>
+    A marker interface extending <code>IExpressionDirectiveService</code>. The directive registered with this interface is used as the fallback when an expression has no explicit directive name (e.g., bare path expressions).
+  </div>
+
+  <h2 id="base">BaseDirectiveEvaluator</h2>
+  <p>Abstract base class that all built-in directives extend. It handles timing and delegates to the abstract <code>EvaluateAsync</code>:</p>
+  <pre><code><span class="kw">public abstract class</span> <span class="ty">BaseDirectiveEvaluator</span> : <span class="ty">IExpressionDirectiveService</span>
+{
+    <span class="kw">public abstract string</span> DirectiveName { <span class="kw">get</span>; }
+
+    <span class="kw">private</span> <span class="ty">EvaluationRequest</span>? _activeRequest;
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">InvokeAsync</span>(
+        <span class="ty">EvaluationRequest</span> request,
+        <span class="ty">CancellationToken</span> ct)
+    {
+        _activeRequest = request;
+        <span class="kw">var</span> sw = <span class="ty">Stopwatch</span>.<span class="fn">StartNew</span>();
+        <span class="ty">EvaluationResponse</span> response = <span class="kw">await</span> <span class="fn">EvaluateAsync</span>(request, ct);
+        <span class="kw">return</span> response.<span class="fn">WithDuration</span>(sw.ElapsedMilliseconds);
+    }
+
+    <span class="cm">// ── Abstract: subclass implements this ────────────────────</span>
+    <span class="kw">protected abstract</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">EvaluateAsync</span>(
+        <span class="ty">EvaluationRequest</span> request,
+        <span class="ty">CancellationToken</span> ct);
+
+    <span class="cm">// ── Protected helpers ──────────────────────────────────────</span>
+    <span class="kw">protected</span> <span class="ty">EvaluationContext</span> Context =&gt; _activeRequest!.Context;
+
+    <span class="kw">protected async</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">ChainExpressionAsync</span>(
+        <span class="ty">string</span> resolvedExpression,
+        <span class="ty">CancellationToken</span> ct);     <span class="cm">// re-enters full parse pipeline</span>
+
+    <span class="kw">protected async</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">ChainToDirectiveAsync</span>(
+        <span class="ty">string</span> directiveName,
+        <span class="ty">CancellationToken</span> ct);     <span class="cm">// routes directly to a named directive</span>
+
+    <span class="kw">protected void</span> <span class="fn">GuardChainDepth</span>();  <span class="cm">// throws if Depth >= 10</span>
+}</code></pre>
+
+  <h2 id="evaluate">EvaluateAsync — The Core Method</h2>
+  <p>This is the only method a directive <em>must</em> implement. It receives the full <code>EvaluationRequest</code> and returns an <code>EvaluationResponse</code>.</p>
+  <pre><code><span class="kw">protected override async</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">EvaluateAsync</span>(
+    <span class="ty">EvaluationRequest</span> request,
+    <span class="ty">CancellationToken</span> ct)
+{
+    <span class="cm">// request.Directives[0].Name  == this directive's name (e.g., "ctx")</span>
+    <span class="cm">// request.Path                == dot-path string (e.g., "user.name")</span>
+    <span class="cm">// request.Options             == option tokens (e.g., ["uppercase"])</span>
+    <span class="cm">// request.Context             == the EvaluationContext</span>
+    <span class="cm">// request.Depth               == current chain depth (0 = top level)</span>
+
+    <span class="kw">var</span> resolved = <span class="kw">await</span> <span class="fn">ResolvePathAsync</span>(request.Path, ct);
+
+    <span class="kw">if</span> (resolved <span class="kw">is null</span>)
+        <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+            <span class="ty">EvaluationErrorCode</span>.PathNotFound,
+            <span class="st">$"Path '{request.Path}' not found"</span>);
+
+    <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Success</span>(resolved);
+}</code></pre>
+
+  <h2 id="context">Accessing Context Inside a Directive</h2>
+  <p>The <code>Context</code> property on <code>BaseDirectiveEvaluator</code> provides the <code>EvaluationContext</code>. Use it to access execution state, memory, user info, and feature flags:</p>
+  <pre><code><span class="cm">// Tenant isolation</span>
+<span class="kw">var</span> tenantId = Context.TenantId;
+
+<span class="cm">// Current user</span>
+<span class="kw">var</span> userName = Context.CurrentUser?.Name;
+
+<span class="cm">// Workflow memory</span>
+<span class="kw">var</span> value = Context.Memory.<span class="fn">Get</span>(variableName, Context.ExecutionId);
+
+<span class="cm">// Node input/output data</span>
+<span class="kw">var</span> inputItem = Context.NodeExecutionData.CurrentItem;
+
+<span class="cm">// Isolation check</span>
+<span class="kw">if</span> (Context.IsolationLevel &lt; <span class="ty">ExpressionIsolationLevel</span>.Sandboxed)
+    <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+        <span class="ty">EvaluationErrorCode</span>.IsolationViolation,
+        <span class="st">"$js requires Sandboxed isolation level"</span>);</code></pre>
+
+  <h2 id="path">Path Resolution</h2>
+  <p>Paths in expressions are dot-separated strings that navigate into data structures. The <code>JsonPathResolver</code> utility handles this for all directives:</p>
+  <pre><code><span class="cm">// Path: "customer.address.city"</span>
+<span class="cm">// Data: { "customer": { "address": { "city": "Dublin" } } }</span>
+
+<span class="kw">var</span> result = <span class="ty">JsonPathResolver</span>.<span class="fn">Resolve</span>(data, <span class="st">"customer.address.city"</span>);
+<span class="cm">// → "Dublin"</span>
+
+<span class="cm">// Array indexing: "items[0].amount"</span>
+<span class="kw">var</span> result = <span class="ty">JsonPathResolver</span>.<span class="fn">Resolve</span>(data, <span class="st">"items[0].amount"</span>);
+<span class="cm">// → 99.99</span></code></pre>
+
+  <p>Each directive segment has a semantic meaning:</p>
+  <table>
+    <thead><tr><th>Directive</th><th>First segment</th><th>Remaining path</th></tr></thead>
+    <tbody>
+      <tr><td><code>$ctx.env.KEY</code></td><td><code>env</code> → routes to EnvironmentHandler</td><td><code>KEY</code> → env var name</td></tr>
+      <tr><td><code>$ctx.user.email</code></td><td><code>user</code> → routes to UserHandler</td><td><code>email</code> → property name</td></tr>
+      <tr><td><code>$input.current.name</code></td><td><code>current</code> → active item</td><td><code>name</code> → field in item</td></tr>
+      <tr><td><code>$output.NodeKey.field</code></td><td><code>NodeKey</code> → previous node</td><td><code>field</code> → output field</td></tr>
+      <tr><td><code>$var.myVar</code></td><td><code>myVar</code> → variable name in memory</td><td>further segments → nested JSON path</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="chaining">Chaining to Other Directives</h2>
+  <p>A directive can chain to other directives in two ways:</p>
+
+  <h3>ChainExpressionAsync — Re-parse a new expression string</h3>
+  <pre><code><span class="cm">// The canned expression directive resolves the alias to an expression string,</span>
+<span class="cm">// then chains to re-evaluate that expression.</span>
+<span class="kw">var</span> storedExpression = <span class="kw">await</span> _store.<span class="fn">GetAsync</span>(alias, Context.TenantId, ct);
+<span class="cm">// storedExpression = "{@ $ctx.tenant.taxRate }"</span>
+
+<span class="fn">GuardChainDepth</span>(); <span class="cm">// throws if depth >= 10</span>
+<span class="kw">return await</span> <span class="fn">ChainExpressionAsync</span>(storedExpression, ct);
+<span class="cm">// → full re-parse → routes to $ctx → returns tenant.taxRate value</span></code></pre>
+
+  <h3>ChainToDirectiveAsync — Route directly without re-parsing</h3>
+  <pre><code><span class="cm">// Template directive evaluates all embedded $-directives by routing directly.</span>
+<span class="cm">// Use this when you already know the target directive name.</span>
+<span class="fn">GuardChainDepth</span>();
+<span class="kw">return await</span> <span class="fn">ChainToDirectiveAsync</span>(<span class="st">"var"</span>, ct);
+<span class="cm">// → skips parser → calls $var.InvokeAsync directly</span></code></pre>
+
+  <div class="callout warn">
+    <strong>Always call GuardChainDepth() before chaining</strong>
+    Both chain methods increment <code>request.Depth</code>. Failing to guard allows runaway recursion. The orchestrator enforces a hard limit of depth = 10.
+  </div>
+
+  <h2 id="options">Reading Options Inside a Directive</h2>
+  <p>Options in <code>request.Options</code> are string tokens parsed from the expression. Most option handling happens in the orchestrator, but a directive can inspect them:</p>
+  <pre><code><span class="cm">// Check if a specific option was requested</span>
+<span class="kw">bool</span> wantsJson = request.Options.Contains(<span class="st">"json"</span>);
+
+<span class="cm">// Options with parameters: "@cache-thread" or "@default:fallback"</span>
+<span class="kw">var</span> defaultOpt = request.Options.FirstOrDefault(o =&gt; o.StartsWith(<span class="st">"default:"</span>));
+<span class="kw">if</span> (defaultOpt <span class="kw">is not null</span>)
+{
+    <span class="kw">var</span> fallback = defaultOpt[<span class="st">"default:"</span>.Length..];
+    <span class="cm">// use fallback</span>
+}</code></pre>
+
+  <h2 id="example">Complete Worked Example — $ctx Directive</h2>
+  <pre><code><span class="kw">public class</span> <span class="ty">ContextDirectiveService</span> : <span class="ty">BaseDirectiveEvaluator</span>
+{
+    <span class="kw">public override string</span> DirectiveName =&gt; <span class="st">"ctx"</span>;
+
+    <span class="kw">private readonly</span> <span class="ty">IReadOnlyDictionary</span>&lt;<span class="ty">string</span>, <span class="ty">IContextHandler</span>&gt; _handlers;
+
+    <span class="kw">public</span> <span class="ty">ContextDirectiveService</span>(<span class="ty">IEnumerable</span>&lt;<span class="ty">IContextHandler</span>&gt; handlers)
+    {
+        _handlers = handlers.<span class="fn">ToDictionary</span>(h =&gt; h.SubKey, <span class="ty">StringComparer</span>.OrdinalIgnoreCase);
+    }
+
+    <span class="kw">protected override async</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">EvaluateAsync</span>(
+        <span class="ty">EvaluationRequest</span> request,
+        <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// Path = "user.name" → split → handler key = "user", sub-path = "name"</span>
+        <span class="kw">var</span> segments = request.Path.<span class="fn">Split</span>(<span class="st">'.'</span>, <span class="nu">2</span>);
+        <span class="kw">var</span> handlerKey = segments[<span class="nu">0</span>];
+        <span class="kw">var</span> subPath    = segments.Length &gt; <span class="nu">1</span> ? segments[<span class="nu">1</span>] : <span class="st">""</span>;
+
+        <span class="kw">if</span> (!_handlers.<span class="fn">TryGetValue</span>(handlerKey, <span class="kw">out var</span> handler))
+            <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+                <span class="ty">EvaluationErrorCode</span>.PathNotFound,
+                <span class="st">$"Unknown $ctx sub-key: '{handlerKey}'"</span>);
+
+        <span class="kw">var</span> value = <span class="kw">await</span> handler.<span class="fn">ResolveAsync</span>(subPath, Context, ct);
+        <span class="kw">return</span> value <span class="kw">is null</span>
+            ? <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(<span class="ty">EvaluationErrorCode</span>.PathNotFound,
+                <span class="st">$"Path '{request.Path}' resolved to null"</span>)
+            : <span class="ty">EvaluationResponse</span>.<span class="fn">Success</span>(value);
+    }
+}</code></pre>
+</main>
+</body>
+</html>

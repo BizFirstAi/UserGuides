@@ -1,0 +1,235 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Continuation — Slack</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">
+    <h2>BizFirst AI</h2>
+    <h1>HIL Continuation</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-building-a-channel.html">Building a Channel</a>
+  <div class="section-label">Channels</div>
+  <a href="03-slack.html" class="ch-slack active">Slack</a>
+  <a href="04-whatsapp.html" class="ch-whatsapp">WhatsApp</a>
+  <a href="05-facebook.html" class="ch-facebook">Facebook Messenger</a>
+  <a href="06-instagram.html" class="ch-instagram">Instagram</a>
+  <a href="07-telegram.html" class="ch-telegram">Telegram</a>
+  <a href="08-teams.html" class="ch-teams">Microsoft Teams</a>
+  <a href="09-email.html" class="ch-email">Email</a>
+  <a href="10-sms.html" class="ch-sms">SMS / Twilio</a>
+  <a href="11-discord.html" class="ch-discord">Discord</a>
+  <a href="12-line.html" class="ch-line">LINE</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="channel-tag ch-tag-slack">Slack</div>
+    <h1>Slack HIL Channel</h1>
+    <p class="lead">
+      Slack's Block Kit provides the richest interactive message experience of any messaging
+      platform. Buttons, overflow menus, input blocks, and modals all work as HIL
+      interaction surfaces. The <code>ExecutionResId</code> travels inside the action payload.
+    </p>
+  </div>
+
+  <h2>How Slack Interactions Work</h2>
+  <p>
+    When a Slack app sends a message containing interactive elements (buttons, select menus,
+    input blocks), Slack fires an HTTP POST to your registered <strong>Interactivity Request URL</strong>
+    whenever a user interacts with any of those elements. The payload includes everything the
+    user did, plus any data you embedded in the <code>action_id</code>, <code>block_id</code>,
+    or modal <code>private_metadata</code>.
+  </p>
+
+  <h2>Correlation Key Strategy: Direct Embed</h2>
+  <p>
+    Slack's <code>action_id</code> field on a block element accepts any string up to 255 characters.
+    A GUID (36 characters) fits comfortably. For simple approve/reject flows, embed the
+    <code>ExecutionResId</code> directly in the <code>action_id</code> of each action button.
+  </p>
+  <pre><code>// Button block action_id format:  "hil_approve|{resId}"
+// This lets you parse the action type and resId from one string
+"action_id": "hil_approve|3fa85f64-5717-4562-b3fc-2c963f66afa6"
+"action_id": "hil_reject|3fa85f64-5717-4562-b3fc-2c963f66afa6"</code></pre>
+
+  <p>
+    For flows where the human also fills in values (editable fields), use a <strong>modal</strong>
+    and embed the <code>ExecutionResId</code> in the modal's <code>private_metadata</code> field.
+    This field is returned verbatim in the view submission payload.
+  </p>
+
+  <h2>Building the Message</h2>
+  <p>
+    Map the resolved HIL fields to Block Kit blocks:
+  </p>
+  <pre><code>private object BuildSlackMessage(IReadOnlyList&lt;ResolvedHilField&gt; fields, string resId)
+{
+    var blocks = new List&lt;object&gt;();
+
+    // Header
+    blocks.Add(new {
+        type = "header",
+        text = new { type = "plain_text", text = "Approval Required" }
+    });
+
+    foreach (var field in fields)
+    {
+        if (field.DisplayMode == HilDisplayMode.Concealed) continue;
+
+        string displayValue = field.DisplayMode == HilDisplayMode.ReadableMasked
+            ? "••••••••"
+            : field.CurrentValue?.ToString() ?? "—";
+
+        if (field.InputMode == HilInputMode.Locked)
+        {
+            // Read-only context block
+            blocks.Add(new {
+                type = "section",
+                fields = new[] {
+                    new { type = "mrkdwn", text = $"*{field.Label}*\n{displayValue}" }
+                }
+            });
+        }
+        else
+        {
+            // Editable — use an input block (in a modal only)
+            blocks.Add(new {
+                type     = "input",
+                block_id = field.FieldKey,
+                label    = new { type = "plain_text", text = field.Label },
+                element  = new {
+                    type             = "plain_text_input",
+                    action_id        = field.FieldKey,
+                    initial_value    = displayValue,
+                    multiline        = false
+                },
+                optional = field.InputMode == HilInputMode.EditableOptional
+            });
+        }
+    }
+
+    // Action buttons
+    blocks.Add(new {
+        type = "actions",
+        elements = new object[] {
+            new {
+                type      = "button",
+                text      = new { type = "plain_text", text = "Approve" },
+                style     = "primary",
+                action_id = $"hil_approve|{resId}"
+            },
+            new {
+                type      = "button",
+                text      = new { type = "plain_text", text = "Reject" },
+                style     = "danger",
+                action_id = $"hil_reject|{resId}"
+            }
+        }
+    });
+
+    return new { blocks };
+}</code></pre>
+
+  <h2>Sending the Message</h2>
+  <pre><code>// In OnProcess:
+var message   = BuildSlackMessage(hilFields, resId);
+var channelId = settings.SlackChannelId; // from resolved config
+
+await _slackClient.PostMessageAsync(channelId, message, cancellationToken);
+
+return NodeExecutionResult.Suspend("waiting");</code></pre>
+
+  <h2>Webhook Handler</h2>
+  <p>
+    Slack sends interaction payloads as <code>application/x-www-form-urlencoded</code>
+    with a JSON string in the <code>payload</code> parameter. Always verify the
+    <code>X-Slack-Signature</code> header first.
+  </p>
+  <pre><code>[HttpPost("webhooks/slack/interactions")]
+public async Task&lt;IActionResult&gt; HandleInteraction()
+{
+    // 1. Read raw body for signature verification
+    var rawBody = await Request.ReadBodyAsStringAsync();
+    if (!_slackSignatureVerifier.Verify(rawBody, Request.Headers))
+        return Unauthorized();
+
+    // 2. Parse the payload
+    var payloadJson = HttpUtility.ParseQueryString(rawBody)["payload"];
+    var payload     = JsonSerializer.Deserialize&lt;SlackInteractionPayload&gt;(payloadJson);
+
+    // 3. Extract resId from action_id
+    var actionId = payload.Actions[0].ActionId;          // e.g. "hil_approve|{guid}"
+    var parts    = actionId.Split('|', 2);
+    var action   = parts[0];   // "hil_approve" or "hil_reject"
+    var resId    = parts[1];   // the ExecutionResId
+
+    // 4. Build response data
+    var responseData = new Dictionary&lt;string, object&gt;
+    {
+        ["approved"] = action == "hil_approve",
+        ["actionBy"] = payload.User.Name
+    };
+
+    // 5. Acknowledge immediately (Slack requires response within 3 seconds)
+    _ = Task.Run(() => _continuationOrchestrator.ContinueAsync(resId, responseData));
+    return Ok();
+}</code></pre>
+
+  <h2>Using a Modal for Editable Fields</h2>
+  <p>
+    When your HIL fields include editable inputs, use a Slack modal instead of a plain message.
+    Modals have a <code>private_metadata</code> string (up to 3000 chars) that is returned
+    on submission — ideal for carrying the <code>ExecutionResId</code>.
+  </p>
+  <pre><code>// Open modal via trigger_id (from button click payload)
+var modal = new {
+    type             = "modal",
+    callback_id      = "hil_submit",
+    private_metadata = resId,   // comes back on view_submission
+    title            = new { type = "plain_text", text = "Review &amp; Submit" },
+    submit           = new { type = "plain_text", text = "Submit" },
+    blocks           = editableBlocks
+};
+await _slackClient.OpenModalAsync(payload.TriggerId, modal);</code></pre>
+
+  <pre><code>// In the view_submission handler:
+var resId  = payload.View.PrivateMetadata;
+var values = payload.View.State.Values; // field key → submitted value map</code></pre>
+
+  <h2>Required Slack App Scopes</h2>
+  <table>
+    <thead><tr><th>Scope</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>chat:write</code></td><td>Post messages to channels</td></tr>
+      <tr><td><code>chat:write.public</code></td><td>Post to channels the app hasn't joined</td></tr>
+      <tr><td><code>views:open</code></td><td>Open modals</td></tr>
+      <tr><td><code>users:read</code></td><td>Resolve user display names in audit logs</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Signature verification is mandatory</strong>
+    Slack sends a <code>X-Slack-Signature</code> HMAC-SHA256 header on all interaction payloads.
+    Compute: <code>HMAC-SHA256(signingSecret, "v0:" + timestamp + ":" + rawBody)</code>.
+    Reject any request where the computed signature doesn't match.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-building-a-channel.html">← Building a Channel</a>
+    <a href="04-whatsapp.html">Next: WhatsApp →</a>
+  </div>
+</main>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,319 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugin Guide | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">BizFirst Expressions<span>Expression Evaluation Framework</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-how-to-call.html">Integration Guide</a>
+  <div class="sidebar-section">Directives</div>
+  <a href="04-directive-structure.html">Directive Structure</a>
+  <a href="03-directive-samples.html">Expression Samples</a>
+  <a href="07-options.html">Options Reference</a>
+  <div class="sidebar-section">Directive Reference</div>
+  <a href="directives/ctx.html">$ctx — Context</a>
+  <a href="directives/var.html">$var — Variable</a>
+  <a href="directives/input.html">$input — Node Input</a>
+  <a href="directives/output.html">$output — Node Output</a>
+  <a href="directives/exec.html">$exec — Execution</a>
+  <a href="directives/flow.html">$flow — Workflow</a>
+  <a href="directives/js.html">$js — JavaScript</a>
+  <a href="directives/cs.html">$cs — C# Script</a>
+  <a href="directives/tpl.html">$tpl — Template</a>
+  <a href="directives/api.html">$api — External API</a>
+  <a href="directives/math.html">$math — Math</a>
+  <a href="directives/items.html">$items — Items</a>
+  <a href="directives/canned.html">@ — Canned</a>
+  <div class="sidebar-section">Patterns</div>
+  <a href="08-nested-templates.html">Nested Templates</a>
+  <a href="09-canned-expressions.html">Canned Expressions</a>
+  <a href="06-complex-cases.html">Complex Use Cases</a>
+  <a href="05-edge-cases.html">Edge Cases</a>
+  <div class="sidebar-section">Extending</div>
+  <a href="10-plugin-guide.html" class="active">Plugin Guide</a>
+  <a href="13-discovery-api.html">Discovery API</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="12-vocabulary.html">Vocabulary</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst Expression Evaluation</div>
+    <h1>Plugin / Extension Guide</h1>
+    <p class="subtitle">How a third-party vendor or internal team creates a new directive and registers it in the expression framework.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#model">The Plugin Model</a></li>
+      <li><a href="#step1">Step 1 — Create the Project</a></li>
+      <li><a href="#step2">Step 2 — Implement the Directive</a></li>
+      <li><a href="#step3">Step 3 — Register via DI Extension</a></li>
+      <li><a href="#step4">Step 4 — Register in Host</a></li>
+      <li><a href="#step5">Step 5 — Add Metadata (optional)</a></li>
+      <li><a href="#security">Security Checklist</a></li>
+      <li><a href="#testing">Testing Your Directive</a></li>
+      <li><a href="#example">Complete Example — $weather Directive</a></li>
+    </ol>
+  </div>
+
+  <h2 id="model">The Plugin Model</h2>
+  <p>Every directive in BizFirst is a plugin. The framework provides no "magic" built-in directives — even <code>$ctx</code>, <code>$var</code>, and <code>$input</code> are independently registered via DI extension methods. A third-party vendor follows the exact same pattern.</p>
+
+  <div class="callout success">
+    <strong>Everything is a plugin</strong>
+    If you can register an implementation of <code>IExpressionDirectiveService</code> with the DI container, your directive is a first-class citizen with full access to the evaluation context.
+  </div>
+
+  <p>Directive naming rules:</p>
+  <ul>
+    <li>Name must be lowercase, alphanumeric with optional hyphens</li>
+    <li>The <code>$</code> prefix is used in expressions but NOT in the <code>DirectiveName</code> property or DI key</li>
+    <li>Name must be unique across all registered directives in a host</li>
+    <li>Recommended format for third-party: <code>vendorname-concept</code> (e.g., <code>acme-crm</code>)</li>
+  </ul>
+
+  <h2 id="step1">Step 1 — Create the Project</h2>
+  <p>Create a .NET class library targeting <code>net9.0</code>. Add a NuGet reference to the BizFirst Expression Domain package:</p>
+  <pre><code><span class="cm">&lt;!-- Acme.CRM.ExpressionDirective.csproj --&gt;</span>
+&lt;<span class="ty">Project</span> Sdk=<span class="st">"Microsoft.NET.Sdk"</span>&gt;
+  &lt;<span class="ty">PropertyGroup</span>&gt;
+    &lt;<span class="ty">TargetFramework</span>&gt;net9.0&lt;/<span class="ty">TargetFramework</span>&gt;
+  &lt;/<span class="ty">PropertyGroup</span>&gt;
+  &lt;<span class="ty">ItemGroup</span>&gt;
+    &lt;<span class="ty">PackageReference</span> Include=<span class="st">"BizFirst.Runtime.Expressions.Evaluation.Domain"</span>
+                      Version=<span class="st">"1.0.*"</span> /&gt;
+    &lt;<span class="ty">PackageReference</span> Include=<span class="st">"Microsoft.Extensions.DependencyInjection.Abstractions"</span>
+                      Version=<span class="st">"9.0.*"</span> /&gt;
+  &lt;/<span class="ty">ItemGroup</span>&gt;
+&lt;/<span class="ty">Project</span>&gt;</code></pre>
+
+  <h2 id="step2">Step 2 — Implement the Directive</h2>
+  <p>Extend <code>BaseDirectiveEvaluator</code> and implement <code>EvaluateAsync</code>:</p>
+  <pre><code><span class="kw">using</span> BizFirst.Runtime.Expressions.Evaluation.Domain;
+
+<span class="kw">public class</span> <span class="ty">AcmeCrmDirectiveService</span> : <span class="ty">BaseDirectiveEvaluator</span>
+{
+    <span class="kw">public override string</span> DirectiveName =&gt; <span class="st">"acme-crm"</span>;
+    <span class="cm">// Used in expressions as: {@ $acme-crm.contacts.email }</span>
+
+    <span class="kw">private readonly</span> <span class="ty">IAcmeCrmClient</span> _crmClient;
+
+    <span class="kw">public</span> <span class="ty">AcmeCrmDirectiveService</span>(<span class="ty">IAcmeCrmClient</span> crmClient)
+    {
+        _crmClient = crmClient;
+    }
+
+    <span class="kw">protected override async</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">EvaluateAsync</span>(
+        <span class="ty">EvaluationRequest</span> request,
+        <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// 1. Enforce isolation level</span>
+        <span class="kw">if</span> (Context.IsolationLevel &lt; <span class="ty">ExpressionIsolationLevel</span>.Trusted)
+            <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+                <span class="ty">EvaluationErrorCode</span>.IsolationViolation,
+                <span class="st">"$acme-crm requires Trusted isolation level"</span>);
+
+        <span class="cm">// 2. Parse path: "contacts.email" → resource = "contacts", field = "email"</span>
+        <span class="kw">var</span> segments = request.Path.<span class="fn">Split</span>(<span class="st">'.'</span>, <span class="nu">2</span>);
+        <span class="kw">if</span> (segments.Length &lt; <span class="nu">2</span>)
+            <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+                <span class="ty">EvaluationErrorCode</span>.ParseError,
+                <span class="st">"$acme-crm path must be: resource.field (e.g., contacts.email)"</span>);
+
+        <span class="kw">var</span> resource = segments[<span class="nu">0</span>];
+        <span class="kw">var</span> field    = segments[<span class="nu">1</span>];
+
+        <span class="cm">// 3. Get the entity ID from memory or input</span>
+        <span class="kw">var</span> entityId = Context.NodeExecutionData?.CurrentItem?.<span class="fn">GetField</span>(<span class="st">"crmId"</span>)?.<span class="fn">ToString</span>();
+        <span class="kw">if</span> (entityId <span class="kw">is null</span>)
+            <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+                <span class="ty">EvaluationErrorCode</span>.PathNotFound,
+                <span class="st">"No 'crmId' field found in current input item"</span>);
+
+        <span class="cm">// 4. Call external CRM API</span>
+        <span class="kw">var</span> data = <span class="kw">await</span> _crmClient.<span class="fn">GetFieldAsync</span>(resource, entityId, field, ct);
+        <span class="kw">if</span> (data <span class="kw">is null</span>)
+            <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+                <span class="ty">EvaluationErrorCode</span>.PathNotFound,
+                <span class="st">$"CRM {resource}/{entityId}/{field} not found"</span>);
+
+        <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Success</span>(data);
+    }
+}</code></pre>
+
+  <h2 id="step3">Step 3 — Register via DI Extension</h2>
+  <p>Create a DI extension method following the framework convention:</p>
+  <pre><code><span class="kw">public static class</span> <span class="ty">AcmeCrmDirectiveServiceCollectionExtensions</span>
+{
+    <span class="kw">public static</span> <span class="ty">IServiceCollection</span> <span class="fn">AddAcmeCrmDirective</span>(
+        <span class="kw">this</span> <span class="ty">IServiceCollection</span> services,
+        <span class="ty">Action</span>&lt;<span class="ty">AcmeCrmOptions</span>&gt;? configure = <span class="kw">null</span>)
+    {
+        <span class="kw">if</span> (configure <span class="kw">is not null</span>)
+            services.<span class="fn">Configure</span>(configure);
+
+        services.<span class="fn">AddHttpClient</span>&lt;<span class="ty">IAcmeCrmClient</span>, <span class="ty">AcmeCrmClient</span>&gt;();
+        services.<span class="fn">AddTransient</span>&lt;<span class="ty">IExpressionDirectiveService</span>, <span class="ty">AcmeCrmDirectiveService</span>&gt;();
+
+        <span class="kw">return</span> services;
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Transient lifetime</strong>
+    All directives must be registered as <strong>Transient</strong>. <code>BaseDirectiveEvaluator</code> stores the active request on <code>_activeRequest</code> — sharing an instance across concurrent calls would cause race conditions.
+  </div>
+
+  <h2 id="step4">Step 4 — Register in Host</h2>
+  <p>The consuming application adds the vendor directive to the DI chain:</p>
+  <pre><code>builder.Services
+    .<span class="fn">AddExpressionEvaluationCore</span>(builder.Configuration)
+    .<span class="fn">AddContextDirective</span>()
+    .<span class="fn">AddMemoryVariableDirective</span>()
+    <span class="cm">// ... other built-in directives ...</span>
+    .<span class="fn">AddAcmeCrmDirective</span>(opts =&gt;          <span class="cm">// ← vendor directive</span>
+    {
+        opts.BaseUrl = <span class="st">"https://api.acme-crm.com/v2"</span>;
+        opts.ApiKey  = builder.Configuration[<span class="st">"AcmeCRM:ApiKey"</span>]!;
+    });</code></pre>
+
+  <h2 id="step5">Step 5 — Add Metadata (optional, for Discovery API)</h2>
+  <p>Implement <code>IDirectiveMetadataProvider</code> to expose your directive's paths in the expression builder UI:</p>
+  <pre><code><span class="kw">public class</span> <span class="ty">AcmeCrmDirectiveMetadata</span> : <span class="ty">IDirectiveMetadataProvider</span>
+{
+    <span class="kw">public string</span> DirectiveName =&gt; <span class="st">"acme-crm"</span>;
+    <span class="kw">public string</span> DisplayName  =&gt; <span class="st">"Acme CRM"</span>;
+    <span class="kw">public string</span> Description  =&gt; <span class="st">"Read customer and contact data from Acme CRM"</span>;
+    <span class="kw">public string</span> IconUrl      =&gt; <span class="st">"https://cdn.acme.com/logo-32.png"</span>;
+    <span class="kw">public string</span> DocsUrl      =&gt; <span class="st">"https://docs.acme-crm.com/bizfirst"</span>;
+
+    <span class="kw">public</span> <span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectivePath</span>&gt; <span class="fn">GetTopLevelPaths</span>() =&gt;
+    [
+        <span class="kw">new</span> <span class="ty">DirectivePath</span>(<span class="st">"contacts"</span>, <span class="st">"Contact records"</span>, hasChildren: <span class="kw">true</span>),
+        <span class="kw">new</span> <span class="ty">DirectivePath</span>(<span class="st">"accounts"</span>, <span class="st">"Account (company) records"</span>, hasChildren: <span class="kw">true</span>),
+        <span class="kw">new</span> <span class="ty">DirectivePath</span>(<span class="st">"deals"</span>,    <span class="st">"Deal/opportunity records"</span>, hasChildren: <span class="kw">true</span>),
+    ];
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectivePath</span>&gt;&gt; <span class="fn">GetChildPathsAsync</span>(
+        <span class="ty">string</span> parentPath,
+        <span class="ty">CancellationToken</span> ct) =&gt;
+        parentPath <span class="kw">switch</span>
+        {
+            <span class="st">"contacts"</span> =&gt; [
+                <span class="kw">new</span>(<span class="st">"contacts.email"</span>,     <span class="st">"Email address"</span>,    <span class="ty">ReturnType</span>.String),
+                <span class="kw">new</span>(<span class="st">"contacts.firstName"</span>,  <span class="st">"First name"</span>,        <span class="ty">ReturnType</span>.String),
+                <span class="kw">new</span>(<span class="st">"contacts.lastName"</span>,   <span class="st">"Last name"</span>,         <span class="ty">ReturnType</span>.String),
+                <span class="kw">new</span>(<span class="st">"contacts.phone"</span>,      <span class="st">"Phone number"</span>,      <span class="ty">ReturnType</span>.String),
+            ],
+            <span class="st">"accounts"</span> =&gt; [ <span class="cm">/* ... */</span> ],
+            _ =&gt; []
+        };
+}</code></pre>
+
+  <h2 id="security">Security Checklist</h2>
+  <table>
+    <thead><tr><th>Concern</th><th>Required Action</th></tr></thead>
+    <tbody>
+      <tr><td>External HTTP calls</td><td>Declare <code>IsolationLevel.Trusted</code> requirement; check at start of <code>EvaluateAsync</code></td></tr>
+      <tr><td>Secrets in logs</td><td>Set <code>IsSensitive = true</code> on any option that outputs credentials</td></tr>
+      <tr><td>Tenant isolation</td><td>Always scope queries by <code>Context.TenantId</code> — never return data for other tenants</td></tr>
+      <tr><td>Input validation</td><td>Validate parsed path segments before using them in queries or API calls</td></tr>
+      <tr><td>Timeout</td><td>Pass <code>CancellationToken</code> to all async calls; respect cancellation</td></tr>
+      <tr><td>Error leakage</td><td>Catch exceptions and return <code>EvaluationResponse.Failure</code> — never let exceptions propagate</td></tr>
+      <tr><td>Depth guard</td><td>Call <code>GuardChainDepth()</code> before any chaining call</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="testing">Testing Your Directive</h2>
+  <pre><code>[<span class="ty">Fact</span>]
+<span class="kw">public async</span> <span class="ty">Task</span> <span class="fn">ReturnsContactEmail_WhenCrmIdPresentInInput</span>()
+{
+    <span class="cm">// Arrange</span>
+    <span class="kw">var</span> crmClient = <span class="ty">Substitute</span>.<span class="fn">For</span>&lt;<span class="ty">IAcmeCrmClient</span>&gt;();
+    crmClient.<span class="fn">GetFieldAsync</span>(<span class="st">"contacts"</span>, <span class="st">"42"</span>, <span class="st">"email"</span>, <span class="ty">Arg</span>.Any&lt;<span class="ty">CancellationToken</span>&gt;())
+             .<span class="fn">Returns</span>(<span class="st">"alice@acme.com"</span>);
+
+    <span class="kw">var</span> directive = <span class="kw">new</span> <span class="ty">AcmeCrmDirectiveService</span>(crmClient);
+
+    <span class="kw">var</span> context = <span class="kw">new</span> <span class="ty">EvaluationContext</span>
+    {
+        TenantId         = <span class="st">"5"</span>,
+        ExecutionId      = <span class="ty">Guid</span>.NewGuid().<span class="fn">ToString</span>(),
+        ThreadId         = <span class="st">"t1"</span>,
+        NodeKey          = <span class="st">"TestNode"</span>,
+        IsolationLevel   = <span class="ty">ExpressionIsolationLevel</span>.Trusted,
+        Cache            = <span class="ty">NoOpExpressionCache</span>.Instance,
+        Memory           = <span class="ty">NoOpExecutionMemory</span>.Instance,
+        NodeExecutionData = <span class="fn">FakeNodeData</span>(<span class="st">"crmId"</span>, <span class="st">"42"</span>),
+    };
+
+    <span class="kw">var</span> request = <span class="kw">new</span> <span class="ty">EvaluationRequest</span>
+    {
+        Directives     = [<span class="kw">new</span> <span class="ty">DirectiveToken</span>(<span class="st">"acme-crm"</span>)],
+        Path           = <span class="st">"contacts.email"</span>,
+        RawExpression  = <span class="st">"{@ $acme-crm.contacts.email }"</span>,
+        Context        = context,
+        Depth          = <span class="nu">0</span>,
+        VisitedKeys    = <span class="ty">ImmutableHashSet</span>&lt;<span class="ty">string</span>&gt;.Empty,
+    };
+
+    <span class="cm">// Act</span>
+    <span class="kw">var</span> response = <span class="kw">await</span> directive.<span class="fn">InvokeAsync</span>(request, <span class="ty">CancellationToken</span>.None);
+
+    <span class="cm">// Assert</span>
+    response.IsSuccess.<span class="fn">Should</span>().<span class="fn">BeTrue</span>();
+    response.Value.<span class="fn">Should</span>().<span class="fn">Be</span>(<span class="st">"alice@acme.com"</span>);
+}</code></pre>
+
+  <h2 id="example">Complete Example — $weather Directive</h2>
+  <p>A simple read-only directive that retrieves weather data. No isolation level requirement since it's a safe read:</p>
+  <pre><code><span class="cm">// Usage: {@ $weather.london.temperature } → 18</span>
+<span class="cm">//        {@ $weather.london.description } → "Partly cloudy"</span>
+
+<span class="kw">public class</span> <span class="ty">WeatherDirectiveService</span> : <span class="ty">BaseDirectiveEvaluator</span>
+{
+    <span class="kw">public override string</span> DirectiveName =&gt; <span class="st">"weather"</span>;
+
+    <span class="kw">private readonly</span> <span class="ty">IWeatherApiClient</span> _weather;
+
+    <span class="kw">public</span> <span class="ty">WeatherDirectiveService</span>(<span class="ty">IWeatherApiClient</span> weather) =&gt; _weather = weather;
+
+    <span class="kw">protected override async</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">EvaluateAsync</span>(
+        <span class="ty">EvaluationRequest</span> request, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="kw">var</span> parts  = request.Path.<span class="fn">Split</span>(<span class="st">'.'</span>, <span class="nu">2</span>);
+        <span class="kw">var</span> city   = parts[<span class="nu">0</span>];
+        <span class="kw">var</span> field  = parts.Length &gt; <span class="nu">1</span> ? parts[<span class="nu">1</span>] : <span class="st">"temperature"</span>;
+
+        <span class="kw">try</span>
+        {
+            <span class="kw">var</span> data = <span class="kw">await</span> _weather.<span class="fn">GetAsync</span>(city, ct);
+            <span class="kw">var</span> value = field <span class="kw">switch</span>
+            {
+                <span class="st">"temperature"</span>  =&gt; (<span class="ty">object</span>)data.Temperature,
+                <span class="st">"description"</span>  =&gt; data.Description,
+                <span class="st">"humidity"</span>     =&gt; data.Humidity,
+                <span class="st">"windSpeed"</span>    =&gt; data.WindSpeed,
+                _              =&gt; <span class="kw">null</span>
+            };
+
+            <span class="kw">return</span> value <span class="kw">is null</span>
+                ? <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(<span class="ty">EvaluationErrorCode</span>.PathNotFound, <span class="st">$"Unknown field: {field}"</span>)
+                : <span class="ty">EvaluationResponse</span>.<span class="fn">Success</span>(value);
+        }
+        <span class="kw">catch</span> (<span class="ty">Exception</span> ex)
+        {
+            <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(<span class="ty">EvaluationErrorCode</span>.ExternalApiError, ex.Message);
+        }
+    }
+}</code></pre>
+</main>
+</body>
+</html>

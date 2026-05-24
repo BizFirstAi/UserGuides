@@ -1,0 +1,210 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Continuation — Facebook Messenger</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">
+    <h2>BizFirst AI</h2>
+    <h1>HIL Continuation</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-building-a-channel.html">Building a Channel</a>
+  <div class="section-label">Channels</div>
+  <a href="03-slack.html" class="ch-slack">Slack</a>
+  <a href="04-whatsapp.html" class="ch-whatsapp">WhatsApp</a>
+  <a href="05-facebook.html" class="ch-facebook active">Facebook Messenger</a>
+  <a href="06-instagram.html" class="ch-instagram">Instagram</a>
+  <a href="07-telegram.html" class="ch-telegram">Telegram</a>
+  <a href="08-teams.html" class="ch-teams">Microsoft Teams</a>
+  <a href="09-email.html" class="ch-email">Email</a>
+  <a href="10-sms.html" class="ch-sms">SMS / Twilio</a>
+  <a href="11-discord.html" class="ch-discord">Discord</a>
+  <a href="12-line.html" class="ch-line">LINE</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="channel-tag ch-tag-facebook">Facebook Messenger</div>
+    <h1>Facebook Messenger HIL Channel</h1>
+    <p class="lead">
+      Facebook Messenger's Send API supports button templates and quick replies.
+      Button payloads can carry up to 1000 characters, making it easy to embed the
+      <code>ExecutionResId</code> directly without a correlation table.
+    </p>
+  </div>
+
+  <h2>Messenger Interactive Elements</h2>
+  <table>
+    <thead><tr><th>Element</th><th>Payload limit</th><th>Best for</th></tr></thead>
+    <tbody>
+      <tr><td>Postback button (in Generic Template)</td><td>1000 chars</td><td>Structured approval with field context shown as a card</td></tr>
+      <tr><td>Quick Reply</td><td>1000 chars</td><td>Simple approve/reject after a text message</td></tr>
+      <tr><td>URL Button</td><td>n/a</td><td>Opening a web form — useful for editable fields</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Correlation Strategy: Direct Embed</h2>
+  <p>
+    Messenger button <code>payload</code> fields support 1000 characters — enough to embed
+    a prefixed GUID directly:
+  </p>
+  <pre><code>"payload": "HIL_APPROVE|3fa85f64-5717-4562-b3fc-2c963f66afa6"
+"payload": "HIL_REJECT|3fa85f64-5717-4562-b3fc-2c963f66afa6"</code></pre>
+
+  <h2>Building the Message</h2>
+  <p>
+    Use a <strong>Generic Template</strong> to display the HIL fields and provide buttons:
+  </p>
+  <pre><code>private object BuildMessengerMessage(
+    IReadOnlyList&lt;ResolvedHilField&gt; fields,
+    string resId,
+    string recipientPsid)
+{
+    var subtitleLines = new List&lt;string&gt;();
+    foreach (var field in fields)
+    {
+        if (field.DisplayMode == HilDisplayMode.Concealed) continue;
+        string val = field.DisplayMode == HilDisplayMode.ReadableMasked
+            ? "••••••••"
+            : field.CurrentValue?.ToString() ?? "—";
+        subtitleLines.Add($"{field.Label}: {val}");
+    }
+
+    return new {
+        recipient = new { id = recipientPsid },
+        message = new {
+            attachment = new {
+                type    = "template",
+                payload = new {
+                    template_type = "generic",
+                    elements = new[] {
+                        new {
+                            title    = "Approval Required",
+                            subtitle = string.Join(" | ", subtitleLines.Take(3)), // 80-char limit on subtitle
+                            buttons  = new object[] {
+                                new {
+                                    type    = "postback",
+                                    title   = "Approve ✅",
+                                    payload = $"HIL_APPROVE|{resId}"
+                                },
+                                new {
+                                    type    = "postback",
+                                    title   = "Reject ❌",
+                                    payload = $"HIL_REJECT|{resId}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Subtitle length limit</strong>
+    The Generic Template subtitle is limited to 80 characters. For HIL flows with many fields,
+    send a text message listing all the fields first, followed by the template with just the
+    action buttons.
+  </div>
+
+  <h2>Sending the Message</h2>
+  <pre><code>// POST to https://graph.facebook.com/v19.0/me/messages?access_token={token}
+await _httpClient.PostAsJsonAsync(
+    $"https://graph.facebook.com/v19.0/me/messages?access_token={settings.PageAccessToken}",
+    message,
+    cancellationToken);
+
+return NodeExecutionResult.Suspend("waiting");</code></pre>
+
+  <h2>Webhook Handler</h2>
+  <p>
+    Messenger webhooks deliver postback events with <code>messaging[].postback.payload</code>.
+    The webhook endpoint also receives a GET challenge request during setup — handle both.
+  </p>
+  <pre><code>// GET: webhook verification challenge
+[HttpGet("webhooks/messenger")]
+public IActionResult Verify([FromQuery] string hub_mode, [FromQuery] string hub_challenge,
+                             [FromQuery] string hub_verify_token)
+{
+    if (hub_mode == "subscribe" && hub_verify_token == _settings.VerifyToken)
+        return Content(hub_challenge);
+    return Forbid();
+}
+
+// POST: inbound events
+[HttpPost("webhooks/messenger")]
+public async Task&lt;IActionResult&gt; Handle([FromBody] MessengerWebhookPayload payload)
+{
+    foreach (var entry in payload.Entry)
+    foreach (var messaging in entry.Messaging)
+    {
+        var postbackPayload = messaging.Postback?.Payload;
+        if (postbackPayload == null || !postbackPayload.StartsWith("HIL_")) continue;
+
+        var parts  = postbackPayload.Split('|', 2);
+        var action = parts[0];  // "HIL_APPROVE" or "HIL_REJECT"
+        var resId  = parts[1];
+
+        var responseData = new Dictionary&lt;string, object&gt;
+        {
+            ["approved"]    = action == "HIL_APPROVE",
+            ["respondedBy"] = messaging.Sender.Id
+        };
+
+        _ = Task.Run(() => _continuationOrchestrator.ContinueAsync(resId, responseData));
+    }
+
+    return Ok();
+}</code></pre>
+
+  <h2>Handling Editable Fields</h2>
+  <p>
+    For <code>RequiredFromHuman</code> fields, add a <strong>URL Button</strong> that opens
+    a hosted BizFirst web form pre-populated with the current field values. The form URL
+    includes a signed token carrying the <code>ExecutionResId</code>. On form submission,
+    the web endpoint calls <code>ContinueAsync</code> with the collected values.
+  </p>
+  <pre><code>{
+    "type": "web_url",
+    "url":  "https://your-domain/hil/form?token={signedToken}",
+    "title": "Edit Values"
+}</code></pre>
+
+  <h2>Required Configuration</h2>
+  <table>
+    <thead><tr><th>Config Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td><code>PageAccessToken</code></td><td><code>@{secret:MessengerPageAccessToken}</code></td></tr>
+      <tr><td><code>WebhookVerifyToken</code></td><td><code>@{secret:MessengerVerifyToken}</code></td></tr>
+      <tr><td><code>RecipientPsid</code></td><td><code>@{input:messengerPsid}</code> — the user's Page-Scoped ID</td></tr>
+      <tr><td><code>AppSecret</code></td><td><code>@{secret:MessengerAppSecret}</code> — for request signature validation</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>24-hour messaging window</strong>
+    Like WhatsApp, Messenger restricts proactive outbound messages. You can only send
+    freely within 24 hours of the user's last inbound message. Outside this window, use
+    a <strong>Message Tag</strong> (e.g., <code>ACCOUNT_UPDATE</code>) or a template —
+    subject to Meta's policy approval.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-whatsapp.html">← WhatsApp</a>
+    <a href="06-instagram.html">Next: Instagram →</a>
+  </div>
+</main>
+
+</div>
+</body>
+</html>

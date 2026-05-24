@@ -1,0 +1,205 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Continuation — Telegram</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">
+    <h2>BizFirst AI</h2>
+    <h1>HIL Continuation</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-building-a-channel.html">Building a Channel</a>
+  <div class="section-label">Channels</div>
+  <a href="03-slack.html" class="ch-slack">Slack</a>
+  <a href="04-whatsapp.html" class="ch-whatsapp">WhatsApp</a>
+  <a href="05-facebook.html" class="ch-facebook">Facebook Messenger</a>
+  <a href="06-instagram.html" class="ch-instagram">Instagram</a>
+  <a href="07-telegram.html" class="ch-telegram active">Telegram</a>
+  <a href="08-teams.html" class="ch-teams">Microsoft Teams</a>
+  <a href="09-email.html" class="ch-email">Email</a>
+  <a href="10-sms.html" class="ch-sms">SMS / Twilio</a>
+  <a href="11-discord.html" class="ch-discord">Discord</a>
+  <a href="12-line.html" class="ch-line">LINE</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="channel-tag ch-tag-telegram">Telegram</div>
+    <h1>Telegram HIL Channel</h1>
+    <p class="lead">
+      Telegram's Bot API is one of the simplest and most developer-friendly HIL channels.
+      <code>InlineKeyboardMarkup</code> with <code>callback_data</code> carries the
+      correlation key directly. No 24-hour window restrictions — bots can message users
+      at any time after they have started the bot.
+    </p>
+  </div>
+
+  <h2>How Telegram Inline Keyboards Work</h2>
+  <p>
+    When you send a message with an <code>InlineKeyboardMarkup</code>, Telegram renders
+    buttons beneath the message. When a user taps a button, Telegram sends a
+    <code>callback_query</code> update to your webhook. The <code>callback_query.data</code>
+    field contains whatever string you put in <code>callback_data</code> on the button —
+    returned verbatim, up to 64 bytes.
+  </p>
+  <p>
+    A GUID is 36 bytes. Adding a short prefix (e.g., <code>A|</code>) costs 2 bytes.
+    A prefixed GUID is 38 bytes — comfortably within the 64-byte limit.
+  </p>
+
+  <h2>Building the Message</h2>
+  <pre><code>private object BuildTelegramMessage(
+    IReadOnlyList&lt;ResolvedHilField&gt; fields,
+    string resId,
+    long chatId)
+{
+    var lines = new List&lt;string&gt; { "📋 *Approval Required*\n" };
+    foreach (var field in fields)
+    {
+        if (field.DisplayMode == HilDisplayMode.Concealed) continue;
+        string val = field.DisplayMode == HilDisplayMode.ReadableMasked
+            ? "••••••••"
+            : EscapeMarkdown(field.CurrentValue?.ToString() ?? "—");
+
+        string editMark = field.InputMode != HilInputMode.Locked ? " ✏️" : "";
+        lines.Add($"*{EscapeMarkdown(field.Label)}*{editMark}: {val}");
+
+        if (!string.IsNullOrEmpty(field.Description))
+            lines.Add($"_{EscapeMarkdown(field.Description)}_");
+    }
+
+    return new {
+        chat_id      = chatId,
+        text         = string.Join("\n", lines),
+        parse_mode   = "MarkdownV2",
+        reply_markup = new {
+            inline_keyboard = new[] {
+                new object[] {
+                    new { text = "Approve ✅", callback_data = $"A|{resId}" },
+                    new { text = "Reject ❌",  callback_data = $"R|{resId}" }
+                }
+            }
+        }
+    };
+}</code></pre>
+
+  <h2>Sending the Message</h2>
+  <pre><code>// POST to https://api.telegram.org/bot{token}/sendMessage
+await _httpClient.PostAsJsonAsync(
+    $"https://api.telegram.org/bot{settings.BotToken}/sendMessage",
+    message,
+    cancellationToken);
+
+return NodeExecutionResult.Suspend("waiting");</code></pre>
+
+  <h2>Webhook Handler</h2>
+  <p>
+    Telegram sends <code>Update</code> objects to your webhook. A button tap produces an
+    update with a <code>callback_query</code>. After processing, always call
+    <code>answerCallbackQuery</code> to dismiss the loading spinner on the button.
+  </p>
+  <pre><code>[HttpPost("webhooks/telegram/{secret}")]
+public async Task&lt;IActionResult&gt; Handle(
+    string secret,
+    [FromBody] TelegramUpdate update)
+{
+    // 1. Validate the path secret matches your configured value
+    if (secret != _settings.WebhookPathSecret)
+        return Unauthorized();
+
+    var query = update.CallbackQuery;
+    if (query?.Data == null || query.Data.Length &lt; 38) return Ok();
+
+    // 2. Parse "A|{guid}" or "R|{guid}"
+    var action = query.Data[0];   // 'A' or 'R'
+    var resId  = query.Data[2..]; // substring after "A|" or "R|"
+
+    // 3. Immediately answer the callback to dismiss the spinner
+    _ = Task.Run(() => AnswerCallbackQueryAsync(query.Id));
+
+    // 4. Build response and continue workflow
+    var responseData = new Dictionary&lt;string, object&gt;
+    {
+        ["approved"]    = action == 'A',
+        ["respondedBy"] = query.From.Username ?? query.From.Id.ToString()
+    };
+
+    _ = Task.Run(() => _continuationOrchestrator.ContinueAsync(resId, responseData));
+    return Ok();
+}
+
+private async Task AnswerCallbackQueryAsync(string callbackQueryId)
+{
+    await _httpClient.PostAsJsonAsync(
+        $"https://api.telegram.org/bot{_settings.BotToken}/answerCallbackQuery",
+        new { callback_query_id = callbackQueryId, text = "Response recorded ✅" });
+}</code></pre>
+
+  <h2>Securing the Webhook Endpoint</h2>
+  <p>
+    Telegram doesn't sign webhook payloads with an HMAC — instead, use a secret path
+    segment in your webhook URL that only Telegram knows:
+  </p>
+  <pre><code>// Register the webhook with a secret in the URL path
+POST https://api.telegram.org/bot{token}/setWebhook
+{
+  "url":          "https://your-domain/webhooks/telegram/{randomSecret}",
+  "allowed_updates": ["callback_query", "message"]
+}</code></pre>
+  <p>
+    Telegram also supports an official <code>secret_token</code> header parameter
+    (added in Bot API 6.1) — use this if your infrastructure supports it, as it's
+    cleaner than a path segment.
+  </p>
+
+  <h2>Handling Editable Fields</h2>
+  <p>
+    For <code>RequiredFromHuman</code> fields, Telegram supports a simple
+    <strong>force-reply</strong> approach: send a message asking for the value with
+    <code>ForceReply</code> enabled. Track the expected field in a session table keyed
+    by <code>chat_id</code>. When the user replies, the inbound message handler reads the
+    session and collects the value.
+  </p>
+  <pre><code>// Send a prompt for a required field
+new {
+    chat_id      = chatId,
+    text         = $"Please enter a value for: *{field.Label}*",
+    parse_mode   = "MarkdownV2",
+    reply_markup = new { force_reply = true, selective = true }
+}</code></pre>
+
+  <h2>Required Configuration</h2>
+  <table>
+    <thead><tr><th>Config Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td><code>BotToken</code></td><td><code>@{secret:TelegramBotToken}</code></td></tr>
+      <tr><td><code>WebhookPathSecret</code></td><td><code>@{secret:TelegramWebhookSecret}</code></td></tr>
+      <tr><td><code>RecipientChatId</code></td><td><code>@{input:telegramChatId}</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Telegram is the easiest HIL channel to start with</strong>
+    No 24-hour window. No template approval process. No page or business account required.
+    Just create a bot via BotFather, get a token, register a webhook URL, and you're sending
+    messages. Great for internal approval workflows within a team.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-instagram.html">← Instagram</a>
+    <a href="08-teams.html">Next: Microsoft Teams →</a>
+  </div>
+</main>
+
+</div>
+</body>
+</html>

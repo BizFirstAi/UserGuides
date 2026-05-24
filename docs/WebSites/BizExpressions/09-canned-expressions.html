@@ -1,0 +1,244 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Canned Expressions | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">BizFirst Expressions<span>Expression Evaluation Framework</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-how-to-call.html">Integration Guide</a>
+  <div class="sidebar-section">Directives</div>
+  <a href="04-directive-structure.html">Directive Structure</a>
+  <a href="03-directive-samples.html">Expression Samples</a>
+  <a href="07-options.html">Options Reference</a>
+  <div class="sidebar-section">Directive Reference</div>
+  <a href="directives/ctx.html">$ctx — Context</a>
+  <a href="directives/var.html">$var — Variable</a>
+  <a href="directives/input.html">$input — Node Input</a>
+  <a href="directives/output.html">$output — Node Output</a>
+  <a href="directives/exec.html">$exec — Execution</a>
+  <a href="directives/flow.html">$flow — Workflow</a>
+  <a href="directives/js.html">$js — JavaScript</a>
+  <a href="directives/cs.html">$cs — C# Script</a>
+  <a href="directives/tpl.html">$tpl — Template</a>
+  <a href="directives/api.html">$api — External API</a>
+  <a href="directives/math.html">$math — Math</a>
+  <a href="directives/items.html">$items — Items</a>
+  <a href="directives/canned.html">@ — Canned</a>
+  <div class="sidebar-section">Patterns</div>
+  <a href="08-nested-templates.html">Nested Templates</a>
+  <a href="09-canned-expressions.html" class="active">Canned Expressions</a>
+  <a href="06-complex-cases.html">Complex Use Cases</a>
+  <a href="05-edge-cases.html">Edge Cases</a>
+  <div class="sidebar-section">Extending</div>
+  <a href="10-plugin-guide.html">Plugin Guide</a>
+  <a href="13-discovery-api.html">Discovery API</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="12-vocabulary.html">Vocabulary</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst Expression Evaluation</div>
+    <h1>Canned Expressions</h1>
+    <p class="subtitle">Reusable, named expressions stored in the database and referenced by alias — with tenant and app-level scoping.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#what">What Are Canned Expressions?</a></li>
+      <li><a href="#syntax">Syntax</a></li>
+      <li><a href="#resolution">Resolution Order</a></li>
+      <li><a href="#database">Database Schema</a></li>
+      <li><a href="#interface">ICannedExpressionStore</a></li>
+      <li><a href="#directive">How the @ Directive Works</a></li>
+      <li><a href="#patterns">Common Patterns</a></li>
+      <li><a href="#api">Managing via API</a></li>
+    </ol>
+  </div>
+
+  <h2 id="what">What Are Canned Expressions?</h2>
+  <p>A canned expression is a named alias stored in the database that maps to a full expression string. Instead of repeating <code>{@ $ctx.tenant.defaultCurrency }</code> in every workflow node, you define it once as <code>@company.currency</code> and reference that alias everywhere.</p>
+
+  <p>Benefits:</p>
+  <ul>
+    <li><strong>DRY</strong> — change the underlying expression once in the database; all workflows update automatically</li>
+    <li><strong>Scoping</strong> — the same alias can have different expressions for different tenants or applications</li>
+    <li><strong>Access control</strong> — workflow authors reference aliases without needing to know internal system paths</li>
+    <li><strong>Composability</strong> — canned expressions can reference other canned expressions (depth-tracked)</li>
+  </ul>
+
+  <h2 id="syntax">Syntax</h2>
+  <p>Canned expressions use the <strong>AtSign parser</strong> (<code>AtSignWildcardParser</code>). The syntax is simply <code>@name</code> or <code>@category.name</code>:</p>
+  <div class="expr-box">
+    <div class="label">Simple alias</div>
+    <span class="di">@</span><span class="pa">company.currency</span>
+  </div>
+  <div class="expr-box">
+    <div class="label">In a template string (mixed with other directives)</div>
+    Total: <span class="di">{@</span> <span class="kw">$var</span>.<span class="pa">subtotal</span> <span class="di">}</span> <span class="di">@</span><span class="pa">company.currency</span>
+  </div>
+  <div class="expr-box">
+    <div class="label">Alias that itself contains an expression (nested)</div>
+    <span class="di">@</span><span class="pa">hr.approvalEmail</span>
+    <div class="result">Stored as: {@ $ctx.tenant.hrDepartmentEmail @lowercase } → resolved at runtime</div>
+  </div>
+
+  <div class="callout info">
+    <strong>The @ prefix is the alias directive</strong>
+    When the AtSign parser detects <code>@name</code>, it routes to <code>CannedExpressionDirectiveService</code> (directive name: <code>"@"</code>). The name is stripped of the <code>@</code> and used as the lookup key.
+  </div>
+
+  <h2 id="resolution">Resolution Order</h2>
+  <p>When resolving alias <code>@company.currency</code> for tenant 5, app 12:</p>
+  <ol>
+    <li>Look up <code>(TenantId=5, AppId=12, Name="company.currency")</code> — app-specific</li>
+    <li>If not found: <code>(TenantId=5, AppId=NULL, Name="company.currency")</code> — tenant-wide</li>
+    <li>If not found: <code>Failure(CannedExpressionNotFound)</code></li>
+  </ol>
+  <p>This hierarchy allows platform-wide defaults to be overridden per-tenant, and tenant defaults to be overridden per-application:</p>
+  <pre><code><span class="cm">// Tenant 5 (default): @company.currency = "{@ $ctx.env.DEFAULT_CURRENCY }" = "EUR"</span>
+<span class="cm">// Tenant 5, App 7 (UK subsidiary): @company.currency = "GBP"</span>
+<span class="cm">// Tenant 5, App 3 (US entity):     @company.currency = "USD"</span>
+
+<span class="cm">// For AppId=7 → "GBP"  (app-specific wins)</span>
+<span class="cm">// For AppId=3 → "USD"  (app-specific wins)</span>
+<span class="cm">// For AppId=9 → "EUR"  (falls back to tenant-wide)</span></code></pre>
+
+  <h2 id="database">Database Schema</h2>
+  <pre><code><span class="kw">CREATE TABLE</span> Expression_CannedExpressions (
+    ExpressionID     INT IDENTITY(<span class="nu">1</span>,<span class="nu">1</span>)   CONSTRAINT PK_Expression_CannedExpressions PRIMARY KEY,
+    TenantID         INT          NOT NULL,
+    AppID            INT          NULL,         <span class="cm">-- NULL = tenant-wide scope</span>
+    Name             NVARCHAR(<span class="nu">200</span>) NOT NULL,   <span class="cm">-- e.g., "company.currency"</span>
+    Expression       NVARCHAR(MAX) NOT NULL,    <span class="cm">-- the stored expression string</span>
+    Description      NVARCHAR(<span class="nu">500</span>) NULL,
+    Tags             NVARCHAR(MAX) NULL,         <span class="cm">-- JSON array: ["billing","finance"]</span>
+    IsActive         BIT          NOT NULL CONSTRAINT DF_Expression_CannedExpressions_IsActive DEFAULT (<span class="nu">1</span>),
+
+    <span class="cm">-- Standard audit columns</span>
+    CreatedOn        DATETIME     NOT NULL,
+    CreatedBy        INT          NOT NULL,
+    LastModifiedOn   DATETIME     NOT NULL,
+    LastModifiedBy   INT          NOT NULL,
+    Deleted          BIT          NOT NULL CONSTRAINT DF_Expression_CannedExpressions_Deleted DEFAULT (<span class="nu">0</span>),
+    Archived         BIT          NOT NULL CONSTRAINT DF_Expression_CannedExpressions_Archived DEFAULT (<span class="nu">0</span>),
+    SourceAppID      INT          NULL,
+    ClientAccountID  INT          NULL,
+    AppDomainID      INT          NULL,
+    DataDomainID     INT          NULL,
+    DataSegmentID    INT          NULL,
+    ResID            UNIQUEIDENTIFIER NULL,
+
+    CONSTRAINT UQ_Expression_CannedExpressions_TenantAppName
+        UNIQUE (TenantID, AppID, Name)
+);</code></pre>
+
+  <h2 id="interface">ICannedExpressionStore</h2>
+  <pre><code><span class="kw">public interface</span> <span class="ty">ICannedExpressionStore</span>
+{
+    <span class="cm">/// Returns the expression string for the given alias, or null if not found.</span>
+    <span class="cm">/// Applies resolution order: (TenantId, AppId, Name) → (TenantId, NULL, Name)</span>
+    <span class="ty">Task</span>&lt;<span class="ty">string</span>?&gt; <span class="fn">GetAsync</span>(
+        <span class="ty">string</span> name,
+        <span class="ty">string</span> tenantId,
+        <span class="ty">string</span>? appId,
+        <span class="ty">CancellationToken</span> ct);
+
+    <span class="cm">/// Returns all active canned expressions for a tenant (for discovery/UI)</span>
+    <span class="ty">Task</span>&lt;<span class="ty">IReadOnlyList</span>&lt;<span class="ty">CannedExpressionEntry</span>&gt;&gt; <span class="fn">GetAllAsync</span>(
+        <span class="ty">string</span> tenantId,
+        <span class="ty">string</span>? appId,
+        <span class="ty">CancellationToken</span> ct);
+}</code></pre>
+
+  <h2 id="directive">How the @ Directive Works</h2>
+  <pre><code><span class="kw">public class</span> <span class="ty">CannedExpressionDirectiveService</span> : <span class="ty">BaseDirectiveEvaluator</span>
+{
+    <span class="kw">public override string</span> DirectiveName =&gt; <span class="st">"@"</span>;
+
+    <span class="kw">protected override async</span> <span class="ty">Task</span>&lt;<span class="ty">EvaluationResponse</span>&gt; <span class="fn">EvaluateAsync</span>(
+        <span class="ty">EvaluationRequest</span> request,
+        <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="kw">var</span> aliasName = request.Path;      <span class="cm">// e.g., "company.currency"</span>
+
+        <span class="cm">// Cycle detection — prevent @loopA → @loopB → @loopA</span>
+        <span class="kw">if</span> (request.VisitedKeys.Contains(aliasName))
+            <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+                <span class="ty">EvaluationErrorCode</span>.CycleDetected,
+                <span class="st">$"Cycle detected: alias '{aliasName}' has already been visited"</span>);
+
+        <span class="kw">var</span> storedExpr = <span class="kw">await</span> _store.<span class="fn">GetAsync</span>(
+            aliasName,
+            Context.TenantId,
+            Context.AppId,
+            ct);
+
+        <span class="kw">if</span> (storedExpr <span class="kw">is null</span>)
+            <span class="kw">return</span> <span class="ty">EvaluationResponse</span>.<span class="fn">Failure</span>(
+                <span class="ty">EvaluationErrorCode</span>.CannedExpressionNotFound,
+                <span class="st">$"Canned expression '@{aliasName}' not found"</span>);
+
+        <span class="cm">// Chain: re-enter full pipeline with stored expression</span>
+        <span class="fn">GuardChainDepth</span>();
+        <span class="kw">return await</span> <span class="fn">ChainExpressionAsync</span>(storedExpr, ct);
+    }
+}</code></pre>
+
+  <h2 id="patterns">Common Patterns</h2>
+
+  <h3>Pattern 1 — Tenant Constants</h3>
+  <table>
+    <thead><tr><th>Alias</th><th>Stored Expression</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>@company.currency</code></td><td><code>{@ $ctx.tenant.currency }</code></td><td>Tenant default currency</td></tr>
+      <tr><td><code>@company.timezone</code></td><td><code>{@ $ctx.tenant.timezone }</code></td><td>Tenant timezone</td></tr>
+      <tr><td><code>@company.supportEmail</code></td><td><code>support@acme.com</code></td><td>Static value</td></tr>
+      <tr><td><code>@company.taxRate</code></td><td><code>0.20</code></td><td>Static tax rate (configurable without code)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Pattern 2 — Cross-App Overrides</h3>
+  <pre><code><span class="cm">-- All apps (AppId=NULL): @tax.rate = "0.20"</span>
+<span class="cm">-- Ireland app (AppId=7): @tax.rate = "0.23"</span>
+<span class="cm">-- US app (AppId=3):      @tax.rate = "0.00"  (tax-exempt entity)</span></code></pre>
+
+  <h3>Pattern 3 — Composed Aliases</h3>
+  <pre><code><span class="cm">-- @billing.recipient = "@company.billingContact"</span>
+<span class="cm">-- @company.billingContact = "{@ $ctx.tenant.billingEmail @lowercase }"</span>
+<span class="cm">-- Chain: @billing.recipient → @company.billingContact → $ctx.tenant.billingEmail</span></code></pre>
+
+  <h2 id="api">Managing via API</h2>
+  <p>Canned expressions are managed through a CRUD REST API. Common operations:</p>
+  <pre><code><span class="cm">// Create a new canned expression</span>
+POST /api/expressions/canned
+{
+  "tenantId": 5,
+  "appId": null,             <span class="cm">// null = tenant-wide</span>
+  "name": "company.currency",
+  "expression": "{@ $ctx.tenant.currency }",
+  "description": "Tenant default currency code",
+  "tags": ["finance", "global"]
+}
+
+<span class="cm">// Update (changing logic without touching any workflow)</span>
+PUT /api/expressions/canned/{id}
+{
+  "expression": "EUR"         <span class="cm">// switch from dynamic to static</span>
+}
+
+<span class="cm">// Preview — evaluate the expression without a workflow context</span>
+POST /api/expressions/canned/{id}/preview
+{
+  "tenantId": 5,
+  "appId": 7
+}</code></pre>
+</main>
+</body>
+</html>

@@ -1,0 +1,206 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>$cs Directive | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI" class="sidebar-logo">BizFirst Expressions<span>Directive Reference</span></div>
+  <div class="sidebar-section">Directives</div>
+  <a href="ctx.html">$ctx — Context</a>
+  <a href="var.html">$var — Variable</a>
+  <a href="input.html">$input — Node Input</a>
+  <a href="output.html">$output — Node Output</a>
+  <a href="exec.html">$exec — Execution</a>
+  <a href="flow.html">$flow — Workflow</a>
+  <a href="js.html">$js — JavaScript</a>
+  <a href="cs.html" class="active">$cs — C# Script</a>
+  <a href="tpl.html">$tpl — Template</a>
+  <a href="api.html">$api — External API</a>
+  <a href="math.html">$math — Math</a>
+  <a href="items.html">$items — Items</a>
+  <a href="canned.html">@ — Canned</a>
+  <div class="sidebar-section">Documentation</div>
+  <a href="../index.html">Hub</a>
+  <a href="../01-how-it-works.html">How It Works</a>
+  <a href="../02-how-to-call.html">Integration Guide</a>
+  <a href="../03-directive-samples.html">Expression Samples</a>
+  <a href="../04-directive-structure.html">Directive Structure</a>
+  <a href="../05-edge-cases.html">Edge Cases</a>
+  <a href="../06-complex-cases.html">Complex Use Cases</a>
+  <a href="../07-options.html">Options Reference</a>
+  <a href="../08-nested-templates.html">Nested Templates</a>
+  <a href="../09-canned-expressions.html">Canned Expressions</a>
+  <a href="../10-plugin-guide.html">Plugin Guide</a>
+  <a href="../12-vocabulary.html">Vocabulary</a>
+  <a href="../13-discovery-api.html">Discovery API</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">Directive Reference</div>
+    <h1><code>$cs</code> — C# Script Directive</h1>
+    <p class="subtitle">Executes a C# code snippet compiled at runtime using Roslyn scripting. Provides full .NET access including LINQ, System.Text.Json, and registered DI services.</p>
+  </div>
+
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Directive name</td><td><code>cs</code></td></tr>
+      <tr><td>Required isolation level</td><td><span class="tag red">Trusted</span> (minimum)</td></tr>
+      <tr><td>Project</td><td><code>Scripting.Cs.Services</code></td></tr>
+      <tr><td>Engine</td><td>Microsoft.CodeAnalysis.CSharp.Scripting (Roslyn)</td></tr>
+      <tr><td>Syntax form</td><td>Template literal: <code>$cs`...script...`</code></td></tr>
+      <tr><td>Return type</td><td>Any — converted to string for expression output</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Syntax</h2>
+  <div class="expr-box">
+    <div class="label">Inline expression</div>
+    <span class="di">{@</span> <span class="kw">$cs</span><span class="st">`Math.Round(Ctx.Input.Current.amount * 1.2m, 2)`</span> <span class="di">}</span>
+  </div>
+  <div class="expr-box">
+    <div class="label">Multi-line script with return</div>
+    <span class="di">{@</span> <span class="kw">$cs</span><span class="st">`
+var rate = decimal.Parse(Ctx.Env["VAT_RATE"] ?? "0.20");
+var net  = (decimal)Ctx.Input.Current.amount;
+return (net * rate).ToString("F2");
+`</span> <span class="di">}</span>
+  </div>
+
+  <div class="callout warn">
+    <strong>Trusted isolation required</strong>
+    <code>$cs</code> requires <code>Trusted</code> isolation. This is the highest isolation level — only grant it to workflows authored by verified developers, not end-user-created workflows. Unlike <code>$js</code> (sandboxed Jint), C# scripts run as real .NET code with access to the full BCL.
+  </div>
+
+  <h2>Script Globals Reference</h2>
+  <p>Scripts receive a <code>Ctx</code> globals object with pre-resolved context:</p>
+  <table>
+    <thead><tr><th>Global</th><th>Type</th><th>Equivalent directive</th></tr></thead>
+    <tbody>
+      <tr><td><code>Ctx.Tenant</code></td><td><code>ITenantMetadata</code></td><td><code>$ctx.tenant.*</code></td></tr>
+      <tr><td><code>Ctx.User</code></td><td><code>IUserClaims</code></td><td><code>$ctx.user.*</code></td></tr>
+      <tr><td><code>Ctx.Env</code></td><td><code>IReadOnlyDictionary&lt;string,string&gt;</code></td><td><code>$ctx.env.*</code></td></tr>
+      <tr><td><code>Ctx.Now</code></td><td><code>DateTimeOffset</code></td><td><code>$ctx.now</code></td></tr>
+      <tr><td><code>Ctx.Input</code></td><td><code>INodeInputAccessor</code></td><td><code>$input.*</code></td></tr>
+      <tr><td><code>Ctx.Output</code></td><td><code>INodeOutputAccessor</code></td><td><code>$output.*</code></td></tr>
+      <tr><td><code>Ctx.Exec</code></td><td><code>INodeExecutionFacts</code></td><td><code>$exec.*</code></td></tr>
+      <tr><td><code>Ctx.Vars</code></td><td><code>IExecutionMemory</code></td><td><code>$var.*</code></td></tr>
+      <tr><td><code>Ctx.Services</code></td><td><code>IServiceProvider</code></td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Complex Scenarios</h2>
+
+  <h3>Scenario 1 — HMRC PAYE Calculation with Decimal Precision</h3>
+  <p>UK payroll tax requires precise decimal arithmetic — C# avoids floating-point issues inherent in JavaScript:</p>
+  <pre><code><span class="di">{@</span> <span class="kw">$cs</span><span class="st">`
+var gross     = (decimal)Ctx.Input.Current.grossPay;
+var period    = (string)Ctx.Input.Current.payPeriod; // "monthly" | "weekly"
+var annualised = period == "weekly" ? gross * 52m : gross * 12m;
+
+var personalAllowance = 12570m;
+decimal tax = 0m;
+var taxable = Math.Max(annualised - personalAllowance, 0m);
+if (taxable > 125140m) tax += (taxable - 125140m) * 0.45m;
+if (taxable > 37700m)  tax += (Math.Min(taxable, 125140m) - 37700m) * 0.40m;
+tax += Math.Min(taxable, 37700m) * 0.20m;
+
+// Return period tax (not annualised)
+var periodTax = period == "weekly" ? tax / 52m : tax / 12m;
+return periodTax.ToString("F2");
+`</span> <span class="di">}</span></code></pre>
+
+  <h3>Scenario 2 — Regex-Based Document Classification</h3>
+  <p>Classify an incoming document by scanning its reference field against known patterns:</p>
+  <pre><code><span class="di">{@</span> <span class="kw">$cs</span><span class="st">`
+using System.Text.RegularExpressions;
+var reference = (string)(Ctx.Input.Current.reference ?? "");
+if (Regex.IsMatch(reference, @"^INV-\d{4}-\d+$")) return "invoice";
+if (Regex.IsMatch(reference, @"^PO-\d{6}$"))      return "purchase_order";
+if (Regex.IsMatch(reference, @"^CR-\d+$"))         return "credit_note";
+return "unknown";
+`</span> <span class="di">}</span></code></pre>
+
+  <h3>Scenario 3 — LINQ Aggregation Over Input Items</h3>
+  <p>Use LINQ to aggregate statistics from a collection of payroll records:</p>
+  <pre><code><span class="di">{@</span> <span class="kw">$cs</span><span class="st">`
+using System.Linq;
+using System.Text.Json;
+
+var items  = Ctx.Input.Items; // IEnumerable&lt;dynamic&gt;
+var totals = items
+    .GroupBy(i => (string)i.department)
+    .Select(g => new {
+        Department = g.Key,
+        HeadCount  = g.Count(),
+        TotalGross = g.Sum(i => (decimal)i.grossPay)
+    })
+    .OrderByDescending(r => r.TotalGross)
+    .ToList();
+
+return JsonSerializer.Serialize(totals);
+`</span> <span class="di">}</span></code></pre>
+
+  <h3>Scenario 4 — Custom Service Injection via IServiceProvider</h3>
+  <p>Resolve a registered DI service to perform domain-specific validation:</p>
+  <pre><code><span class="di">{@</span> <span class="kw">$cs</span><span class="st">`
+var svc = Ctx.Services.GetRequiredService&lt;IPayrollRuleEngine&gt;();
+var employeeId = (int)Ctx.Input.Current.employeeId;
+var period     = (string)Ctx.Input.Current.payPeriod;
+
+var result = await svc.ValidateAsync(employeeId, period, CancellationToken.None);
+return result.IsValid ? "valid" : string.Join("; ", result.Errors);
+`</span> <span class="di">}</span>
+<span class="cm">// Async scripts are fully supported — just use await</span></code></pre>
+
+  <h3>Scenario 5 — Cryptographic Hash for Idempotency</h3>
+  <p>Generate a deterministic SHA-256 hash from key fields to detect duplicate submissions:</p>
+  <pre><code><span class="di">{@</span> <span class="kw">$cs</span><span class="st">`
+using System.Security.Cryptography;
+using System.Text;
+
+var key = string.Concat(
+    Ctx.Input.Current.supplierId, "|",
+    Ctx.Input.Current.invoiceNumber, "|",
+    Ctx.Input.Current.invoiceDate
+);
+var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(key));
+return Convert.ToHexString(bytes).ToLower();
+`</span> <span class="di">}</span>
+<span class="cm">// Deterministic key — same invoice always produces same hash</span></code></pre>
+
+  <h3>Scenario 6 — XML Parsing for Legacy System Integration</h3>
+  <p>Parse an XML response from a legacy system and extract a specific field:</p>
+  <pre><code><span class="di">{@</span> <span class="kw">$cs</span><span class="st">`
+using System.Xml.Linq;
+
+var xmlString = (string)Ctx.Output["LegacySystem"].body;
+var doc       = XDocument.Parse(xmlString);
+var ns        = XNamespace.Get("http://schemas.acme.com/payroll/v1");
+
+var employeeId = doc
+    .Descendants(ns + "Employee")
+    .FirstOrDefault()
+    ?.Attribute("ID")
+    ?.Value;
+
+return employeeId ?? throw new InvalidOperationException("Employee ID not found in XML response");
+`</span> <span class="di">}</span></code></pre>
+
+  <h2>Common Errors</h2>
+  <table>
+    <thead><tr><th>Error</th><th>Cause</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><code>IsolationViolation: $cs requires Trusted</code></td><td>Node isolation level is Safe or Sandboxed</td><td>Set node isolation to Trusted; restrict to developer-authored workflows</td></tr>
+      <tr><td><code>CompilationError: CS0234</code></td><td>Missing <code>using</code> statement for a namespace</td><td>Add the <code>using</code> statement inside the script block</td></tr>
+      <tr><td><code>RuntimeError: InvalidCastException</code></td><td>Dynamic property cast to wrong type</td><td>Use safe casts: <code>(decimal?)(double?)Ctx.Input.Current.amount ?? 0m</code></td></tr>
+      <tr><td>Script hangs</td><td>Async deadlock or service call without cancellation</td><td>Always pass <code>CancellationToken.None</code> (or the provided token) to async calls</td></tr>
+      <tr><td><code>ServiceNotFound: IMyService</code></td><td>Service not registered in DI</td><td>Register the service in <code>AddExpressionEvaluation()</code> or app DI setup</td></tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>
