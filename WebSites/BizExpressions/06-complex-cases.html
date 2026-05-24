@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Complex Use Cases | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand">BizFirst Expressions<span>Expression Evaluation Framework</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-how-to-call.html">Integration Guide</a>
+  <div class="sidebar-section">Directives</div>
+  <a href="04-directive-structure.html">Directive Structure</a>
+  <a href="03-directive-samples.html">Expression Samples</a>
+  <a href="07-options.html">Options Reference</a>
+  <div class="sidebar-section">Directive Reference</div>
+  <a href="directives/ctx.html">$ctx — Context</a>
+  <a href="directives/var.html">$var — Variable</a>
+  <a href="directives/input.html">$input — Node Input</a>
+  <a href="directives/output.html">$output — Node Output</a>
+  <a href="directives/exec.html">$exec — Execution</a>
+  <a href="directives/flow.html">$flow — Workflow</a>
+  <a href="directives/js.html">$js — JavaScript</a>
+  <a href="directives/cs.html">$cs — C# Script</a>
+  <a href="directives/tpl.html">$tpl — Template</a>
+  <a href="directives/api.html">$api — External API</a>
+  <a href="directives/math.html">$math — Math</a>
+  <a href="directives/items.html">$items — Items</a>
+  <a href="directives/canned.html">@ — Canned</a>
+  <div class="sidebar-section">Patterns</div>
+  <a href="08-nested-templates.html">Nested Templates</a>
+  <a href="09-canned-expressions.html">Canned Expressions</a>
+  <a href="06-complex-cases.html" class="active">Complex Use Cases</a>
+  <a href="05-edge-cases.html">Edge Cases</a>
+  <div class="sidebar-section">Extending</div>
+  <a href="10-plugin-guide.html">Plugin Guide</a>
+  <a href="13-discovery-api.html">Discovery API</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="12-vocabulary.html">Vocabulary</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst Expression Evaluation</div>
+    <h1>Complex Use Cases</h1>
+    <p class="subtitle">Real-world patterns: directive chaining, multi-expression templates, conditional logic, and cross-node data flows.</p>
+  </div>
+
+  <h2>1. Dynamic HTTP Body Built from Multiple Directives</h2>
+  <p>An HTTP Request node's body field uses multiple expressions assembled into a JSON payload.</p>
+  <div class="expr-box">
+    <div class="label">Node field: Request Body (template string)</div>
+    {<br>
+    &nbsp;&nbsp;"tenantId": "<span class="di">{@</span> <span class="kw">$ctx</span>.<span class="pa">tenant.id</span> <span class="di">}</span>",<br>
+    &nbsp;&nbsp;"userId": "<span class="di">{@</span> <span class="kw">$ctx</span>.<span class="pa">user.id</span> <span class="di">}</span>",<br>
+    &nbsp;&nbsp;"amount": <span class="di">{@</span> <span class="kw">$var</span>.<span class="pa">invoiceTotal</span> <span class="di">}</span>,<br>
+    &nbsp;&nbsp;"currency": "<span class="di">{@</span> <span class="kw">@</span><span class="pa">company.defaultCurrency</span> <span class="di">}</span>",<br>
+    &nbsp;&nbsp;"referenceId": "<span class="di">{@</span> <span class="kw">$exec</span>.<span class="pa">executionId</span> <span class="di">}</span>"<br>
+    }
+    <div class="result">{"tenantId":"5","userId":"42","amount":1250.00,"currency":"EUR","referenceId":"e8f2..."}</div>
+  </div>
+  <p>All five expressions are evaluated in parallel (parallel interpolation). The assembled JSON is built in a single pass.</p>
+
+  <h2>2. Conditional Value via JavaScript</h2>
+  <p>When the value depends on a business rule that's too complex for static paths:</p>
+  <div class="expr-box">
+    <div class="label">Discount tier calculation</div>
+    <span class="di">{@</span> <span class="kw">$js</span><span class="st">`
+const total = context.vars.invoiceTotal;
+if (total > 10000) return 'platinum';
+if (total > 5000)  return 'gold';
+if (total > 1000)  return 'silver';
+return 'standard';
+`</span> <span class="di">}</span>
+    <div class="result">"gold" (for invoiceTotal = 7500)</div>
+  </div>
+
+  <h2>3. Cross-Node Data Aggregation</h2>
+  <p>Downstream nodes reference output from multiple upstream nodes:</p>
+  <div class="expr-box">
+    <div class="label">Merge data from two upstream nodes into an email subject</div>
+    Invoice <span class="di">{@</span> <span class="kw">$output</span>.<span class="pa">ParseInvoice.invoiceNumber</span> <span class="di">}</span> for <span class="di">{@</span> <span class="kw">$output</span>.<span class="pa">FetchCustomer.company</span> <span class="di">}</span> — <span class="di">{@</span> <span class="kw">$output</span>.<span class="pa">ParseInvoice.total</span> <span class="op">@json</span> <span class="di">}</span> due
+    <div class="result">"Invoice INV-2024-001 for Acme Corp — 4500 due"</div>
+  </div>
+
+  <h2>4. Canned Expression Resolving to Another Expression</h2>
+  <p>Canned expressions can reference other directives. The chain is depth-tracked:</p>
+  <pre><code><span class="cm">// DB: Name="company.billingEmail", Expression="{@ $ctx.tenant.billingEmail }"</span>
+<span class="cm">// DB: Name="report.recipient",    Expression="@company.billingEmail"</span>
+
+<span class="cm">// Expression in node field:</span>
+<span class="st">"@report.recipient"</span>
+
+<span class="cm">// Chain:</span>
+<span class="cm">// Depth 0: @report.recipient → resolves alias → "@company.billingEmail"</span>
+<span class="cm">// Depth 1: @company.billingEmail → resolves alias → "{@ $ctx.tenant.billingEmail }"</span>
+<span class="cm">// Depth 2: {@ $ctx.tenant.billingEmail } → resolves via ContextDirective → "billing@acme.com"</span>
+<span class="cm">// Final result: "billing@acme.com"</span></code></pre>
+
+  <h2>5. $tpl with Embedded Directive Calls</h2>
+  <p>A Liquid template can reference the same expression system inside its content using a BizFirst-aware Fluid filter or by structuring values into the template context before rendering:</p>
+  <pre><code><span class="cm">-- Liquid template stored in DB (name: "WelcomeEmail") --</span>
+Dear {{ user.name }},
+
+Welcome to {{ tenant.name }}. Your account was created on {{ exec.startedAt | date: "%B %d, %Y" }}.
+
+Your default currency is {{ tenant.currency }}.
+Regards, {{ platform.supportEmail }}
+</code></pre>
+  <div class="expr-box">
+    <div class="label">Node field</div>
+    <span class="di">{@</span> <span class="kw">$tpl</span>.<span class="pa">WelcomeEmail</span> <span class="di">}</span>
+    <div class="result">Fully rendered welcome email with all values substituted</div>
+  </div>
+  <p>The <code>$tpl</code> directive builds the Liquid template context from <code>EvaluationContext</code> — tenant, user, exec, input, vars — before rendering.</p>
+
+  <h2>6. Storing a Computed Value Back to Memory</h2>
+  <p>A <em>VariableAssignment</em> node can use an expression as the value to store:</p>
+  <pre><code><span class="cm">// VariableAssignment node config:</span>
+<span class="cm">// VariableName: "discountedTotal"</span>
+<span class="cm">// Value field: "{@ $js`return context.vars.subtotal * (1 - context.vars.discount)` }"</span>
+
+<span class="cm">// The node executor evaluates the expression → gets a number</span>
+<span class="cm">// Then stores it in memory as "discountedTotal"</span>
+<span class="cm">// Downstream nodes can access it as {@ $var.discountedTotal }</span></code></pre>
+
+  <h2>7. API Call Result Used in Template</h2>
+  <p>Chain: <code>$api</code> result → stored in <code>$var</code> → used in <code>$tpl</code></p>
+  <div class="expr-box">
+    <div class="label">Node 1 — HttpRequest: fetch exchange rate (stored to var.usdRate)</div>
+    <span class="di">{@</span> <span class="kw">$api</span>.<span class="pa">ExchangeService/rates/USD.rate</span> <span class="op">@cache-thread</span> <span class="di">}</span>
+  </div>
+  <div class="expr-box">
+    <div class="label">Node 2 — VariableAssignment: store rate</div>
+    <span class="kw">Variable:</span> usdRate &nbsp; <span class="kw">Value:</span> [above expression]
+  </div>
+  <div class="expr-box">
+    <div class="label">Node 3 — Email: render with rate</div>
+    Amount in USD: <span class="di">{@</span> <span class="kw">$js</span><span class="st">`return (context.vars.totalEur * context.vars.usdRate).toFixed(2)`</span> <span class="di">}</span>
+  </div>
+
+  <h2>8. Multi-Tenant Expression Override Pattern</h2>
+  <p>Different tenants need different calculation logic. Use app-scoped canned expressions to override the base:</p>
+  <pre><code><span class="cm">// Tenant-wide canned expression (AppId = NULL):</span>
+<span class="cm">// Name="tax.calculate", Expression="{@ $js`return context.vars.amount * 0.20` }"</span>
+
+<span class="cm">// App-specific override (AppId = 7 — Ireland region):</span>
+<span class="cm">// Name="tax.calculate", Expression="{@ $js`return context.vars.amount * 0.23` }"</span>
+
+<span class="cm">// Node field in workflow:</span>
+<span class="st">"@tax.calculate"</span>
+
+<span class="cm">// Resolution:</span>
+<span class="cm">// If AppId = 7 → uses 23% (Irish VAT)</span>
+<span class="cm">// All other apps → uses 20% (UK VAT)</span></code></pre>
+
+  <h2>9. Parallel Fan-Out Aggregation</h2>
+  <p>A <em>ParallelFork</em> node creates multiple execution lanes. Each lane processes items independently. A <em>ParallelJoin</em> node uses <code>$items</code> to aggregate results:</p>
+  <div class="expr-box">
+    <div class="label">ParallelJoin node — compute total from all parallel branches</div>
+    <span class="di">{@</span> <span class="kw">$items</span>.<span class="pa">sum.processedAmount</span> <span class="di">}</span>
+    <div class="result">Sum of processedAmount across all completed parallel lanes</div>
+  </div>
+
+  <h2>10. Debug / Audit Logging Template</h2>
+  <p>A logging node that captures full execution state for audit:</p>
+  <div class="expr-box">
+    <div class="label">Audit log message field (template string)</div>
+    [<span class="di">{@</span> <span class="kw">$ctx</span>.<span class="pa">now</span> <span class="di">}</span>] Execution <span class="di">{@</span> <span class="kw">$exec</span>.<span class="pa">executionId</span> <span class="di">}</span> on workflow "<span class="di">{@</span> <span class="kw">$flow</span>.<span class="pa">current.name</span> <span class="di">}</span>" v<span class="di">{@</span> <span class="kw">$flow</span>.<span class="pa">current.version</span> <span class="di">}</span> by user <span class="di">{@</span> <span class="kw">$ctx</span>.<span class="pa">user.email</span> <span class="di">}</span> (tenant: <span class="di">{@</span> <span class="kw">$ctx</span>.<span class="pa">tenant.name</span> <span class="di">}</span>)
+    <div class="result">[2024-03-15T10:22:01Z] Execution e8f2... on workflow "Invoice Processing" v3 by alice@acme.com (tenant: Acme Corp)</div>
+  </div>
+</main>
+</body>
+</html>

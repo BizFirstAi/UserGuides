@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Evaluation Pipeline — Expression Engine · BizFirst AI</title>
+<link rel="stylesheet" href="shared.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: true, theme: 'dark',
+  fontFamily: 'Segoe UI, system-ui, sans-serif',
+  flowchart: { curve: 'basis', useMaxWidth: true },
+  themeVariables: {
+    primaryColor: '#1e2640', primaryTextColor: '#e2e8f0', primaryBorderColor: '#2a3060',
+    lineColor: '#6c8cff', edgeLabelBackground: '#111425', clusterBkg: '#181d33',
+    clusterBorder: '#2a3060', secondaryColor: '#181d33', tertiaryColor: '#111425'
+  }
+});
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    document.querySelectorAll('.diagram.animated .mermaid svg').forEach(svg => {
+      svg.querySelectorAll('.edgePaths path, .edgePath path').forEach(p => {
+        p.style.strokeDasharray = '8 4';
+        p.style.animation = 'edgeFlow 2s linear infinite';
+      });
+    });
+  }, 900);
+});
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <img src="https://www.bizfirstai.com/website/images/logo.png" alt="BizFirst AI" class="topbar-logo">
+  <div class="topbar-sep"></div>
+  <span class="topbar-site">Documentation</span>
+  <nav class="topbar-links">
+    <a href="../NodeLifeCycle/index.html">Node Lifecycle</a>
+    <a href="index.html" class="current">Expression Engine</a>
+  </nav>
+</header>
+
+<div class="layout">
+<nav class="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-brand">BizFirst AI</div>
+    <div class="sidebar-title">Expression Engine</div>
+  </div>
+  <div class="sidebar-section">Navigation</div>
+  <a href="index.html">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M1 6.5L8 1.5l7 5V15h-4.5v-4.5h-5V15H1V6.5z" fill="currentColor"/></svg>
+    Overview
+  </a>
+  <a href="01-data-bags.html">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="5" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M2 5v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 5v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><ellipse cx="8" cy="11" rx="6" ry="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+    1 · Data Bags
+  </a>
+  <a href="02-expression-syntax.html">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M5 4L1.5 8 5 12M11 4L14.5 8 11 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><line x1="9" y1="3" x2="7" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    2 · Expression Syntax
+  </a>
+  <a href="03-evaluation-pipeline.html" class="active">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="3" cy="8" r="2" fill="currentColor"/><circle cx="8" cy="8" r="2" fill="currentColor"/><circle cx="13" cy="8" r="2" fill="currentColor"/><path d="M5 8h1.5M9.5 8h1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    3 · Evaluation Pipeline
+  </a>
+  <a href="04-node-policies.html">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L14 4v5c0 3.5-6 6-6 6s-6-2.5-6-6V4L8 1.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/><path d="M5.5 8l2 2 3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    4 · Node Field Policies
+  </a>
+  <a href="05-hil-labels.html">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M2.5 14.5C2.5 11.5 5 9 8 9s5.5 2.5 5.5 5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+    5 · HIL Labels
+  </a>
+  <div class="sidebar-section">Related</div>
+  <a href="../NodeLifeCycle/index.html">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="3" rx="1" fill="currentColor"/><rect x="1" y="6.5" width="14" height="3" rx="1" fill="currentColor" opacity="0.7"/><rect x="1" y="11" width="14" height="3" rx="1" fill="currentColor" opacity="0.45"/></svg>
+    Node Lifecycle
+  </a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="page-tag">Chapter 3</div>
+    <h1>Evaluation Pipeline</h1>
+    <p class="lead">
+      Expression evaluation happens in two distinct tiers, at two different points during
+      element execution. Understanding why two tiers exist — and exactly when each runs —
+      is essential for correctly declaring field policies and for knowing which directives
+      are available at each point.
+    </p>
+  </div>
+
+  <h2>Why Two Tiers?</h2>
+  <p>
+    Some expressions can be resolved as soon as the node is about to execute, before
+    the upstream outputs are known. Environment variables and secrets fall into this
+    category — they are static configuration data that does not depend on what any
+    upstream node produced.
+  </p>
+  <p>
+    Other expressions — like <code>@{input:employeeId}</code> or
+    <code>@{output:fetchUser.email}</code> — cannot be resolved until the orchestrator
+    has assembled the input bag from upstream outputs. Trying to resolve them before
+    that point would always produce an empty result.
+  </p>
+  <p>
+    The two-tier design resolves each field exactly when its source data is available,
+    avoiding both premature resolution (empty results) and deferred resolution
+    (unnecessary overhead).
+  </p>
+
+  <h2>The Full Pipeline</h2>
+
+  <div class="diagram animated">
+    <div class="mermaid">
+flowchart LR
+    subgraph T1["Tier 1 — AtConfigLoad"]
+        direction TB
+        CM["3-Layer Config Merge\nExtension → Connector → Element"]
+        T1E["Evaluate AtConfigLoad fields\nenv: secret: context:"]
+        CM --> T1E
+    end
+    subgraph IM["Input Assembly"]
+        direction TB
+        IA["Orchestrator maps upstream\noutputs into element InputData"]
+    end
+    subgraph T2["Tier 2 — AtInputReady"]
+        direction TB
+        T2E["Evaluate AtInputReady fields\ninput: output: var:"]
+    end
+    subgraph V["Validation"]
+        direction TB
+        VL["Required fields present?\nExecutor registered?\nConnector data valid?"]
+    end
+    EXEC(["Node Executor\nAll fields fully resolved"])
+    T1 --> IM --> T2 --> V --> EXEC
+    style T1  fill:#181d33,stroke:#6c8cff
+    style IM  fill:#111425,stroke:#34d399
+    style T2  fill:#181d33,stroke:#a78bfa
+    style V   fill:#181d33,stroke:#fbbf24
+    style EXEC fill:#162040,stroke:#6c8cff,color:#c8d8ff
+    </div>
+  </div>
+
+  <h2>Tier 1 — AtConfigLoad</h2>
+
+  <p>
+    Tier 1 runs during <code>PrepareExecutionAsync</code>, immediately after the
+    3-layer config merge completes. Only fields whose <code>NodeFieldDescriptor</code>
+    has <code>EvaluationStage == AtConfigLoad</code> are processed here.
+  </p>
+
+  <h3>What is available at Tier 1</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Directive</th><th>Available</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>@{env:KEY}</code></td><td>Yes</td><td>Process environment variables — always available</td></tr>
+      <tr><td><code>@{secret:Key}</code></td><td>Yes</td><td>Vault secrets — resolved via async secret store</td></tr>
+      <tr><td><code>@{context:field}</code></td><td>Yes</td><td>Execution context (tenantId, processId, threadId)</td></tr>
+      <tr><td><code>@{input:key}</code></td><td>Partial</td><td>Thread-level InputData (trigger payload) is available; element-level InputData is not yet populated</td></tr>
+      <tr><td><code>@{output:nodeKey.field}</code></td><td>No</td><td>NodeOutputs are not yet available at Tier 1</td></tr>
+      <tr><td><code>@{var:key}</code></td><td>No</td><td>Variable scope is not yet wired to element context</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    Tier 1 is synchronous with config loading. Its results are written back into the
+    merged config dictionary in-place. If no fields have <code>AtConfigLoad</code> stage,
+    the expression pipeline is skipped entirely for Tier 1 with zero overhead.
+  </p>
+
+  <h2>Tier 2 — AtInputReady</h2>
+
+  <p>
+    Tier 2 runs after the orchestrator has populated the element's <code>InputData</code>
+    bag with mapped outputs from upstream nodes. Only fields with
+    <code>EvaluationStage == AtInputReady</code> are processed here.
+  </p>
+
+  <h3>What is available at Tier 2</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Directive</th><th>Available</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>@{env:KEY}</code></td><td>Yes</td><td>Also available in Tier 1, so typically declared AtConfigLoad instead</td></tr>
+      <tr><td><code>@{secret:Key}</code></td><td>Yes</td><td>Also available in Tier 1, so typically declared AtConfigLoad instead</td></tr>
+      <tr><td><code>@{context:field}</code></td><td>Yes</td><td>Same as Tier 1</td></tr>
+      <tr><td><code>@{input:key}</code></td><td>Yes</td><td>Element-level InputData — upstream outputs mapped into this node's input</td></tr>
+      <tr><td><code>@{output:nodeKey.field}</code></td><td>Yes</td><td>Full NodeOutputs from all previously completed nodes</td></tr>
+      <tr><td><code>@{var:key}</code></td><td>Yes</td><td>Variable scope chain (global + any current loop/function scope)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    Tier 2 results are also written back into the merged config dictionary. Like Tier 1,
+    if no fields require <code>AtInputReady</code> evaluation, the entire tier is skipped.
+  </p>
+
+  <h2>EvaluationStage Enum</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Value</th><th>When it runs</th><th>Use for</th></tr></thead>
+    <tbody>
+      <tr><td><code>AtConfigLoad</code></td><td>After 3-layer merge, before input mapping</td><td>Static configuration: env vars, secrets, execution context</td></tr>
+      <tr><td><code>AtInputReady</code></td><td>After input bag is populated from upstream outputs</td><td>Runtime data: input values, upstream outputs, variables</td></tr>
+      <tr><td><code>Never</code></td><td>—</td><td>Field is never expression-evaluated (raw string only)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>What Happens When No Manifest Exists</h2>
+  <p>
+    If a node executor does not implement <code>INodeFieldManifestSource</code>, all
+    fields default to <code>ExpressionPolicy.Default</code>:
+  </p>
+  <ul>
+    <li><code>EvaluationStage = AtConfigLoad</code></li>
+    <li><code>EvaluatorKind = Template</code></li>
+  </ul>
+  <p>
+    This means only <code>@{env:}</code>, <code>@{secret:}</code>, and
+    <code>@{context:}</code> directives will resolve. <code>@{input:}</code>,
+    <code>@{output:}</code>, and <code>@{var:}</code> directives in fields without
+    an <code>AtInputReady</code> declaration will not resolve and will remain as
+    literal text in the config.
+  </p>
+  <p>
+    Executors that need runtime data in their config fields <strong>must</strong> declare
+    a field manifest with <code>AtInputReady</code> stage for those fields.
+  </p>
+
+  <h2>Error Handling</h2>
+  <p>
+    Expression evaluation errors are handled at the field level. A single field failing
+    to resolve does not abort the entire pipeline. The behavior depends on the field's
+    policy:
+  </p>
+  <ul>
+    <li><strong>Required fields</strong> — if resolution fails and the field is marked required, a validation error is raised and the executor is not dispatched. The element returns a failed result.</li>
+    <li><strong>Optional fields</strong> — if resolution fails, the field is set to null. Execution continues. The executor must handle null values for optional fields.</li>
+    <li><strong>JavaScript evaluator errors</strong> — if a Jint script throws, the error is caught, logged, and the field is set to null (unless required, in which case it fails).</li>
+  </ul>
+
+  <div class="callout success">
+    <strong>Tier skipping is free</strong>
+    Both tiers check whether any fields exist that require their stage before doing any
+    work. If your executor has no <code>AtInputReady</code> fields (for example, a simple
+    utility node that only uses <code>@{env:}</code>), Tier 2 is entirely skipped without
+    scanning the config dictionary.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-expression-syntax.html" class="nav-btn">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13 8H3M7 12l-4-4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Expression Syntax
+    </a>
+    <a href="04-node-policies.html" class="nav-btn">
+      Next: Node Field Policies
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+</main>
+</div>
+</body>
+</html>

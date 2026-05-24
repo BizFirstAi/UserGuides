@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Continuation — How It Works</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst AI</h2>
+    <h1>HIL Continuation</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html" class="active">How It Works</a>
+  <a href="02-building-a-channel.html">Building a Channel</a>
+  <div class="section-label">Channels</div>
+  <a href="03-slack.html" class="ch-slack">Slack</a>
+  <a href="04-whatsapp.html" class="ch-whatsapp">WhatsApp</a>
+  <a href="05-facebook.html" class="ch-facebook">Facebook Messenger</a>
+  <a href="06-instagram.html" class="ch-instagram">Instagram</a>
+  <a href="07-telegram.html" class="ch-telegram">Telegram</a>
+  <a href="08-teams.html" class="ch-teams">Microsoft Teams</a>
+  <a href="09-email.html" class="ch-email">Email</a>
+  <a href="10-sms.html" class="ch-sms">SMS / Twilio</a>
+  <a href="11-discord.html" class="ch-discord">Discord</a>
+  <a href="12-line.html" class="ch-line">LINE</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Architecture</div>
+    <h1>How It Works</h1>
+    <p class="lead">
+      A complete picture of how the engine suspends a workflow, how the human response
+      flows back in, and how the channel is completely decoupled from both of those steps.
+    </p>
+  </div>
+
+  <h2>The Three Layers</h2>
+  <p>
+    Every HIL channel implementation is built from three independent layers that never
+    need to know about each other:
+  </p>
+
+  <div class="card-grid">
+    <div class="card" style="border-top:3px solid var(--accent)">
+      <h4>Layer 1 — What to show</h4>
+      <p style="color:var(--text-muted);font-size:0.875rem;">
+        Declared by the node type in its <code>NodeFieldManifest</code>.
+        The <code>HilPolicy</code> on each field descriptor states whether the field is
+        sent to HIL, how it's displayed, and whether the human can edit it.
+        This is channel-agnostic.
+      </p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--accent2)">
+      <h4>Layer 2 — How to show it</h4>
+      <p style="color:var(--text-muted);font-size:0.875rem;">
+        Implemented by the channel node executor. Reads the resolved HIL fields,
+        formats them for Slack / WhatsApp / email / etc., embeds the
+        <code>ExecutionResId</code>, sends the message, and returns the
+        <code>"waiting"</code> port.
+      </p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--accent3)">
+      <h4>Layer 3 — How to resume</h4>
+      <p style="color:var(--text-muted);font-size:0.875rem;">
+        Always the same: the channel's inbound webhook handler extracts the
+        <code>ExecutionResId</code> and the human's response, then calls
+        <code>ContinueAsync</code>. The engine does the rest.
+      </p>
+    </div>
+  </div>
+
+  <h2>End-to-End Flow</h2>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Node executor reads the NodeFieldManifest</h4>
+        <p>
+          The executor calls <code>IHilLabelResolver.ResolveAllAsync</code> to get all
+          fields where <code>HilPolicy.SendToHil == true</code>. Each resolved field
+          carries its label, description, current value, <code>DisplayMode</code>, and
+          <code>InputMode</code>.
+        </p>
+        <p>
+          <code>DisplayMode</code> values: <code>ReadableContext</code> (show value),
+          <code>ReadableMasked</code> (show as ****), <code>Concealed</code> (hide entirely).<br>
+          <code>InputMode</code> values: <code>Locked</code> (read-only),
+          <code>EditableOptional</code>, <code>RequiredFromHuman</code>,
+          <code>PrefilledEditable</code>.
+        </p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Executor formats the payload for the target channel</h4>
+        <p>
+          The resolved fields are translated into whatever format the channel needs —
+          Slack Block Kit blocks, a WhatsApp interactive message, an HTML email, etc.
+          Fields with <code>InputMode = Locked</code> become read-only display items.
+          Fields with editable input modes become input controls (buttons, text inputs).
+        </p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>ExecutionResId is embedded in the outgoing message</h4>
+        <p>
+          The <code>ExecutionResId</code> is the correlation key. It is embedded in the
+          outgoing message so it comes back with the human's response.
+          How it's embedded depends on the channel — see each channel's page for details.
+        </p>
+        <pre><code>// Available from the execution context
+string resId = elementContext.ExecutionContext.ExecutionResId;</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Node returns the "waiting" port — engine suspends</h4>
+        <p>
+          The executor returns a <code>NodeExecutionResult</code> with
+          <code>OutputPortKey = "waiting"</code>. The engine serializes the full
+          <code>ExecutionMemory</code> (variables, node outputs, scope stack, loop state)
+          into a <code>SuspendedExecutionData</code> record and persists it to SQL.
+          The in-process thread is torn down. The server is free.
+        </p>
+        <pre><code>return NodeExecutionResult.Suspend("waiting");</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">5</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Human receives and responds via the channel</h4>
+        <p>
+          The workflow is fully paused in the database. The human sees the message,
+          reviews the fields, and responds — clicking a button, filling a form, replying
+          to a message. This can happen seconds or days later. Server restarts don't matter.
+        </p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">6</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Webhook handler receives the response</h4>
+        <p>
+          The channel fires an inbound event to your registered webhook endpoint.
+          Your handler extracts the <code>ExecutionResId</code> from the payload
+          and maps the human's response to a <code>Dictionary&lt;string, object&gt;</code>
+          keyed by field name.
+        </p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">7</div><div class="line"></div></div>
+      <div class="body">
+        <h4>ContinueAsync resumes the workflow</h4>
+        <p>
+          The handler calls <code>IWorkflowContinuationOrchestrator.ContinueAsync</code>.
+          The engine loads <code>SuspendedExecutionData</code> from SQL, restores
+          <code>ExecutionMemory</code>, merges the response data into the input bag,
+          and restarts the execution loop from the node's downstream connections.
+        </p>
+        <pre><code>await _continuationOrchestrator.ContinueAsync(
+    executionResId: resId,
+    responseData:   humanResponse,
+    cancellationToken: ct);</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <h2>SuspendedExecutionData — What Gets Saved</h2>
+  <p>
+    When the engine suspends, it persists everything needed for a full resume.
+    As a channel developer, the only field you need to care about is <code>ExecutionResId</code>.
+  </p>
+  <table>
+    <thead><tr><th>Field</th><th>What it contains</th></tr></thead>
+    <tbody>
+      <tr><td><code>ExecutionResId</code></td><td>The unique correlation key — embed this in every outgoing HIL message</td></tr>
+      <tr><td><code>Memory</code></td><td>Full <code>ExecutionMemory</code>: all variables, node outputs, scope stack, loop stack</td></tr>
+      <tr><td><code>SuspendedNodeKey</code></td><td>The <code>ProcessElementKey</code> of the node that triggered suspension</td></tr>
+      <tr><td><code>ThreadVersionId</code></td><td>Which thread definition was running</td></tr>
+      <tr><td><code>InputData</code></td><td>Original trigger data</td></tr>
+      <tr><td><code>SuspendedAt</code></td><td>Timestamp for SLA tracking and expiry</td></tr>
+      <tr><td><code>TenantId</code></td><td>Multi-tenant isolation</td></tr>
+      <tr><td><code>ParentProcessContext</code></td><td>Reference to parent process for full hierarchy resume</td></tr>
+    </tbody>
+  </table>
+
+  <h2>NodeFieldManifest — HilPolicy Reference</h2>
+  <p>
+    The <code>HilPolicy</code> on each <code>NodeFieldDescriptor</code> controls
+    the field's behaviour in HIL interactions:
+  </p>
+  <table>
+    <thead><tr><th>Property</th><th>Type</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>SendToHil</code></td><td><code>bool</code></td><td>If <code>false</code>, this field is invisible to HIL entirely — never include it in your message</td></tr>
+      <tr><td><code>DisplayMode</code></td><td><code>HilDisplayMode</code></td><td><code>ReadableContext</code>: show value · <code>ReadableMasked</code>: show as **** · <code>Concealed</code>: do not render</td></tr>
+      <tr><td><code>InputMode</code></td><td><code>HilInputMode</code></td><td><code>Locked</code>: display only · <code>EditableOptional</code>: can change · <code>RequiredFromHuman</code>: must provide · <code>PrefilledEditable</code>: pre-filled but editable</td></tr>
+      <tr><td><code>Label</code></td><td><code>string?</code></td><td>Human-readable field label</td></tr>
+      <tr><td><code>Description</code></td><td><code>string?</code></td><td>Additional context shown to the human</td></tr>
+      <tr><td><code>LabelExpressionPolicy</code></td><td><code>ExpressionPolicy?</code></td><td>When non-null, label/description are dynamic expressions resolved at runtime via <code>IHilLabelResolver</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Correlation Key Strategies</h2>
+  <p>
+    Different channels have different constraints on how much data can travel with an
+    interaction event. Choose the strategy that fits:
+  </p>
+  <table>
+    <thead><tr><th>Strategy</th><th>How it works</th><th>Best for</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Direct embed</strong></td>
+        <td>The <code>ExecutionResId</code> (a GUID string) is placed directly in the interaction payload field (e.g. Slack <code>action_id</code>, Telegram <code>callback_data</code>)</td>
+        <td>Slack, Telegram, Discord — payloads support long strings</td>
+      </tr>
+      <tr>
+        <td><strong>Metadata embed</strong></td>
+        <td>The <code>ExecutionResId</code> is stored in a dedicated metadata/private-metadata field separate from the visible interaction</td>
+        <td>Slack (modal/view metadata), Teams (Adaptive Card data)</td>
+      </tr>
+      <tr>
+        <td><strong>Correlation table</strong></td>
+        <td>A short token (8–12 chars) is stored in a <code>HilCorrelation</code> table mapping token → <code>ExecutionResId</code>. The short token travels with the message.</td>
+        <td>WhatsApp (256-char payload limit), SMS, any channel with tight payload limits</td>
+      </tr>
+      <tr>
+        <td><strong>Signed URL</strong></td>
+        <td>The <code>ExecutionResId</code> is embedded in a signed URL in the message. The human clicks the link, which hits a BizFirst endpoint.</td>
+        <td>Email, any channel where you can include links</td>
+      </tr>
+      <tr>
+        <td><strong>Session context</strong></td>
+        <td>The active HIL execution for a given phone/user ID is tracked in a table. Inbound reply is correlated by sender identity.</td>
+        <td>SMS (reply-based), WhatsApp text replies</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>The golden rule</strong>
+    Whatever strategy you use, at the moment the human responds your webhook handler must
+    be able to recover the <code>ExecutionResId</code>. Everything else is implementation detail.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">← Introduction</a>
+    <a href="02-building-a-channel.html">Next: Building a Channel →</a>
+  </div>
+</main>
+
+</div>
+</body>
+</html>

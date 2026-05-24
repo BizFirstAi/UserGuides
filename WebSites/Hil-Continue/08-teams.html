@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Continuation — Microsoft Teams</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst AI</h2>
+    <h1>HIL Continuation</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-building-a-channel.html">Building a Channel</a>
+  <div class="section-label">Channels</div>
+  <a href="03-slack.html" class="ch-slack">Slack</a>
+  <a href="04-whatsapp.html" class="ch-whatsapp">WhatsApp</a>
+  <a href="05-facebook.html" class="ch-facebook">Facebook Messenger</a>
+  <a href="06-instagram.html" class="ch-instagram">Instagram</a>
+  <a href="07-telegram.html" class="ch-telegram">Telegram</a>
+  <a href="08-teams.html" class="ch-teams active">Microsoft Teams</a>
+  <a href="09-email.html" class="ch-email">Email</a>
+  <a href="10-sms.html" class="ch-sms">SMS / Twilio</a>
+  <a href="11-discord.html" class="ch-discord">Discord</a>
+  <a href="12-line.html" class="ch-line">LINE</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="channel-tag ch-tag-teams">Microsoft Teams</div>
+    <h1>Microsoft Teams HIL Channel</h1>
+    <p class="lead">
+      Teams is the go-to enterprise HIL channel. Adaptive Cards support rich structured
+      layouts with both read-only and editable fields in a single card. The
+      <code>Action.Submit</code> data object carries the <code>ExecutionResId</code> and
+      all field values back in one interaction.
+    </p>
+  </div>
+
+  <h2>Why Teams Is Well-Suited for HIL</h2>
+  <ul>
+    <li><strong>Adaptive Cards</strong> — rich, flexible layout. A single card can show all context fields and contain editable inputs, giving the human a complete review interface without multiple messages.</li>
+    <li><strong>No messaging window restrictions</strong> — bots can message users proactively in Teams at any time (within the organization).</li>
+    <li><strong>Action.Submit data object</strong> — all input values plus any custom data you embed are returned together on submission.</li>
+    <li><strong>Approval workflows are a native Teams use case</strong> — users are familiar with Teams bot cards.</li>
+  </ul>
+
+  <h2>Correlation Strategy: Action.Submit Data</h2>
+  <p>
+    Adaptive Card <code>Action.Submit</code> accepts a <code>data</code> object whose
+    properties are merged with input field values and returned in the activity payload.
+    Embed the <code>ExecutionResId</code> in this data object:
+  </p>
+  <pre><code>{
+  "type": "Action.Submit",
+  "title": "Approve",
+  "data": {
+    "hilAction": "approve",
+    "hilResId":  "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+  }
+}</code></pre>
+
+  <h2>Building the Adaptive Card</h2>
+  <pre><code>private object BuildAdaptiveCard(
+    IReadOnlyList&lt;ResolvedHilField&gt; fields,
+    string resId)
+{
+    var body = new List&lt;object&gt;();
+
+    // Title
+    body.Add(new {
+        type   = "TextBlock",
+        text   = "Approval Required",
+        weight = "Bolder",
+        size   = "Medium"
+    });
+    body.Add(new { type = "Separator" });
+
+    foreach (var field in fields)
+    {
+        if (field.DisplayMode == HilDisplayMode.Concealed) continue;
+
+        string val = field.DisplayMode == HilDisplayMode.ReadableMasked
+            ? "••••••••"
+            : field.CurrentValue?.ToString() ?? "—";
+
+        if (field.InputMode == HilInputMode.Locked ||
+            field.DisplayMode == HilDisplayMode.ReadableMasked)
+        {
+            // Read-only fact set entry
+            body.Add(new {
+                type  = "FactSet",
+                facts = new[] { new { title = field.Label, value = val } }
+            });
+        }
+        else
+        {
+            // Editable text input
+            body.Add(new {
+                type        = "TextBlock",
+                text        = $"{field.Label}{(field.InputMode == HilInputMode.RequiredFromHuman ? " *" : "")}",
+                weight      = "Bolder",
+                spacing     = "Medium"
+            });
+            body.Add(new {
+                type        = "Input.Text",
+                id          = field.FieldKey,
+                value       = val,
+                isRequired  = field.InputMode == HilInputMode.RequiredFromHuman,
+                placeholder = field.Description ?? ""
+            });
+        }
+    }
+
+    var actions = new object[] {
+        new {
+            type  = "Action.Submit",
+            title = "Approve ✅",
+            style = "positive",
+            data  = new { hilAction = "approve", hilResId = resId }
+        },
+        new {
+            type  = "Action.Submit",
+            title = "Reject ❌",
+            style = "destructive",
+            data  = new { hilAction = "reject", hilResId = resId }
+        }
+    };
+
+    return new {
+        type    = "AdaptiveCard",
+        version = "1.5",
+        body,
+        actions
+    };
+}</code></pre>
+
+  <h2>Sending the Card via Bot Framework</h2>
+  <pre><code>// Using Bot Framework SDK (Microsoft.Bot.Builder)
+var card           = BuildAdaptiveCard(hilFields, resId);
+var adaptiveCard   = new Attachment
+{
+    ContentType = "application/vnd.microsoft.card.adaptive",
+    Content     = card
+};
+
+var activity = MessageFactory.Attachment(adaptiveCard);
+
+// TurnContext is passed from the bot's OnMessageActivityAsync, or use proactive messaging
+await turnContext.SendActivityAsync(activity, cancellationToken);
+
+return NodeExecutionResult.Suspend("waiting");</code></pre>
+
+  <h2>Proactive Messaging</h2>
+  <p>
+    For workflows that need to send a HIL card without being triggered by an inbound Teams
+    message (i.e., the bot is not in an active turn), use Teams Proactive Messaging:
+  </p>
+  <pre><code>// Store the ConversationReference when the user first interacts with the bot
+// Then use it to send a proactive message from outside a bot turn:
+var botAdapter = _serviceProvider.GetRequiredService&lt;IBotFrameworkHttpAdapter&gt;();
+await ((BotAdapter)botAdapter).ContinueConversationAsync(
+    _settings.BotAppId,
+    conversationReference,
+    async (turnContext, ct) =>
+    {
+        await turnContext.SendActivityAsync(activity, ct);
+    },
+    cancellationToken);</code></pre>
+
+  <h2>Webhook Handler — Activity Endpoint</h2>
+  <pre><code>// The Bot Framework routes all activities to your bot class.
+// Override OnEventActivityAsync or handle invoke activities for card submissions.
+
+protected override async Task OnMessageActivityAsync(ITurnContext&lt;IMessageActivity&gt; ctx, CancellationToken ct)
+{
+    // Adaptive Card submit sends an invoke activity type, not a message.
+    // Handle in OnInvokeActivityAsync or via Action.Submit → adaptiveCard/action invoke
+}
+
+// For Action.Submit:
+protected override async Task&lt;InvokeResponse&gt; OnAdaptiveCardInvokeAsync(
+    ITurnContext&lt;IInvokeActivity&gt; ctx,
+    AdaptiveCardInvokeValue invokeValue,
+    CancellationToken ct)
+{
+    var data   = invokeValue.Action.Data as JObject;
+    var action = data?["hilAction"]?.ToString();
+    var resId  = data?["hilResId"]?.ToString();
+
+    if (resId == null) return new InvokeResponse { Status = 400 };
+
+    // Collect all input values from the card
+    var inputValues = invokeValue.Action.Data as IDictionary&lt;string, object&gt;;
+
+    var responseData = new Dictionary&lt;string, object&gt;(inputValues)
+    {
+        ["approved"]    = action == "approve",
+        ["respondedBy"] = ctx.Activity.From.Name
+    };
+
+    _ = Task.Run(() => _continuationOrchestrator.ContinueAsync(resId, responseData));
+
+    return new InvokeResponse { Status = 200 };
+}</code></pre>
+
+  <h2>Required Configuration</h2>
+  <table>
+    <thead><tr><th>Config Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td><code>BotAppId</code></td><td><code>@{secret:TeamsBotAppId}</code></td></tr>
+      <tr><td><code>BotAppPassword</code></td><td><code>@{secret:TeamsBotAppPassword}</code></td></tr>
+      <tr><td><code>RecipientAadObjectId</code></td><td><code>@{input:teamsUserAadId}</code> — the user's Azure AD Object ID</td></tr>
+      <tr><td><code>TenantId</code></td><td><code>@{env:TEAMS_TENANT_ID}</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Adaptive Card versioning</strong>
+    Use Adaptive Card schema version 1.5 for <code>Input.Text</code> with <code>isRequired</code>.
+    Teams clients are regularly updated but always verify target client versions in your
+    organization match the schema version used.
+  </div>
+
+  <div class="page-nav">
+    <a href="07-telegram.html">← Telegram</a>
+    <a href="09-email.html">Next: Email →</a>
+  </div>
+</main>
+
+</div>
+</body>
+</html>

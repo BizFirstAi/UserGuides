@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Discovery API | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand">BizFirst Expressions<span>Expression Evaluation Framework</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-how-to-call.html">Integration Guide</a>
+  <div class="sidebar-section">Directives</div>
+  <a href="04-directive-structure.html">Directive Structure</a>
+  <a href="03-directive-samples.html">Expression Samples</a>
+  <a href="07-options.html">Options Reference</a>
+  <div class="sidebar-section">Directive Reference</div>
+  <a href="directives/ctx.html">$ctx — Context</a>
+  <a href="directives/var.html">$var — Variable</a>
+  <a href="directives/input.html">$input — Node Input</a>
+  <a href="directives/output.html">$output — Node Output</a>
+  <a href="directives/exec.html">$exec — Execution</a>
+  <a href="directives/flow.html">$flow — Workflow</a>
+  <a href="directives/js.html">$js — JavaScript</a>
+  <a href="directives/cs.html">$cs — C# Script</a>
+  <a href="directives/tpl.html">$tpl — Template</a>
+  <a href="directives/api.html">$api — External API</a>
+  <a href="directives/math.html">$math — Math</a>
+  <a href="directives/items.html">$items — Items</a>
+  <a href="directives/canned.html">@ — Canned</a>
+  <div class="sidebar-section">Patterns</div>
+  <a href="08-nested-templates.html">Nested Templates</a>
+  <a href="09-canned-expressions.html">Canned Expressions</a>
+  <a href="06-complex-cases.html">Complex Use Cases</a>
+  <a href="05-edge-cases.html">Edge Cases</a>
+  <div class="sidebar-section">Extending</div>
+  <a href="10-plugin-guide.html">Plugin Guide</a>
+  <a href="13-discovery-api.html" class="active">Discovery API</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="12-vocabulary.html">Vocabulary</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst Expression Evaluation</div>
+    <h1>Discovery API</h1>
+    <p class="subtitle">Self-describing metadata that powers the expression builder UI — autocomplete, path browsing, and option selection.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#purpose">Purpose</a></li>
+      <li><a href="#what-needs-discovery">What the UI Needs</a></li>
+      <li><a href="#interfaces">Core Interfaces</a></li>
+      <li><a href="#data-model">Data Model</a></li>
+      <li><a href="#lazy-loading">Lazy Loading Strategy</a></li>
+      <li><a href="#json-examples">JSON Response Examples</a></li>
+      <li><a href="#implement-provider">Implementing IDirectiveMetadataProvider</a></li>
+      <li><a href="#ui-integration">UI Integration Patterns</a></li>
+      <li><a href="#canned-discovery">Discovering Canned Expressions</a></li>
+    </ol>
+  </div>
+
+  <h2 id="purpose">Purpose</h2>
+  <p>The expression builder UI needs to guide users through building valid expressions without requiring them to memorize directive names, path structures, or option tokens. The Discovery API provides a self-describing metadata layer that every directive can contribute to.</p>
+
+  <p>The UI interaction model is:</p>
+  <ol>
+    <li>User types <code>{@</code> → UI shows a list of all registered directives</li>
+    <li>User selects <code>$ctx</code> → UI shows top-level paths (env, tenant, user, app, platform, now, today)</li>
+    <li>User selects <code>user</code> → UI shows sub-paths (id, name, email, roles…)</li>
+    <li>User selects <code>name</code> → UI shows: type=string, example="Alice Smith", available options</li>
+    <li>User optionally picks <code>@uppercase</code> → expression assembled</li>
+  </ol>
+
+  <h2 id="what-needs-discovery">What the UI Needs</h2>
+  <table>
+    <thead><tr><th>UI Feature</th><th>Data Required</th></tr></thead>
+    <tbody>
+      <tr><td>Directive picker (first level)</td><td>All registered directive names, display names, icons, descriptions</td></tr>
+      <tr><td>Path autocomplete (first segment)</td><td>Top-level paths for selected directive with descriptions and type hints</td></tr>
+      <tr><td>Path autocomplete (drill-down)</td><td>Children of a selected path segment</td></tr>
+      <tr><td>Type annotation</td><td>Return type for a specific path (string, number, boolean, object, array)</td></tr>
+      <tr><td>Example value</td><td>A representative example value for the path</td></tr>
+      <tr><td>Option picker</td><td>Which options are compatible with this directive/path combination</td></tr>
+      <tr><td>Option description</td><td>What each option does</td></tr>
+      <tr><td>Canned expression browser</td><td>List of aliases for this tenant/app with descriptions and tags</td></tr>
+      <tr><td>Syntax selector</td><td>Which syntax flavors are supported</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="interfaces">Core Interfaces</h2>
+  <pre><code><span class="cm">/// Implemented by each directive to expose its paths and metadata.</span>
+<span class="kw">public interface</span> <span class="ty">IDirectiveMetadataProvider</span>
+{
+    <span class="ty">string</span> DirectiveName  { <span class="kw">get</span>; }
+    <span class="ty">string</span> DisplayName    { <span class="kw">get</span>; }
+    <span class="ty">string</span> Description    { <span class="kw">get</span>; }
+    <span class="ty">string</span>? IconUrl       { <span class="kw">get</span>; }
+    <span class="ty">string</span>? DocsUrl       { <span class="kw">get</span>; }
+    <span class="ty">ExpressionIsolationLevel</span> RequiredIsolationLevel { <span class="kw">get</span>; }
+
+    <span class="cm">/// Returns top-level paths (no parent)</span>
+    <span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectivePath</span>&gt; <span class="fn">GetTopLevelPaths</span>();
+
+    <span class="cm">/// Returns child paths for a given parent path (lazy drill-down)</span>
+    <span class="ty">Task</span>&lt;<span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectivePath</span>&gt;&gt; <span class="fn">GetChildPathsAsync</span>(
+        <span class="ty">string</span> parentPath,
+        <span class="ty">CancellationToken</span> ct);
+}
+
+<span class="cm">/// Aggregates all directive metadata providers — the main discovery service.</span>
+<span class="kw">public interface</span> <span class="ty">IExpressionDiscoveryService</span>
+{
+    <span class="cm">/// Returns summary of all registered directives</span>
+    <span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectiveSummary</span>&gt; <span class="fn">GetAllDirectives</span>();
+
+    <span class="cm">/// Returns top-level paths for a directive</span>
+    <span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectivePath</span>&gt; <span class="fn">GetTopLevelPaths</span>(<span class="ty">string</span> directiveName);
+
+    <span class="cm">/// Returns children of a path (for drill-down)</span>
+    <span class="ty">Task</span>&lt;<span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectivePath</span>&gt;&gt; <span class="fn">GetChildPathsAsync</span>(
+        <span class="ty">string</span> directiveName,
+        <span class="ty">string</span> parentPath,
+        <span class="ty">CancellationToken</span> ct);
+
+    <span class="cm">/// Returns all available options</span>
+    <span class="ty">IReadOnlyList</span>&lt;<span class="ty">OptionMetadata</span>&gt; <span class="fn">GetAllOptions</span>();
+
+    <span class="cm">/// Returns options compatible with a specific directive and path</span>
+    <span class="ty">IReadOnlyList</span>&lt;<span class="ty">OptionMetadata</span>&gt; <span class="fn">GetCompatibleOptions</span>(
+        <span class="ty">string</span> directiveName,
+        <span class="ty">string</span>? path = <span class="kw">null</span>);
+}</code></pre>
+
+  <h2 id="data-model">Data Model</h2>
+  <pre><code><span class="kw">public record</span> <span class="ty">DirectiveSummary</span>(
+    <span class="ty">string</span> Name,           <span class="cm">// "ctx" (no $)</span>
+    <span class="ty">string</span> DisplayName,    <span class="cm">// "Context"</span>
+    <span class="ty">string</span> Description,    <span class="cm">// "Environment, tenant, user, and time values"</span>
+    <span class="ty">string</span>? IconUrl,
+    <span class="ty">string</span>? DocsUrl,
+    <span class="ty">ExpressionIsolationLevel</span> RequiredIsolationLevel
+);
+
+<span class="kw">public record</span> <span class="ty">DirectivePath</span>(
+    <span class="ty">string</span> Path,           <span class="cm">// "user.name"</span>
+    <span class="ty">string</span> DisplayName,    <span class="cm">// "User Name"</span>
+    <span class="ty">string</span> Description,    <span class="cm">// "Display name of the authenticated user"</span>
+    <span class="ty">ReturnType</span> ReturnType, <span class="cm">// String, Number, Boolean, Object, Array, DateTime</span>
+    <span class="ty">string</span>? ExampleValue,  <span class="cm">// "Alice Smith"</span>
+    <span class="ty">bool</span> HasChildren,      <span class="cm">// true if this path has sub-paths</span>
+    <span class="ty">bool</span> IsLeaf            <span class="cm">// true if this is a final path (no further drill-down)</span>
+);
+
+<span class="kw">public record</span> <span class="ty">OptionMetadata</span>(
+    <span class="ty">string</span> Token,          <span class="cm">// "uppercase"</span>
+    <span class="ty">string</span> DisplayName,    <span class="cm">// "Uppercase"</span>
+    <span class="ty">string</span> Description,    <span class="cm">// "Converts the resolved value to upper case"</span>
+    <span class="ty">bool</span> HasParameter,     <span class="cm">// true for @default:value, @date:format</span>
+    <span class="ty">string</span>? ParameterHint, <span class="cm">// "Value to return when null" / "yyyy-MM-dd"</span>
+    <span class="ty">bool</span> IsCache,          <span class="cm">// true for cache options</span>
+    <span class="ty">string[]</span> CompatibleWith <span class="cm">// directive names this option works with ("*" = all)</span>
+);</code></pre>
+
+  <h2 id="lazy-loading">Lazy Loading Strategy</h2>
+  <p>Some directives have dynamic paths (e.g., <code>$output.NodeKey</code> where NodeKey depends on the workflow), or very large path trees (e.g., a CRM with hundreds of fields). Discovery uses lazy loading to handle this:</p>
+  <ol>
+    <li><strong>First call</strong>: <code>GetTopLevelPaths("ctx")</code> → returns: <code>[env, tenant, user, app, platform, now, today]</code></li>
+    <li><strong>Drill-down</strong>: <code>GetChildPathsAsync("ctx", "user")</code> → returns: <code>[user.id, user.name, user.email, user.roles]</code></li>
+    <li><strong>Leaf</strong>: <code>user.name</code> has <code>HasChildren=false</code> → no further drill-down</li>
+  </ol>
+
+  <div class="callout info">
+    <strong>Dynamic paths</strong>
+    For <code>$output.NodeKey.field</code>, the discovery endpoint can accept the current workflow definition as context, parse its nodes, and return the list of upstream node keys as the first-level children. This makes the browser context-aware.
+  </div>
+
+  <h2 id="json-examples">JSON Response Examples</h2>
+
+  <h3>GET /api/expressions/discover/directives</h3>
+  <pre><code>[
+  {
+    <span class="st">"name"</span>: <span class="st">"ctx"</span>,
+    <span class="st">"displayName"</span>: <span class="st">"Context"</span>,
+    <span class="st">"description"</span>: <span class="st">"Environment, tenant, user, and time values"</span>,
+    <span class="st">"iconUrl"</span>: <span class="kw">null</span>,
+    <span class="st">"requiredIsolationLevel"</span>: <span class="st">"Safe"</span>
+  },
+  {
+    <span class="st">"name"</span>: <span class="st">"var"</span>,
+    <span class="st">"displayName"</span>: <span class="st">"Variable"</span>,
+    <span class="st">"description"</span>: <span class="st">"Workflow memory variables"</span>,
+    <span class="st">"requiredIsolationLevel"</span>: <span class="st">"Safe"</span>
+  },
+  {
+    <span class="st">"name"</span>: <span class="st">"js"</span>,
+    <span class="st">"displayName"</span>: <span class="st">"JavaScript"</span>,
+    <span class="st">"description"</span>: <span class="st">"Inline JavaScript in a Jint sandbox"</span>,
+    <span class="st">"requiredIsolationLevel"</span>: <span class="st">"Sandboxed"</span>
+  }
+]</code></pre>
+
+  <h3>GET /api/expressions/discover/directives/ctx/paths</h3>
+  <pre><code>[
+  { <span class="st">"path"</span>: <span class="st">"env"</span>,      <span class="st">"displayName"</span>: <span class="st">"Environment"</span>,   <span class="st">"returnType"</span>: <span class="st">"String"</span>,   <span class="st">"hasChildren"</span>: <span class="kw">true</span>,  <span class="st">"isLeaf"</span>: <span class="kw">false</span> },
+  { <span class="st">"path"</span>: <span class="st">"tenant"</span>,   <span class="st">"displayName"</span>: <span class="st">"Tenant"</span>,        <span class="st">"returnType"</span>: <span class="st">"Object"</span>,   <span class="st">"hasChildren"</span>: <span class="kw">true</span>,  <span class="st">"isLeaf"</span>: <span class="kw">false</span> },
+  { <span class="st">"path"</span>: <span class="st">"user"</span>,     <span class="st">"displayName"</span>: <span class="st">"Current User"</span>,  <span class="st">"returnType"</span>: <span class="st">"Object"</span>,   <span class="st">"hasChildren"</span>: <span class="kw">true</span>,  <span class="st">"isLeaf"</span>: <span class="kw">false</span> },
+  { <span class="st">"path"</span>: <span class="st">"now"</span>,      <span class="st">"displayName"</span>: <span class="st">"Current DateTime"</span>, <span class="st">"returnType"</span>: <span class="st">"DateTime"</span>, <span class="st">"exampleValue"</span>: <span class="st">"2024-03-15T10:22:01Z"</span>, <span class="st">"hasChildren"</span>: <span class="kw">false</span>, <span class="st">"isLeaf"</span>: <span class="kw">true</span> },
+  { <span class="st">"path"</span>: <span class="st">"today"</span>,    <span class="st">"displayName"</span>: <span class="st">"Current Date"</span>,  <span class="st">"returnType"</span>: <span class="st">"String"</span>,   <span class="st">"exampleValue"</span>: <span class="st">"2024-03-15"</span>,            <span class="st">"hasChildren"</span>: <span class="kw">false</span>, <span class="st">"isLeaf"</span>: <span class="kw">true</span> }
+]</code></pre>
+
+  <h3>GET /api/expressions/discover/directives/ctx/paths?parent=user</h3>
+  <pre><code>[
+  { <span class="st">"path"</span>: <span class="st">"user.id"</span>,     <span class="st">"displayName"</span>: <span class="st">"User ID"</span>,     <span class="st">"returnType"</span>: <span class="st">"Number"</span>,  <span class="st">"exampleValue"</span>: <span class="st">"42"</span>,            <span class="st">"isLeaf"</span>: <span class="kw">true</span> },
+  { <span class="st">"path"</span>: <span class="st">"user.name"</span>,   <span class="st">"displayName"</span>: <span class="st">"Display Name"</span>, <span class="st">"returnType"</span>: <span class="st">"String"</span>,  <span class="st">"exampleValue"</span>: <span class="st">"Alice Smith"</span>,   <span class="st">"isLeaf"</span>: <span class="kw">true</span> },
+  { <span class="st">"path"</span>: <span class="st">"user.email"</span>,  <span class="st">"displayName"</span>: <span class="st">"Email"</span>,        <span class="st">"returnType"</span>: <span class="st">"String"</span>,  <span class="st">"exampleValue"</span>: <span class="st">"alice@acme.com"</span>, <span class="st">"isLeaf"</span>: <span class="kw">true</span> },
+  { <span class="st">"path"</span>: <span class="st">"user.roles"</span>,  <span class="st">"displayName"</span>: <span class="st">"Roles"</span>,        <span class="st">"returnType"</span>: <span class="st">"Array"</span>,   <span class="st">"exampleValue"</span>: <span class="st">"[\"Admin\"]"</span>,    <span class="st">"isLeaf"</span>: <span class="kw">true</span> }
+]</code></pre>
+
+  <h2 id="implement-provider">Implementing IDirectiveMetadataProvider</h2>
+  <p>The concrete directive class can also implement <code>IDirectiveMetadataProvider</code>, or a separate companion class can be provided:</p>
+  <pre><code><span class="kw">public class</span> <span class="ty">ContextDirectiveMetadata</span> : <span class="ty">IDirectiveMetadataProvider</span>
+{
+    <span class="kw">public string</span> DirectiveName =&gt; <span class="st">"ctx"</span>;
+    <span class="kw">public string</span> DisplayName   =&gt; <span class="st">"Context"</span>;
+    <span class="kw">public string</span> Description   =&gt; <span class="st">"Environment variables, tenant, user, app, platform, and time"</span>;
+    <span class="kw">public string</span>? IconUrl      =&gt; <span class="kw">null</span>;
+    <span class="kw">public string</span>? DocsUrl      =&gt; <span class="kw">null</span>;
+    <span class="kw">public</span> <span class="ty">ExpressionIsolationLevel</span> RequiredIsolationLevel
+        =&gt; <span class="ty">ExpressionIsolationLevel</span>.Safe;
+
+    <span class="kw">public</span> <span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectivePath</span>&gt; <span class="fn">GetTopLevelPaths</span>() =&gt;
+    [
+        <span class="kw">new</span>(<span class="st">"env"</span>,      <span class="st">"Environment"</span>,       <span class="st">"Environment variable (requires name)"</span>,   <span class="ty">ReturnType</span>.String,   <span class="kw">null</span>,           HasChildren: <span class="kw">true</span>,  IsLeaf: <span class="kw">false</span>),
+        <span class="kw">new</span>(<span class="st">"tenant"</span>,   <span class="st">"Tenant"</span>,            <span class="st">"Current tenant metadata"</span>,               <span class="ty">ReturnType</span>.Object,   <span class="kw">null</span>,           HasChildren: <span class="kw">true</span>,  IsLeaf: <span class="kw">false</span>),
+        <span class="kw">new</span>(<span class="st">"user"</span>,     <span class="st">"Current User"</span>,      <span class="st">"Authenticated user properties"</span>,          <span class="ty">ReturnType</span>.Object,   <span class="kw">null</span>,           HasChildren: <span class="kw">true</span>,  IsLeaf: <span class="kw">false</span>),
+        <span class="kw">new</span>(<span class="st">"app"</span>,      <span class="st">"Application"</span>,       <span class="st">"Current application metadata"</span>,           <span class="ty">ReturnType</span>.Object,   <span class="kw">null</span>,           HasChildren: <span class="kw">true</span>,  IsLeaf: <span class="kw">false</span>),
+        <span class="kw">new</span>(<span class="st">"platform"</span>, <span class="st">"Platform"</span>,          <span class="st">"BizFirst platform metadata"</span>,             <span class="ty">ReturnType</span>.Object,   <span class="kw">null</span>,           HasChildren: <span class="kw">true</span>,  IsLeaf: <span class="kw">false</span>),
+        <span class="kw">new</span>(<span class="st">"now"</span>,      <span class="st">"Current DateTime"</span>,  <span class="st">"UTC datetime string (ISO 8601)"</span>,          <span class="ty">ReturnType</span>.DateTime, <span class="st">"2024-03-15T10:22Z"</span>, HasChildren: <span class="kw">false</span>, IsLeaf: <span class="kw">true</span>),
+        <span class="kw">new</span>(<span class="st">"today"</span>,    <span class="st">"Current Date"</span>,      <span class="st">"Current date (YYYY-MM-DD)"</span>,              <span class="ty">ReturnType</span>.String,   <span class="st">"2024-03-15"</span>,      HasChildren: <span class="kw">false</span>, IsLeaf: <span class="kw">true</span>),
+    ];
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">IReadOnlyList</span>&lt;<span class="ty">DirectivePath</span>&gt;&gt; <span class="fn">GetChildPathsAsync</span>(
+        <span class="ty">string</span> parentPath, <span class="ty">CancellationToken</span> ct) =&gt;
+        parentPath <span class="kw">switch</span>
+        {
+            <span class="st">"user"</span>   =&gt; <span class="fn">UserPaths</span>(),
+            <span class="st">"tenant"</span> =&gt; <span class="fn">TenantPaths</span>(),
+            <span class="st">"env"</span>    =&gt; [], <span class="cm">// environment variable names are runtime-dynamic</span>
+            _        =&gt; []
+        };
+
+    <span class="kw">private static</span> <span class="ty">DirectivePath</span>[] <span class="fn">UserPaths</span>() =&gt;
+    [
+        <span class="kw">new</span>(<span class="st">"user.id"</span>,    <span class="st">"ID"</span>,           <span class="st">"User ID"</span>,           <span class="ty">ReturnType</span>.Number,  <span class="st">"42"</span>,              <span class="kw">false</span>, <span class="kw">true</span>),
+        <span class="kw">new</span>(<span class="st">"user.name"</span>,  <span class="st">"Name"</span>,         <span class="st">"Display name"</span>,      <span class="ty">ReturnType</span>.String,  <span class="st">"Alice Smith"</span>,     <span class="kw">false</span>, <span class="kw">true</span>),
+        <span class="kw">new</span>(<span class="st">"user.email"</span>, <span class="st">"Email"</span>,        <span class="st">"Email address"</span>,     <span class="ty">ReturnType</span>.String,  <span class="st">"alice@acme.com"</span>,  <span class="kw">false</span>, <span class="kw">true</span>),
+        <span class="kw">new</span>(<span class="st">"user.roles"</span>, <span class="st">"Roles"</span>,        <span class="st">"Role names (array)"</span>, <span class="ty">ReturnType</span>.Array,   <span class="st">"[\"Admin\"]"</span>,     <span class="kw">false</span>, <span class="kw">true</span>),
+    ];
+}</code></pre>
+
+  <h2 id="ui-integration">UI Integration Patterns</h2>
+
+  <h3>Pattern 1 — Autocomplete Trigger</h3>
+  <pre><code><span class="cm">// When user types "{@" in expression field:</span>
+<span class="kw">await</span> fetch(<span class="st">'/api/expressions/discover/directives'</span>)
+<span class="cm">// → render dropdown of all directives with icons and descriptions</span>
+
+<span class="cm">// When user selects "$ctx":</span>
+<span class="kw">await</span> fetch(<span class="st">'/api/expressions/discover/directives/ctx/paths'</span>)
+<span class="cm">// → render nested path browser</span>
+
+<span class="cm">// When user drills into "user":</span>
+<span class="kw">await</span> fetch(<span class="st">'/api/expressions/discover/directives/ctx/paths?parent=user'</span>)
+<span class="cm">// → render sub-path list with type badges</span></code></pre>
+
+  <h3>Pattern 2 — Type-Aware Option Filtering</h3>
+  <pre><code><span class="cm">// User selected $ctx.user.name (ReturnType = String)</span>
+<span class="cm">// Show only string-compatible options:</span>
+<span class="kw">await</span> fetch(<span class="st">'/api/expressions/discover/options?directive=ctx&amp;path=user.name'</span>)
+<span class="cm">// → [uppercase, lowercase, trim, required, not-empty, default:, cache, cache-thread, cache-process]</span>
+<span class="cm">// NOT shown: json (only for object/array), date (only for DateTime)</span></code></pre>
+
+  <h3>Pattern 3 — Expression Validation</h3>
+  <pre><code><span class="cm">// Before saving a workflow node, validate all field expressions:</span>
+POST /api/expressions/validate
+{
+  "expressions": [
+    "{@ $ctx.user.name @uppercase }",
+    "{@ $var.missingVar @required }"
+  ],
+  "tenantId": 5,
+  "appId": 7
+}
+
+<span class="cm">// Response:</span>
+{
+  "results": [
+    { "expression": "{@ $ctx.user.name @uppercase }", "valid": true },
+    { "expression": "{@ $var.missingVar @required }", "valid": true, "warnings": ["Variable 'missingVar' not found at design time — ensure it is set at runtime"] }
+  ]
+}</code></pre>
+
+  <h2 id="canned-discovery">Discovering Canned Expressions</h2>
+  <p>Canned expressions are surfaced through a separate discovery endpoint since they're tenant/app-scoped:</p>
+  <pre><code><span class="cm">// GET /api/expressions/canned?tenantId=5&appId=7&tag=finance</span>
+[
+  {
+    <span class="st">"alias"</span>:       <span class="st">"company.currency"</span>,
+    <span class="st">"expression"</span>:  <span class="st">"{@ $ctx.tenant.currency }"</span>,
+    <span class="st">"description"</span>: <span class="st">"Tenant default currency code"</span>,
+    <span class="st">"tags"</span>:        [<span class="st">"finance"</span>, <span class="st">"global"</span>],
+    <span class="st">"scope"</span>:       <span class="st">"tenant"</span>   <span class="cm">// "app" if AppId-specific</span>
+  },
+  {
+    <span class="st">"alias"</span>:       <span class="st">"company.taxRate"</span>,
+    <span class="st">"expression"</span>:  <span class="st">"0.20"</span>,
+    <span class="st">"description"</span>: <span class="st">"Standard VAT rate"</span>,
+    <span class="st">"tags"</span>:        [<span class="st">"finance"</span>, <span class="st">"tax"</span>],
+    <span class="st">"scope"</span>:       <span class="st">"app"</span>       <span class="cm">// overrides tenant-wide</span>
+  }
+]</code></pre>
+
+  <p>The UI can show these as a searchable palette alongside the directive browser, allowing users to pick an alias as an alternative to building a directive expression from scratch.</p>
+
+  <div class="callout info">
+    <strong>Preview on hover</strong>
+    When a user hovers over a canned expression in the palette, the UI can call <code>POST /api/expressions/canned/{id}/preview</code> with the current tenant/app context to show a live preview of what the alias resolves to.
+  </div>
+</main>
+</body>
+</html>

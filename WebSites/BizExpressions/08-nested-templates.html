@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nested Templates | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand">BizFirst Expressions<span>Expression Evaluation Framework</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-how-to-call.html">Integration Guide</a>
+  <div class="sidebar-section">Directives</div>
+  <a href="04-directive-structure.html">Directive Structure</a>
+  <a href="03-directive-samples.html">Expression Samples</a>
+  <a href="07-options.html">Options Reference</a>
+  <div class="sidebar-section">Directive Reference</div>
+  <a href="directives/ctx.html">$ctx — Context</a>
+  <a href="directives/var.html">$var — Variable</a>
+  <a href="directives/input.html">$input — Node Input</a>
+  <a href="directives/output.html">$output — Node Output</a>
+  <a href="directives/exec.html">$exec — Execution</a>
+  <a href="directives/flow.html">$flow — Workflow</a>
+  <a href="directives/js.html">$js — JavaScript</a>
+  <a href="directives/cs.html">$cs — C# Script</a>
+  <a href="directives/tpl.html">$tpl — Template</a>
+  <a href="directives/api.html">$api — External API</a>
+  <a href="directives/math.html">$math — Math</a>
+  <a href="directives/items.html">$items — Items</a>
+  <a href="directives/canned.html">@ — Canned</a>
+  <div class="sidebar-section">Patterns</div>
+  <a href="08-nested-templates.html" class="active">Nested Templates</a>
+  <a href="09-canned-expressions.html">Canned Expressions</a>
+  <a href="06-complex-cases.html">Complex Use Cases</a>
+  <a href="05-edge-cases.html">Edge Cases</a>
+  <div class="sidebar-section">Extending</div>
+  <a href="10-plugin-guide.html">Plugin Guide</a>
+  <a href="13-discovery-api.html">Discovery API</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="12-vocabulary.html">Vocabulary</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst Expression Evaluation</div>
+    <h1>Nested Templates</h1>
+    <p class="subtitle">Template strings, multi-pass resolution, depth tracking, and cycle prevention.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#single-vs-template">Single Expression vs Template String</a></li>
+      <li><a href="#interpolation">Parallel Interpolation</a></li>
+      <li><a href="#multi-pass">Multi-Pass Resolution</a></li>
+      <li><a href="#visited-keys">VisitedKeys — Preventing Cycles</a></li>
+      <li><a href="#depth">Depth Tracking Across Passes</a></li>
+      <li><a href="#tpl-directive">$tpl — Liquid Template Directive</a></li>
+      <li><a href="#samples">Sample Walkthroughs</a></li>
+    </ol>
+  </div>
+
+  <h2 id="single-vs-template">Single Expression vs Template String</h2>
+  <p>The parser classifies a field value into one of three cases:</p>
+  <table>
+    <thead><tr><th>Case</th><th>Example</th><th>Handling</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>No wildcard</strong></td>
+        <td><code>"hello world"</code></td>
+        <td>Short-circuit — returned as-is, no evaluation</td>
+      </tr>
+      <tr>
+        <td><strong>Single expression</strong></td>
+        <td><code>"{@ $var.name }"</code></td>
+        <td>Parse once → single directive invocation → return value</td>
+      </tr>
+      <tr>
+        <td><strong>Template string</strong></td>
+        <td><code>"Hello {@ $ctx.user.name }, order {@ $var.id } is ready"</code></td>
+        <td>FindAllRegions → parallel evaluation → string assembly → multi-pass if needed</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><code>IWildcardParser.IsTemplate(text)</code> returns <code>true</code> when: (a) there are two or more expressions, or (b) there is literal text outside the expression boundary.</p>
+
+  <h2 id="interpolation">Parallel Interpolation</h2>
+  <p>When a template string is detected, all regions are evaluated simultaneously:</p>
+  <pre><code><span class="cm">// Field value:</span>
+<span class="st">"Dear {@ $ctx.user.name }, your balance is {@ $var.balance @json } as of {@ $ctx.today }"</span>
+
+<span class="cm">// Step 1: FindAllRegions() → 3 regions</span>
+<span class="cm">// Step 2: Task.WhenAll — all 3 evaluated concurrently</span>
+<span class="cm">//   Region 0: $ctx.user.name  → "Alice"</span>
+<span class="cm">//   Region 1: $var.balance    → 1250.50</span>
+<span class="cm">//   Region 2: $ctx.today      → "2024-03-15"</span>
+
+<span class="cm">// Step 3: Substitute FormattedValues</span>
+<span class="cm">// Result: "Dear Alice, your balance is 1250.5 as of 2024-03-15"</span></code></pre>
+
+  <div class="callout info">
+    <strong>Parallel, not sequential</strong>
+    Regions are evaluated with <code>Task.WhenAll</code>. If your expressions are independently resolvable (most are), this is free parallelism. The order of substitution is determined by region positions, not evaluation order.
+  </div>
+
+  <h2 id="multi-pass">Multi-Pass Resolution</h2>
+  <p>After assembling the interpolated string, the orchestrator scans it again for wildcards. If new wildcards are found (because a resolved value itself contained an expression), it re-enters the pipeline:</p>
+  <pre><code><span class="cm">// Pass 1:</span>
+<span class="st">"Recipient: {@ @report.recipient }"</span>
+<span class="cm">// @report.recipient → "{@ $ctx.tenant.billingEmail }"  (this alias IS an expression)</span>
+<span class="cm">// Assembled: "Recipient: {@ $ctx.tenant.billingEmail }"</span>
+
+<span class="cm">// Scan → new wildcards found → Pass 2:</span>
+<span class="st">"Recipient: {@ $ctx.tenant.billingEmail }"</span>
+<span class="cm">// $ctx.tenant.billingEmail → "billing@acme.com"</span>
+<span class="cm">// Assembled: "Recipient: billing@acme.com"</span>
+
+<span class="cm">// Scan → no wildcards → done</span>
+<span class="cm">// Final result: "Recipient: billing@acme.com"</span></code></pre>
+
+  <p>Multi-pass continues as long as new wildcards are found AND <code>Depth &lt; 10</code>. Each pass increments depth by 1.</p>
+
+  <h2 id="visited-keys">VisitedKeys — Preventing Cycles</h2>
+  <p>The <code>VisitedKeys</code> set is shared across all passes. Each expression's unique key is added before evaluation. If it's already in the set, a cycle is detected:</p>
+  <pre><code><span class="cm">// Scenario: canned expression loop</span>
+<span class="cm">// @loopA → "{@ @loopB }"</span>
+<span class="cm">// @loopB → "{@ @loopA }"</span>
+
+<span class="cm">// Pass 1: evaluate @loopA → key "loopA" added to VisitedKeys</span>
+<span class="cm">// Result: "{@ @loopB }"</span>
+<span class="cm">// Pass 2: evaluate @loopB → key "loopB" added</span>
+<span class="cm">// Result: "{@ @loopA }"</span>
+<span class="cm">// Pass 3: @loopA → "loopA" already in VisitedKeys → CycleDetected error</span></code></pre>
+
+  <div class="callout danger">
+    <strong>VisitedKeys is carried forward, not reset between passes</strong>
+    This is intentional. It catches cycles that span multiple passes — e.g., A → B → A — which Depth alone cannot catch if each hop is shallow.
+  </div>
+
+  <h2 id="depth">Depth Tracking Across Passes</h2>
+  <p>Both multi-pass interpolation and directive chaining share the same <code>Depth</code> counter on the <code>EvaluationRequest</code>:</p>
+  <ul>
+    <li>Each multi-pass iteration increments depth by 1</li>
+    <li>Each <code>ChainExpressionAsync</code> or <code>ChainToDirectiveAsync</code> call increments depth by 1</li>
+    <li>Hard limit is 10 total across both</li>
+  </ul>
+  <p>This prevents the combination of chaining + multi-pass from bypassing the depth limit:</p>
+  <pre><code><span class="cm">// 5 levels of canned expression chaining (depth 0→5)</span>
+<span class="cm">// + 5 multi-pass iterations (depth 5→10)</span>
+<span class="cm">// = hit depth limit at exactly 10</span></code></pre>
+
+  <h2 id="tpl-directive">$tpl — Liquid Template Directive</h2>
+  <p>The <code>$tpl</code> directive is a specialized case of template rendering. It uses the Fluid (Liquid) library and handles its own internal variable substitution — it does NOT re-enter the BizFirst expression pipeline for Liquid <code>{{ variable }}</code> references. Instead, it populates the Liquid context from <code>EvaluationContext</code>:</p>
+
+  <table>
+    <thead><tr><th>Liquid variable</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td><code>{{ user.name }}</code></td><td><code>Context.CurrentUser.Name</code></td></tr>
+      <tr><td><code>{{ tenant.name }}</code></td><td><code>Context.TenantId</code> → metadata provider</td></tr>
+      <tr><td><code>{{ tenant.timezone }}</code></td><td>Tenant metadata</td></tr>
+      <tr><td><code>{{ exec.executionId }}</code></td><td><code>Context.ExecutionId</code></td></tr>
+      <tr><td><code>{{ input.fieldName }}</code></td><td><code>Context.NodeExecutionData.CurrentItem</code></td></tr>
+      <tr><td><code>{{ vars.myVar }}</code></td><td><code>Context.Memory</code></td></tr>
+      <tr><td><code>{{ now }}</code></td><td><code>DateTime.UtcNow</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <strong>$tpl is a separate rendering system</strong>
+    BizFirst expressions (<code>{@ $var.x }</code>) and Liquid expressions (<code>{{ x }}</code>) are different syntaxes processed by different engines. A <code>$tpl</code> directive renders Liquid — the result is a plain string. If that string needs further BizFirst expression evaluation, it would require another pass through the orchestrator.
+  </div>
+
+  <h2 id="samples">Sample Walkthroughs</h2>
+
+  <h3>Sample 1 — Email Subject with Dynamic Values</h3>
+  <pre><code><span class="cm">// Field: Email Subject</span>
+<span class="st">"[{@ $ctx.tenant.name }] Invoice #{@ $var.invoiceNumber } — {@ $var.amount @default:0 } {@ @company.currency }"</span>
+
+<span class="cm">// Regions found: 4</span>
+<span class="cm">// Parallel evaluation:</span>
+<span class="cm">//   $ctx.tenant.name   → "Acme Corp"</span>
+<span class="cm">//   $var.invoiceNumber → "INV-2024-001"</span>
+<span class="cm">//   $var.amount        → 4500</span>
+<span class="cm">//   @company.currency  → "EUR" (via canned expression → $ctx.tenant.currency)</span>
+<span class="cm">// Assembled: "[Acme Corp] Invoice #INV-2024-001 — 4500 EUR"</span>
+<span class="cm">// Scan → no new wildcards → done (1 pass)</span></code></pre>
+
+  <h3>Sample 2 — Nested Canned Expression (2 passes)</h3>
+  <pre><code><span class="cm">// Canned: @hr.approver → "{@ @tenant.hrManager }"</span>
+<span class="cm">// Canned: @tenant.hrManager → "{@ $ctx.tenant.hrManagerEmail }"</span>
+
+<span class="cm">// Field: "Approval required from: @hr.approver"</span>
+
+<span class="cm">// Pass 1: @hr.approver → "{@ @tenant.hrManager }"</span>
+<span class="cm">// Assembled: "Approval required from: {@ @tenant.hrManager }"</span>
+<span class="cm">// Scan → wildcard found → Pass 2</span>
+
+<span class="cm">// Pass 2: @tenant.hrManager → "{@ $ctx.tenant.hrManagerEmail }"</span>
+<span class="cm">// Assembled: "Approval required from: {@ $ctx.tenant.hrManagerEmail }"</span>
+<span class="cm">// Scan → wildcard found → Pass 3</span>
+
+<span class="cm">// Pass 3: $ctx.tenant.hrManagerEmail → "hr@acme.com"</span>
+<span class="cm">// Assembled: "Approval required from: hr@acme.com"</span>
+<span class="cm">// Scan → no wildcards → done (3 passes, depth 3)</span></code></pre>
+
+  <h3>Sample 3 — $tpl with Context Data</h3>
+  <pre><code><span class="cm">// Node field: "{@ $tpl.InvoiceEmail }"</span>
+
+<span class="cm">// $tpl directive:</span>
+<span class="cm">// 1. Loads template "InvoiceEmail" from database</span>
+<span class="cm">// 2. Builds Liquid context from EvaluationContext</span>
+<span class="cm">// 3. Renders Liquid → plain HTML string</span>
+<span class="cm">// 4. Returns EvaluationResponse.Success(htmlString)</span>
+
+<span class="cm">// Liquid template stored in DB:</span>
+<span class="cm">// ---</span>
+<span class="cm">// Dear {{ user.name }},</span>
+<span class="cm">//</span>
+<span class="cm">// Your invoice {{ vars.invoiceNumber }} for {{ vars.amount | money }} is ready.</span>
+<span class="cm">// Payment due: {{ vars.dueDate | date: "%B %d, %Y" }}</span>
+<span class="cm">// ---</span>
+
+<span class="cm">// Result: fully rendered HTML email body (single BizFirst evaluation pass)</span></code></pre>
+</main>
+</body>
+</html>

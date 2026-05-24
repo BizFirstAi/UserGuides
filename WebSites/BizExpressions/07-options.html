@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Options Reference | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand">BizFirst Expressions<span>Expression Evaluation Framework</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-how-to-call.html">Integration Guide</a>
+  <div class="sidebar-section">Directives</div>
+  <a href="04-directive-structure.html">Directive Structure</a>
+  <a href="03-directive-samples.html">Expression Samples</a>
+  <a href="07-options.html" class="active">Options Reference</a>
+  <div class="sidebar-section">Directive Reference</div>
+  <a href="directives/ctx.html">$ctx — Context</a>
+  <a href="directives/var.html">$var — Variable</a>
+  <a href="directives/input.html">$input — Node Input</a>
+  <a href="directives/output.html">$output — Node Output</a>
+  <a href="directives/exec.html">$exec — Execution</a>
+  <a href="directives/flow.html">$flow — Workflow</a>
+  <a href="directives/js.html">$js — JavaScript</a>
+  <a href="directives/cs.html">$cs — C# Script</a>
+  <a href="directives/tpl.html">$tpl — Template</a>
+  <a href="directives/api.html">$api — External API</a>
+  <a href="directives/math.html">$math — Math</a>
+  <a href="directives/items.html">$items — Items</a>
+  <a href="directives/canned.html">@ — Canned</a>
+  <div class="sidebar-section">Patterns</div>
+  <a href="08-nested-templates.html">Nested Templates</a>
+  <a href="09-canned-expressions.html">Canned Expressions</a>
+  <a href="06-complex-cases.html">Complex Use Cases</a>
+  <a href="05-edge-cases.html">Edge Cases</a>
+  <div class="sidebar-section">Extending</div>
+  <a href="10-plugin-guide.html">Plugin Guide</a>
+  <a href="13-discovery-api.html">Discovery API</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="12-vocabulary.html">Vocabulary</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst Expression Evaluation</div>
+    <h1>Options Reference</h1>
+    <p class="subtitle">Post-resolution transforms: format, validate, encode, and cache the resolved value.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#overview">How Options Work</a></li>
+      <li><a href="#interface">IDirectiveOption Interface</a></li>
+      <li><a href="#syntax">Option Syntax</a></li>
+      <li><a href="#builtin">Built-in Options Reference</a></li>
+      <li><a href="#cache">Cache Options</a></li>
+      <li><a href="#chaining">Combining Multiple Options</a></li>
+      <li><a href="#custom">Creating a Custom Option</a></li>
+    </ol>
+  </div>
+
+  <h2 id="overview">How Options Work</h2>
+  <p>Options are declared in the expression after the path, prefixed with <code>@</code>. They are applied by the orchestrator <em>after</em> the directive resolves the raw value, in this order:</p>
+  <ol>
+    <li><strong>PopulateConstraints</strong> — each option records its constraints (Required, NotEmpty, DefaultValue) into <code>FieldConstraints</code></li>
+    <li><strong>Apply</strong> — each option transforms the resolved value</li>
+    <li><strong>FormatOutput</strong> — the final <code>FormattedValue</code> string is produced</li>
+  </ol>
+
+  <div class="callout info">
+    <strong>ICacheMarkerOption is special</strong>
+    Options implementing <code>ICacheMarkerOption</code> (<code>@cache</code>, <code>@cache-thread</code>, <code>@cache-process</code>) are handled by the orchestrator <em>before</em> directive invocation. A cache hit returns immediately, skipping the directive entirely.
+  </div>
+
+  <h2 id="interface">IDirectiveOption Interface</h2>
+  <pre><code><span class="kw">public interface</span> <span class="ty">IDirectiveOption</span>
+{
+    <span class="ty">string</span> OptionName { <span class="kw">get</span>; }                          <span class="cm">// token after @</span>
+    <span class="ty">bool</span> IsSensitive { <span class="kw">get</span>; }                            <span class="cm">// mask value in logs</span>
+
+    <span class="ty">void</span> <span class="fn">PopulateConstraints</span>(<span class="ty">FieldConstraints</span> constraints); <span class="cm">// set Required/NotEmpty/Default</span>
+    <span class="ty">object</span>? <span class="fn">Apply</span>(<span class="ty">object</span>? resolvedValue);               <span class="cm">// transform the value</span>
+    <span class="ty">string</span>? <span class="fn">FormatOutput</span>(<span class="ty">object</span>? finalValue);            <span class="cm">// produce FormattedValue string</span>
+}
+
+<span class="kw">public interface</span> <span class="ty">ICacheMarkerOption</span> : <span class="ty">IDirectiveOption</span>
+{
+    <span class="ty">CacheScope</span> Scope { <span class="kw">get</span>; }
+    <span class="ty">string</span> <span class="fn">BuildCacheKey</span>(<span class="ty">EvaluationRequest</span> request);
+}</code></pre>
+
+  <h2 id="syntax">Option Syntax</h2>
+  <table>
+    <thead><tr><th>Pattern</th><th>Example</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Simple flag</td><td><code>@uppercase</code></td><td>No parameter</td></tr>
+      <tr><td>With parameter</td><td><code>@default:N/A</code></td><td>Parameter after colon</td></tr>
+      <tr><td>With format string</td><td><code>@date:yyyy-MM-dd</code></td><td>Format string as parameter</td></tr>
+      <tr><td>With scope</td><td><code>@cache-thread</code></td><td>Hyphen-separated qualifier</td></tr>
+    </tbody>
+  </table>
+  <p>Multiple options in a single expression — space-separated, applied left to right:</p>
+  <div class="expr-box">
+    <div class="label">Trim, then uppercase, then cache at thread scope</div>
+    <span class="di">{@</span> <span class="kw">$var</span>.<span class="pa">status</span> <span class="op">@trim @uppercase @cache-thread</span> <span class="di">}</span>
+  </div>
+
+  <h2 id="builtin">Built-in Options Reference</h2>
+
+  <h3>Transform Options</h3>
+  <table>
+    <thead><tr><th>Option</th><th>Effect on Value</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td><code>@uppercase</code></td><td>Converts string to upper case</td><td><code>"hello" → "HELLO"</code></td></tr>
+      <tr><td><code>@lowercase</code></td><td>Converts string to lower case</td><td><code>"HELLO" → "hello"</code></td></tr>
+      <tr><td><code>@trim</code></td><td>Removes leading/trailing whitespace</td><td><code>"  hi  " → "hi"</code></td></tr>
+      <tr><td><code>@json</code></td><td>JSON-serializes the value</td><td><code>{ id: 1 } → '{"id":1}'</code></td></tr>
+      <tr><td><code>@base64</code></td><td>Base64-encodes the string representation</td><td><code>"abc" → "YWJj"</code></td></tr>
+      <tr><td><code>@date:format</code></td><td>Formats a DateTime value using the given format string</td><td><code>@date:yyyy-MM-dd</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>Validation Options</h3>
+  <table>
+    <thead><tr><th>Option</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td><code>@required</code></td><td>Sets <code>FieldConstraints.IsRequired = true</code>. If value is <code>null</code>, returns <code>ValidationError</code>.</td></tr>
+      <tr><td><code>@not-empty</code></td><td>Sets <code>FieldConstraints.MustNotBeEmpty = true</code>. If value is empty string, returns <code>ValidationError</code>.</td></tr>
+      <tr><td><code>@default:value</code></td><td>Sets <code>FieldConstraints.DefaultValue</code>. Returns the default when resolved value is <code>null</code> or empty.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Output Shape Options</h3>
+  <table>
+    <thead><tr><th>Option</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td><code>@typed</code></td><td>Sets <code>OutputFieldName = "value"</code> on <code>FieldConstraints</code> — tells the assignment layer to use the raw <code>Value</code> property (typed) rather than <code>FormattedValue</code> (string).</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="cache">Cache Options</h2>
+  <p>Cache options implement <code>ICacheMarkerOption</code>. They must appear in the expression — they cannot be programmatically added.</p>
+  <table>
+    <thead><tr><th>Option</th><th>Scope</th><th>Invalidated when</th><th>Use for</th></tr></thead>
+    <tbody>
+      <tr><td><code>@cache</code></td><td>Node</td><td>Current node execution ends</td><td>Values constant within a node run (e.g., config lookups)</td></tr>
+      <tr><td><code>@cache-thread</code></td><td>Thread</td><td>Workflow thread completes</td><td>Values constant for entire workflow execution (e.g., exchange rates)</td></tr>
+      <tr><td><code>@cache-process</code></td><td>Process</td><td>Top-level process completes</td><td>Values constant across parallel branches (e.g., tenant settings)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="expr-box">
+    <div class="label">Cache an expensive API call for the entire thread</div>
+    <span class="di">{@</span> <span class="kw">$api</span>.<span class="pa">ExchangeService/rates/USD.rate</span> <span class="op">@cache-thread</span> <span class="di">}</span>
+    <div class="result">First call makes HTTP request. All subsequent calls in same thread return cached value.</div>
+  </div>
+
+  <h2 id="chaining">Combining Multiple Options</h2>
+  <p>Options are applied left to right. The output of each <code>Apply</code> becomes the input of the next.</p>
+  <div class="expr-box">
+    <div class="label">Chain: default → trim → uppercase</div>
+    <span class="di">{@</span> <span class="kw">$var</span>.<span class="pa">countryCode</span> <span class="op">@default:US @trim @uppercase</span> <span class="di">}</span>
+    <div class="result">
+      null → "US" (default applied) → "US" (trim: no-op) → "US" (uppercase: already upper)
+    </div>
+  </div>
+  <div class="callout warn">
+    <strong>Order matters</strong>
+    <code>@json @base64</code> first JSON-serializes, then Base64-encodes the JSON string. Reversing to <code>@base64 @json</code> would Base64-encode the raw value, then JSON-serialize the Base64 string — a very different result.
+  </div>
+
+  <h2 id="custom">Creating a Custom Option</h2>
+  <p>Implement <code>IDirectiveOption</code> and register it in the DI container:</p>
+  <pre><code><span class="kw">public class</span> <span class="ty">SanitizeHtmlDirectiveOption</span> : <span class="ty">IDirectiveOption</span>
+{
+    <span class="kw">public string</span> OptionName =&gt; <span class="st">"sanitize-html"</span>;
+    <span class="kw">public bool</span> IsSensitive =&gt; <span class="kw">false</span>;
+
+    <span class="kw">public void</span> <span class="fn">PopulateConstraints</span>(<span class="ty">FieldConstraints</span> constraints)
+    {
+        <span class="cm">// No constraints to set</span>
+    }
+
+    <span class="kw">public object</span>? <span class="fn">Apply</span>(<span class="ty">object</span>? resolvedValue)
+    {
+        <span class="kw">if</span> (resolvedValue <span class="kw">is not string</span> str) <span class="kw">return</span> resolvedValue;
+        <span class="kw">return</span> <span class="ty">HtmlEncoder</span>.Default.<span class="fn">Encode</span>(str);
+    }
+
+    <span class="kw">public string</span>? <span class="fn">FormatOutput</span>(<span class="ty">object</span>? finalValue)
+        =&gt; finalValue?.<span class="fn">ToString</span>();
+}
+
+<span class="cm">// Registration in DI</span>
+services.<span class="fn">AddSingleton</span>&lt;<span class="ty">IDirectiveOption</span>, <span class="ty">SanitizeHtmlDirectiveOption</span>&gt;();
+</code></pre>
+  <p>The orchestrator discovers all registered <code>IDirectiveOption</code> implementations by name when parsing the <code>@sanitize-html</code> token from an expression.</p>
+
+  <div class="expr-box">
+    <div class="label">Using the custom option</div>
+    <span class="di">{@</span> <span class="kw">$input</span>.<span class="pa">current.userComment</span> <span class="op">@sanitize-html</span> <span class="di">}</span>
+    <div class="result">&lt;script&gt;alert('xss')&lt;/script&gt; → &amp;lt;script&amp;gt;alert(&#x27;xss&#x27;)&amp;lt;/script&amp;gt;</div>
+  </div>
+</main>
+</body>
+</html>

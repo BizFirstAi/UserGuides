@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>@ Canned Expressions | BizFirst Expression Evaluation</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand">BizFirst Expressions<span>Directive Reference</span></div>
+  <div class="sidebar-section">Directives</div>
+  <a href="ctx.html">$ctx — Context</a>
+  <a href="var.html">$var — Variable</a>
+  <a href="input.html">$input — Node Input</a>
+  <a href="output.html">$output — Node Output</a>
+  <a href="exec.html">$exec — Execution</a>
+  <a href="flow.html">$flow — Workflow</a>
+  <a href="js.html">$js — JavaScript</a>
+  <a href="cs.html">$cs — C# Script</a>
+  <a href="tpl.html">$tpl — Template</a>
+  <a href="api.html">$api — External API</a>
+  <a href="math.html">$math — Math</a>
+  <a href="items.html">$items — Items</a>
+  <a href="canned.html" class="active">@ — Canned</a>
+  <div class="sidebar-section">Documentation</div>
+  <a href="../index.html">Hub</a>
+  <a href="../01-how-it-works.html">How It Works</a>
+  <a href="../02-how-to-call.html">Integration Guide</a>
+  <a href="../03-directive-samples.html">Expression Samples</a>
+  <a href="../04-directive-structure.html">Directive Structure</a>
+  <a href="../05-edge-cases.html">Edge Cases</a>
+  <a href="../06-complex-cases.html">Complex Use Cases</a>
+  <a href="../07-options.html">Options Reference</a>
+  <a href="../08-nested-templates.html">Nested Templates</a>
+  <a href="../09-canned-expressions.html">Canned Expressions</a>
+  <a href="../10-plugin-guide.html">Plugin Guide</a>
+  <a href="../12-vocabulary.html">Vocabulary</a>
+  <a href="../13-discovery-api.html">Discovery API</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">Directive Reference</div>
+    <h1><code>@</code> — Canned Expression Directive</h1>
+    <p class="subtitle">Named aliases for pre-written expressions stored in the database. A canned expression resolves to its stored body — which may itself contain BizFirst wildcards that are evaluated via multi-pass resolution.</p>
+  </div>
+
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Directive name</td><td><code>@</code> (AtSign prefix)</td></tr>
+      <tr><td>Required isolation level</td><td><span class="tag green">Safe</span> (inherited from stored expression)</td></tr>
+      <tr><td>Project</td><td><code>Catalog.Services</code></td></tr>
+      <tr><td>Data source</td><td><code>Expression_CannedExpressions</code> table via <code>ICannedExpressionStore</code></td></tr>
+      <tr><td>Syntax form</td><td><code>{@ @AliasName }</code> or bare <code>@AliasName</code> in supporting contexts</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Syntax</h2>
+  <div class="expr-box">
+    <div class="label">Canned expression by alias</div>
+    <span class="di">{@</span> <span class="kw">@TenantCurrency</span> <span class="di">}</span>
+    <div class="result">Stored body: <code>{@ $ctx.tenant.currency }</code> → evaluated to "EUR"</div>
+  </div>
+  <div class="expr-box">
+    <div class="label">Embedded in a template string</div>
+    Invoice <span class="di">{@</span> <span class="kw">$input</span>.<span class="pa">current.invoiceNumber</span> <span class="di">}</span> — Total: <span class="di">{@</span> <span class="kw">@FormattedTotal</span> <span class="di">}</span>
+    <div class="result">FormattedTotal expands to its stored expression and is evaluated inline</div>
+  </div>
+  <div class="expr-box">
+    <div class="label">With options</div>
+    <span class="di">{@</span> <span class="kw">@EmployeeFullName</span> <span class="op">@uppercase</span> <span class="di">}</span>
+    <div class="result">Canned expression resolved, then result uppercased</div>
+  </div>
+
+  <h2>Resolution Order</h2>
+  <p>When resolving <code>@AliasName</code>, the system searches in order and uses the first match:</p>
+  <ol>
+    <li>TenantID = current tenant, AppID = current app, Name = alias</li>
+    <li>TenantID = current tenant, AppID = NULL (tenant-wide), Name = alias</li>
+    <li>TenantID = NULL (platform-wide), AppID = NULL, Name = alias</li>
+  </ol>
+  <p>This allows platform defaults to be overridden per-tenant or per-app without changing workflow definitions.</p>
+
+  <h2>Database Schema</h2>
+  <pre><code>CREATE TABLE Expression_CannedExpressions (
+    ID            INT IDENTITY,
+    TenantID      INT NULL,          -- NULL = platform-wide default
+    AppDomainID   INT NULL,          -- NULL = tenant-wide (all apps)
+    Name          NVARCHAR(200) NOT NULL,   -- the alias (e.g. "TenantCurrency")
+    Body          NVARCHAR(MAX) NOT NULL,   -- expression text (may contain wildcards)
+    Description   NVARCHAR(500) NULL,
+    IsActive      BIT DEFAULT 1,
+    CreatedOn     DATETIME NOT NULL,
+    CreatedBy     INT NOT NULL,
+    LastModifiedOn DATETIME NULL,
+    LastModifiedBy INT NULL,
+    -- ... full standard audit columns
+    CONSTRAINT UQ_CannedExpr UNIQUE (TenantID, AppDomainID, Name)
+)</code></pre>
+
+  <h2>Multi-Pass Resolution</h2>
+  <p>Canned expressions are the primary driver of multi-pass resolution. When a canned body itself contains BizFirst wildcards, those wildcards are resolved in subsequent passes:</p>
+  <pre><code><span class="cm">Pass 1:</span>  <span class="di">{@</span> <span class="kw">@GreetingLine</span> <span class="di">}</span>
+         ↓ loads body: "Dear {@ $ctx.user.firstName }, welcome to {@ $ctx.tenant.name }"
+<span class="cm">Pass 2:</span>  wildcards inside the body are evaluated
+         ↓ result: "Dear Alice, welcome to Acme Corp"</code></pre>
+
+  <div class="callout info">
+    <strong>VisitedKeys prevents infinite loops</strong>
+    If canned expression A expands to body that references <code>@A</code> again, the VisitedKeys set catches the cycle and raises <code>CyclicReference</code> rather than looping infinitely.
+  </div>
+
+  <h2>Complex Scenarios</h2>
+
+  <h3>Scenario 1 — Tenant-Specific Legal Disclaimer</h3>
+  <p>Each tenant has a different legal footer. A single workflow uses one canned alias — each tenant's record returns their own text:</p>
+  <pre><code><span class="cm">// Platform default (TenantID = NULL):</span>
+@LegalDisclaimer → "This document is generated automatically. For queries contact support@bizfirst.ai."
+
+<span class="cm">// Acme Corp override (TenantID = 5):</span>
+@LegalDisclaimer → "Acme Corp. Registered in Ireland. Company No. 123456. VAT IE9876543A."
+
+<span class="cm">// Usage in email template — same workflow, different output per tenant:</span>
+<span class="di">{@</span> <span class="kw">@LegalDisclaimer</span> <span class="di">}</span></code></pre>
+
+  <h3>Scenario 2 — Composed Expression from Multiple Canned Parts</h3>
+  <p>Build a reusable email greeting from several canned pieces, each independently overridable:</p>
+  <pre><code><span class="cm">// @GreetingLine body:    "Dear {@ $ctx.user.firstName },"</span>
+<span class="cm">// @SignatureLine body:   "{@ $ctx.user.name }\n{@ $ctx.user.department } Manager"</span>
+<span class="cm">// @TenantSupport body:  "{@ $ctx.tenant.name } Support — {@ $ctx.env.SUPPORT_EMAIL }"</span>
+
+<span class="cm">// Email node:</span>
+<span class="di">{@</span> <span class="kw">@GreetingLine</span> <span class="di">}</span>
+
+Your payslip for <span class="di">{@</span> <span class="kw">$ctx</span>.<span class="pa">now</span> <span class="op">@date:MMMM yyyy</span> <span class="di">}</span> is attached.
+
+Kind regards,
+<span class="di">{@</span> <span class="kw">@SignatureLine</span> <span class="di">}</span>
+
+---
+<span class="di">{@</span> <span class="kw">@TenantSupport</span> <span class="di">}</span></code></pre>
+
+  <h3>Scenario 3 — Shared Validation Rule</h3>
+  <p>A canned expression encapsulates a reusable business rule used across multiple workflows:</p>
+  <pre><code><span class="cm">// @IsHighValueTransaction body:</span>
+<span class="cm">//   "{@ $js`return parseFloat(context.input.current.amount) > 50000` }"</span>
+
+<span class="cm">// Used in multiple workflows — change the threshold in ONE place:</span>
+<span class="di">{@</span> <span class="kw">@IsHighValueTransaction</span> <span class="di">}</span>
+<span class="cm">// IfCondition: true → route to finance approval; false → auto-approve</span>
+
+<span class="cm">// When threshold changes from 50000 to 75000:</span>
+<span class="cm">// Update ONE DB record; all workflows using @IsHighValueTransaction update instantly.</span></code></pre>
+
+  <h3>Scenario 4 — Nested Canned Expressions</h3>
+  <p>A canned expression that references another canned expression — resolved recursively via multi-pass:</p>
+  <pre><code><span class="cm">// @AuditHeader body:</span>
+<span class="cm">//   "[{@ $ctx.now }] Tenant: {@  @TenantRef } | Exec: {@ $exec.executionId }"</span>
+
+<span class="cm">// @TenantRef body:</span>
+<span class="cm">//   "{@ $ctx.tenant.id }:{@ $ctx.tenant.name }"</span>
+
+<span class="cm">// Usage:</span>
+<span class="di">{@</span> <span class="kw">@AuditHeader</span> <span class="di">}</span>
+
+<span class="cm">// Pass 1: expands @AuditHeader</span>
+<span class="cm">// Pass 2: expands $ctx.now, @TenantRef, $exec.executionId</span>
+<span class="cm">// Pass 3: expands $ctx.tenant.id, $ctx.tenant.name (from @TenantRef body)</span>
+<span class="cm">// Result: "[2024-03-15T10:22:01Z] Tenant: 5:Acme Corp | Exec: e8f23a1b-..."</span></code></pre>
+
+  <h3>Scenario 5 — App-Specific Override for Multi-App Tenant</h3>
+  <p>A tenant has two apps (Payroll UK, Payroll IE). The same alias resolves differently per app:</p>
+  <pre><code><span class="cm">// @PayPeriodLabel entries:</span>
+<span class="cm">// TenantID=5, AppDomainID=12 (Payroll UK): "Tax Week"</span>
+<span class="cm">// TenantID=5, AppDomainID=15 (Payroll IE): "Pay Period"</span>
+<span class="cm">// TenantID=NULL, AppDomainID=NULL (default): "Period"</span>
+
+<span class="cm">// Same workflow runs in both apps:</span>
+<span class="di">{@</span> <span class="kw">@PayPeriodLabel</span> <span class="di">}</span>: <span class="di">{@</span> <span class="kw">$input</span>.<span class="pa">current.periodStart</span> <span class="di">}</span> – <span class="di">{@</span> <span class="kw">$input</span>.<span class="pa">current.periodEnd</span> <span class="di">}</span>
+<span class="cm">// UK app → "Tax Week: 2024-04-06 – 2024-04-12"</span>
+<span class="cm">// IE app → "Pay Period: 2024-04-01 – 2024-04-30"</span></code></pre>
+
+  <h3>Scenario 6 — REST API Management of Canned Expressions</h3>
+  <p>Canned expressions are managed via REST API — enabling admin UIs and CI/CD pipeline updates:</p>
+  <pre><code><span class="cm">// List all tenant-scoped canned expressions</span>
+GET /api/expressions/canned?tenantId=5
+
+<span class="cm">// Create a new one</span>
+POST /api/expressions/canned
+{
+  "tenantId": 5,
+  "appDomainId": null,
+  "name": "SupportEmail",
+  "body": "{@ $ctx.env.SUPPORT_EMAIL @default:support@bizfirst.ai }",
+  "description": "Tenant support email address, falls back to platform default"
+}
+
+<span class="cm">// Preview resolution without executing a workflow</span>
+POST /api/expressions/canned/preview
+{
+  "name": "SupportEmail",
+  "tenantId": 5
+}
+<span class="cm">// Returns: { "resolved": "helpdesk@acme.com", "passCount": 2 }</span></code></pre>
+
+  <h2>Common Errors</h2>
+  <table>
+    <thead><tr><th>Error</th><th>Cause</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><code>PathNotFound: @MyAlias</code></td><td>No matching record in <code>Expression_CannedExpressions</code> for this tenant/app/name</td><td>Create the entry via admin UI or REST API; check spelling (case-sensitive)</td></tr>
+      <tr><td><code>CyclicReference: @MyAlias</code></td><td>Canned expression body references itself directly or indirectly</td><td>Break the cycle by creating intermediate variables; VisitedKeys detects the loop</td></tr>
+      <tr><td><code>DepthLimitExceeded</code></td><td>Deep chain of nested canned expressions exceeds 10 passes</td><td>Flatten nested canned expressions; increase depth limit with caution</td></tr>
+      <tr><td>Wrong tenant's value returned</td><td>Resolution order matched a broader-scoped record unexpectedly</td><td>Add a more specific record (TenantID + AppDomainID) to override the fallback</td></tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>
