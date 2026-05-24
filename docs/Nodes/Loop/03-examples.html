@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Loop — Examples — BizFirstAI</title>
+  <link rel="stylesheet" href="../../styles.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+</head>
+<body>
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">LOOP<span>Logic Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Other Logic Nodes</div>
+  <a href="../IfCondition/">If Condition</a>
+  <a href="../Switch/">Switch</a>
+  <a href="../Break/">Break</a>
+  <a href="../Continue/">Continue</a>
+  <a href="../ParallelFork/">Parallel Fork</a>
+  <a href="../ParallelJoin/">Parallel Join</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="https://bizfirstai.github.io/UserGuides/">Portal</a>
+      <span>/</span>
+      <a href="../../">Nodes</a>
+      <span>/</span>
+      <a href="index.html">Loop</a>
+      <span>/</span>
+      <span>Examples</span>
+    </div>
+    <h1><i class="fa-solid fa-flask"></i> Examples</h1>
+    <p class="page-subtitle">Real-world Loop node configurations for invoice processing, email dispatch, and early-exit patterns.</p>
+  </div>
+
+  <h3>Example 1: Process Invoice Line Items</h3>
+  <p>
+    Iterate over the line items extracted from an invoice document. For each item, validate the product code and accumulate the total amount. After all items are processed, the done port triggers the approval step.
+  </p>
+  <pre><code>{
+  "node_type": "Loop",
+  "node_id": "ProcessLineItems",
+  "config": {
+    "items": "invoice.lineItems"
+  },
+  "connections": {
+    "body": ["ValidateProductCode"],
+    "done": ["SubmitForApproval"]
+  }
+}
+
+// ValidateProductCode node uses:
+// $var.current_item.sku  → product code for lookup
+// $var.current_item.qty  → quantity
+// $var.current_item.price → unit price
+// $var.current_index     → item position for error reporting</code></pre>
+  <p><strong>Expected outcome:</strong> For a 5-line invoice, the ValidateProductCode node fires 5 times, each time receiving the corresponding line item. After all 5 pass validation, the SubmitForApproval node fires once with the fully validated invoice context.</p>
+
+  <h3>Example 2: Bulk Email Dispatch</h3>
+  <p>
+    Loop over a list of marketing campaign recipients and send a personalised email to each. Track the number of successfully sent emails in an accumulator variable.
+  </p>
+  <pre><code>{
+  "node_type": "Loop",
+  "node_id": "SendCampaignEmails",
+  "config": {
+    "items": "campaignRecipients"
+  },
+  "connections": {
+    "body": ["PersonaliseEmailContent"],
+    "done": ["SendCampaignSummaryReport"]
+  }
+}
+
+// Before the loop, a Set Variable node initialises:
+// sentCount = 0
+
+// PersonaliseEmailContent uses:
+// $var.current_item.email
+// $var.current_item.firstName
+// After sending, a Set Variable node increments:
+// sentCount = $var.sentCount + 1</code></pre>
+  <p><strong>Expected outcome:</strong> Each recipient receives a personalised email. After the loop, <code>sentCount</code> holds the total dispatched count. SendCampaignSummaryReport uses this value to notify the campaign manager of delivery totals.</p>
+
+  <h3>Example 3: Cart Validation with Early Break</h3>
+  <p>
+    Validate stock availability for each cart item. Exit the loop immediately if any item is out of stock and route to a stock-alert page instead of proceeding to checkout.
+  </p>
+  <pre><code>{
+  "node_type": "Loop",
+  "node_id": "ValidateCartStock",
+  "config": {
+    "items": "cart.items"
+  },
+  "connections": {
+    "body": ["CheckStockAvailability"],
+    "done": ["ProceedToPayment"]
+  }
+}
+
+// CheckStockAvailability → IfCondition (inStock check)
+//   true:  → (no further body nodes, loop advances to next item)
+//   false: → SetVariable (outOfStockSku = $var.current_item.sku)
+//             → Break node (exits loop early)
+
+// Loop "done" port fires after Break:
+//   loop_completed_normally = false
+//   outOfStockSku = "SKU-442"
+// ProceedToPayment node checks loop_completed_normally:
+//   if false → redirect to stock alert page</code></pre>
+  <p><strong>Expected outcome:</strong> If all items are in stock, the loop completes normally and the customer proceeds to payment. If any item is out of stock, the Break exits the loop early, <code>outOfStockSku</code> is populated, and the done port routes to a stock-unavailable message.</p>
+
+  <h3>Example 4: Payroll Processing with Skipping</h3>
+  <p>
+    Process payroll for each employee in the batch. Skip employees who are on unpaid leave (their pay is zero), using a Continue node to advance to the next employee without running the full payroll calculation.
+  </p>
+  <pre><code>{
+  "node_type": "Loop",
+  "node_id": "ProcessPayrollBatch",
+  "config": {
+    "items": "employees"
+  },
+  "connections": {
+    "body": ["CheckLeaveStatus"],
+    "done": ["SubmitBankTransferBatch"]
+  }
+}
+
+// CheckLeaveStatus → IfCondition
+//   condition: "$var.current_item.onUnpaidLeave === true"
+//   true:  → Continue node (skip payroll calc for this employee)
+//   false: → CalculateGrossPay → CalculateDeductions
+//             → GeneratePayslip
+
+// After the loop completes:
+// SubmitBankTransferBatch receives all calculated pay records</code></pre>
+  <p><strong>Expected outcome:</strong> Employees on unpaid leave are skipped without error. All other employees receive full payroll calculations. The batch submission node receives the accumulated payslip data for all processed employees.</p>
+
+  <h3>Example 5: Iterating a Simple String Array</h3>
+  <p>
+    Loop over a list of email addresses (simple string array) to send password reset links. Demonstrates that the Loop node works equally well with arrays of primitives, not just arrays of objects.
+  </p>
+  <pre><code>{
+  "node_type": "Loop",
+  "node_id": "SendPasswordResets",
+  "config": {
+    "items": "adminEmailList"
+  },
+  "connections": {
+    "body": ["SendResetEmail"],
+    "done": ["LogResetCompletion"]
+  }
+}
+
+// adminEmailList = ["alice@acme.com", "bob@acme.com", "carol@acme.com"]
+
+// For each iteration, current_item is the email string directly:
+// SendResetEmail uses: $var.current_item as the recipient address
+// current_index used for logging: "Sent reset 1 of 3", "2 of 3", etc.</code></pre>
+  <p><strong>Expected outcome:</strong> Three password reset emails are dispatched, one per address in the array. The LogResetCompletion node fires once after all three are sent, recording the event with <code>loop_total_items = 3</code> and <code>loop_completed_normally = true</code>.</p>
+</main>
+</body>
+</html>

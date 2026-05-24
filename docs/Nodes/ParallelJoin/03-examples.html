@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Parallel Join — Examples — BizFirstAI</title>
+  <link rel="stylesheet" href="../../styles.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+</head>
+<body>
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">PARALLEL JOIN<span>Logic Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Other Logic Nodes</div>
+  <a href="../IfCondition/">If Condition</a>
+  <a href="../Switch/">Switch</a>
+  <a href="../Loop/">Loop</a>
+  <a href="../Break/">Break</a>
+  <a href="../Continue/">Continue</a>
+  <a href="../ParallelFork/">Parallel Fork</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="https://bizfirstai.github.io/UserGuides/">Portal</a>
+      <span>/</span>
+      <a href="../../">Nodes</a>
+      <span>/</span>
+      <a href="index.html">Parallel Join</a>
+      <span>/</span>
+      <span>Examples</span>
+    </div>
+    <h1><i class="fa-solid fa-flask"></i> Examples</h1>
+    <p class="page-subtitle">Complete Fork + Join configurations for notification aggregation, API merging, and parallel validation.</p>
+  </div>
+
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <div>Each example below shows the complete Fork + Join pair as they would appear in a workflow definition, along with the merged context structure available after the Join fires.</div>
+  </div>
+
+  <h3>Example 1: Order Notification — Aggregate Channel Results</h3>
+  <p>
+    Simultaneously send email, SMS, and Slack notifications. After the Join, check how many channels succeeded and route accordingly.
+  </p>
+  <pre><code>// Parallel Fork
+{
+  "node_type": "ParallelFork",
+  "node_id": "NotifyChannels",
+  "config": { "fail_fast": false },
+  "connections": {
+    "success": ["SendEmail", "SendSms", "PostSlack"]
+  }
+}
+
+// Parallel Join (no config needed)
+{
+  "node_type": "ParallelJoin",
+  "node_id": "WaitForNotifications"
+}
+
+// After Join success port fires:
+// $var.lane_success_count  → 3 (if all succeeded)
+// $var.lane_0_emailSent    → true
+// $var.lane_1_smsSent      → true
+// $var.lane_2_slackPosted  → true
+
+// Downstream IfCondition:
+// "$var.lane_success_count >= 1"  → at least one channel worked → proceed
+// "$var.lane_success_count === 0" → all channels failed → escalate</code></pre>
+  <p><strong>Expected outcome:</strong> Even if one channel fails, the workflow proceeds if at least one notification was delivered. All channel statuses are available for the audit log.</p>
+
+  <h3>Example 2: Customer Enrichment — Merge All API Results</h3>
+  <p>
+    Call three enrichment APIs concurrently, then merge their results into a unified customer risk profile. All three are required, so fail_fast is enabled.
+  </p>
+  <pre><code>// Parallel Fork
+{
+  "node_type": "ParallelFork",
+  "node_id": "EnrichCustomer",
+  "config": { "fail_fast": true },
+  "connections": {
+    "success": [
+      "CallCreditAPI",     // lane 0: sets creditScore
+      "CallFraudAPI",      // lane 1: sets riskLevel
+      "CallLoyaltyAPI"     // lane 2: sets loyaltyTier
+    ]
+  }
+}
+
+// After Parallel Join fires success:
+// $var.lane_0_creditScore  → 742
+// $var.lane_1_riskLevel    → "low"
+// $var.lane_2_loyaltyTier  → "gold"
+
+// Downstream SetVariable node creates:
+// customerProfile = {
+//   creditScore: $var.lane_0_creditScore,
+//   riskLevel:   $var.lane_1_riskLevel,
+//   loyaltyTier: $var.lane_2_loyaltyTier
+// }</code></pre>
+  <p><strong>Expected outcome:</strong> All three API results are merged into a single <code>customerProfile</code> object. If any API fails, the workflow routes to an error handler immediately (fail_fast), preventing a partial profile from being used.</p>
+
+  <h3>Example 3: Parallel Validation — Loan Application Checks</h3>
+  <p>
+    Run four validation checks in parallel for a loan application. After the Join, confirm all four passed before approving.
+  </p>
+  <pre><code>// Parallel Fork
+{
+  "node_type": "ParallelFork",
+  "node_id": "RunValidations",
+  "config": { "fail_fast": false },
+  "connections": {
+    "success": [
+      "CheckCreditHistory",    // lane 0: sets creditPassed
+      "VerifyIdentity",        // lane 1: sets identityPassed
+      "VerifyIncome",          // lane 2: sets incomePassed
+      "VerifyAddress"          // lane 3: sets addressPassed
+    ]
+  }
+}
+
+// After Parallel Join fires:
+// lane_success_count = 4 (if all pass)
+// $var.lane_0_creditPassed   → true
+// $var.lane_1_identityPassed → true
+// $var.lane_2_incomePassed   → true
+// $var.lane_3_addressPassed  → false  ← address check failed
+
+// Downstream IfCondition:
+// "$var.lane_0_creditPassed && $var.lane_1_identityPassed &&
+//  $var.lane_2_incomePassed && $var.lane_3_addressPassed"
+//   true:  → ApproveLoanApplication
+//   false: → RouteToHumanReview (with specific failed checks identified)</code></pre>
+  <p><strong>Expected outcome:</strong> All four checks run concurrently. The Join provides individual pass/fail for each check. The downstream node identifies exactly which checks failed (address in this case) and routes the application to human review with the failure details populated.</p>
+
+  <h3>Example 4: Document Generation — Collect All Document URLs</h3>
+  <p>
+    Generate four documents in parallel and collect all their storage URLs into a single array after the Join. The array is used to attach all documents to the outbound email.
+  </p>
+  <pre><code>// Parallel Fork
+{
+  "node_type": "ParallelFork",
+  "node_id": "GenerateDocuments",
+  "config": { "fail_fast": false },
+  "connections": {
+    "success": [
+      "GenerateInvoice",        // lane 0: sets documentUrl
+      "GenerateShippingLabel",  // lane 1: sets documentUrl
+      "GeneratePickList",       // lane 2: sets documentUrl
+      "GenerateRemittance"      // lane 3: sets documentUrl
+    ]
+  }
+}
+
+// After Parallel Join fires:
+// lane_outputs[0].documentUrl → "https://storage.../invoice-001.pdf"
+// lane_outputs[1].documentUrl → "https://storage.../label-001.pdf"
+// lane_outputs[2].documentUrl → "https://storage.../picklist-001.pdf"
+// lane_outputs[3].documentUrl → "https://storage.../remittance-001.pdf"
+
+// SetVariable:
+// allDocumentUrls = lane_outputs.map(l => l.documentUrl)
+// → ["https://.../invoice-001.pdf", "https://.../label-001.pdf", ...]
+
+// SendDispatchEmail uses: $var.allDocumentUrls as attachment list</code></pre>
+  <p><strong>Expected outcome:</strong> All four documents are generated concurrently. The Join provides the <code>lane_outputs</code> array, from which all document URLs are extracted into a flat array. The dispatch email is sent with all four documents attached in a single operation.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Break — Input &amp; Output — BizFirstAI</title>
+  <link rel="stylesheet" href="../../styles.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+</head>
+<body>
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">BREAK<span>Logic Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html" class="active">Input &amp; Output</a>
+  <a href="03-examples.html">Examples</a>
+  <div class="sidebar-section">Other Logic Nodes</div>
+  <a href="../IfCondition/">If Condition</a>
+  <a href="../Switch/">Switch</a>
+  <a href="../Loop/">Loop</a>
+  <a href="../Continue/">Continue</a>
+  <a href="../ParallelFork/">Parallel Fork</a>
+  <a href="../ParallelJoin/">Parallel Join</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="https://bizfirstai.github.io/UserGuides/">Portal</a>
+      <span>/</span>
+      <a href="../../">Nodes</a>
+      <span>/</span>
+      <a href="index.html">Break</a>
+      <span>/</span>
+      <span>Input &amp; Output</span>
+    </div>
+    <h1><i class="fa-solid fa-right-left"></i> Input &amp; Output</h1>
+    <p class="page-subtitle">The break output port, signal propagation to the Loop node, and post-break context availability.</p>
+  </div>
+
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <div>
+      <strong>Signal-based exit:</strong> The Break node does not directly jump execution to the Loop's done port. Instead, it signals the loop via a memory flag. The Loop node observes the signal and performs the transition. This design ensures execution flow remains consistent and auditable.
+    </div>
+  </div>
+
+  <h2>Output Ports</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Port</th>
+        <th>When Triggered</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>break</code></td>
+        <td>Immediately when the Break node executes</td>
+        <td>The break port fires after setting the LoopBreakSignal. You can connect optional cleanup or logging nodes to this port. In most use cases, this port has no connections and execution returns to the Loop node which then fires its done port.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Execution Memory Written by Break</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Memory Key</th>
+        <th>Value</th>
+        <th>Cleared By</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>LoopBreakSignal</code></td>
+        <td><code>true</code></td>
+        <td>Cleared by the Loop node after it detects the signal and transitions to the done port</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Data Flow After Break</h2>
+  <pre><code>// === Loop iterating over 5 items ===
+// Iteration 1 completes normally
+// Iteration 2: IfCondition routes to Break node
+
+// === Break node executes on iteration 2 ===
+// Sets LoopBreakSignal = true in execution memory
+// Fires "break" port (no downstream nodes connected)
+
+// === Loop node detects signal ===
+// Clears LoopBreakSignal
+// Does NOT start iteration 3, 4, or 5
+// Fires "done" port with:
+{
+  "loop_completed_normally": false,
+  "loop_total_items": 5,
+  "current_index": 1,       // last executed iteration index
+  "current_item": { ... },  // last executed item
+  // All variables accumulated during iterations 1 and 2
+  // Variables set before break (e.g., breakReason) are available
+}</code></pre>
+
+  <h2>Post-Break Routing in the Done Port</h2>
+  <p>
+    Downstream nodes connected to the Loop's done port can use the <code>loop_completed_normally</code> flag to distinguish between a full successful iteration and an early break exit. A common pattern is to connect an If Condition node immediately after the Loop's done port:
+  </p>
+  <pre><code>// If Condition after Loop done port:
+{
+  "condition": "$var.loop_completed_normally === true"
+  // true:  → NormalCompletionPath
+  // false: → EarlyExitHandlingPath
+}</code></pre>
+  <p>
+    This pattern allows the workflow to take a completely different action depending on whether all items were processed or the loop exited early, without requiring separate workflow branches for each scenario.
+  </p>
+</main>
+</body>
+</html>

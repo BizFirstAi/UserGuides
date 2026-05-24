@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Parallel Fork — Examples — BizFirstAI</title>
+  <link rel="stylesheet" href="../../styles.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+</head>
+<body>
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">PARALLEL FORK<span>Logic Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Other Logic Nodes</div>
+  <a href="../IfCondition/">If Condition</a>
+  <a href="../Switch/">Switch</a>
+  <a href="../Loop/">Loop</a>
+  <a href="../Break/">Break</a>
+  <a href="../Continue/">Continue</a>
+  <a href="../ParallelJoin/">Parallel Join</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="https://bizfirstai.github.io/UserGuides/">Portal</a>
+      <span>/</span>
+      <a href="../../">Nodes</a>
+      <span>/</span>
+      <a href="index.html">Parallel Fork</a>
+      <span>/</span>
+      <span>Examples</span>
+    </div>
+    <h1><i class="fa-solid fa-flask"></i> Examples</h1>
+    <p class="page-subtitle">Parallel Fork configurations for notifications, API enrichment, validation, and fail_fast transactions.</p>
+  </div>
+
+  <h3>Example 1: Multi-Channel Order Notification</h3>
+  <p>
+    When an order is confirmed, simultaneously send an email receipt, an SMS alert, and a Slack channel notification. All three channels are independent and should run concurrently. A failure on one channel (e.g., SMS provider down) should not block the others.
+  </p>
+  <pre><code>{
+  "node_type": "ParallelFork",
+  "node_id": "NotifyAllChannels",
+  "config": {
+    "fail_fast": false,
+    "max_parallelism": 0
+  },
+  "connections": {
+    "success": [
+      "SendOrderConfirmationEmail",
+      "SendOrderSmsAlert",
+      "PostOrderSlackMessage"
+    ]
+  }
+}
+
+// All three nodes start simultaneously.
+// Each receives full order context including orderId, customer details.
+// ParallelJoin waits for all three before proceeding.</code></pre>
+  <p><strong>Expected outcome:</strong> All three notifications are dispatched concurrently, reducing total notification time from ~3 seconds to ~1 second. If SMS fails, email and Slack still complete — the Join node records the SMS failure in lane results.</p>
+
+  <h3>Example 2: Concurrent Customer Profile Enrichment</h3>
+  <p>
+    Enrich a customer profile from three independent data sources simultaneously. All three results are needed to assemble the complete profile, so fail_fast is enabled.
+  </p>
+  <pre><code>{
+  "node_type": "ParallelFork",
+  "node_id": "EnrichCustomerProfile",
+  "config": {
+    "fail_fast": true,
+    "max_parallelism": 0
+  },
+  "connections": {
+    "success": [
+      "CallCreditScoringAPI",
+      "CallFraudRiskAPI",
+      "CallLoyaltyProgrammeAPI"
+    ]
+  }
+}
+
+// Each API call runs independently.
+// If any API returns an error, fail_fast cancels the others.
+// ParallelJoin merges: lane_0_creditScore, lane_1_riskScore, lane_2_loyaltyPoints</code></pre>
+  <p><strong>Expected outcome:</strong> All three API calls fire simultaneously. If all succeed, the Join assembles the complete enriched profile. If any fails, the remaining calls are cancelled and the workflow routes to an enrichment error handler.</p>
+
+  <h3>Example 3: Rate-Limited Parallel API Calls</h3>
+  <p>
+    Fan out to 8 data processing lanes but limit to 3 concurrent executions to respect API rate limits. Lanes 4-8 queue and execute as the earlier lanes complete.
+  </p>
+  <pre><code>{
+  "node_type": "ParallelFork",
+  "node_id": "ProcessDataBatch",
+  "config": {
+    "fail_fast": false,
+    "max_parallelism": 3
+  },
+  "connections": {
+    "success": [
+      "ProcessSegmentA", "ProcessSegmentB", "ProcessSegmentC",
+      "ProcessSegmentD", "ProcessSegmentE", "ProcessSegmentF",
+      "ProcessSegmentG", "ProcessSegmentH"
+    ]
+  }
+}</code></pre>
+  <p><strong>Expected outcome:</strong> Segments A, B, and C start immediately. As each completes, the next queued segment starts. At most 3 segments are processing at any given time, staying within the API rate limit. Total time is significantly less than sequential processing while remaining within rate constraints.</p>
+
+  <h3>Example 4: Parallel Document Generation</h3>
+  <p>
+    Generate four output documents from a single order record simultaneously: customer invoice, shipping label, warehouse pick list, and supplier remittance advice.
+  </p>
+  <pre><code>{
+  "node_type": "ParallelFork",
+  "node_id": "GenerateOrderDocuments",
+  "config": {
+    "fail_fast": false,
+    "max_parallelism": 0
+  },
+  "connections": {
+    "success": [
+      "GenerateCustomerInvoice",
+      "GenerateShippingLabel",
+      "GenerateWarehousePickList",
+      "GenerateSupplierRemittance"
+    ]
+  }
+}
+
+// Each generator uses orderId from the shared context.
+// Each produces a document URL stored in its lane's results.
+// ParallelJoin collects:
+//   lane_0_invoiceUrl, lane_1_shippingLabelUrl,
+//   lane_2_pickListUrl, lane_3_remittanceUrl</code></pre>
+  <p><strong>Expected outcome:</strong> All four documents are generated concurrently. The total generation time equals the slowest document renderer, not the sum. After the Join, all four document URLs are available for dispatch to the relevant recipients.</p>
+</main>
+</body>
+</html>

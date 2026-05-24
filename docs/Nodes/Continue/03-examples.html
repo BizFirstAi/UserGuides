@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Continue — Examples — BizFirstAI</title>
+  <link rel="stylesheet" href="../../styles.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+</head>
+<body>
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">CONTINUE<span>Logic Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Other Logic Nodes</div>
+  <a href="../IfCondition/">If Condition</a>
+  <a href="../Switch/">Switch</a>
+  <a href="../Loop/">Loop</a>
+  <a href="../Break/">Break</a>
+  <a href="../ParallelFork/">Parallel Fork</a>
+  <a href="../ParallelJoin/">Parallel Join</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="https://bizfirstai.github.io/UserGuides/">Portal</a>
+      <span>/</span>
+      <a href="../../">Nodes</a>
+      <span>/</span>
+      <a href="index.html">Continue</a>
+      <span>/</span>
+      <span>Examples</span>
+    </div>
+    <h1><i class="fa-solid fa-flask"></i> Examples</h1>
+    <p class="page-subtitle">Practical Continue node patterns: filter-by-condition, idempotent processing, null-skipping, and resilient batches.</p>
+  </div>
+
+  <h3>Example 1: Filter — Skip Inactive Customers</h3>
+  <p>
+    A monthly statement generation loop processes all customers. Customers without active subscriptions are skipped — no statement is generated and no email is sent.
+  </p>
+  <pre><code>// Loop: items = "allCustomers"
+// Body:
+// → IfCondition: "$var.current_item.subscriptionStatus !== 'active'"
+//   true:
+//     → SetVariable: skippedCount = $var.skippedCount + 1
+//     → Continue
+//   false:
+//     → GenerateStatement
+//     → SendStatementEmail
+
+// Done port:
+// → SendBatchSummary (uses processedCount and skippedCount variables)</code></pre>
+  <p><strong>Expected outcome:</strong> Only active customers receive statements. Inactive customers are silently skipped with their count tracked. The batch summary reports both figures to the billing team.</p>
+
+  <h3>Example 2: Idempotent Processing — Skip Already Migrated Records</h3>
+  <p>
+    A data migration loop can be safely re-run. Records already migrated in a previous run are skipped via Continue, preventing duplicate writes.
+  </p>
+  <pre><code>// Loop: items = "legacyRecords"
+// Body:
+// → CheckMigrationStatus (HTTP call: GET /migration/status/$var.current_item.id)
+// → IfCondition: "$output.CheckMigrationStatus.alreadyMigrated === true"
+//   true:
+//     → Continue  (skip — already migrated)
+//   false:
+//     → MigrateRecord (HTTP call: POST /migration/records)
+//     → SetVariable: migratedCount = $var.migratedCount + 1
+
+// Done port:
+// → LogMigrationResult (reports migratedCount out of loop_total_items)</code></pre>
+  <p><strong>Expected outcome:</strong> Re-running the migration skips all previously migrated records and only processes new ones. The loop is fully idempotent — safe to run multiple times without duplicate data.</p>
+
+  <h3>Example 3: Skip Null or Malformed Items</h3>
+  <p>
+    An external API returns an array that may contain null entries or objects missing required fields. Guard the loop body with a null check before any processing.
+  </p>
+  <pre><code>// Loop: items = "apiResults"
+// Body:
+// → IfCondition: "$var.current_item == null || $var.current_item.id == null"
+//   true:
+//     → SetVariable: nullCount = $var.nullCount + 1
+//     → Continue
+//   false:
+//     → EnrichRecord
+//     → SaveToDatabase
+
+// Done port:
+// → If nullCount > 0 → SendDataQualityAlert
+// → AlwaysRun: → FinaliseImport</code></pre>
+  <p><strong>Expected outcome:</strong> Null or incomplete records are skipped and counted. Valid records are enriched and saved. After the loop, a data quality alert is sent if any nulls were detected, but the import itself completes successfully regardless.</p>
+
+  <h3>Example 4: Resilient Batch — Continue on API Error</h3>
+  <p>
+    A bulk enrichment workflow calls a third-party data service for each record. Transient API errors for individual records are caught and the loop continues rather than aborting the entire batch.
+  </p>
+  <pre><code>// Loop: items = "recordsToEnrich"
+// Body:
+// → CallEnrichmentAPI (HTTP node, may return error status)
+// → IfCondition: "$output.CallEnrichmentAPI.statusCode !== 200"
+//   true:
+//     → SetVariable: failedIds = $var.failedIds.concat([$var.current_item.id])
+//     → Continue  (log and skip, do not abort batch)
+//   false:
+//     → MergeEnrichedData
+//     → SaveRecord
+
+// Done port:
+// → If failedIds.length > 0 → ScheduleRetryJob
+// → SendBatchCompletionReport</code></pre>
+  <p><strong>Expected outcome:</strong> The batch processes as many records as possible. Failed API calls don't abort the loop — they are collected into <code>failedIds</code>. After the loop, a retry job is scheduled for the failed IDs while the successfully enriched records are already saved.</p>
+
+  <h3>Example 5: Combine Continue and Break in the Same Loop</h3>
+  <p>
+    A prioritised task processor skips low-priority tasks but immediately stops when a critical-priority task is found (to handle it out-of-band).
+  </p>
+  <pre><code>// Loop: items = "taskQueue"
+// Body:
+// → IfCondition: "$var.current_item.priority === 'critical'"
+//   true:
+//     → SetVariable: criticalTask = $var.current_item
+//     → Break  (exit loop, handle critical task immediately)
+//   false:
+//     → IfCondition: "$var.current_item.priority === 'low'"
+//       true:  → Continue (skip low priority for now)
+//       false: → ProcessNormalTask
+
+// Done port:
+// → If criticalTask != null → EscalateCriticalTask
+// → Else: → ReportNormalTasksProcessed</code></pre>
+  <p><strong>Expected outcome:</strong> Low-priority tasks are skipped, normal tasks are processed. If a critical task is encountered, the loop exits immediately via Break and the critical task is escalated. Both Continue and Break coexist cleanly in the same loop body.</p>
+</main>
+</body>
+</html>

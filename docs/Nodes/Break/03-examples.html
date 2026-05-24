@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Break — Examples — BizFirstAI</title>
+  <link rel="stylesheet" href="../../styles.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+</head>
+<body>
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">BREAK<span>Logic Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Other Logic Nodes</div>
+  <a href="../IfCondition/">If Condition</a>
+  <a href="../Switch/">Switch</a>
+  <a href="../Loop/">Loop</a>
+  <a href="../Continue/">Continue</a>
+  <a href="../ParallelFork/">Parallel Fork</a>
+  <a href="../ParallelJoin/">Parallel Join</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="https://bizfirstai.github.io/UserGuides/">Portal</a>
+      <span>/</span>
+      <a href="../../">Nodes</a>
+      <span>/</span>
+      <a href="index.html">Break</a>
+      <span>/</span>
+      <span>Examples</span>
+    </div>
+    <h1><i class="fa-solid fa-flask"></i> Examples</h1>
+    <p class="page-subtitle">Practical Break node patterns for early exit, find-first, and error-on-detection scenarios.</p>
+  </div>
+
+  <h3>Example 1: Find First Matching Pricing Rule</h3>
+  <p>
+    A pricing engine loops over rules in priority order. The first rule matching the order's attributes is applied and the loop exits. Without Break, all rules would be evaluated unnecessarily after a match is already found.
+  </p>
+  <pre><code>// Loop node
+{
+  "node_type": "Loop",
+  "node_id": "EvaluatePricingRules",
+  "config": { "items": "pricingRules" }
+}
+
+// Inside loop body:
+// → IfCondition: "$var.current_item.appliesToTier === $ctx.customer.tier"
+//   true:
+//     → SetVariable: matchedRule = $var.current_item
+//     → Break (no config)
+//   false:
+//     → (no connection, loop advances to next item)
+
+// After loop done port:
+// matchedRule contains the first applicable rule
+// loop_completed_normally = false (if match was found before end)
+// loop_completed_normally = true (if no rule matched — use default pricing)</code></pre>
+  <p><strong>Expected outcome:</strong> The loop stops at the first matching rule and the matched rule is captured. If no rule matches, the loop completes normally and the default pricing path handles the order.</p>
+
+  <h3>Example 2: Stop CSV Import on Validation Error</h3>
+  <p>
+    A CSV import loop processes rows one by one. If a row fails validation, the Break node exits the loop and the error context is returned to the user.
+  </p>
+  <pre><code>// Loop: items = "csvRows"
+// Body:
+// → ValidateRowNode (HTTP call to validate service)
+// → IfCondition: "$output.ValidateRowNode.valid === false"
+//   true:
+//     → SetVariable: importError = {
+//         rowIndex: $var.current_index,
+//         reason: $output.ValidateRowNode.error
+//       }
+//     → Break
+//   false:
+//     → ImportRowToDB → (no further body nodes)
+
+// Done port IfCondition: "loop_completed_normally === true"
+//   true:  → ReturnSuccessResponse
+//   false: → ReturnValidationErrorResponse (uses importError variable)</code></pre>
+  <p><strong>Expected outcome:</strong> Valid rows are imported. The first invalid row triggers Break and the entire import stops. The error response includes the row index and reason, letting the user correct the specific row before retrying.</p>
+
+  <h3>Example 3: First Available Supplier Selection</h3>
+  <p>
+    Query multiple supplier APIs in preference order. Stop as soon as one returns available stock — avoid making redundant API calls to lower-priority suppliers.
+  </p>
+  <pre><code>// Loop: items = "suppliers"  (ordered by preference)
+// Body:
+// → CallSupplierAPI (HTTP node, uses $var.current_item.apiUrl)
+// → IfCondition: "$output.CallSupplierAPI.inStock === true"
+//   true:
+//     → SetVariable: selectedSupplier = $var.current_item
+//     → SetVariable: supplierPrice = $output.CallSupplierAPI.price
+//     → Break
+//   false:
+//     → (loop continues to next supplier)
+
+// Done port:
+// → PlaceOrderWithSupplier (uses selectedSupplier variable)</code></pre>
+  <p><strong>Expected outcome:</strong> The workflow queries suppliers one at a time in preference order. As soon as an available supplier is found, the remaining supplier APIs are not called, reducing latency and API costs.</p>
+
+  <h3>Example 4: Security Check — Stop on First Violation</h3>
+  <p>
+    A security policy loop evaluates a list of access control rules. The first rule violation triggers an immediate break and access is denied without evaluating remaining rules.
+  </p>
+  <pre><code>// Loop: items = "accessControlRules"
+// Body:
+// → EvaluateRule (evaluates $var.current_item.expression against request context)
+// → IfCondition: "$output.EvaluateRule.violated === true"
+//   true:
+//     → SetVariable: accessDeniedRule = $var.current_item.ruleName
+//     → Break
+//   false:
+//     → (continue checking remaining rules)
+
+// Done port IfCondition: "loop_completed_normally === false"
+//   true  (early break = violation found): → DenyAccessResponse
+//   false (all rules passed):              → GrantAccessResponse</code></pre>
+  <p><strong>Expected outcome:</strong> Access is denied immediately when the first violated rule is detected, with the rule name logged for audit purposes. If all rules pass (loop completes normally), access is granted.</p>
+</main>
+</body>
+</html>

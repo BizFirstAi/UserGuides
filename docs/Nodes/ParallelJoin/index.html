@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Parallel Join Node — BizFirstAI</title>
+  <link rel="stylesheet" href="../../styles.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+</head>
+<body>
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">PARALLEL JOIN<span>Logic Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html">Examples</a>
+  <div class="sidebar-section">Other Logic Nodes</div>
+  <a href="../IfCondition/">If Condition</a>
+  <a href="../Switch/">Switch</a>
+  <a href="../Loop/">Loop</a>
+  <a href="../Break/">Break</a>
+  <a href="../Continue/">Continue</a>
+  <a href="../ParallelFork/">Parallel Fork</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="https://bizfirstai.github.io/UserGuides/">Portal</a>
+      <span>/</span>
+      <a href="../../">Nodes</a>
+      <span>/</span>
+      <span>Parallel Join</span>
+    </div>
+    <h1><i class="fa-solid fa-code-merge"></i> Parallel Join Node</h1>
+    <p class="page-subtitle">Wait for all parallel lanes to complete, merge their results, and continue the workflow as a unified execution.</p>
+  </div>
+
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <div>
+      <strong>What it does:</strong> The Parallel Join node is the synchronisation point for a parallel execution group. It waits until every lane spawned by the corresponding Parallel Fork node has completed. Once all lanes report completion, the Join node collects each lane's output data into prefixed memory keys (<code>lane_0_*</code>, <code>lane_1_*</code>, etc.), assembles a <code>lane_outputs</code> collection, sets <code>IsParallelExecutionActive = false</code>, and fires its <strong>success</strong> port to continue the workflow.
+    </div>
+  </div>
+
+  <h2>Key Capabilities</h2>
+  <ul class="feature-list">
+    <li><i class="fa-solid fa-check"></i> Waits for ALL parallel lanes before proceeding — provides a clean synchronisation barrier ensuring no downstream node runs before all parallel work is complete.</li>
+    <li><i class="fa-solid fa-check"></i> Collects each lane's final execution context into <code>lane_N_*</code> prefixed memory keys, making all lane results accessible to downstream nodes through standard <code>$var</code> expressions.</li>
+    <li><i class="fa-solid fa-check"></i> Creates a <code>lane_outputs</code> array in memory containing all lane result objects, enabling downstream nodes to iterate over results or access specific lanes by index.</li>
+    <li><i class="fa-solid fa-check"></i> Restores single-thread execution by setting <code>IsParallelExecutionActive = false</code>, signalling that normal sequential execution has resumed.</li>
+    <li><i class="fa-solid fa-check"></i> Records per-lane success/failure status, allowing downstream logic to check which lanes succeeded and which failed when <code>fail_fast</code> is false.</li>
+    <li><i class="fa-solid fa-check"></i> Requires no configuration — the Join node automatically detects which Fork node it is paired with based on the workflow graph structure.</li>
+  </ul>
+
+  <h2>Business Benefits</h2>
+  <p>
+    The Parallel Join is the essential counterpart to the Parallel Fork — without it, parallel execution would produce results that cannot be used by subsequent workflow steps. The Join node provides the structured merge mechanism that makes parallel execution practical for real business workflows.
+  </p>
+  <p>
+    The prefixed lane output structure (<code>lane_0_*</code>, <code>lane_1_*</code>) gives downstream nodes precise access to each lane's individual results. A node after the Join can compare the email send result (<code>lane_0_status</code>) independently from the SMS result (<code>lane_1_status</code>), enabling fine-grained post-parallel routing based on exactly which channels succeeded.
+  </p>
+  <p>
+    The <code>lane_outputs</code> collection enables aggregate analysis of all lane results. Downstream nodes can count how many lanes succeeded, sum numeric results from all lanes, or identify which lane produced the best outcome — patterns that are common in scenarios like parallel supplier price queries where you want to select the lowest quoted price from multiple concurrent results.
+  </p>
+  <p>
+    By setting <code>IsParallelExecutionActive = false</code> after joining, the execution engine cleanly transitions back to sequential mode, ensuring that subsequent nodes behave normally without any special parallel-context considerations.
+  </p>
+
+  <h2>Use Cases</h2>
+
+  <div class="use-case">
+    <h3><i class="fa-solid fa-layer-group"></i> Aggregate Results from Parallel API Calls</h3>
+    <p>After a Parallel Fork calls three enrichment APIs concurrently, the Join node merges their results. A downstream Set Variable node combines <code>$var.lane_0_creditScore</code>, <code>$var.lane_1_riskLevel</code>, and <code>$var.lane_2_loyaltyTier</code> into a single unified customer risk profile object ready for the decision engine.</p>
+  </div>
+
+  <div class="use-case">
+    <h3><i class="fa-solid fa-bell"></i> Combine Parallel Notification Outcomes</h3>
+    <p>After parallel email, SMS, and push notification lanes complete, the Join node provides per-channel delivery results. A downstream If Condition can check whether at least one notification channel succeeded and route accordingly — if all three failed, escalate to a manual contact task.</p>
+  </div>
+
+  <div class="use-case">
+    <h3><i class="fa-solid fa-magnifying-glass-chart"></i> Merge Concurrent Data Enrichment Results</h3>
+    <p>Multiple data enrichment lanes — each calling a different data provider — run concurrently and complete at different times. The Join node waits for the last provider to respond, then presents all enriched fields in a structured format for the record update node.</p>
+  </div>
+
+  <div class="use-case">
+    <h3><i class="fa-solid fa-shield-check"></i> Consolidate Parallel Validation Results</h3>
+    <p>Four parallel validation checks (credit, identity, income, address) run concurrently. The Join node collects all four pass/fail results. A downstream If Condition checks whether ALL four lanes returned success — if any failed, the loan application is routed to a human review queue with the specific failed checks identified.</p>
+  </div>
+
+  <h2>In This Guide</h2>
+  <div class="card-grid">
+    <a href="01-configuration.html" class="card">
+      <i class="fa-solid fa-sliders"></i>
+      <h3>Configuration</h3>
+      <p>The Parallel Join has no configuration. This page explains auto-pairing with Fork, the memory structure written, and the execution state transition.</p>
+    </a>
+    <a href="02-input-output.html" class="card">
+      <i class="fa-solid fa-right-left"></i>
+      <h3>Input &amp; Output</h3>
+      <p>The success port, lane_N_* memory keys, lane_outputs collection structure, and data flow after the join completes.</p>
+    </a>
+    <a href="03-examples.html" class="card">
+      <i class="fa-solid fa-flask"></i>
+      <h3>Examples</h3>
+      <p>Complete Fork+Join configurations for notification aggregation, API result merging, and parallel validation consolidation.</p>
+    </a>
+  </div>
+</main>
+</body>
+</html>
