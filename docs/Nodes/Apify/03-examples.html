@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Apify — Examples — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.callout{border-radius:6px;padding:14px 18px;margin:18px 0;font-size:14px;line-height:1.6;}
+.callout.info{background:#e6f2fc;border-left:4px solid #0f6cbd;color:#0a3d6b;}
+.callout.success{background:#edf7f0;border-left:4px solid #2a9d5c;color:#1a5c38;}
+pre{background:#1e2736;color:#e8edf3;border-radius:6px;padding:20px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;}
+pre code{background:none;padding:0;color:inherit;}
+ul,ol{margin:10px 0 14px 22px;}
+li{margin-bottom:5px;font-size:14px;}
+h3{font-size:18px;font-weight:700;margin:36px 0 8px;color:var(--accent);padding-bottom:6px;border-bottom:1px solid var(--border);}
+.example-meta{font-size:13px;color:var(--text-muted);margin-bottom:12px;}
+</style>
+<style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Apify<span>/ Web Scraping Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Apify</a> / Examples</div>
+    <h1>Examples</h1>
+    <p class="subtitle">Five practical Apify examples: single URL scrape, full crawler run, dataset retrieval, scheduled actor runs, and task-based scrape jobs.</p>
+  </div>
+
+  <h3>Example 1: Scrape a Product Page and Extract Structured Data</h3>
+  <p class="example-meta">Scenario: Instantly scrape a competitor's product page to extract the title, price, and description without writing any actor code.</p>
+  <pre><code>{
+  "resource": "actor",
+  "operation": "scrapeSingleUrl",
+  "api_token": "{{ credentials.apify_token }}",
+  "url": "{{ vars.competitor_product_url }}",
+  "wait_for_selector_css": ".product-price",
+  "extract_html": false,
+  "extract_text": true,
+  "take_screenshot": true,
+  "screenshot_width": 1280
+}</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The success port fires with <code>text</code> containing the full page text and <code>screenshotBase64</code> containing a PNG of the page. Connect a DataMapping node to parse out the price and title using regex or string expressions.</div>
+
+  <h3>Example 2: Run a Full Website Crawler Actor and Poll for Completion</h3>
+  <p class="example-meta">Scenario: Launch Apify's <code>apify/website-content-crawler</code> to crawl an entire site, then poll every 30 seconds until the run completes before processing results.</p>
+  <pre><code>// Step 1 — actor/run node
+{
+  "resource": "actor",
+  "operation": "run",
+  "api_token": "{{ credentials.apify_token }}",
+  "actor_id": "apify/website-content-crawler",
+  "memory_mb": 1024,
+  "timeout_seconds": 600,
+  "input_json": "{\"startUrls\":[{\"url\":\"{{ vars.target_website }}\"}],\"maxCrawlDepth\":3,\"maxCrawlPages\":200}"
+}
+
+// Step 2 — Delay node (30 seconds)
+
+// Step 3 — actorRun/getRun node (loop until status !== "RUNNING")
+{
+  "resource": "actorRun",
+  "operation": "getRun",
+  "api_token": "{{ credentials.apify_token }}",
+  "run_id": "{{ nodes.step1.id }}"
+}</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> After the loop exits with <code>status = "SUCCEEDED"</code>, route to <code>dataset/getItems</code> using <code>defaultDatasetId</code> from the run object to retrieve all crawled pages.</div>
+
+  <h3>Example 3: Get Items from a Completed Dataset Run</h3>
+  <p class="example-meta">Scenario: A dataset was populated by an earlier actor run. Read the first 100 items from that dataset and load them into a Loop node for per-record processing.</p>
+  <pre><code>{
+  "resource": "dataset",
+  "operation": "getItems",
+  "api_token": "{{ credentials.apify_token }}",
+  "dataset_id": "{{ vars.dataset_id }}",
+  "clean": true,
+  "limit": 100,
+  "offset": 0,
+  "fields": "title,price,url,sku"
+}</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The success port returns an <code>items</code> array of up to 100 objects, each containing only the four requested fields. Feed this into a Loop node to process each product record individually.</div>
+
+  <h3>Example 4: Schedule Actor Runs and Process Results</h3>
+  <p class="example-meta">Scenario: A ScheduledTrigger fires daily at 6 AM. Run a price monitoring actor, wait for results, and write new prices to MongoDB only if they changed.</p>
+  <pre><code>// Triggered by ScheduledTrigger (daily 06:00)
+
+// Apify node — actor/runAndGetDatasetItems
+{
+  "resource": "actor",
+  "operation": "runAndGetDatasetItems",
+  "api_token": "{{ credentials.apify_token }}",
+  "actor_id": "apify/cheerio-scraper",
+  "memory_mb": 512,
+  "timeout_seconds": 300,
+  "max_items": 500,
+  "input_json": "{\"startUrls\":[{\"url\":\"{{ vars.pricing_page }}\"}],\"pageFunction\":\"async ({ $, request }) => ({ product: $('h1').text(), price: $('.price').text(), url: request.url })\"}"
+}
+
+// Loop node over items array
+// → IfCondition: items[i].price !== vars.last_known_prices[items[i].product]
+//   → MongoDB/insertOne to record price change with timestamp</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Each morning, fresh pricing data is collected and only changed prices are written to MongoDB, building a historical price change log for analytics.</div>
+
+  <h3>Example 5: Use actorTask for Pre-configured Scrape Jobs</h3>
+  <p class="example-meta">Scenario: Your team created a saved Apify task that bundles a scraper actor with your site-specific configuration. Invoke it via task ID so no input JSON is needed at runtime.</p>
+  <pre><code>{
+  "resource": "actorTask",
+  "operation": "runAndGetDatasetItems",
+  "api_token": "{{ credentials.apify_token }}",
+  "task_id": "{{ vars.apify_task_id }}",
+  "max_items": 200
+}
+
+// Override task input for this specific run only (optional):
+{
+  "resource": "actorTask",
+  "operation": "runAndGetDatasetItems",
+  "api_token": "{{ credentials.apify_token }}",
+  "task_id": "{{ vars.apify_task_id }}",
+  "input_json": "{\"startDate\":\"{{ vars.report_start_date }}\",\"endDate\":\"{{ vars.report_end_date }}\"}",
+  "max_items": 1000
+}</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The task runs with its saved actor configuration. The first variant uses the saved input as-is. The second variant passes a date range override — useful for parameterised report generation without exposing full actor configuration details to the workflow.</div>
+</main>
+</body>
+</html>

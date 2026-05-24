@@ -14,7 +14,7 @@ pre code{background:none;padding:0;color:inherit;}
 h3{font-size:18px;font-weight:700;margin:36px 0 8px;color:var(--accent);padding-bottom:6px;border-bottom:1px solid var(--border);}
 .example-meta{font-size:13px;color:var(--text-muted);margin-bottom:12px;}
 ul,ol{margin:10px 0 14px 22px;}
-li{margin-bottom:5px;font-size:14px;}
+li{margin-bottom:6px;font-size:14px;}
 </style>
 <style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
 </head>
@@ -27,7 +27,7 @@ li{margin-bottom:5px;font-size:14px;}
   </div>
 </div>
 <nav class="sidebar">
-  <div class="sidebar-brand">GitHub<span>Integration Node</span></div>
+  <div class="sidebar-brand">GitHub<span>Webhook Trigger</span></div>
   <div class="sidebar-section">This Node</div>
   <a href="index.html">Overview</a>
   <a href="01-configuration.html">Configuration</a>
@@ -46,77 +46,148 @@ li{margin-bottom:5px;font-size:14px;}
   <div class="page-header">
     <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">GitHub</a> / Examples</div>
     <h1>Examples</h1>
-    <p class="subtitle">Five GitHub node configurations for bug reports, PRs, deployment comments, sprint tracking, and issue queries.</p>
+    <p class="subtitle">Five GitHub webhook trigger examples: auto-deploy on push, PR review bot, auto-close stale issues, release notes workflow, and CI failure alert.</p>
   </div>
 
-  <h3>Example 1: Auto-Create Bug Issue from Monitoring Alert</h3>
-  <p class="example-meta">Scenario: A monitoring workflow detects a production error. Create a GitHub issue with full context automatically.</p>
-  <pre><code>{
-  "credential_id": "github-pat-devops",
-  "operation": "createIssue",
-  "owner": "{{ env.GITHUB_ORG }}",
-  "repo": "{{ vars.affected_service_repo }}",
-  "title": "[{{ vars.severity }}] {{ vars.error_type }} — {{ vars.environment }}",
-  "body": "## Incident Summary\n\n**Service:** {{ vars.service_name }}\n**Environment:** {{ vars.environment }}\n**Severity:** {{ vars.severity }}\n**Detected At:** {{ vars.detected_at }}\n\n## Error Details\n\n```\n{{ vars.error_message }}\n```\n\n## Stack Trace\n\n```\n{{ vars.stack_trace }}\n```\n\n## Monitoring Dashboard\n{{ vars.dashboard_url }}\n\n*Auto-created by BizFirst workflow — Incident ID: {{ workflow.id }}*",
-  "labels": ["bug", "{{ vars.severity_label }}", "{{ vars.environment_label }}"],
-  "assignees": ["{{ vars.oncall_github_username }}"]
-}</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> A fully detailed GitHub issue is created with error details, stack trace, and a monitoring link. The on-call engineer is assigned and notified by GitHub. Issue URL is passed to a Slack notification node.</div>
+  <h3>Example 1: Auto-Deploy on Push to Main</h3>
+  <p class="example-meta">Trigger: push event to the main branch of the production repository. Start a deployment pipeline automatically when code lands on main.</p>
+  <p><strong>Node settings:</strong></p>
+  <pre><code>AllowedEventTypes: push
+AllowedRepositories: myorg/api-service
+AllowedBranches: main
+WebhookSecret: {{ secrets.github_webhook_secret }}
+OnlyProcessNonEmptyPushes: true</code></pre>
+  <p><strong>Downstream workflow uses these output fields:</strong></p>
+  <pre><code>// Check forced push (should fail deployment)
+{{ nodes.githubTrigger.output.forced_push }}
 
-  <h3>Example 2: Create Pull Request After Auto-Configuration Update</h3>
-  <p class="example-meta">Scenario: A workflow has auto-generated a configuration file update on a feature branch. Open a PR to main for review.</p>
-  <pre><code>{
-  "credential_id": "github-pat-devops",
-  "operation": "createPullRequest",
-  "owner": "{{ env.GITHUB_ORG }}",
-  "repo": "infra-config",
-  "title": "Auto: Update {{ vars.config_key }} for {{ vars.environment }} — {{ vars.change_id }}",
-  "head": "auto/config-update-{{ vars.change_id }}",
-  "base": "main",
-  "body": "## Automated Configuration Update\n\n**Change ID:** {{ vars.change_id }}\n**Config Key:** {{ vars.config_key }}\n**New Value:** {{ vars.new_value }}\n**Changed By:** BizFirst Workflow ({{ workflow.id }})\n**Approved By:** {{ vars.approver_name }} on {{ vars.approval_time }}\n\n## Test Results\n- Configuration validation: PASSED\n- Dry-run deployment: PASSED\n\nCloses #{{ vars.related_issue_number }}",
-  "reviewers": ["{{ vars.infra_team_lead }}"],
-  "draft": false
-}</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> A detailed PR is opened, the infra team lead is requested as reviewer, and the related issue is linked for auto-close on merge.</div>
+// Deploy commit SHA
+{{ nodes.githubTrigger.output.after_commit }}
 
-  <h3>Example 3: Post Deployment Status Comment on PR</h3>
-  <p class="example-meta">Scenario: After deploying to staging, comment on the PR with deployment details and the staging URL.</p>
-  <pre><code>{
-  "credential_id": "github-pat-devops",
-  "operation": "commentOnIssue",
-  "owner": "{{ env.GITHUB_ORG }}",
-  "repo": "{{ vars.repo_name }}",
-  "issue_number": "{{ vars.pr_number }}",
-  "body": "## Staging Deployment — {{ vars.deploy_status_emoji }} {{ vars.deploy_status }}\n\n| Property | Value |\n|---|---|\n| **Environment** | Staging |\n| **Version** | `{{ vars.version }}` |\n| **Deployed At** | {{ vars.deployed_at }} |\n| **Duration** | {{ vars.deploy_duration_seconds }}s |\n| **Staging URL** | {{ vars.staging_url }} |\n\n### Test Results\n- Unit tests: {{ vars.unit_test_status }}\n- Integration tests: {{ vars.integration_test_status }}\n\n*Deployed by BizFirst CI/CD workflow*"
-}</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> A formatted table comment is posted on the PR with deployment details and a link to the staging environment for reviewers to test.</div>
+// Who pushed — for Slack notification
+{{ nodes.githubTrigger.output.pusher }}
 
-  <h3>Example 4: List Open High-Priority Issues for Sprint Planning</h3>
-  <p class="example-meta">Scenario: Every Monday, fetch all open high-priority issues to generate a sprint planning summary email.</p>
-  <pre><code>{
-  "credential_id": "github-pat-devops",
-  "operation": "listIssues",
-  "owner": "{{ env.GITHUB_ORG }}",
-  "repo": "main-application",
-  "state": "open",
-  "labels": "high-priority,bug",
-  "sort": "created",
-  "per_page": 50
-}</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Returns all open high-priority bugs. The issues array is passed to a Transform node to build a formatted HTML table, then sent via the Email (SMTP) node to the engineering manager for sprint prioritisation.</div>
+// Commit messages for changelog
+{{ nodes.githubTrigger.output.commits[0].message }}
 
-  <h3>Example 5: Merge Pull Request After Approval</h3>
-  <p class="example-meta">Scenario: After an automated test workflow confirms all checks pass and a human approver clicks "Merge" in a Slack sendAndWait message, merge the PR.</p>
-  <pre><code>{
-  "credential_id": "github-pat-devops",
-  "operation": "mergeAsync",
-  "owner": "{{ env.GITHUB_ORG }}",
-  "repo": "{{ vars.repo_name }}",
-  "pull_number": "{{ vars.pr_number }}",
-  "merge_method": "squash",
-  "commit_message": "{{ vars.pr_title }} (#{{ vars.pr_number }})\n\nApproved by: {{ vars.approver_name }}\nApproval time: {{ vars.approval_time }}\nWorkflow: {{ workflow.id }}"
-}</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> PR is squash-merged with a descriptive commit message including approver details for full audit trail. The merge commit SHA is stored in output for deployment workflow triggering.</div>
+// Repository for environment lookup
+{{ nodes.githubTrigger.output.repository }}</code></pre>
+  <p><strong>Workflow steps after trigger:</strong></p>
+  <ol>
+    <li><strong>IfCondition</strong> — if <code>forced_push == true</code>, route to alert channel and halt</li>
+    <li><strong>HTTP Request</strong> — trigger deployment pipeline API with <code>after_commit</code></li>
+    <li><strong>Delay</strong> — wait for deployment to complete</li>
+    <li><strong>HTTP Request</strong> — check deployment health endpoint</li>
+    <li><strong>Slack</strong> — notify <code>#deployments</code> with commit summary and deployment URL</li>
+  </ol>
+  <div class="callout success"><strong>Expected outcome:</strong> Every merge to main triggers an automated deployment. Force pushes are caught before the pipeline starts. The team is notified in Slack with the commit author, message, and deployment result.</div>
+
+  <h3>Example 2: PR Review Bot Trigger</h3>
+  <p class="example-meta">Trigger: pull_request event with action "opened". When a new PR is opened, run automated checks and post a structured review comment.</p>
+  <p><strong>Node settings:</strong></p>
+  <pre><code>AllowedEventTypes: pull_request
+AllowedRepositories: myorg/api-service,myorg/web-app
+AllowedPullRequestActions: opened
+WebhookSecret: {{ secrets.github_webhook_secret }}</code></pre>
+  <p><strong>Downstream workflow uses these output fields:</strong></p>
+  <pre><code>// PR number for posting the comment back
+{{ nodes.githubTrigger.output.pr_number }}
+
+// Head branch — check naming convention
+{{ nodes.githubTrigger.output.pr_head_branch }}
+
+// Base branch — confirm merging to correct target
+{{ nodes.githubTrigger.output.pr_base_branch }}
+
+// PR title for quality check
+{{ nodes.githubTrigger.output.pr_title }}
+
+// Author for team lookup
+{{ nodes.githubTrigger.output.sender_login }}
+
+// Labels already applied
+{{ nodes.githubTrigger.output.pr_labels }}</code></pre>
+  <p><strong>Workflow steps after trigger:</strong></p>
+  <ol>
+    <li><strong>IfCondition</strong> — check branch name follows <code>feature/*</code>, <code>fix/*</code>, or <code>hotfix/*</code> convention. If not, post a naming reminder comment.</li>
+    <li><strong>HTTP Request</strong> — look up code owners based on changed files (via GitHub API)</li>
+    <li><strong>HTTP Request (GitHub API)</strong> — post a review comment on the PR with the automated check results and assign appropriate code owners</li>
+    <li><strong>Slack</strong> — notify the relevant team channel that a review is needed, with a direct link to the PR</li>
+  </ol>
+  <div class="callout success"><strong>Expected outcome:</strong> Every new PR receives an automated comment within seconds of opening — checking naming conventions, assigning code owners, and alerting the team. Reviewers see everything they need without manual triage.</div>
+
+  <h3>Example 3: Auto-Close Stale Issues</h3>
+  <p class="example-meta">Trigger: issues event with action "labeled". When the "stale" label is applied to an issue (by a scheduled triage workflow), automatically add a closing comment and schedule the issue for closure.</p>
+  <p><strong>Node settings:</strong></p>
+  <pre><code>AllowedEventTypes: issues
+AllowedIssueActions: labeled
+AllowedRepositories: myorg/api-service
+WebhookSecret: {{ secrets.github_webhook_secret }}</code></pre>
+  <p><strong>Downstream workflow:</strong></p>
+  <pre><code>// Check if the applied label is "stale"
+{{ nodes.githubTrigger.output.action }}        // "labeled"
+{{ nodes.githubTrigger.output.issue_labels }}  // check array contains "stale"
+{{ nodes.githubTrigger.output.issue_number }}  // for posting the comment
+{{ nodes.githubTrigger.output.issue_title }}   // for notification
+{{ nodes.githubTrigger.output.sender_login }}  // who labelled it</code></pre>
+  <p><strong>Workflow steps after trigger:</strong></p>
+  <ol>
+    <li><strong>IfCondition</strong> — confirm <code>issue_labels</code> includes "stale" (the label event may also fire for other labels)</li>
+    <li><strong>HTTP Request (GitHub API)</strong> — post a closing comment: "This issue has been automatically marked as stale due to inactivity. It will be closed in 7 days unless there is new activity."</li>
+    <li><strong>Delay</strong> — wait 7 days</li>
+    <li><strong>HTTP Request (GitHub API)</strong> — check if there has been any new activity on the issue since labelling</li>
+    <li><strong>IfCondition</strong> — if still stale, close the issue via GitHub API</li>
+    <li><strong>Slack</strong> — post a summary of closed stale issues to the engineering channel</li>
+  </ol>
+  <div class="callout success"><strong>Expected outcome:</strong> Stale issues are automatically triaged and closed on a 7-day grace period. The team is notified of closures without any manual issue management work.</div>
+
+  <h3>Example 4: Release Notes Workflow</h3>
+  <p class="example-meta">Trigger: release event with action "published". When a new release is published on GitHub, automatically generate formatted release notes and distribute them.</p>
+  <p><strong>Node settings:</strong></p>
+  <pre><code>AllowedEventTypes: release
+AllowedRepositories: myorg/api-service
+WebhookSecret: {{ secrets.github_webhook_secret }}
+IncludeFullEventObject: true</code></pre>
+  <p><strong>Output fields used downstream:</strong></p>
+  <pre><code>{{ nodes.githubTrigger.output.release_tag }}          // e.g. "v2.4.0"
+{{ nodes.githubTrigger.output.release_name }}         // Display name
+{{ nodes.githubTrigger.output.release_body }}         // Raw release notes
+{{ nodes.githubTrigger.output.release_prerelease }}   // Skip Confluence post for pre-releases
+{{ nodes.githubTrigger.output.release_url }}          // Link back to GitHub
+{{ nodes.githubTrigger.output.release_published_at }} // Publication timestamp
+{{ nodes.githubTrigger.output.sender_login }}         // Who published it</code></pre>
+  <p><strong>Workflow steps after trigger:</strong></p>
+  <ol>
+    <li><strong>IfCondition</strong> — if <code>release_prerelease == true</code>, only notify the beta channel; skip Confluence and full distribution</li>
+    <li><strong>AI Text Node</strong> — reformat <code>release_body</code> Markdown into a structured HTML changelog</li>
+    <li><strong>HTTP Request (Confluence API)</strong> — create or update the release notes page in Confluence</li>
+    <li><strong>Slack</strong> — post release announcement to <code>#product-updates</code> with tag, summary, and GitHub link</li>
+    <li><strong>Email (SMTP)</strong> — send release notes to the product stakeholder mailing list</li>
+  </ol>
+  <div class="callout success"><strong>Expected outcome:</strong> Within minutes of publishing a release on GitHub, formatted release notes appear in Confluence, Slack, and stakeholder inboxes — automatically. No manual writing or distribution needed.</div>
+
+  <h3>Example 5: CI Failure Alert</h3>
+  <p class="example-meta">Trigger: workflow_run event. When a GitHub Actions workflow completes with a failure conclusion, immediately alert the responsible team and create a tracking issue.</p>
+  <p><strong>Node settings:</strong></p>
+  <pre><code>AllowedEventTypes: workflow_run
+AllowedRepositories: myorg/api-service,myorg/web-app
+WebhookSecret: {{ secrets.github_webhook_secret }}</code></pre>
+  <p><strong>Output fields used downstream:</strong></p>
+  <pre><code>{{ nodes.githubTrigger.output.workflow_status }}     // "completed"
+{{ nodes.githubTrigger.output.workflow_conclusion }} // "failure", "timed_out", etc.
+{{ nodes.githubTrigger.output.workflow_name }}       // Which workflow failed
+{{ nodes.githubTrigger.output.workflow_branch }}     // Which branch
+{{ nodes.githubTrigger.output.workflow_commit_sha }} // Failing commit
+{{ nodes.githubTrigger.output.sender_login }}        // Who triggered the run
+{{ nodes.githubTrigger.output.repository }}          // Which repo</code></pre>
+  <p><strong>Workflow steps after trigger:</strong></p>
+  <ol>
+    <li><strong>IfCondition</strong> — only proceed if <code>workflow_status == "completed"</code> AND <code>workflow_conclusion == "failure"</code> (or "timed_out")</li>
+    <li><strong>Slack</strong> — post to <code>#ci-alerts</code>: "CI FAILURE: {{ workflow_name }} on {{ repository }}@{{ workflow_branch }} — triggered by {{ sender_login }}. Commit: {{ workflow_commit_sha }}."</li>
+    <li><strong>HTTP Request (GitHub API)</strong> — create a GitHub issue in the repository with label "ci-failure" and assign to the on-call engineer</li>
+    <li><strong>IfCondition</strong> — if the failing branch is <code>main</code>, escalate: page on-call via PagerDuty and send a high-severity Slack alert</li>
+  </ol>
+  <div class="callout success"><strong>Expected outcome:</strong> CI failures on any branch generate an immediate Slack alert and a GitHub issue. Failures on main trigger an escalated page. Engineers have full context — repo, branch, commit, workflow name — without needing to check GitHub manually.</div>
 </main>
 </body>
 </html>

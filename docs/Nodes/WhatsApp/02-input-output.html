@@ -8,16 +8,20 @@
 <style>
 .callout{border-radius:6px;padding:14px 18px;margin:18px 0;font-size:14px;line-height:1.6;}
 .callout.info{background:#e6f2fc;border-left:4px solid #0f6cbd;color:#0a3d6b;}
+.callout.warning{background:#fff8e1;border-left:4px solid #f0a500;color:#6b4400;}
 table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;}
 th{background:#f0f4f8;text-align:left;padding:10px 14px;font-weight:600;border:1px solid #dde3ea;}
 td{padding:9px 14px;border:1px solid #dde3ea;vertical-align:top;line-height:1.55;}
 td code{background:#f0f4f8;padding:1px 6px;border-radius:4px;font-size:12.5px;font-family:monospace;}
 pre{background:#1e2736;color:#e8edf3;border-radius:6px;padding:20px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;}
 pre code{background:none;padding:0;color:inherit;}
+ul,ol{margin:10px 0 14px 22px;}
+li{margin-bottom:5px;font-size:14px;}
 h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
 .port-badge{display:inline-block;font-size:11px;font-weight:700;border-radius:4px;padding:3px 10px;}
 .port-success{background:#edf7f0;color:#2a9d5c;}
 .port-error{background:#fde8ec;color:#c82045;}
+.port-timeout{background:#fff3cd;color:#856404;}
 </style>
 <style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
 </head>
@@ -49,54 +53,132 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <div class="page-header">
     <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">WhatsApp</a> / Input &amp; Output</div>
     <h1>Input &amp; Output</h1>
-    <p class="subtitle">Output ports and data schemas for all WhatsApp node operations.</p>
+    <p class="subtitle">Output schemas per operation, sendAndWait suspend/resume behaviour, and webhook trigger output fields.</p>
   </div>
+
   <h2>Output Ports</h2>
   <table>
-    <tr><th>Port</th><th>Trigger</th><th>Description</th></tr>
-    <tr><td><span class="port-badge port-success">success</span></td><td>API accepted the message</td><td>The WhatsApp Business API accepted the message for delivery. Note: acceptance does not guarantee delivery — the recipient's device must be online.</td></tr>
-    <tr><td><span class="port-badge port-error">error</span></td><td>API error</td><td>The request was rejected — invalid phone number, invalid template name, expired token, rate limit exceeded, or network failure.</td></tr>
+    <tr><th>Port</th><th>Triggered When</th><th>Description</th></tr>
+    <tr><td><span class="port-badge port-success">success</span></td><td>API accepted the request</td><td>The WhatsApp Business API accepted the message or media operation. For send operations, acceptance does not guarantee delivery — the recipient must be online.</td></tr>
+    <tr><td><span class="port-badge port-error">error</span></td><td>API or configuration error</td><td>The request failed — invalid phone number, invalid template, expired access token, rate limit exceeded, or network failure.</td></tr>
+    <tr><td><span class="port-badge port-timeout">timeout</span></td><td>sendAndWait only</td><td>The TimeoutSeconds limit elapsed before a reply was received. The workflow resumes on this port.</td></tr>
   </table>
-  <h2>send / sendTemplate Output</h2>
+
+  <h2>message/sendText, sendImage, sendVideo, sendAudio, sendDocument, sendSticker, sendLocation, sendContacts — Output</h2>
   <table>
-    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
-    <tr><td><code>message_id</code></td><td>string</td><td>WhatsApp message ID (format: <code>wamid.xxx</code>). Use with <code>getStatus</code> to track delivery.</td></tr>
-    <tr><td><code>status</code></td><td>string</td><td>Initial message status. Typically <code>accepted</code> immediately after API call. Final delivery statuses (sent, delivered, read) arrive via webhook.</td></tr>
-    <tr><td><code>timestamp</code></td><td>string</td><td>ISO 8601 timestamp of when the message was accepted by the API.</td></tr>
-    <tr><td><code>phone_number</code></td><td>string</td><td>The recipient phone number as used in the API call.</td></tr>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>message_id</code></td><td>string</td><td>WhatsApp message ID in wamid format (e.g. <code>wamid.HBgL...</code>). Use this for markAsRead or sendReaction.</td></tr>
+    <tr><td><code>status</code></td><td>string</td><td>Initial status, typically <code>accepted</code>. Final delivery statuses (sent, delivered, read) arrive via webhook events from Meta.</td></tr>
+    <tr><td><code>timestamp</code></td><td>string</td><td>ISO 8601 timestamp of when the Meta API accepted the message.</td></tr>
+    <tr><td><code>to</code></td><td>string</td><td>The recipient phone number used in the request.</td></tr>
   </table>
-  <h2>getStatus Output</h2>
+
+  <h2>message/sendInteractiveButtons, sendInteractiveList — Output</h2>
   <table>
-    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
-    <tr><td><code>message_id</code></td><td>string</td><td>The message ID queried.</td></tr>
-    <tr><td><code>status</code></td><td>string</td><td>Current delivery status: <code>sent</code>, <code>delivered</code>, <code>read</code>, <code>failed</code>.</td></tr>
-    <tr><td><code>timestamp</code></td><td>string</td><td>Timestamp of the last status update.</td></tr>
-    <tr><td><code>error_code</code></td><td>integer</td><td>WhatsApp error code if status is <code>failed</code>. Reference Meta's error code documentation for details.</td></tr>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>message_id</code></td><td>string</td><td>WhatsApp message ID for the sent interactive message.</td></tr>
+    <tr><td><code>status</code></td><td>string</td><td>Initial status, typically <code>accepted</code>.</td></tr>
+    <tr><td><code>timestamp</code></td><td>string</td><td>ISO 8601 timestamp.</td></tr>
   </table>
-  <h2>getMedia Output</h2>
+
+  <h2>message/sendTemplate — Output</h2>
   <table>
-    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
-    <tr><td><code>media_data</code></td><td>string</td><td>Base64-encoded media file content. Decode and process downstream (e.g. pass to AI extraction node).</td></tr>
-    <tr><td><code>mime_type</code></td><td>string</td><td>MIME type of the media (e.g. <code>image/jpeg</code>, <code>application/pdf</code>).</td></tr>
-    <tr><td><code>file_size</code></td><td>integer</td><td>Size of the media file in bytes.</td></tr>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>message_id</code></td><td>string</td><td>WhatsApp message ID for the sent template message.</td></tr>
+    <tr><td><code>status</code></td><td>string</td><td>Initial status, typically <code>accepted</code>.</td></tr>
+    <tr><td><code>timestamp</code></td><td>string</td><td>ISO 8601 timestamp.</td></tr>
+    <tr><td><code>to</code></td><td>string</td><td>Recipient phone number.</td></tr>
   </table>
-  <h2>Example: sendTemplate Output</h2>
   <pre><code>{
   "message_id": "wamid.HBgLMTYxNTU1MjQ3OTgVAgASGBQzQUJGNkZCODYyMUEwMjJBODU4NgA=",
   "status": "accepted",
-  "timestamp": "2025-11-14T09:15:03Z",
-  "phone_number": "+14155552671"
+  "timestamp": "2026-05-23T09:15:03Z",
+  "to": "+14155552671"
 }</code></pre>
-  <h2>Example: getStatus Output</h2>
-  <pre><code>{
-  "message_id": "wamid.HBgLMTYxNTU1MjQ3OTgVAgASGBQzQUJGNkZCODYyMUEwMjJBODU4NgA=",
-  "status": "read",
-  "timestamp": "2025-11-14T09:18:42Z",
-  "error_code": null
-}</code></pre>
+
+  <h2>message/sendAndWait — Suspend/Resume Behaviour</h2>
+  <p><code>message/sendAndWait</code> sends the Text message to the recipient, then suspends the workflow execution. The workflow run is paused — no further nodes execute — until one of the following occurs:</p>
+  <ul>
+    <li><strong>Reply received:</strong> The recipient sends any WhatsApp message in response. The workflow resumes on the <strong>success</strong> port with the reply data in the output.</li>
+    <li><strong>Timeout:</strong> The configured TimeoutSeconds elapses with no reply. The workflow resumes on the <strong>timeout</strong> port. No reply fields are populated.</li>
+  </ul>
+  <h3>sendAndWait Output Fields (on success / reply received)</h3>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>sent_message_id</code></td><td>string</td><td>The wamid of the message that was sent to initiate the wait.</td></tr>
+    <tr><td><code>reply_from</code></td><td>string</td><td>The phone number that replied, in E.164 format.</td></tr>
+    <tr><td><code>reply_text</code></td><td>string</td><td>The text content of the reply message.</td></tr>
+    <tr><td><code>reply_message_id</code></td><td>string</td><td>The wamid of the reply message received.</td></tr>
+    <tr><td><code>reply_timestamp</code></td><td>string</td><td>ISO 8601 timestamp of when the reply was received.</td></tr>
+    <tr><td><code>reply_type</code></td><td>string</td><td>Type of the reply: <code>text</code>, <code>image</code>, <code>audio</code>, <code>document</code>, <code>interactive</code> (button tap or list selection).</td></tr>
+    <tr><td><code>reply_button_id</code></td><td>string</td><td>For interactive button replies: the <code>id</code> of the button that was tapped.</td></tr>
+    <tr><td><code>reply_list_row_id</code></td><td>string</td><td>For interactive list replies: the <code>id</code> of the row that was selected.</td></tr>
+  </table>
+
+  <h2>message/markAsRead — Output</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>success</code></td><td>bool</td><td><code>true</code> if the message was marked as read successfully.</td></tr>
+    <tr><td><code>message_id</code></td><td>string</td><td>The message ID that was marked as read.</td></tr>
+  </table>
+
+  <h2>message/sendTypingIndicator — Output</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>success</code></td><td>bool</td><td><code>true</code> if the typing indicator was sent successfully.</td></tr>
+  </table>
+
+  <h2>media/upload — Output</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>media_id</code></td><td>string</td><td>The WhatsApp media ID assigned to the uploaded file. Use this ID in subsequent send operations instead of a URL.</td></tr>
+  </table>
+
+  <h2>media/download — Output</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>file_data</code></td><td>string</td><td>Base64-encoded file content. Decode downstream for processing or storage.</td></tr>
+    <tr><td><code>mime_type</code></td><td>string</td><td>MIME type of the downloaded file (e.g. <code>image/jpeg</code>, <code>application/pdf</code>).</td></tr>
+    <tr><td><code>file_size</code></td><td>integer</td><td>File size in bytes.</td></tr>
+  </table>
+
+  <h2>media/getInfo — Output</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>mime_type</code></td><td>string</td><td>MIME type of the media file.</td></tr>
+    <tr><td><code>file_size</code></td><td>integer</td><td>File size in bytes.</td></tr>
+    <tr><td><code>url</code></td><td>string</td><td>Temporary download URL for the media file (expires quickly — use media/download to retrieve file data for storage).</td></tr>
+    <tr><td><code>sha256</code></td><td>string</td><td>SHA256 hash of the file content for integrity verification.</td></tr>
+  </table>
+
+  <h2>template/list — Output</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>templates</code></td><td>array</td><td>Array of template objects, each with <code>id</code>, <code>name</code>, <code>status</code>, <code>category</code>, <code>language</code>, and <code>components</code>.</td></tr>
+    <tr><td><code>paging_cursor</code></td><td>string</td><td>Cursor for the next page of results. Pass as <code>After</code> in the next template/list call.</td></tr>
+  </table>
+
+  <h2>profile/getContact — Output</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>name</code></td><td>string</td><td>Display name of the WhatsApp contact.</td></tr>
+    <tr><td><code>phone</code></td><td>string</td><td>Phone number in E.164 format.</td></tr>
+    <tr><td><code>profile_picture_url</code></td><td>string</td><td>URL of the contact's profile picture (if available).</td></tr>
+  </table>
+
+  <h2>profile/getBusinessProfile — Output</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>description</code></td><td>string</td><td>Business profile description.</td></tr>
+    <tr><td><code>address</code></td><td>string</td><td>Business address.</td></tr>
+    <tr><td><code>email</code></td><td>string</td><td>Business contact email.</td></tr>
+    <tr><td><code>websites</code></td><td>array</td><td>Array of website URLs associated with the business.</td></tr>
+    <tr><td><code>vertical</code></td><td>string</td><td>Business category/vertical (e.g. <code>RETAIL</code>, <code>PROFESSIONAL_SERVICES</code>).</td></tr>
+  </table>
+
   <div class="callout info">
     <i class="fa-solid fa-circle-info"></i>
-    <strong>Delivery webhooks:</strong> For real-time delivery status tracking, configure a WhatsApp webhook in Meta's Business Manager pointing to your BizFirst webhook trigger endpoint. This enables event-driven workflows that react when messages are delivered or read.
+    <strong>Delivery webhooks:</strong> The <code>status</code> field in send operation output reflects only the initial API acceptance state. Actual delivery progress (sent to device, delivered, read) arrives as inbound webhook events from Meta. Configure a WhatsApp webhook in Meta Business Manager pointing to a BizFirst webhook trigger node to react to delivery and read receipts in real time.
   </div>
 </main>
 </body>

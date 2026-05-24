@@ -13,6 +13,8 @@ table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;}
 th{background:#f0f4f8;text-align:left;padding:10px 14px;font-weight:600;border:1px solid #dde3ea;}
 td{padding:9px 14px;border:1px solid #dde3ea;vertical-align:top;}
 td code{background:#f0f4f8;padding:1px 6px;border-radius:4px;font-size:12.5px;font-family:monospace;}
+ul,ol{margin:10px 0 14px 22px;}
+li{margin-bottom:5px;font-size:14px;}
 h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
 </style>
 <style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
@@ -26,7 +28,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   </div>
 </div>
 <nav class="sidebar">
-  <div class="sidebar-brand">Stripe<span>Payments Node</span></div>
+  <div class="sidebar-brand">Stripe<span>Webhook Receiver</span></div>
   <div class="sidebar-section">This Node</div>
   <a href="index.html" class="active">Overview</a>
   <a href="01-configuration.html">Configuration</a>
@@ -43,139 +45,85 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <div class="page-header">
     <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / Stripe</div>
     <h1><i class="fa-brands fa-stripe" style="color:#635bff;margin-right:10px;"></i>Stripe</h1>
-    <p class="subtitle">Create payment intents, manage customers, handle subscriptions, and process refunds — directly within BizFirst workflows.</p>
+    <p class="subtitle">Receive Stripe webhook events and trigger workflows on payment success, failure, refund, and dispute activity.</p>
   </div>
 
   <div class="callout info">
-    <strong>What this node does:</strong> The Stripe node integrates BizFirst workflows with the Stripe Payments API. Automate billing, subscription lifecycle, customer management, and financial reconciliation — connecting payment events to your business processes without writing Stripe SDK code.
+    <i class="fa-solid fa-circle-info"></i>
+    <strong>This is a webhook receiver node — it does NOT call the Stripe API.</strong> The Stripe node is a trigger that receives inbound webhook events sent by Stripe. When Stripe fires an event to the BizFirst endpoint (e.g. <code>charge.succeeded</code>, <code>payment_intent.payment_failed</code>), this node starts a workflow run and passes the parsed event data to downstream nodes. The settings class is <strong>StripePaymentNodeSettings</strong>.
   </div>
 
-  <h2>Supported Operations</h2>
+  <h2>Supported Event Types</h2>
   <table>
-    <tr><th>Operation</th><th>Description</th></tr>
-    <tr><td><code>create_payment_intent</code></td><td>Create a PaymentIntent for a specified amount and currency. Returns a <code>client_secret</code> for client-side confirmation.</td></tr>
-    <tr><td><code>create_customer</code></td><td>Create a Stripe Customer record with email, name, and metadata. Returns the Stripe customer ID for future billing operations.</td></tr>
-    <tr><td><code>retrieve_customer</code></td><td>Retrieve a Stripe Customer object by ID including attached payment methods and subscription status.</td></tr>
-    <tr><td><code>create_subscription</code></td><td>Subscribe a customer to a plan/price. Handles trial periods, billing cycles, and metadata.</td></tr>
-    <tr><td><code>cancel_subscription</code></td><td>Cancel an active subscription immediately or at period end.</td></tr>
-    <tr><td><code>create_refund</code></td><td>Issue a full or partial refund for a completed charge or PaymentIntent.</td></tr>
-    <tr><td><code>retrieve_payment_intent</code></td><td>Fetch the current status of a PaymentIntent to verify payment completion.</td></tr>
-    <tr><td><code>create_invoice</code></td><td>Create and optionally finalize and send a Stripe invoice to a customer.</td></tr>
+    <tr><th style="width:260px;">Stripe Event</th><th>Meaning</th></tr>
+    <tr><td><code>charge.succeeded</code></td><td>A payment was captured successfully.</td></tr>
+    <tr><td><code>charge.failed</code></td><td>A payment attempt failed.</td></tr>
+    <tr><td><code>charge.refunded</code></td><td>A refund was issued against a charge.</td></tr>
+    <tr><td><code>payment_intent.succeeded</code></td><td>A PaymentIntent was confirmed and funds captured.</td></tr>
+    <tr><td><code>payment_intent.payment_failed</code></td><td>A PaymentIntent failed — card declined or authentication failed.</td></tr>
+    <tr><td><code>charge.dispute.created</code></td><td>A customer opened a dispute (chargeback) against a charge.</td></tr>
+    <tr><td><code>charge.dispute.closed</code></td><td>A dispute was resolved — won, lost, or withdrawn.</td></tr>
   </table>
 
-  <h2>Key Capabilities</h2>
+  <h2>How to Configure the Stripe Webhook</h2>
+  <p>After saving your Stripe node in BizFirst, register the BizFirst endpoint in your Stripe Dashboard:</p>
+  <ol>
+    <li>In the Stripe Dashboard, go to <strong>Developers &gt; Webhooks &gt; Add endpoint</strong>.</li>
+    <li>Set the <strong>Endpoint URL</strong> to the BizFirst Stripe webhook endpoint provided in the node settings panel.</li>
+    <li>Select the events you want to receive — choose from the 7 supported event types above.</li>
+    <li>After saving, Stripe shows a <strong>Signing Secret</strong> (starts with <code>whsec_</code>). Copy this value.</li>
+    <li>Paste the signing secret into the <strong>WebhookSecret</strong> field in your BizFirst Stripe node settings.</li>
+    <li>BizFirst will now verify every incoming event using Stripe's HMAC signature before starting any workflow.</li>
+  </ol>
+
+  <div class="callout warning">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <strong>Always set WebhookSecret in production.</strong> Without signature verification, anyone who knows your endpoint URL could send fake payment events. With WebhookSecret configured, BizFirst verifies the Stripe signature header on every request and rejects tampered or spoofed payloads.
+  </div>
+
+  <h2>Filtering Events</h2>
+  <p>The node settings give you multiple filters to control which events trigger a workflow run:</p>
   <ul>
-    <li>Full payment lifecycle automation — create, confirm, capture, refund</li>
-    <li>Customer and subscription management without manual Stripe dashboard work</li>
-    <li>Supports all major currencies via Stripe's multi-currency infrastructure</li>
-    <li>Metadata support on all objects for business data correlation</li>
-    <li>Test mode / live mode toggle via credential configuration</li>
-    <li>Idempotency key support to prevent duplicate charges on retry</li>
-    <li>Invoice creation with line items, tax rates, and automatic finalization</li>
+    <li><strong>AllowedEventTypes</strong> — restrict to specific event types. Supports wildcards like <code>charge.*</code> or <code>payment_intent.*</code>.</li>
+    <li><strong>MinimumAmount / MaximumAmount</strong> — only process events where the charge amount is within a defined range (in cents). Set to 0 to disable the filter.</li>
+    <li><strong>AllowedCurrencies</strong> — restrict to specific ISO currency codes (e.g. <code>usd</code>, <code>gbp</code>, <code>eur</code>).</li>
+    <li><strong>RequireKnownCustomer</strong> — only process events that have a Stripe customer ID attached.</li>
+    <li><strong>EnableIdempotencyCheck</strong> — deduplicate retried Stripe deliveries using the event signature.</li>
   </ul>
 
-  <h2>Business Benefits</h2>
-  <h3>Automated Billing Workflows</h3>
-  <p>Connect order completion to payment collection without manual steps. When a service is provisioned, automatically create a PaymentIntent, notify the customer, and capture funds — all within a single BizFirst workflow.</p>
+  <h2>What This Node Does Not Do</h2>
+  <p>The Stripe node does not create payment intents, customers, subscriptions, refunds, or invoices. It does not call the Stripe API at all. It only receives and parses events that Stripe sends to it. If you need to call the Stripe API from a workflow, use an HTTP Request node with your Stripe secret key.</p>
 
-  <h3>Subscription Lifecycle Management</h3>
-  <p>Handle upgrades, downgrades, and cancellations programmatically. When a customer requests a plan change through your application, a BizFirst workflow updates the Stripe subscription and notifies downstream systems (CRM, provisioning, email) in one atomic flow.</p>
-
-  <h3>Refund Automation</h3>
-  <p>Trigger refunds from approval workflows. A customer service agent approves a refund request in BizFirst's HIL interface, and the Stripe refund is automatically issued — with confirmation sent to the customer and logged in your ERP.</p>
-
-  <h3>Financial Reconciliation</h3>
-  <p>Retrieve payment intents and invoice data to feed your accounting workflows. Automate revenue recognition, VAT calculation, and monthly billing summaries without manual Stripe exports.</p>
-
-  <h2>Use Cases</h2>
-  <h3>SaaS Onboarding to First Payment</h3><p>New user signs up → create Stripe customer → create subscription → send welcome email with billing confirmation → provision account. The entire sequence in a single triggered workflow.</p>
-  <h3>Invoice-to-Cash</h3><p>Generate a Stripe invoice, finalize it, and email it to the customer. When payment is received (via webhook), update CRM and trigger fulfillment — fully automated accounts receivable.</p>
-  <h3>Churn Prevention Refund</h3><p>When a high-value customer requests cancellation, route to a CS agent approval workflow. On approval, issue a partial refund, update the subscription, and send a retention offer — all automated.</p>
-  <h3>B2B Usage Billing</h3><p>At end of month, collect usage metrics, calculate the charge amount, create a Stripe invoice with itemized line items, and send to the customer — replacing manual billing operations.</p>
+  <h2>Business Use Cases</h2>
+  <h3>Payment Success — Provision Service</h3>
+  <p>When <code>charge.succeeded</code> or <code>payment_intent.succeeded</code> fires, extract the customer ID and metadata, update the order status in your database, send a receipt email, and provision access to the purchased service — all in a single automated workflow.</p>
+  <h3>Payment Failure — Retry and Notify</h3>
+  <p>When <code>payment_intent.payment_failed</code> fires, check the failure reason, send a personalised recovery email with a payment update link, and schedule a follow-up reminder if no update is received within 3 days.</p>
+  <h3>Refund — Update Order Status</h3>
+  <p>When <code>charge.refunded</code> fires, update the order record to <code>refunded</code>, reverse any access grants or fulfilment steps, and send a refund confirmation to the customer.</p>
+  <h3>Dispute — Pause Account and Alert</h3>
+  <p>When <code>charge.dispute.created</code> fires, immediately pause the customer account, alert the billing team in Slack, and open a case in your CRM with the dispute amount and reason.</p>
+  <h3>All Charge Events via Wildcard</h3>
+  <p>Configure <code>AllowedEventTypes</code> to <code>charge.*</code> to receive all charge lifecycle events in a single workflow and route them using a Switch node on <code>event_type</code>.</p>
 
   <h2>In This Guide</h2>
   <div class="card-grid">
     <a href="01-configuration.html" class="card">
       <div class="card-icon"><i class="fa-solid fa-sliders" style="color:var(--accent);"></i></div>
       <h3>Configuration</h3>
-      <p>All properties per operation, credential setup, test vs. live mode, and idempotency.</p>
+      <p>All StripePaymentNodeSettings fields — webhook secret, event filters, amount range, currency, and idempotency.</p>
     </a>
     <a href="02-input-output.html" class="card">
       <div class="card-icon"><i class="fa-solid fa-right-left" style="color:var(--accent);"></i></div>
       <h3>Input &amp; Output</h3>
-      <p>Output ports, PaymentIntent schema, Customer object, and Subscription response format.</p>
+      <p>Output field schemas per event type — charge, payment_intent, and dispute events.</p>
     </a>
     <a href="03-examples.html" class="card">
-      <div class="card-icon"><i class="fa-solid fa-flask" style="color:var(--accent);"></i></div>
+      <div class="card-icon"><i class="fa-solid fa-code" style="color:var(--accent);"></i></div>
       <h3>Examples</h3>
-      <p>Payment intent creation, subscription setup, refund flow, and invoice-to-cash pipeline.</p>
+      <p>Five examples: payment success provisioning, failure retry, refund order update, dispute response, and wildcard charge filter.</p>
     </a>
   </div>
-
-  <div class="callout warning">
-    <strong>Live vs. Test mode:</strong> Always test workflows using a Stripe test-mode credential before switching to live keys. Charges made with live keys result in real transactions. BizFirst credential management supports separate test and live credential entries.
-  </div>
-
-  <h2>Stripe Object Model</h2>
-  <p>Understanding the relationships between Stripe objects helps you design billing workflows correctly.</p>
-  <table>
-    <tr><th>Object</th><th>Stripe ID Prefix</th><th>Description</th><th>Stores Where</th></tr>
-    <tr><td>Customer</td><td><code>cus_</code></td><td>Represents a billing entity (person or company). Holds payment methods and is the anchor for all subscriptions and invoices.</td><td>Your user database — map to your internal user/org ID</td></tr>
-    <tr><td>PaymentIntent</td><td><code>pi_</code></td><td>Represents a single payment transaction. Manages the payment state machine from creation to confirmation.</td><td>Your order/transaction table</td></tr>
-    <tr><td>Subscription</td><td><code>sub_</code></td><td>Recurring billing relationship. Automatically creates invoices on the billing cycle.</td><td>Your subscription table</td></tr>
-    <tr><td>Invoice</td><td><code>in_</code></td><td>A billing document with line items and a total. Can be auto-charged or sent for manual payment.</td><td>Your invoices table or S3 (PDF)</td></tr>
-    <tr><td>Refund</td><td><code>re_</code></td><td>A full or partial reversal of a charge.</td><td>Your refunds/adjustments log</td></tr>
-    <tr><td>Price</td><td><code>price_</code></td><td>Defines the amount and billing interval for a subscription. Created in Stripe dashboard or via API.</td><td>Your product/pricing table</td></tr>
-  </table>
-
-  <h2>Credential Setup</h2>
-  <p>The Stripe node requires a credential stored in BizFirst Credentials Manager with the following fields:</p>
-  <table>
-    <tr><th>Field</th><th>Description</th></tr>
-    <tr><td>Secret Key</td><td>Your Stripe Secret Key (<code>sk_live_...</code> for production, <code>sk_test_...</code> for test). Found in Stripe Dashboard &rarr; Developers &rarr; API keys.</td></tr>
-    <tr><td>Mode</td><td>Select <code>live</code> or <code>test</code> to automatically validate that the key matches the expected mode.</td></tr>
-    <tr><td>Webhook Secret</td><td>Optional. Required if you verify Stripe webhook signatures in BizFirst (recommended for production WebhookTrigger workflows receiving Stripe events).</td></tr>
-  </table>
-
-  <h2>Idempotency Key Best Practices</h2>
-  <p>Stripe supports idempotency keys on all POST operations. When a workflow retries due to a timeout, the same idempotency key ensures Stripe returns the original result rather than creating a duplicate charge, customer, or subscription. Always set <code>idempotency_key</code> on:</p>
-  <ul>
-    <li><code>create_payment_intent</code> — use the order ID</li>
-    <li><code>create_customer</code> — use the internal user ID</li>
-    <li><code>create_subscription</code> — use the user ID + plan ID</li>
-    <li><code>create_refund</code> — use the support ticket ID or refund request ID</li>
-  </ul>
-  <p>Idempotency keys are valid for 24 hours on Stripe. After that, the same key can be reused for a new operation.</p>
-
-  <div class="callout info">
-    <strong>Webhook integration tip:</strong> Most Stripe operations are asynchronous from a business perspective. Payment confirmation, subscription status changes, and invoice payment events arrive as Stripe webhook events. Use a <strong>WebhookTrigger</strong> node configured with your Stripe webhook endpoint to handle events like <code>payment_intent.succeeded</code>, <code>invoice.payment_failed</code>, and <code>customer.subscription.deleted</code> — and trigger the appropriate downstream workflow steps.
-  </div>
-
-  <h2>Key Stripe Webhook Events to Handle in BizFirst</h2>
-  <table>
-    <tr><th>Stripe Event</th><th>Meaning</th><th>Recommended BizFirst Action</th></tr>
-    <tr><td><code>payment_intent.succeeded</code></td><td>Payment collected successfully</td><td>Trigger fulfillment, update order status, send receipt</td></tr>
-    <tr><td><code>payment_intent.payment_failed</code></td><td>Payment attempt failed</td><td>Notify customer, log failure, trigger retry workflow</td></tr>
-    <tr><td><code>invoice.payment_succeeded</code></td><td>Subscription invoice paid</td><td>Update CRM, send receipt, renew access</td></tr>
-    <tr><td><code>invoice.payment_failed</code></td><td>Subscription invoice payment failed</td><td>Send dunning email, restrict access after grace period</td></tr>
-    <tr><td><code>customer.subscription.created</code></td><td>New subscription started</td><td>Provision access, send welcome email</td></tr>
-    <tr><td><code>customer.subscription.deleted</code></td><td>Subscription cancelled</td><td>Revoke access, send offboarding email, update CRM</td></tr>
-    <tr><td><code>customer.subscription.updated</code></td><td>Plan changed, quantity changed, etc.</td><td>Adjust provisioned access, send confirmation</td></tr>
-    <tr><td><code>refund.created</code></td><td>Refund issued</td><td>Log to ERP, send refund confirmation to customer</td></tr>
-  </table>
-  <p>Set up a single BizFirst WebhookTrigger endpoint for all Stripe events. Use a Switch node on the <code>type</code> field of the Stripe webhook payload to route each event type to its own handling workflow branch.</p>
-
-  <h2>Test Mode Cards</h2>
-  <p>When using a test-mode credential, use these Stripe test card numbers to simulate different payment scenarios in your workflow testing:</p>
-  <table>
-    <tr><th>Card Number</th><th>Scenario</th></tr>
-    <tr><td><code>4242 4242 4242 4242</code></td><td>Payment succeeds</td></tr>
-    <tr><td><code>4000 0000 0000 0002</code></td><td>Card always declined</td></tr>
-    <tr><td><code>4000 0027 6000 3184</code></td><td>Requires 3D Secure authentication</td></tr>
-    <tr><td><code>4000 0000 0000 9995</code></td><td>Insufficient funds decline</td></tr>
-    <tr><td><code>4000 0000 0000 0069</code></td><td>Expired card decline</td></tr>
-  </table>
-  <p>Use expiry <code>12/34</code>, CVC <code>123</code>, and any 5-digit postal code for all test cards. Test your error port handling by using a declined card to confirm your workflow handles payment failures gracefully.</p>
 </main>
 </body>
 </html>

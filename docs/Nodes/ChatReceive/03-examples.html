@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ChatReceive — Examples — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.callout{border-radius:6px;padding:14px 18px;margin:18px 0;font-size:14px;line-height:1.6;}
+.callout.info{background:#e6f2fc;border-left:4px solid #0f6cbd;color:#0a3d6b;}
+.callout.success{background:#edf7f0;border-left:4px solid #2a9d5c;color:#1a5c38;}
+pre{background:#1e2736;color:#e8edf3;border-radius:6px;padding:20px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;}
+pre code{background:none;padding:0;color:inherit;}
+ul,ol{margin:10px 0 14px 22px;}
+li{margin-bottom:5px;font-size:14px;}
+h3{font-size:18px;font-weight:700;margin:36px 0 8px;color:var(--accent);padding-bottom:6px;border-bottom:1px solid var(--border);}
+.example-meta{font-size:13px;color:var(--text-muted);margin-bottom:12px;}
+</style>
+<style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">ChatReceive<span>/ HIL Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">ChatReceive</a> / Examples</div>
+    <h1>Examples</h1>
+    <p class="subtitle">Three examples: user confirmation before proceeding, multi-step conversational Q&amp;A, and support ticket escalation chat flow.</p>
+  </div>
+
+  <h3>Example 1: Wait for User Confirmation Message Before Proceeding</h3>
+  <p class="example-meta">Scenario: A deployment workflow pauses and requires a manager to type "CONFIRM" in the deployment channel before proceeding. If no response arrives within 30 minutes, the deployment is cancelled.</p>
+  <pre><code>// Step 1 — Chat node: send a prompt message
+{
+  "channel": "{{ vars.deployment_channel }}",
+  "text": "Deployment of {{ vars.service_name }} v{{ vars.version }} is ready. Type CONFIRM to proceed or CANCEL to abort."
+}
+
+// Step 2 — ChatReceive node
+{
+  "from_channel": "{{ vars.deployment_channel }}",
+  "from_user": "{{ vars.manager_user_id }}",
+  "keyword_filter": "CONFIRM",
+  "timeout_minutes": 30
+}
+
+// waiting port → (no additional action needed)
+
+// success port → proceed with deployment steps
+
+// error port → Chat node: "Deployment timed out waiting for confirmation. Deployment cancelled."
+//            → StopWorkflow node</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The workflow pauses at the ChatReceive node. When the manager types "CONFIRM" in the channel, the workflow resumes and continues with deployment. If no response in 30 minutes, the error branch cancels the deployment and notifies the team.</div>
+
+  <h3>Example 2: Multi-Step Conversational Q&amp;A Using Loop + ChatReceive</h3>
+  <p class="example-meta">Scenario: A support intake bot asks three questions sequentially — each using a separate ChatReceive node. Answers are collected into variables for a support ticket.</p>
+  <pre><code>// Triggered by ChatTrigger (initial message from user)
+
+// Step 1 — Chat node: "What is your name?"
+// Step 2 — ChatReceive: wait for name
+{
+  "from_user": "{{ trigger.user_id }}",
+  "timeout_minutes": 10
+}
+// success → VariableAssignment: customer_name = message_text
+
+// Step 3 — Chat node: "What product are you having trouble with?"
+// Step 4 — ChatReceive: wait for product
+{
+  "from_user": "{{ trigger.user_id }}",
+  "timeout_minutes": 10
+}
+// success → VariableAssignment: product_name = message_text
+
+// Step 5 — Chat node: "Please describe the issue in detail."
+// Step 6 — ChatReceive: wait for description
+{
+  "from_user": "{{ trigger.user_id }}",
+  "timeout_minutes": 15
+}
+// success → VariableAssignment: issue_description = message_text
+
+// Step 7 — MongoDB/insertOne: create support ticket
+// Step 8 — Chat node: "Your ticket #{{ vars.ticket_id }} has been created. Our team will contact you within 2 hours."</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The bot conducts a three-question intake entirely through chat. Each question waits for a response before asking the next. After all questions are answered, a support ticket is created automatically and the user receives a confirmation with their ticket number.</div>
+
+  <h3>Example 3: Support Ticket Escalation Chat Flow</h3>
+  <p class="example-meta">Scenario: A support ticket is auto-escalated to Tier 2. The workflow posts the ticket details to the #tier2-support channel and waits for a technician to claim it by replying "CLAIM".</p>
+  <pre><code>// Triggered by webhook from support system (ticket escalated to T2)
+
+// Step 1 — Chat node: post to #tier2-support channel
+{
+  "channel": "#tier2-support",
+  "text": "ESCALATION: Ticket #{{ vars.ticket_id }} requires Tier 2 attention.\nCustomer: {{ vars.customer_name }}\nIssue: {{ vars.issue_summary }}\nSeverity: {{ vars.severity }}\n\nReply CLAIM to take ownership."
+}
+
+// Step 2 — ChatReceive: wait for any T2 technician to claim
+{
+  "from_channel": "CH-tier2-support",
+  "keyword_filter": "CLAIM",
+  "timeout_minutes": 60
+}
+
+// waiting port → log "Waiting for T2 claim since {{ now }}"
+
+// success port:
+// → VariableAssignment: assigned_tech = from_user
+// → HTTP POST to support system: assign ticket to technician
+// → Chat node: "Ticket #{{ vars.ticket_id }} claimed by <@{{ vars.assigned_tech }}>. SLA clock started."
+
+// error port (timeout — no claim in 60 minutes):
+// → Chat node: "@here — URGENT: Ticket #{{ vars.ticket_id }} unclaimed for 60 minutes! Immediate attention required."
+// → HTTP POST to support system: escalate to manager
+// → VariableAssignment: escalation_count += 1
+// → ChatReceive (second attempt with extended timeout)</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The first available Tier 2 technician to type "CLAIM" in the channel takes ownership of the ticket. The workflow captures their user ID, assigns the ticket in the support system, and posts a confirmation. If no one claims the ticket within an hour, an @here alert fires and the ticket escalates further.</div>
+</main>
+</body>
+</html>

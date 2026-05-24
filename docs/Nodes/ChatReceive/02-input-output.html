@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ChatReceive — Input &amp; Output — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.callout{border-radius:6px;padding:14px 18px;margin:18px 0;font-size:14px;line-height:1.6;}
+.callout.info{background:#e6f2fc;border-left:4px solid #0f6cbd;color:#0a3d6b;}
+.callout.warning{background:#fff8e1;border-left:4px solid #f0a500;color:#6b4400;}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;}
+th{background:#f0f4f8;text-align:left;padding:10px 14px;font-weight:600;border:1px solid #dde3ea;}
+td{padding:9px 14px;border:1px solid #dde3ea;vertical-align:top;line-height:1.55;}
+td code{background:#f0f4f8;padding:1px 6px;border-radius:4px;font-size:12.5px;font-family:monospace;}
+pre{background:#1e2736;color:#e8edf3;border-radius:6px;padding:20px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;}
+pre code{background:none;padding:0;color:inherit;}
+ul,ol{margin:10px 0 14px 22px;}
+li{margin-bottom:5px;font-size:14px;}
+h3{font-size:16px;font-weight:700;margin:30px 0 8px;color:var(--text);}
+h2{margin-top:40px;}
+.port-badge{display:inline-block;font-size:11px;font-weight:700;border-radius:4px;padding:3px 10px;}
+.port-waiting{background:#fff3e0;color:#e65100;}
+.port-success{background:#edf7f0;color:#2a9d5c;}
+.port-error{background:#fde8ec;color:#c82045;}
+</style>
+<style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">ChatReceive<span>/ HIL Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html" class="active">Input &amp; Output</a>
+  <a href="03-examples.html">Examples</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">ChatReceive</a> / Input &amp; Output</div>
+    <h1>Input &amp; Output</h1>
+    <p class="subtitle">Output port behaviour, success payload schema, and error/timeout scenarios for the ChatReceive node.</p>
+  </div>
+
+  <h2>Execution Timeline</h2>
+  <p>When a workflow reaches a ChatReceive node, the following sequence occurs:</p>
+  <ol>
+    <li>The node registers a listener with the chat platform (channel, user, and keyword filters applied).</li>
+    <li>The <strong>waiting</strong> port fires immediately — any nodes connected to <code>waiting</code> execute now.</li>
+    <li>The workflow execution suspends. No compute resources are consumed during the wait.</li>
+    <li>When a matching message arrives: the workflow resumes and the <strong>success</strong> port fires with the message payload.</li>
+    <li>If <code>TimeoutMinutes</code> elapses before a message arrives: the <strong>error</strong> port fires.</li>
+  </ol>
+
+  <!-- waiting port -->
+  <h2><span class="port-badge port-waiting">waiting</span> Port Output</h2>
+  <p>The waiting port fires synchronously on node entry. It carries minimal state — primarily the context needed to send a prompt to the user:</p>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:100px;">Type</th><th>Description</th></tr>
+    <tr><td><code>listening_on_channel</code></td><td>string</td><td>The channel ID the node is listening on (from <code>FromChannel</code>, or empty if not set).</td></tr>
+    <tr><td><code>listening_for_user</code></td><td>string</td><td>The user ID the node will accept messages from (from <code>FromUser</code>, or empty if not set).</td></tr>
+    <tr><td><code>keyword_filter</code></td><td>string</td><td>The keyword filter in effect (from <code>KeywordFilter</code>, or empty if not set).</td></tr>
+    <tr><td><code>timeout_at</code></td><td>string (ISO 8601)</td><td>Timestamp when the timeout will fire (if <code>TimeoutMinutes</code> was set). Empty string if no timeout is configured.</td></tr>
+    <tr><td><code>conversation_id</code></td><td>string</td><td>Unique ID for this ChatReceive instance within the workflow run. Use this to correlate the waiting/success/error events in logs.</td></tr>
+  </table>
+  <pre><code>{
+  "listening_on_channel": "CH-support-tier2",
+  "listening_for_user": "",
+  "keyword_filter": "",
+  "timeout_at": "2026-05-23T16:00:00.000Z",
+  "conversation_id": "cr_7f3a9b2c-1d4e-4f80-a123-789012345678"
+}</code></pre>
+
+  <!-- success port -->
+  <h2><span class="port-badge port-success">success</span> Port Output</h2>
+  <p>Fires when a matching chat message is received. Contains the full message payload:</p>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:100px;">Type</th><th>Description</th></tr>
+    <tr><td><code>message_text</code></td><td>string</td><td>Full text content of the received message.</td></tr>
+    <tr><td><code>from_user</code></td><td>string</td><td>User ID of the person who sent the message.</td></tr>
+    <tr><td><code>from_channel</code></td><td>string</td><td>Channel ID where the message was received.</td></tr>
+    <tr><td><code>received_at</code></td><td>string (ISO 8601)</td><td>Timestamp when the message was received.</td></tr>
+    <tr><td><code>conversation_id</code></td><td>string</td><td>The same conversation ID issued in the waiting port — use for correlating the full conversation lifecycle.</td></tr>
+    <tr><td><code>raw_message</code></td><td>object</td><td>The raw message event object from the chat platform (structure varies by platform).</td></tr>
+  </table>
+  <pre><code>{
+  "message_text": "Yes, approved. Please proceed.",
+  "from_user": "U-manager-007",
+  "from_channel": "CH-approvals",
+  "received_at": "2026-05-23T14:47:32.000Z",
+  "conversation_id": "cr_7f3a9b2c-1d4e-4f80-a123-789012345678",
+  "raw_message": { "type": "message", "text": "Yes, approved. Please proceed.", "ts": "1748000852.000100" }
+}</code></pre>
+
+  <!-- error port -->
+  <h2><span class="port-badge port-error">error</span> Port Output — Timeout and Filter Failure</h2>
+  <table>
+    <tr><th style="width:180px;">Field</th><th style="width:100px;">Type</th><th>Description</th></tr>
+    <tr><td><code>errorCode</code></td><td>string</td><td>Either <code>"timeout"</code> (TimeoutMinutes elapsed) or <code>"filter_mismatch"</code> (message received but keyword did not match after max wait).</td></tr>
+    <tr><td><code>message</code></td><td>string</td><td>Human-readable description of what happened.</td></tr>
+    <tr><td><code>conversation_id</code></td><td>string</td><td>Same conversation ID from the waiting port for correlation.</td></tr>
+    <tr><td><code>waited_minutes</code></td><td>integer</td><td>Actual number of minutes the node waited before the error fired.</td></tr>
+  </table>
+  <pre><code>// Timeout scenario:
+{
+  "errorCode": "timeout",
+  "message": "No matching message received within 60 minutes.",
+  "conversation_id": "cr_7f3a9b2c-1d4e-4f80-a123-789012345678",
+  "waited_minutes": 60
+}</code></pre>
+
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <strong>Design tip:</strong> Always connect the error port to a cleanup handler. Typical cleanup includes: sending an escalation message to a supervisor channel, marking the workflow record as "timed out" in your database, and optionally restarting the ChatReceive listener with an extended timeout.
+  </div>
+</main>
+</body>
+</html>

@@ -46,79 +46,130 @@ li{margin-bottom:5px;font-size:14px;}
   <div class="page-header">
     <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">WhatsApp</a> / Examples</div>
     <h1>Examples</h1>
-    <p class="subtitle">Five WhatsApp node configurations covering OTP, order updates, templates, media, and delivery tracking.</p>
+    <p class="subtitle">Five WhatsApp node examples: interactive product catalog, sendAndWait order confirmation, media upload and share, group announcement with buttons, and template appointment reminder.</p>
   </div>
 
-  <h3>Example 1: OTP Delivery via Text Message</h3>
-  <p class="example-meta">Scenario: Send a one-time password to a customer's WhatsApp during a login or transaction verification flow.</p>
+  <h3>Example 1: Rich Product Catalog with Interactive List</h3>
+  <p class="example-meta">Scenario: A customer sends "menu" to your business number. Respond with a scrollable interactive list showing your product categories and items so they can select what to order.</p>
   <pre><code>{
-  "credential_id": "whatsapp-business-api",
-  "operation": "send",
-  "phone_number": "{{ vars.customer_phone }}",
-  "message_type": "text",
-  "message_text": "Your {{ env.COMPANY_NAME }} verification code is: *{{ vars.otp_code }}*\n\nThis code expires in 10 minutes. Do not share it with anyone."
-}</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> OTP delivered to customer's WhatsApp. Bold formatting applied to the code for readability. The 10-minute expiry is enforced by an upstream Delay + VariableAssignment node that invalidates the token.</div>
-
-  <h3>Example 2: Order Shipped Template Notification</h3>
-  <p class="example-meta">Scenario: When an order ships, send a pre-approved WhatsApp template message with the tracking details. This is sent outside a customer service window, so a template is required.</p>
-  <pre><code>{
-  "credential_id": "whatsapp-business-api",
-  "operation": "sendTemplate",
-  "phone_number": "{{ vars.customer_phone }}",
-  "template_name": "order_shipped_notification",
-  "template_language": "en_US",
-  "parameters": [
-    "{{ vars.customer_first_name }}",
-    "{{ vars.order_number }}",
-    "{{ vars.carrier_name }}",
-    "{{ vars.tracking_number }}",
-    "{{ vars.estimated_delivery_date }}",
-    "{{ vars.tracking_url }}"
+  "AccessToken": "{{ credentials.whatsapp_access_token }}",
+  "PhoneNumberId": "{{ credentials.whatsapp_phone_number_id }}",
+  "operation": "message/sendInteractiveList",
+  "To": "{{ vars.customer_phone }}",
+  "BodyText": "Welcome to FreshMart! Browse our menu and tap an item to order.",
+  "ButtonTitle": "View Menu",
+  "Sections": [
+    {
+      "title": "Fresh Produce",
+      "rows": [
+        { "id": "prod_apples", "title": "Apples (1kg)", "description": "$3.50 — Crisp red apples, locally grown" },
+        { "id": "prod_bananas", "title": "Bananas (bunch)", "description": "$2.20 — Ripe yellow bananas" },
+        { "id": "prod_tomatoes", "title": "Tomatoes (500g)", "description": "$2.80 — Vine-ripened tomatoes" }
+      ]
+    },
+    {
+      "title": "Dairy",
+      "rows": [
+        { "id": "prod_milk", "title": "Full Cream Milk (2L)", "description": "$4.10 — Fresh from local farms" },
+        { "id": "prod_cheese", "title": "Cheddar Cheese (200g)", "description": "$5.50 — Mature cheddar" }
+      ]
+    }
   ]
 }</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Customer receives a branded shipping notification: "Hi Jane, your order #ORD-2025-8471 has shipped via FedEx (tracking: 794644792798). Estimated delivery: 17 Nov. Track: https://..."</div>
+  <div class="callout success"><strong>Expected outcome:</strong> Customer taps "View Menu" and sees the scrollable list. When they select an item, a reply webhook arrives with <code>reply_list_row_id</code> set to the selected row's ID (e.g. <code>prod_milk</code>). Use a sendAndWait or webhook trigger to capture the selection and build the order.</div>
 
-  <h3>Example 3: Document Invoice via Media Message</h3>
-  <p class="example-meta">Scenario: Within a 24-hour support window, send the customer their invoice as a PDF document attachment.</p>
+  <h3>Example 2: sendAndWait Order Confirmation Flow</h3>
+  <p class="example-meta">Scenario: After building an order summary, send it to the customer on WhatsApp and wait for their "Yes" or "No" reply before processing payment. The workflow suspends until the customer responds.</p>
   <pre><code>{
-  "credential_id": "whatsapp-business-api",
-  "operation": "send",
-  "phone_number": "{{ vars.customer_phone }}",
-  "message_type": "document",
-  "media_url": "{{ vars.invoice_pdf_url }}",
-  "media_filename": "Invoice_{{ vars.invoice_number }}.pdf",
-  "media_caption": "Invoice #{{ vars.invoice_number }} for {{ vars.invoice_amount_formatted }}. Due: {{ vars.invoice_due_date }}."
+  "AccessToken": "{{ credentials.whatsapp_access_token }}",
+  "PhoneNumberId": "{{ credentials.whatsapp_phone_number_id }}",
+  "operation": "message/sendAndWait",
+  "To": "{{ vars.customer_phone }}",
+  "Text": "Hi {{ vars.customer_name }}, your order summary:\n\n{{ vars.order_items_formatted }}\n\n*Total: {{ vars.order_total }}*\n\nReply *YES* to confirm and proceed to payment, or *NO* to cancel.",
+  "TimeoutSeconds": 300
 }</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Customer receives the PDF invoice directly in WhatsApp with a clear filename and caption. The <code>media_url</code> must be publicly accessible or a pre-signed S3 URL.</div>
+  <div class="callout info"><strong>Behaviour:</strong> The workflow suspends after sending. On the success port, <code>reply_text</code> contains the customer's reply. Use a Switch node to branch on the reply — route "YES" to the payment processing branch and "NO" to the cancellation branch. On the timeout port (5 minutes with no reply), route to an order expiry notification.</div>
 
-  <h3>Example 4: Appointment Reminder Template</h3>
-  <p class="example-meta">Scenario: 24 hours before a scheduled appointment, send a reminder via approved template with confirmation and rescheduling options.</p>
+  <h3>Example 3: Media Upload and Share Document</h3>
+  <p class="example-meta">Scenario: Generate an invoice PDF (stored in a BizFirst variable as base64), upload it to WhatsApp media hosting, then send it to the customer as a document message with a caption.</p>
+  <p><strong>Step 1 — Upload the file to WhatsApp:</strong></p>
   <pre><code>{
-  "credential_id": "whatsapp-business-api",
-  "operation": "sendTemplate",
-  "phone_number": "{{ vars.patient_phone }}",
-  "template_name": "appointment_reminder_v3",
-  "template_language": "en_US",
-  "parameters": [
-    "{{ vars.patient_first_name }}",
-    "{{ vars.appointment_date }}",
-    "{{ vars.appointment_time }}",
-    "{{ vars.doctor_name }}",
-    "{{ vars.clinic_address }}",
-    "{{ vars.reschedule_url }}"
+  "AccessToken": "{{ credentials.whatsapp_access_token }}",
+  "PhoneNumberId": "{{ credentials.whatsapp_phone_number_id }}",
+  "operation": "media/upload",
+  "FileData": "{{ vars.invoice_pdf_base64 }}",
+  "MimeType": "application/pdf",
+  "Filename": "Invoice_{{ vars.invoice_number }}.pdf"
+}</code></pre>
+  <p><strong>Step 2 — Send the document using the returned media_id:</strong></p>
+  <pre><code>{
+  "AccessToken": "{{ credentials.whatsapp_access_token }}",
+  "PhoneNumberId": "{{ credentials.whatsapp_phone_number_id }}",
+  "operation": "message/sendDocument",
+  "To": "{{ vars.customer_phone }}",
+  "DocumentUrl": null,
+  "DocumentBase64": "{{ nodes.uploadInvoice.output.media_id }}",
+  "Filename": "Invoice_{{ vars.invoice_number }}.pdf",
+  "Caption": "Invoice #{{ vars.invoice_number }} — {{ vars.invoice_total_formatted }}. Due: {{ vars.invoice_due_date }}. Questions? Reply here."
+}</code></pre>
+  <div class="callout success"><strong>Expected outcome:</strong> The PDF is uploaded once and sent to the customer with a readable filename and caption. Using media/upload before sending is preferred over direct URL delivery when the source file is dynamically generated rather than hosted on a public URL.</div>
+
+  <h3>Example 4: Group Announcement with Interactive Buttons</h3>
+  <p class="example-meta">Scenario: Send a staff announcement to a WhatsApp group asking members to acknowledge they have read it. Use interactive buttons for quick replies.</p>
+  <p><strong>Step 1 — Send buttons message to group:</strong></p>
+  <pre><code>{
+  "AccessToken": "{{ credentials.whatsapp_access_token }}",
+  "PhoneNumberId": "{{ credentials.whatsapp_phone_number_id }}",
+  "operation": "message/sendInteractiveButtons",
+  "To": "{{ vars.group_id }}",
+  "Header": "Policy Update — Action Required",
+  "BodyText": "A new data security policy has been issued. All staff must acknowledge receipt by {{ vars.deadline_date }}.\n\nDocument: {{ vars.policy_doc_url }}",
+  "Buttons": [
+    { "id": "ack_read", "title": "I have read it" },
+    { "id": "ack_questions", "title": "I have questions" },
+    { "id": "ack_later", "title": "Remind me later" }
+  ],
+  "Footer": "HR Department — {{ vars.policy_version }}"
+}</code></pre>
+  <div class="callout success"><strong>Expected outcome:</strong> Group members see the announcement with three tappable buttons. Button tap replies arrive as webhook events with <code>reply_button_id</code> set to the tapped button's ID. A parallel webhook trigger workflow captures these responses and records acknowledgements in your HR system.</div>
+
+  <h3>Example 5: Template Message for Appointment Reminder</h3>
+  <p class="example-meta">Scenario: 24 hours before a scheduled appointment, trigger a pre-approved Meta template message to remind the patient of their booking details.</p>
+  <pre><code>{
+  "AccessToken": "{{ credentials.whatsapp_access_token }}",
+  "PhoneNumberId": "{{ credentials.whatsapp_phone_number_id }}",
+  "operation": "message/sendTemplate",
+  "To": "{{ vars.patient_phone }}",
+  "TemplateName": "appointment_reminder_v2",
+  "LanguageCode": "en_US",
+  "Components": [
+    {
+      "type": "header",
+      "parameters": [
+        { "type": "text", "text": "{{ vars.clinic_name }}" }
+      ]
+    },
+    {
+      "type": "body",
+      "parameters": [
+        { "type": "text", "text": "{{ vars.patient_first_name }}" },
+        { "type": "text", "text": "{{ vars.appointment_date }}" },
+        { "type": "text", "text": "{{ vars.appointment_time }}" },
+        { "type": "text", "text": "{{ vars.doctor_name }}" },
+        { "type": "text", "text": "{{ vars.clinic_address }}" }
+      ]
+    },
+    {
+      "type": "button",
+      "sub_type": "url",
+      "index": 0,
+      "parameters": [
+        { "type": "text", "text": "{{ vars.reschedule_token }}" }
+      ]
+    }
   ]
 }</code></pre>
-  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Patient receives an appointment reminder with all details. Reply handling via a webhook trigger workflow can capture confirmation or rescheduling requests.</div>
-
-  <h3>Example 5: Check Delivery Status After Send</h3>
-  <p class="example-meta">Scenario: After sending a critical compliance notification, poll its delivery status to confirm receipt before proceeding with the workflow.</p>
-  <pre><code>{
-  "credential_id": "whatsapp-business-api",
-  "operation": "getStatus",
-  "message_id": "{{ nodes.sendComplianceNotice.output.message_id }}"
-}</code></pre>
-  <div class="callout info"><i class="fa-solid fa-circle-info"></i>This node is typically placed after a short Delay (e.g. 30 seconds) to allow delivery. Use a Switch node downstream on <code>{{ nodes.checkStatus.output.status }}</code> to route: <code>delivered</code> → continue, <code>failed</code> → escalate via alternate channel.</div>
+  <div class="callout success"><strong>Expected outcome:</strong> Patient receives a structured appointment reminder with clinic name in the header, their name, date, time, doctor, and clinic address in the body, and a personalised "Reschedule" button linking to <code>https://clinic.example.com/reschedule/{{ vars.reschedule_token }}</code>. This is sent outside the 24-hour window and requires an approved template — no free-form messaging policy applies.</div>
 </main>
 </body>
 </html>

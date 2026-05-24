@@ -28,7 +28,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   </div>
 </div>
 <nav class="sidebar">
-  <div class="sidebar-brand">GitHub<span>Integration Node</span></div>
+  <div class="sidebar-brand">GitHub<span>Webhook Trigger</span></div>
   <div class="sidebar-section">This Node</div>
   <a href="index.html" class="active">Overview</a>
   <a href="01-configuration.html">Configuration</a>
@@ -47,65 +47,91 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <div class="page-header">
     <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / GitHub</div>
     <h1><i class="fa-brands fa-github" style="color:#24292e;margin-right:10px;"></i>GitHub</h1>
-    <p class="subtitle">Automate GitHub repository and project management — create issues, open pull requests, post comments, and drive DevOps pipelines from workflows.</p>
+    <p class="subtitle">Receive GitHub webhook events and trigger BizFirst workflows on push, pull request, issue, release, and workflow_run activity.</p>
   </div>
+
   <div class="callout info">
     <i class="fa-solid fa-circle-info"></i>
-    <strong>What this node does:</strong> The GitHub node integrates with the GitHub REST API to automate repository operations. Create issues automatically from monitoring alerts, open pull requests when workflow steps complete, comment on issues with deployment or processing results, list and query open issues, and integrate GitHub into end-to-end DevOps automation pipelines — all driven by workflow context via BizFirst expressions.
+    <strong>This is a webhook trigger node.</strong> The GitHub node does NOT call the GitHub API. It receives inbound webhook events sent by GitHub when activity happens in your repositories. When GitHub fires a matching event to the BizFirst endpoint, this node starts a workflow run and passes structured event data to downstream nodes.
   </div>
-  <h2>Supported Operations</h2>
+
+  <h2>Supported Event Types</h2>
   <table>
-    <tr><th>Operation</th><th>Description</th></tr>
-    <tr><td><code>createIssue</code></td><td>Create a new issue in a repository with title, body, labels, assignees, and milestone.</td></tr>
-    <tr><td><code>createPullRequest</code></td><td>Open a pull request from a head branch to a base branch with full metadata.</td></tr>
-    <tr><td><code>commentOnIssue</code></td><td>Post a comment on an existing issue or pull request by number.</td></tr>
-    <tr><td><code>mergeAsync</code></td><td>Merge a pull request using merge, squash, or rebase strategy.</td></tr>
-    <tr><td><code>getIssue</code></td><td>Retrieve full details of a specific issue or pull request by number.</td></tr>
-    <tr><td><code>listIssues</code></td><td>List issues in a repository with filtering by state, labels, assignee, and milestone.</td></tr>
+    <tr><th style="width:200px;">Event Type</th><th>GitHub Activity</th><th>BizFirst Endpoint</th></tr>
+    <tr><td><code>push</code></td><td>One or more commits pushed to a branch or tag</td><td><code>POST /webhooks/github/push</code></td></tr>
+    <tr><td><code>pull_request</code></td><td>PR opened, closed, merged, reviewed, labelled, or updated</td><td><code>POST /webhooks/github/pull-request</code></td></tr>
+    <tr><td><code>issues</code></td><td>Issue opened, edited, closed, labelled, assigned, or milestoned</td><td><code>POST /webhooks/github/issues</code></td></tr>
+    <tr><td><code>release</code></td><td>Release published, pre-released, edited, or deleted</td><td><code>POST /webhooks/github/releases</code></td></tr>
+    <tr><td><code>workflow_run</code></td><td>GitHub Actions workflow completed, requested, or in-progress</td><td><code>POST /webhooks/github/workflow</code></td></tr>
   </table>
-  <h2>Key Capabilities</h2>
+
+  <h2>How to Configure the GitHub Webhook</h2>
+  <p>After saving your GitHub node in BizFirst, point GitHub to the BizFirst endpoint for each event type you want to handle:</p>
+  <ol>
+    <li>In your GitHub repository (or organisation), go to <strong>Settings &gt; Webhooks &gt; Add webhook</strong>.</li>
+    <li>Set <strong>Payload URL</strong> to the BizFirst endpoint for the event type — for example <code>https://app.bizfirstai.com/webhooks/github/push</code>.</li>
+    <li>Set <strong>Content type</strong> to <code>application/json</code>.</li>
+    <li>If using WebhookSecret, paste the same secret value in both GitHub and the BizFirst node settings.</li>
+    <li>Select the specific events to send (push, pull_request, issues, etc.) or choose "Send me everything".</li>
+    <li>Save the webhook. GitHub will send a ping event — the node will receive it but will not start a workflow run.</li>
+  </ol>
+
+  <div class="callout warning">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <strong>WebhookSecret:</strong> It is strongly recommended to set a WebhookSecret. When set, BizFirst verifies the HMAC SHA256 signature in the <code>x-hub-signature-256</code> header sent by GitHub. Events with invalid signatures are rejected before any workflow is started.
+  </div>
+
+  <h2>Filtering Events</h2>
+  <p>The node settings let you filter which events actually trigger a workflow run. Filters include allowed repositories, organisations, branches, PR actions, and issue actions. Events that do not pass the configured filters are silently discarded — the workflow is never started.</p>
   <ul>
-    <li>Full issue lifecycle management — create, comment, read, and list with rich filtering</li>
-    <li>Pull request automation — open PRs, post review comments, and trigger merges</li>
-    <li>Dynamic labels, assignees, and milestones from workflow expressions</li>
-    <li>GitHub Personal Access Token or GitHub App authentication</li>
-    <li>Supports GitHub.com and GitHub Enterprise Server</li>
-    <li>Dual output ports: <strong>success</strong> and <strong>error</strong></li>
+    <li>Filter by specific repositories using <code>owner/repo</code> format</li>
+    <li>Filter push events to specific branches — wildcards supported (e.g. <code>release/*</code>)</li>
+    <li>Filter pull request events by action (opened, synchronize, closed, etc.)</li>
+    <li>Filter issue events by action (opened, closed, labeled, etc.)</li>
+    <li>Restrict to organisation members or users with push access</li>
+    <li>Skip empty push events with <code>OnlyProcessNonEmptyPushes</code></li>
+    <li>Deduplicate retried deliveries with <code>EnableIdempotencyCheck</code></li>
   </ul>
-  <h2>Business Benefits</h2>
-  <h3>Automated Bug Reporting from Monitoring</h3>
-  <p>When application monitoring detects an error exceeding a threshold, automatically create a GitHub issue with the full error context, stack trace, environment details, and a link to the monitoring dashboard — giving developers everything they need immediately.</p>
-  <h3>DevOps Pipeline Integration</h3>
-  <p>Trigger GitHub pull requests, issue status updates, and merge operations as part of larger deployment workflows. Connect your release management process, change approval flows, and environment promotion steps directly to GitHub actions.</p>
-  <h3>Sprint Tracking Automation</h3>
-  <p>When business processes complete milestones (e.g. client sign-off, QA approval), automatically close GitHub issues, update labels, or post progress comments — keeping technical and business tracking in sync without manual updates.</p>
+
+  <h2>Output Data</h2>
+  <p>Each event type produces structured output fields that downstream nodes can reference. All events include common fields (repository name, owner, sender, timestamp) plus event-specific fields:</p>
+  <ul>
+    <li><strong>push:</strong> branch, commits array, forced_push, pusher</li>
+    <li><strong>pull_request:</strong> PR number, title, state, head/base branch, labels, reviewers</li>
+    <li><strong>issues:</strong> issue number, title, state, labels, assignees</li>
+    <li><strong>release:</strong> release name, tag, prerelease flag, asset count</li>
+    <li><strong>workflow_run:</strong> run ID, workflow name, status, conclusion, branch</li>
+  </ul>
+
   <h2>Use Cases</h2>
-  <h3>Auto-Create Bug Reports from Monitoring Alerts</h3><p>When Datadog/PagerDuty triggers a workflow for an application error, create a GitHub issue with severity label, assignee, and full error details automatically.</p>
-  <h3>Create PR on Workflow Completion</h3><p>After an automated code generation or configuration update step completes, open a pull request to the main branch with a descriptive body summarising the changes made.</p>
-  <h3>Post Deployment Status Comments</h3><p>After deploying to staging or production, comment on the related PR with the deployment result, environment URL, and test coverage summary.</p>
-  <h3>Track Sprint Items via Workflow</h3><p>When a business process milestone is reached, close the corresponding GitHub issue and update its label to "Done" — keeping Scrum boards in sync with business processes.</p>
-  <h3>Auto-Assign Issues</h3><p>When new issues are created in a repository, a webhook-triggered BizFirst workflow analyses the issue content and auto-assigns it to the correct team member based on keyword matching and team schedules.</p>
+  <h3>Auto-Deploy on Push to Main</h3>
+  <p>When a push event arrives for the main branch of your production repository, trigger a deployment pipeline — run tests, update staging, notify the team in Slack, and promote to production after approval.</p>
+  <h3>PR Review Bot</h3>
+  <p>When a pull request is opened, run automated checks — post a comment with the diff summary, assign reviewers based on file ownership rules, and label the PR with the affected service area.</p>
+  <h3>Auto-Close Stale Issues</h3>
+  <p>When an issue is labelled "stale" by a triage workflow, trigger a BizFirst workflow that adds a closing comment, closes the issue after 7 days of no activity, and logs the closure in your project management tool.</p>
+  <h3>Release Notes Generation</h3>
+  <p>When a release is published, collect all merged PRs since the previous tag, generate formatted release notes, post them to Confluence, and notify the product team in Slack.</p>
+  <h3>CI Failure Alert</h3>
+  <p>When a <code>workflow_run</code> event arrives with conclusion <code>failure</code>, page the on-call engineer, create a GitHub issue, and post the failure details to the engineering channel.</p>
+
   <h2>In This Guide</h2>
   <div class="card-grid">
     <a href="01-configuration.html" class="card">
       <div class="card-icon"><i class="fa-solid fa-sliders" style="color:var(--accent);"></i></div>
       <h3>Configuration</h3>
-      <p>Full property reference for all six GitHub operations.</p>
+      <p>All settings with descriptions — secrets, filters, access controls, and idempotency.</p>
     </a>
     <a href="02-input-output.html" class="card">
       <div class="card-icon"><i class="fa-solid fa-right-left" style="color:var(--accent);"></i></div>
       <h3>Input &amp; Output</h3>
-      <p>Output ports, schemas, and example API responses.</p>
+      <p>Full output field tables for each event type — push, pull_request, issues, release, workflow_run.</p>
     </a>
     <a href="03-examples.html" class="card">
       <div class="card-icon"><i class="fa-solid fa-code" style="color:var(--accent);"></i></div>
       <h3>Examples</h3>
-      <p>Five examples: bug issue, PR creation, deployment comment, milestone close, and list query.</p>
+      <p>Five examples: auto-deploy on push, PR review bot, stale issue close, release notes, and CI failure alert.</p>
     </a>
-  </div>
-  <div class="callout warning">
-    <i class="fa-solid fa-triangle-exclamation"></i>
-    <strong>GitHub authentication:</strong> Store your GitHub Personal Access Token (PAT) or GitHub App private key in BizFirst Credentials Manager. PATs require the <code>repo</code> scope for full issue and PR management. For production workflows, prefer GitHub Apps for fine-grained permission control.
   </div>
 </main>
 </body>

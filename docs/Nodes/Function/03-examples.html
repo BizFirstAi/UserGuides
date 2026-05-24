@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Function — Examples — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.callout{border-radius:6px;padding:14px 18px;margin:18px 0;font-size:14px;line-height:1.6;}
+.callout.info{background:#e6f2fc;border-left:4px solid #0f6cbd;color:#0a3d6b;}
+.callout.success{background:#edf7f0;border-left:4px solid #2a9d5c;color:#1a5c38;}
+pre{background:#1e2736;color:#e8edf3;border-radius:6px;padding:20px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;}
+pre code{background:none;padding:0;color:inherit;}
+ul,ol{margin:10px 0 14px 22px;}
+li{margin-bottom:5px;font-size:14px;}
+h3{font-size:18px;font-weight:700;margin:36px 0 8px;color:var(--accent);padding-bottom:6px;border-bottom:1px solid var(--border);}
+.example-meta{font-size:13px;color:var(--text-muted);margin-bottom:12px;}
+</style>
+<style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Function<span>/ Script Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Function</a> / Examples</div>
+    <h1>Examples</h1>
+    <p class="subtitle">Four Function node examples: JSON transformation, custom pricing engine, multi-rule data validation, and string/regex extraction.</p>
+  </div>
+
+  <h3>Example 1: Parse and Transform a Complex JSON Payload</h3>
+  <p class="example-meta">Scenario: An upstream HTTP Request node returns a deeply nested API response. Flatten and reshape it into the exact structure needed for a downstream MongoDB insert.</p>
+  <pre><code>// Script property:
+const raw = context.input;
+
+// Flatten the nested order response into a flat document
+const order = raw.data.order;
+const customer = raw.data.order.customer;
+const items = raw.data.order.line_items;
+
+return {
+  order_id: order.id,
+  order_date: order.created_at,
+  customer_id: customer.id,
+  customer_email: customer.email,
+  customer_name: `${customer.first_name} ${customer.last_name}`.trim(),
+  total_amount: order.total_price,
+  currency: order.currency,
+  item_count: items.length,
+  items: items.map(item => ({
+    sku: item.variant_id,
+    title: item.title,
+    quantity: item.quantity,
+    unit_price: item.price,
+    subtotal: (item.quantity * parseFloat(item.price)).toFixed(2)
+  })),
+  fulfillment_status: order.fulfillment_status ?? "pending",
+  tags: order.tags ? order.tags.split(",").map(t => t.trim()) : []
+};</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The deeply nested Shopify-style order response is transformed into a clean, flat MongoDB document. The downstream MongoDB/insertOne node receives exactly the structure required — no additional DataMapping needed.</div>
+
+  <h3>Example 2: Custom Business Logic Calculation (Pricing Engine)</h3>
+  <p class="example-meta">Scenario: Calculate the final price for a customer order by applying tier-based discounts, promotional codes, and tax rules in one place.</p>
+  <pre><code>// Script property:
+const cart = context.vars.cart_items;
+const pricingTier = context.vars.customer_tier; // "bronze", "silver", "gold", "platinum"
+const promoCode = context.vars.promo_code;
+const region = context.vars.customer_region;
+
+// Tier discount rates
+const tierDiscounts = { bronze: 0, silver: 0.05, gold: 0.10, platinum: 0.15 };
+const tierDiscount = tierDiscounts[pricingTier] ?? 0;
+
+// Calculate subtotal
+const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+// Apply tier discount
+let discountAmount = subtotal * tierDiscount;
+
+// Apply promo code (if applicable)
+const promoCodes = { "SAVE10": 0.10, "LAUNCH20": 0.20, "VIP30": 0.30 };
+const promoDiscount = promoCodes[promoCode] ?? 0;
+const promoAmount = subtotal * promoDiscount;
+
+// Total discount (capped at 40% to prevent stacking abuse)
+const totalDiscountRate = Math.min(tierDiscount + promoDiscount, 0.40);
+const totalDiscount = subtotal * totalDiscountRate;
+
+// Tax rates by region
+const taxRates = { "US-CA": 0.0975, "US-NY": 0.08875, "UK": 0.20, "EU": 0.21 };
+const taxRate = taxRates[region] ?? 0;
+const discountedSubtotal = subtotal - totalDiscount;
+const taxAmount = discountedSubtotal * taxRate;
+const finalTotal = discountedSubtotal + taxAmount;
+
+return {
+  subtotal: parseFloat(subtotal.toFixed(2)),
+  tier_discount_pct: (tierDiscount * 100).toFixed(0) + "%",
+  promo_discount_pct: (promoDiscount * 100).toFixed(0) + "%",
+  total_discount: parseFloat(totalDiscount.toFixed(2)),
+  discounted_subtotal: parseFloat(discountedSubtotal.toFixed(2)),
+  tax_rate: taxRate,
+  tax_amount: parseFloat(taxAmount.toFixed(2)),
+  final_total: parseFloat(finalTotal.toFixed(2)),
+  currency: "USD",
+  pricing_tier: pricingTier,
+  promo_applied: promoCode || null
+};</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> A complete price breakdown object is returned. The downstream order creation node receives <code>data.final_total</code> as the charge amount. All discount and tax logic is encapsulated in one testable script, making it easy to update pricing rules without modifying the workflow structure.</div>
+
+  <h3>Example 3: Data Validation with Multiple Rules Returning Structured Errors</h3>
+  <p class="example-meta">Scenario: Before inserting a customer record, validate all required fields and business rules. Return a structured error list rather than failing the workflow.</p>
+  <pre><code>// Script property:
+const data = context.input;
+const errors = [];
+
+// Required field checks
+if (!data.email || !data.email.includes("@")) {
+  errors.push({ field: "email", code: "INVALID_EMAIL", message: "A valid email address is required." });
+}
+if (!data.first_name || data.first_name.trim().length < 2) {
+  errors.push({ field: "first_name", code: "TOO_SHORT", message: "First name must be at least 2 characters." });
+}
+if (!data.phone) {
+  errors.push({ field: "phone", code: "MISSING", message: "Phone number is required." });
+}
+
+// Business rule checks
+if (data.age !== undefined && (data.age < 18 || data.age > 120)) {
+  errors.push({ field: "age", code: "OUT_OF_RANGE", message: "Age must be between 18 and 120." });
+}
+if (data.country && !["US", "UK", "CA", "AU"].includes(data.country)) {
+  errors.push({ field: "country", code: "UNSUPPORTED_REGION", message: `Country '${data.country}' is not supported.` });
+}
+if (data.credit_limit !== undefined && data.credit_limit > 50000 && data.account_type !== "premium") {
+  errors.push({ field: "credit_limit", code: "LIMIT_EXCEEDED", message: "Credit limits above $50,000 require a premium account type." });
+}
+
+return {
+  valid: errors.length === 0,
+  error_count: errors.length,
+  errors: errors,
+  validated_at: new Date().toISOString()
+};</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The script always routes to the success port — the validation result is returned as structured data. A downstream IfCondition node checks <code>data.valid === true</code> to decide whether to proceed with the insert or route to a rejection handler that sends the <code>data.errors</code> array back to the user.</div>
+
+  <h3>Example 4: String Manipulation and Regex Extraction</h3>
+  <p class="example-meta">Scenario: Parse a free-text delivery address entered by a user into structured fields (street, city, state, postal code) using regex patterns.</p>
+  <pre><code>// Script property:
+const rawAddress = context.input.address_text || "";
+
+// Normalise whitespace
+const cleaned = rawAddress.replace(/\s+/g, " ").trim();
+
+// Extract US ZIP code (5 or 9 digit)
+const zipMatch = cleaned.match(/\b(\d{5}(?:-\d{4})?)\b/);
+const postalCode = zipMatch ? zipMatch[1] : null;
+
+// Extract US state abbreviation (2 uppercase letters before ZIP)
+const stateMatch = cleaned.match(/\b([A-Z]{2})\s+\d{5}/);
+const state = stateMatch ? stateMatch[1] : null;
+
+// Extract city (word(s) before state abbreviation)
+const cityMatch = state
+  ? cleaned.match(new RegExp(`([A-Za-z\\s]+?)\\s*,?\\s*${state}\\b`))
+  : null;
+const city = cityMatch ? cityMatch[1].trim() : null;
+
+// Remainder is street address (everything before city)
+const streetEnd = city ? cleaned.indexOf(city) : cleaned.length;
+const street = cleaned.slice(0, streetEnd).replace(/,$/, "").trim();
+
+// Generate URL-safe slug from company name (for subdomain use)
+const companySlug = (context.vars.company_name || "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-|-$/g, "");
+
+return {
+  raw: rawAddress,
+  street: street || null,
+  city: city || null,
+  state: state || null,
+  postal_code: postalCode || null,
+  parsed: !!(street && city && state && postalCode),
+  company_slug: companySlug
+};</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> A free-text address like "123 Main St, Springfield, IL 62701" is parsed into <code>{ street: "123 Main St", city: "Springfield", state: "IL", postal_code: "62701", parsed: true }</code>. The <code>parsed</code> boolean lets downstream nodes detect incomplete addresses and route to a data-quality review step.</div>
+</main>
+</body>
+</html>

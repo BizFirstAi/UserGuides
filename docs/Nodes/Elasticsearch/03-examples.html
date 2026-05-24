@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Elasticsearch — Examples — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.callout{border-radius:6px;padding:14px 18px;margin:18px 0;font-size:14px;line-height:1.6;}
+.callout.success{background:#edf7f0;border-left:4px solid #2a9d5c;color:#1a5c38;}
+.callout.info{background:#e6f2fc;border-left:4px solid #0f6cbd;color:#0a3d6b;}
+pre{background:#1e2736;color:#e8edf3;border-radius:6px;padding:20px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;}
+pre code{background:none;padding:0;color:inherit;}
+h3{font-size:18px;font-weight:700;margin:36px 0 8px;color:var(--accent);padding-bottom:6px;border-bottom:1px solid var(--border);}
+.example-meta{font-size:13px;color:var(--text-muted);margin-bottom:12px;}
+ul,ol{margin:10px 0 14px 22px;}
+li{margin-bottom:5px;font-size:14px;}
+</style>
+<style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<nav class="sidebar">
+  <div class="sidebar-brand">Elasticsearch<span>Search Node</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Related Nodes</div>
+  <a href="../MongoDB/">MongoDB</a>
+  <a href="../HttpRequest/">HTTP Request</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Elasticsearch</a> / Examples</div>
+    <h1>Examples</h1>
+    <p class="subtitle">Five Elasticsearch node configurations: product catalogue indexing, full-text search, order analytics aggregation, bulk log indexing, and partial document update.</p>
+  </div>
+
+  <h3>Example 1: Index a Product Catalogue Document with Mapping</h3>
+  <p class="example-meta">Scenario: When a new product is added in the PIM system, create the index with correct field types and write the product document to Elasticsearch.</p>
+  <p>Step 1 — Create the index with explicit mappings:</p>
+  <pre><code>{
+  "Resource": "index",
+  "Operation": "create",
+  "IndexName": "products",
+  "Mappings": {
+    "properties": {
+      "title":       { "type": "text", "analyzer": "english" },
+      "brand":       { "type": "keyword" },
+      "category":    { "type": "keyword" },
+      "description": { "type": "text", "analyzer": "english" },
+      "price":       { "type": "float" },
+      "sku":         { "type": "keyword" },
+      "tags":        { "type": "keyword" },
+      "in_stock":    { "type": "boolean" },
+      "created_at":  { "type": "date" }
+    }
+  },
+  "Settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1
+  }
+}</code></pre>
+  <p>Step 2 — Index the product document:</p>
+  <pre><code>{
+  "Resource": "document",
+  "Operation": "create",
+  "IndexName": "products",
+  "DocumentId": "{{ vars.product_sku }}",
+  "Fields": {
+    "title":       "{{ vars.product_title }}",
+    "brand":       "{{ vars.brand_name }}",
+    "category":    "{{ vars.category_slug }}",
+    "description": "{{ vars.product_description }}",
+    "price":       "{{ vars.retail_price }}",
+    "sku":         "{{ vars.product_sku }}",
+    "tags":        "{{ vars.tag_array }}",
+    "in_stock":    true,
+    "created_at":  "{{ now() }}"
+  },
+  "SimplifyResponse": true
+}</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> The index is created with typed field mappings ensuring correct full-text analysis on <code>title</code> and <code>description</code>, and exact-match filtering on <code>brand</code>, <code>category</code>, and <code>sku</code>. The product is indexed with its SKU as the document ID for idempotent updates.</div>
+
+  <h3>Example 2: Full-Text Search with Relevance Scoring</h3>
+  <p class="example-meta">Scenario: A user submits a search query on an e-commerce storefront. Return the top 10 results by relevance, boosting matches in the title field.</p>
+  <pre><code>{
+  "Resource": "document",
+  "Operation": "search",
+  "IndexName": "products",
+  "Query": {
+    "query": {
+      "bool": {
+        "must": [
+          {
+            "multi_match": {
+              "query":  "{{ vars.search_term }}",
+              "fields": ["title^3", "description", "tags^2"],
+              "type":   "best_fields",
+              "fuzziness": "AUTO"
+            }
+          }
+        ],
+        "filter": [
+          { "term":  { "in_stock": true } },
+          { "range": { "price": { "lte": "{{ vars.max_price }}" } } }
+        ]
+      }
+    },
+    "sort": [
+      { "_score": { "order": "desc" } },
+      { "price":  { "order": "asc" } }
+    ],
+    "_source": ["title", "brand", "price", "sku", "tags"]
+  },
+  "Limit": 10,
+  "Simplify": false
+}</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Returns up to 10 in-stock products matching the user's query, priced within budget, sorted by relevance score then by price ascending. Title matches score 3x higher than description matches. Fuzzy matching handles minor typos. The <code>hits</code> array is passed to a DataMapping node to build the storefront response JSON.</div>
+
+  <h3>Example 3: Aggregation Query for Order Analytics by Category</h3>
+  <p class="example-meta">Scenario: A scheduled weekly report workflow queries completed orders, aggregates total revenue and order count by product category, and emails the summary to the finance team.</p>
+  <pre><code>{
+  "Resource": "document",
+  "Operation": "search",
+  "IndexName": "orders",
+  "Query": {
+    "query": {
+      "bool": {
+        "filter": [
+          { "term":  { "status": "completed" } },
+          { "range": { "completed_at": { "gte": "{{ vars.week_start }}", "lte": "{{ vars.week_end }}" } } }
+        ]
+      }
+    },
+    "aggs": {
+      "revenue_by_category": {
+        "terms": { "field": "category", "size": 20 },
+        "aggs": {
+          "total_revenue": { "sum":   { "field": "order_total" } },
+          "avg_order_value": { "avg": { "field": "order_total" } }
+        }
+      },
+      "weekly_total": {
+        "sum": { "field": "order_total" }
+      }
+    },
+    "size": 0
+  }
+}</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Returns aggregation results only (<code>size: 0</code> suppresses document hits for performance). The <code>aggregations.revenue_by_category.buckets</code> array contains each category with its total revenue and average order value. <code>aggregations.weekly_total.value</code> gives the overall weekly revenue. Results are passed to a DataMapping node to build the finance report.</div>
+
+  <h3>Example 4: Bulk Index 1000 Log Entries</h3>
+  <p class="example-meta">Scenario: An application monitoring workflow receives a batch of 1000 log events from a webhook and indexes them all into a time-series log index efficiently using the Bulk API.</p>
+  <pre><code>{
+  "Resource": "document",
+  "Operation": "create",
+  "IndexName": "app-logs-{{ formatDate(now(), 'YYYY-MM') }}",
+  "Bulk": true,
+  "Documents": "{{ vars.log_entries_array }}",
+  "SimplifyResponse": true
+}</code></pre>
+  <p>Where <code>vars.log_entries_array</code> is an array of objects, e.g.:</p>
+  <pre><code>[
+  {
+    "timestamp":   "2026-05-23T14:32:01.123Z",
+    "level":       "ERROR",
+    "service":     "payment-service",
+    "message":     "Connection timeout to payment gateway",
+    "trace_id":    "abc123",
+    "environment": "production"
+  },
+  {
+    "timestamp":   "2026-05-23T14:32:01.456Z",
+    "level":       "INFO",
+    "service":     "order-service",
+    "message":     "Order ORD-88421 created",
+    "trace_id":    "def456",
+    "environment": "production"
+  }
+]</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> All 1000 log entries are indexed in a single Bulk API call, which is significantly faster than 1000 individual index requests. The index name includes the current year-month for automatic time-based partitioning. Downstream nodes check the bulk response for any partial failures.</div>
+
+  <h3>Example 5: Update Document with Partial Fields (Upsert Pattern)</h3>
+  <p class="example-meta">Scenario: An order fulfilment workflow updates the shipment status on an order document. If the document does not yet exist (race condition from a delayed create), upsert creates it with the available fields.</p>
+  <pre><code>{
+  "Resource": "document",
+  "Operation": "update",
+  "IndexName": "orders",
+  "DocumentId": "{{ vars.order_id }}",
+  "Fields": {
+    "status":          "shipped",
+    "tracking_number": "{{ vars.tracking_number }}",
+    "carrier":         "{{ vars.carrier_name }}",
+    "shipped_at":      "{{ now() }}",
+    "estimated_delivery": "{{ vars.estimated_delivery_date }}"
+  },
+  "Upsert": true
+}</code></pre>
+  <div class="callout success"><i class="fa-solid fa-circle-check"></i><strong>Expected outcome:</strong> Only the five specified fields are updated on the existing order document — all other fields (customer details, line items, payment info) remain unchanged. If the document does not exist, it is created with the provided fields. The output <code>result</code> field will be <code>"updated"</code> or <code>"created"</code> accordingly, which can be used in a downstream Switch node to branch the workflow.</div>
+</main>
+</body>
+</html>
