@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rate Limiting — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html" class="active">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Use Case</div>
+    <h1>Multi-Tenant Rate Limiting</h1>
+    <p class="lead">Isolate tenant traffic so one runaway automation cannot consume platform resources or exhaust credits belonging to other tenants. Circuit breaking provides an additional layer when dependencies fail.</p>
+  </div>
+
+  <h2>The Problem</h2>
+  <p>A SaaS platform serves 500 tenants. Tenant A configures an automation that triggers on every new database row. A data migration at Tenant A inserts 10,000 rows in a minute, triggering 10,000 workflow executions that each call an external payment API.</p>
+  <ul>
+    <li>The external payment API gets hammered and returns 429 Too Many Requests — for all tenants</li>
+    <li>The platform receives the bill for 10,000 API calls</li>
+    <li>Other tenants experience slowdowns because shared infrastructure is saturated</li>
+  </ul>
+
+  <h2>The Solution: Tenant-Scoped Rate Limiting</h2>
+  <p><code>RateLimitingGuard</code> with <code>scope="tenant"</code> creates per-tenant rate limit keys. Tenant A's 10,000 calls are throttled at the configured threshold. Other tenants are completely unaffected.</p>
+
+  <h3>Configuration</h3>
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "RateLimitingGuard",
+        "enabled": true,
+        "order": 1,
+        "config": {
+          "rps": 50,         // 50 requests per second per tenant
+          "window": 60,      // measured over 60-second sliding window (3000 max per window)
+          "scope": "tenant"  // key = "tenant:{TenantId}"
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <h2>Three Scopes Explained</h2>
+  <table>
+    <thead><tr><th>Scope</th><th>Rate Key</th><th>When to use</th><th>Isolation</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>"global"</code></td>
+        <td><code>"global"</code></td>
+        <td>Platform-wide cap on a shared external API key</td>
+        <td>None — all tenants share the limit</td>
+      </tr>
+      <tr>
+        <td><code>"tenant"</code></td>
+        <td><code>"tenant:42"</code></td>
+        <td>Per-tenant quota enforcement (most common)</td>
+        <td>Full — each tenant has its own counter</td>
+      </tr>
+      <tr>
+        <td><code>"user"</code></td>
+        <td><code>"user:1099"</code></td>
+        <td>Per-user limits (e.g., API gateway, interactive workflows)</td>
+        <td>Full — each user has their own counter</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Layered Rate Limiting</h2>
+  <p>You can layer multiple rate limits to protect at different granularities:</p>
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      // Global cap: platform-wide external API limit
+      {
+        "name": "RateLimitingGuard",
+        "enabled": true,
+        "order": 1,
+        "config": { "rps": 500, "window": 60, "scope": "global" }
+      },
+      // Tenant cap: per-tenant fairness
+      {
+        "name": "RateLimitingGuard",
+        "enabled": true,
+        "order": 2,
+        "config": { "rps": 50, "window": 60, "scope": "tenant" }
+      },
+      // Circuit breaker: protect when external API goes down
+      {
+        "name": "CircuitBreakerGuard",
+        "enabled": true,
+        "order": 3,
+        "config": { "threshold": 5, "timeout": 60000 }
+      }
+    ]
+  }
+}</code></pre>
+
+  <h2>What the Block Response Looks Like</h2>
+  <pre><code>// When Tenant A exceeds 50 rps:
+{
+  "IsAllowed": false,
+  "RetryAfterSeconds": 3,    // hint: try again in 3 seconds
+  "ErrorMessage": "Rate limit exceeded",
+  "Metadata": {
+    "scope": "tenant",
+    "requests_in_window": 52,
+    "limit": 50
+  }
+}</code></pre>
+
+  <p>The caller receives a structured error. The workflow engine can surface this to the user as: <em>"This automation is running too frequently. Retry after 3 seconds."</em></p>
+
+  <h2>Circuit Breaking Complement</h2>
+  <p>When the external payment API starts returning 503 errors, <code>CircuitBreakerGuard</code> opens the circuit after 5 consecutive failures. Subsequent requests are blocked immediately without hitting the failing API — saving credits and reducing log noise.</p>
+
+  <table>
+    <thead><tr><th>Scenario</th><th>Guard that activates</th><th>Outcome</th></tr></thead>
+    <tbody>
+      <tr><td>Tenant A sends 100 requests in 2 seconds</td><td>RateLimitingGuard (scope=tenant)</td><td>Requests 51–100 blocked; Tenant B unaffected</td></tr>
+      <tr><td>External API returns 503 × 5 consecutive</td><td>CircuitBreakerGuard</td><td>Circuit opens; all requests blocked for 60s; no more API calls</td></tr>
+      <tr><td>After 60s, circuit transitions to HalfOpen</td><td>CircuitBreakerGuard</td><td>One test request allowed; if success → closed; if fail → reopen</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Production Rate Limiting</strong>
+    The current in-memory implementation is suitable for single-instance deployments. For production multi-instance deployments, inject <code>IRateLimitingOrchestrator</code> from <code>BizFirst.Platform.Operations.Guard</code> — it provides Redis-backed distributed rate limiting with the same configuration interface.
+  </div>
+
+  <div class="page-nav">
+    <a href="07-uc-pii-protection.html">← PII Protection</a>
+    <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

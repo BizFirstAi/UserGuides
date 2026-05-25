@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PII Protection — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html" class="active">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Use Case</div>
+    <h1>PII Protection in AI Workflows</h1>
+    <p class="lead">Prevent customer personally identifiable information from entering AI models, third-party APIs, or appearing in workflow outputs — automatically, with no changes to node code.</p>
+  </div>
+
+  <h2>The Problem</h2>
+  <p>A financial services workflow processes loan applications. The data payload includes:</p>
+  <ul>
+    <li>Customer SSN: <code>123-45-6789</code></li>
+    <li>Email: <code>john.doe@bank.com</code></li>
+    <li>Phone: <code>+1-555-987-6543</code></li>
+    <li>Credit card (for credit check): <code>4111-1111-1111-1111</code></li>
+  </ul>
+  <p>This data flows into an LLM-calling node for risk analysis. Without GuardRails, the raw SSN and credit card number are sent to the AI model — a GDPR and PCI-DSS violation. The AI model response may also echo the sensitive data back in its output.</p>
+
+  <h2>The Solution: Two-Layer PII Pipeline</h2>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot pre">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4><span class="phase phase-pre">Pre</span> — PiiDetectionGuard blocks PII at the gate</h4>
+        <p>Before the AI model is called, <code>PiiDetectionGuard</code> scans the input. It detects <code>SSN</code>, <code>Email</code>, <code>CreditCard</code>. Returns <code>Blocked</code>. The AI API call never happens.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot muted">✗</div><div class="line"></div></div>
+      <div class="body">
+        <h4>AI model call is blocked</h4>
+        <p>The node executor never reaches its <code>ExecuteInternalAsync</code>. The workflow returns an error to the caller: "PII detected in input: SSN, Email, CreditCard".</p>
+      </div>
+    </div>
+  </div>
+
+  <p>For scenarios where the node <em>must</em> process the data (with appropriate authorization), configure the Post-phase redaction instead:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot pre">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4><span class="phase phase-pre">Pre</span> — PiiDetectionGuard with delayed enforcement</h4>
+        <p>Guard runs and records violations but does not block immediately. The authorized node processes the data.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot node">N</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Node executes with authorized access</h4>
+        <p>The AI model call proceeds. The response may contain reflected or derived PII.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot post">2</div></div>
+      <div class="body">
+        <h4><span class="phase phase-post">Post</span> — PiiRedactionGuard masks the output</h4>
+        <p>The AI model response is scanned. Any SSN, email, or credit card number in the response is masked with <code>*</code> characters before it reaches the caller.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Configuration</h2>
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+
+      // Block mode: detect PII in input, block immediately
+      {
+        "name": "PiiDetectionGuard",
+        "enabled": true,
+        "order": 1,
+        "config": {
+          "sensitivityLevel": "high"  // "high" catches all patterns including CVV and IP
+        }
+      },
+
+      // Redact mode: mask PII found in the node output
+      {
+        "name": "PiiRedactionGuard",
+        "enabled": true,
+        "config": {
+          "redaction_method": "mask"
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <h2>What Happens at Each Sensitivity Level</h2>
+  <table>
+    <thead><tr><th>Level</th><th>Patterns Active</th><th>Use When</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>"low"</code></td>
+        <td>SSN (hyphenated), CreditCard (full pattern only)</td>
+        <td>Low-risk data with only structured PII fields. Minimizes false positives.</td>
+      </tr>
+      <tr>
+        <td><code>"medium"</code></td>
+        <td>Above + Email, Phone, SSN_NoHyphen, Passport, DriverLicense, BankAccount, IPAddress</td>
+        <td>Default for most workflows. Catches the common PII types without triggering on 9-digit phone extensions or 3-digit codes.</td>
+      </tr>
+      <tr>
+        <td><code>"high"</code></td>
+        <td>All 10 patterns including CVV (3-4 digits) and BankAccount (8-17 digits)</td>
+        <td>Maximum protection. Higher false-positive rate on benign numbers. Use for financial and healthcare workflows.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Current Implementation Note</strong>
+    In the current implementation, all 10 patterns always run regardless of <code>sensitivityLevel</code>. The sensitivity level is stored and will be used to filter patterns in Phase 5. Set it to your intended future level now for forward compatibility.
+  </div>
+
+  <h2>Choosing a Redaction Method</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Output example</th><th>Reversible?</th><th>Use when</th></tr></thead>
+    <tbody>
+      <tr><td><code>"mask"</code></td><td><code>j***@***.com</code> → <code>****************</code></td><td>No</td><td>Logs, audit records, displays — the safest option</td></tr>
+      <tr><td><code>"hash"</code></td><td><code>a3f9b2c1d4e5f678</code></td><td>No (one-way)</td><td>Need to compare if the same value appears twice without exposing it</td></tr>
+      <tr><td><code>"partial"</code></td><td><code>j**************m</code></td><td>No</td><td>UI display where the user needs a hint of what was there</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Using PiiNodeGuard for Full Protection</h2>
+  <p>The simplest way to get two-layer protection is to register <code>PiiNodeGuard</code> which wires both guards automatically:</p>
+  <pre><code>// In DI setup
+services.AddSingleton&lt;INodeGuardExecutor, PiiNodeGuard&gt;();
+
+// PiiNodeGuard automatically:
+// - ExecutePreAsync → PiiDetectionGuard (blocks if PII found)
+// - ExecutePostAsync → PiiRedactionGuard (masks PII in output)
+// - ExecuteOnErrorAsync → no-op</code></pre>
+
+  <div class="page-nav">
+    <a href="06-use-cases.html">← Use Case Overview</a>
+    <a href="08-uc-rate-limiting.html">Rate Limiting →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Timeout &amp; Resilience — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html" class="active">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Use Case</div>
+    <h1>Timeout &amp; Circuit Breaker Resilience</h1>
+    <p class="lead">Enforce strict execution time limits and implement automatic circuit breaking so that slow or failing dependencies never cascade into full platform outages.</p>
+  </div>
+
+  <h2>TimeoutGuard: Execution Time Enforcement</h2>
+
+  <h3>The Problem</h3>
+  <p>An HTTP node calls a third-party analytics API. Under normal conditions it completes in 200ms. Under load, the API degrades — responses take 45 seconds. Without a timeout guard:</p>
+  <ul>
+    <li>Each workflow execution holds a thread for 45 seconds</li>
+    <li>Database connections remain open during the wait</li>
+    <li>100 concurrent slow calls exhaust the thread pool</li>
+    <li>The platform appears hung to all users</li>
+  </ul>
+
+  <h3>The Solution</h3>
+  <p>TimeoutGuard records start time in Pre and checks elapsed time in Post. Configure <code>action="block"</code> to return a failure after <code>timeoutMs</code> milliseconds.</p>
+
+  <pre><code>{
+  "name": "TimeoutGuard",
+  "enabled": true,
+  "config": {
+    "timeoutMs": 5000,   // 5 seconds maximum
+    "action": "block"    // fail with Blocked result if exceeded
+  }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Important: TimeoutGuard does not cancel the node execution</strong>
+    TimeoutGuard checks elapsed time in the <em>Post</em> phase, after the node has returned (or errored). If you need to interrupt a long-running operation mid-execution, use <code>CancellationToken</code> in the node implementation itself. TimeoutGuard enforces the policy at the workflow level — it blocks the result from being accepted, but the node's async operation may have already completed.
+  </div>
+
+  <h3>Warning mode vs block mode</h3>
+  <table>
+    <thead><tr><th>Config</th><th>Behavior</th><th>Use when</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>"action": "block"</code></td>
+        <td>Returns <code>Blocked</code> — the workflow fails with an error</td>
+        <td>Hard SLA requirements; output after timeout is unreliable</td>
+      </tr>
+      <tr>
+        <td><code>"action": "warn"</code></td>
+        <td>Returns <code>Warning</code> (<code>IsAllowed=true</code>) — workflow continues but violation is logged</td>
+        <td>Monitoring and alerting; tolerant workflows where slow response is still usable</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>CircuitBreakerGuard: Automatic Dependency Protection</h2>
+
+  <h3>The Problem</h3>
+  <p>The analytics API goes fully down at 2:00 AM. Without circuit breaking:</p>
+  <ul>
+    <li>Every workflow execution waits the full 5s timeout before failing</li>
+    <li>Logs fill with timeout errors — thousands per minute</li>
+    <li>The failing API receives a thundering herd of retries, delaying recovery</li>
+    <li>Audit and monitoring systems are overwhelmed by error volume</li>
+  </ul>
+
+  <h3>The Solution</h3>
+  <p>CircuitBreakerGuard opens the circuit after 5 consecutive failures. Subsequent calls are rejected immediately without touching the failing API — fast fail with no resource waste.</p>
+
+  <pre><code>{
+  "name": "CircuitBreakerGuard",
+  "enabled": true,
+  "config": {
+    "threshold": 5,      // open after 5 consecutive permanent failures
+    "timeout": 60000     // stay Open for 60 seconds, then try HalfOpen
+  }
+}</code></pre>
+
+  <h3>Circuit breaker state machine</h3>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot post">C</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Closed <span class="badge badge-green">Normal</span></h4>
+        <p>All requests pass through. Failures are tracked in a sliding 5-minute window. When <code>FailureCount ≥ 5</code> → Open.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot" style="background:var(--danger)">O</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Open <span class="badge badge-red">Blocking</span></h4>
+        <p>All requests blocked immediately. After 60 seconds (<code>OpenDuration</code>) → HalfOpen.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot" style="background:var(--warning);color:#000">H</div></div>
+      <div class="body">
+        <h4>HalfOpen <span class="badge badge-yellow">Testing</span></h4>
+        <p>One test request allowed. <strong>Success:</strong> → Closed (normal operation). <strong>Failure:</strong> → Open (60 more seconds).</p>
+        <p>The circuit breaker at the <em>service level</em> (in <code>GuardCircuitBreaker</code>) requires 3 consecutive successes to close from HalfOpen.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>Service-level circuit breaker defaults</h3>
+  <p>The <code>GuardCircuitBreaker</code> service (which protects guard infrastructure) uses these defaults, configured in DI:</p>
+  <table>
+    <thead><tr><th>Policy</th><th>Default</th></tr></thead>
+    <tbody>
+      <tr><td>FailureThreshold</td><td>5 (within the failure window)</td></tr>
+      <tr><td>OpenDuration</td><td>60 seconds</td></tr>
+      <tr><td>SuccessThresholdForHalfOpen</td><td>3 consecutive successes</td></tr>
+      <tr><td>FailSecure</td><td>true (security-critical guards block when circuit open)</td></tr>
+      <tr><td>ResetOnTransient</td><td>true (transient failures don't count toward threshold)</td></tr>
+      <tr><td>FailureWindow</td><td>300 seconds (5-minute sliding window)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Combined Configuration: Timeout + Circuit Breaker</h2>
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "TimeoutGuard",
+        "enabled": true,
+        "order": 1,
+        "config": { "timeoutMs": 5000, "action": "block" }
+      },
+      {
+        "name": "CircuitBreakerGuard",
+        "enabled": true,
+        "order": 2,
+        "config": { "threshold": 5, "timeout": 60000 }
+      }
+    ]
+  }
+}</code></pre>
+
+  <p><strong>Result:</strong> Slow requests fail fast (5s max). After 5 failures, subsequent requests fail instantly (circuit open). After 60s, one test request probes recovery. On success, normal operation resumes.</p>
+
+  <div class="page-nav">
+    <a href="08-uc-rate-limiting.html">← Rate Limiting</a>
+    <a href="10-uc-input-validation.html">Input Validation →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>
