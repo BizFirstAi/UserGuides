@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Overview — Node Policies — BizFirstAI</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst AI</h2>
+    <h1>Node Policies</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-overview.html" class="active">Overview</a>
+  <a href="02-manifest-types.html">Manifest Types</a>
+  <div class="section-label">Policies</div>
+  <a href="03-field-descriptors.html">Field Descriptors</a>
+  <a href="04-expression-policies.html">Expression Policies</a>
+  <a href="05-dataflow-policies.html">DataFlow Policies</a>
+  <a href="06-hil-policies.html">HIL Policies</a>
+  <a href="07-security-policies.html">Security Policies</a>
+  <a href="08-suspension-policies.html">Suspension Policies</a>
+  <div class="section-label">Reference</div>
+  <a href="09-use-cases.html">Developer Use Cases</a>
+  <a href="10-business-cases.html">Business Cases</a>
+  <a href="11-quick-reference.html">Quick Reference</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Architecture</div>
+    <h1>Overview</h1>
+    <p class="lead">
+      What Node Policies are, why they exist, the two-layer architecture, and how the platform
+      reads them at runtime to handle expression evaluation, data routing, HIL rendering,
+      security masking, and suspension.
+    </p>
+  </div>
+
+  <h2>The Problem Without Node Policies</h2>
+  <p>
+    Without a contract, every node is a black box. The platform cannot:
+  </p>
+  <ul>
+    <li>Route data from upstream nodes to the right fields without per-node custom code</li>
+    <li>Know which fields a human reviewer should see or be able to edit</li>
+    <li>Apply consistent credential masking rules across all 60+ node types</li>
+    <li>Register suspension timers when a node waits for human input</li>
+    <li>Evaluate template expressions at the correct lifecycle stage</li>
+  </ul>
+  <p>
+    Node Policies solve this by giving every node a <strong>machine-readable manifest</strong>
+    that the platform reads to handle all of these concerns automatically.
+  </p>
+
+  <h2>The Five Policy Types</h2>
+  <table>
+    <thead><tr><th>Policy</th><th>Controls</th></tr></thead>
+    <tbody>
+      <tr><td><strong>ExpressionPolicy</strong></td><td>When and how a field's value is computed (evaluation stage + evaluator kind)</td></tr>
+      <tr><td><strong>DataFlowPolicy</strong></td><td>Which fields accept upstream data, emit to downstream, and persist to workflow memory</td></tr>
+      <tr><td><strong>HilPolicy</strong></td><td>What humans see in their task inbox, how it is displayed, and what they can change</td></tr>
+      <tr><td><strong>SecurityPolicy</strong></td><td>Field masking in logs and output, and elevated-access gates</td></tr>
+      <tr><td><strong>SuspensionPolicy</strong></td><td>Timeout, SLA thresholds, reminders, and escalation for nodes that wait</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The Two Layers</h2>
+
+  <h3>Layer 1 — Code Manifest (Compile-time)</h3>
+  <p>
+    Each node executor defines its manifest in a <code>.Config.cs</code> partial by overriding
+    <code>GetNodeExecutorManifest()</code>:
+  </p>
+  <pre><code>// SmtpNodeExecutor.Config.cs
+protected override NodeExecutorManifest? GetNodeExecutorManifest()
+    => NodeExecutorManifest.From(
+        ProcessElementTypeCode,
+        new[]
+        {
+            new NodeFieldDescriptor
+            {
+                FieldId          = "to",
+                Description      = "Recipient email address",
+                ExpressionPolicy = new ExpressionPolicy
+                {
+                    EvaluationStage = EvaluationStage.AtInputReady,
+                    EvaluatorKind   = EvaluatorKind.Template
+                },
+                DataFlowPolicy = new DataFlowPolicy
+                {
+                    AcceptsUpstreamInput     = true,
+                    ExcludeFromOutputMapping = true
+                },
+                HilPolicy = new HilPolicy
+                {
+                    SendToHil   = true,
+                    DisplayMode = HilDisplayMode.ReadableContext,
+                    InputMode   = HilInputMode.EditableOptional,
+                    Label       = "To"
+                },
+                SecurityPolicy = new SecurityPolicy()
+            }
+        }
+    );</code></pre>
+
+  <h3>Layer 2 — Extension JSON (Runtime Override)</h3>
+  <p>
+    Administrators store additional field descriptors or override existing ones in the database
+    (<code>ProcessNodePolicies</code> table). This JSON is merged with the code manifest at
+    runtime by <code>NodeFieldManifestResolver</code>, allowing customisation without
+    redeployment — for example adjusting HIL labels or enabling masking for a specific tenant.
+  </p>
+  <pre><code>{
+  "nodeTypeName": "email-smtp",
+  "fields": [
+    {
+      "id": "body",
+      "hilPolicy": {
+        "sendToHil": true,
+        "inputMode": "RequiredFromHuman",
+        "label": "Email Body",
+        "description": "You must confirm this before the email sends."
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>Runtime Execution Flow</h2>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Manifest registered at startup</h4>
+        <p><code>GetNodeExecutorManifest()</code> is called once per node type. The result is stored in <code>NodeFieldManifestRegistry</code> keyed by <code>ProcessElementTypeCode</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Resolver merges code + DB overrides</h4>
+        <p><code>NodeFieldManifestResolver.GetManifest(nodeTypeName, extensionJson)</code> produces the final merged manifest for the execution.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Expression evaluation — AtConfigLoad stage</h4>
+        <p>Fields with <code>EvaluationStage.AtConfigLoad</code> are resolved using the configured evaluator (Template, Literal, etc.).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>DataFlow — input mapping</h4>
+        <p>Fields with <code>AcceptsUpstreamInput: true</code> are populated from the upstream node's output data bag. Fields with <code>ExcludeFromInputMapping: true</code> are skipped.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">5</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Node executes</h4>
+        <p>The executor runs its logic. Output fields are populated by the executor and held in the result.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">6</div><div class="line"></div></div>
+      <div class="body">
+        <h4>DataFlow — output mapping</h4>
+        <p>Fields with <code>EmitsToDownstream: true</code> are written to the downstream data bag. Fields with <code>PersistsToMemory: true</code> are written to workflow memory.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">7</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Security masking</h4>
+        <p>Fields with <code>MaskInLogs: true</code> or <code>MaskInOutput: true</code> are redacted before logs are written and before the output bag leaves the node.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">8</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Suspension timers registered (if node suspends)</h4>
+        <p><code>SuspensionPolicyOrchestrator</code> reads the <code>SuspensionPolicy</code> and registers timeout and reminder timers via <code>ISuspensionTimerService</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot info">9</div></div>
+      <div class="body">
+        <h4>HIL fields sent to inbox (if in review mode)</h4>
+        <p>Fields with <code>SendToHil: true</code> are formatted and routed to the actor's inbox. <code>DisplayMode</code> and <code>InputMode</code> control rendering.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Key Types</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Role</th><th>Project</th></tr></thead>
+    <tbody>
+      <tr><td><code>NodeExecutorManifest</code></td><td>Container for all field descriptors + suspension policy for one node type</td><td><code>BizFirst.Ai.ProcessNodePolicies.Domain</code></td></tr>
+      <tr><td><code>NodeFieldDescriptor</code></td><td>One field and its four per-field policies</td><td>Same</td></tr>
+      <tr><td><code>ExpressionPolicy</code></td><td>Evaluation stage + evaluator kind</td><td>Same</td></tr>
+      <tr><td><code>DataFlowPolicy</code></td><td>Data routing rules</td><td>Same</td></tr>
+      <tr><td><code>HilPolicy</code></td><td>Human inbox rendering rules</td><td>Same</td></tr>
+      <tr><td><code>SecurityPolicy</code></td><td>Masking and access rules</td><td>Same</td></tr>
+      <tr><td><code>SuspensionPolicy</code></td><td>Timeout and reminder configuration</td><td>Same</td></tr>
+      <tr><td><code>NodeFieldManifestRegistry</code></td><td>Thread-safe ConcurrentDictionary of code manifests</td><td><code>BizFirst.Ai.ProcessNodePolicies.Service</code></td></tr>
+      <tr><td><code>NodeFieldManifestResolver</code></td><td>Merges code manifest with DB extension JSON</td><td>Same</td></tr>
+      <tr><td><code>SuspensionPolicyOrchestrator</code></td><td>Reads SuspensionPolicy, registers all timers at suspension time</td><td><code>BizFirst.Ai.ProcessEngine.Service</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Type alias</strong>
+    The old name <code>NodeFieldManifest</code> is aliased to <code>NodeExecutorManifest</code> in the GlobalUsings files:<br>
+    <code>global using NodeFieldManifest = BizFirst.Ai.ProcessNodePolicies.Domain.Models.NodeExecutorManifest;</code>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">← Introduction</a>
+    <a href="02-manifest-types.html">Next: Manifest Types →</a>
+  </div>
+</main>
+
+</div>
+</body>
+</html>
