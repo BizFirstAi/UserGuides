@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Developer Use Cases — Node Policies — BizFirstAI</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Node Policies</h1></div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-manifest-types.html">Manifest Types</a>
+  <div class="section-label">Policies</div>
+  <a href="03-field-descriptors.html">Field Descriptors</a>
+  <a href="04-expression-policies.html">Expression Policies</a>
+  <a href="05-dataflow-policies.html">DataFlow Policies</a>
+  <a href="06-hil-policies.html">HIL Policies</a>
+  <a href="07-security-policies.html">Security Policies</a>
+  <a href="08-suspension-policies.html">Suspension Policies</a>
+  <div class="section-label">Reference</div>
+  <a href="09-use-cases.html" class="active">Developer Use Cases</a>
+  <a href="10-business-cases.html">Business Cases</a>
+  <a href="11-quick-reference.html">Quick Reference</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Developer Reference</div>
+    <h1>Developer Use Cases</h1>
+    <p class="lead">
+      Practical code recipes for common scenarios when implementing node manifests — from a
+      minimal placeholder to a full suspension-based approval node.
+    </p>
+  </div>
+
+  <h2>1. New Node — Minimal Setup</h2>
+  <p>Simple action node with no HIL, no sensitive data. Return <code>Empty</code>.</p>
+  <pre><code>// MyNode.Config.cs
+protected override NodeExecutorManifest? GetNodeExecutorManifest()
+    => NodeExecutorManifest.Empty(ProcessElementTypeCode);</code></pre>
+
+  <h2>2. Field Receiving Upstream Input</h2>
+  <p>Field populated automatically from upstream node's output data bag.</p>
+  <pre><code>new NodeFieldDescriptor
+{
+    FieldId          = "recipientId",
+    Description      = "User ID resolved from upstream lookup.",
+    ExpressionPolicy = new ExpressionPolicy
+    {
+        EvaluationStage = EvaluationStage.AtInputReady,
+        EvaluatorKind   = EvaluatorKind.Template
+    },
+    DataFlowPolicy = new DataFlowPolicy
+    {
+        AcceptsUpstreamInput     = true,
+        ExcludeFromInputMapping  = false,
+        ExcludeFromOutputMapping = true
+    },
+    HilPolicy      = new HilPolicy { SendToHil = false, DisplayMode = HilDisplayMode.Concealed },
+    SecurityPolicy = new SecurityPolicy()
+}</code></pre>
+
+  <h2>3. Output Field for Downstream Nodes</h2>
+  <p>Result produced by executor, passed to downstream nodes, persisted to memory.</p>
+  <pre><code>new NodeFieldDescriptor
+{
+    FieldId          = "parsedResult",
+    Description      = "Parsed output data for downstream processing.",
+    ExpressionPolicy = new ExpressionPolicy
+    {
+        EvaluationStage = EvaluationStage.AtInputReady,
+        EvaluatorKind   = EvaluatorKind.None   // set by executor
+    },
+    DataFlowPolicy = new DataFlowPolicy
+    {
+        AcceptsUpstreamInput     = false,
+        EmitsToDownstream        = true,
+        PersistsToMemory         = true,
+        ExcludeFromInputMapping  = true,
+        ExcludeFromOutputMapping = false
+    },
+    HilPolicy      = new HilPolicy { SendToHil = false, DisplayMode = HilDisplayMode.Concealed },
+    SecurityPolicy = new SecurityPolicy()
+}</code></pre>
+
+  <h2>4. Credential Field — Maximum Security</h2>
+  <p>Full lockdown — masked, concealed, excluded from all mapping, elevated access required.</p>
+  <pre><code>new NodeFieldDescriptor
+{
+    FieldId          = "credentialId",
+    Description      = "Vault credential ID resolved via ICredentialResolver.",
+    ExpressionPolicy = new ExpressionPolicy
+    {
+        EvaluationStage = EvaluationStage.AtConfigLoad,
+        EvaluatorKind   = EvaluatorKind.Template
+    },
+    DataFlowPolicy = new DataFlowPolicy
+    {
+        AcceptsUpstreamInput     = false,
+        EmitsToDownstream        = false,
+        PersistsToMemory         = false,
+        ExcludeFromInputMapping  = true,
+        ExcludeFromOutputMapping = true
+    },
+    HilPolicy = new HilPolicy
+    {
+        SendToHil   = false,
+        DisplayMode = HilDisplayMode.Concealed,
+        InputMode   = HilInputMode.Locked,
+        Label       = "Credential",
+        Description = "Internal vault reference — not shown to reviewers."
+    },
+    SecurityPolicy = new SecurityPolicy
+    {
+        MaskInLogs             = true,
+        MaskInOutput           = true,
+        RequiresElevatedAccess = true
+    }
+}</code></pre>
+
+  <h2>5. HIL Context-Only Field</h2>
+  <p>Human sees the value for context but cannot change it.</p>
+  <pre><code>new NodeFieldDescriptor
+{
+    FieldId          = "strategy",
+    Description      = "Approval strategy — shown in inbox for context.",
+    ExpressionPolicy = new ExpressionPolicy
+    {
+        EvaluationStage = EvaluationStage.AtConfigLoad,
+        EvaluatorKind   = EvaluatorKind.Template
+    },
+    DataFlowPolicy = new DataFlowPolicy
+    {
+        ExcludeFromInputMapping  = true,
+        ExcludeFromOutputMapping = true
+    },
+    HilPolicy = new HilPolicy
+    {
+        SendToHil   = true,
+        DisplayMode = HilDisplayMode.ReadableContext,
+        InputMode   = HilInputMode.Locked,
+        Label       = "Approval Strategy",
+        Description = "How votes are counted to reach a decision."
+    },
+    SecurityPolicy = new SecurityPolicy()
+}</code></pre>
+
+  <h2>6. HIL Required Confirmation</h2>
+  <p>Human must explicitly confirm or provide a value before the workflow continues.</p>
+  <pre><code>new NodeFieldDescriptor
+{
+    FieldId          = "body",
+    Description      = "Message body — human must confirm before sending.",
+    ExpressionPolicy = new ExpressionPolicy
+    {
+        EvaluationStage = EvaluationStage.AtInputReady,
+        EvaluatorKind   = EvaluatorKind.Template
+    },
+    DataFlowPolicy = new DataFlowPolicy
+    {
+        AcceptsUpstreamInput     = true,
+        ExcludeFromInputMapping  = false,
+        ExcludeFromOutputMapping = true
+    },
+    HilPolicy = new HilPolicy
+    {
+        SendToHil   = true,
+        DisplayMode = HilDisplayMode.ReadableContext,
+        InputMode   = HilInputMode.RequiredFromHuman,
+        Label       = "Message Body",
+        Description = "Read the full message. You must confirm it before it is sent."
+    },
+    SecurityPolicy = new SecurityPolicy()
+}</code></pre>
+
+  <h2>7. Suspending Node with Approval Logic</h2>
+  <p>Full manifest with 48h hard deadline approval suspension.</p>
+  <pre><code>protected override NodeExecutorManifest? GetNodeExecutorManifest()
+    => NodeExecutorManifest.From(
+        ProcessElementTypeCode,
+        fields: new[]
+        {
+            // ... field descriptors ...
+        },
+        suspensionPolicy: new SuspensionPolicy
+        {
+            TimeoutSeconds               = 172800,             // 48 hours
+            TimeoutPortKey               = "expired",
+            TimeoutBehavior              = TimeoutBehavior.AbsoluteDeadline,
+            ReminderIntervalSeconds      = new[] { 86400, 43200, 3600 },
+            SlaThresholdSeconds          = 86400,              // 24h SLA
+            EmitSlaBreachEvent           = true,
+            AllowAdminForceComplete      = true,
+            CapturePreSuspensionSnapshot = true
+        }
+    );</code></pre>
+
+  <h2>8. JavaScript Expression Field</h2>
+  <p>Field whose value is computed by a JavaScript snippet from multiple upstream inputs.</p>
+  <pre><code>new NodeFieldDescriptor
+{
+    FieldId          = "payload",
+    Description      = "Webhook payload built dynamically from upstream inputs.",
+    ExpressionPolicy = new ExpressionPolicy
+    {
+        EvaluationStage = EvaluationStage.AtInputReady,
+        EvaluatorKind   = EvaluatorKind.JavaScript
+    },
+    DataFlowPolicy = new DataFlowPolicy
+    {
+        AcceptsUpstreamInput     = true,
+        ExcludeFromInputMapping  = false,
+        ExcludeFromOutputMapping = true
+    },
+    HilPolicy = new HilPolicy
+    {
+        SendToHil   = true,
+        DisplayMode = HilDisplayMode.ReadableContext,
+        InputMode   = HilInputMode.EditableOptional,
+        Label       = "Webhook Payload",
+        Description = "The JSON payload to send. You may edit before sending."
+    },
+    SecurityPolicy = new SecurityPolicy()
+}
+// Config value stored in DB / workflow definition:
+// JSON.stringify({ userId: inputs.customerId, amount: inputs.total })</code></pre>
+
+  <h2>9. Extension JSON Override (No Redeployment)</h2>
+  <p>Override a field's HIL policy for a specific tenant via database without code changes.</p>
+  <pre><code>{
+  "nodeTypeName": "email-smtp",
+  "suspensionPolicy": null,
+  "fields": [
+    {
+      "id": "body",
+      "hilPolicy": {
+        "sendToHil": true,
+        "displayMode": "ReadableContext",
+        "inputMode": "RequiredFromHuman",
+        "label": "Email Body",
+        "description": "Compliance requirement: you must confirm every email body."
+      }
+    }
+  ]
+}
+// Only hilPolicy is overridden. expressionPolicy, dataFlowPolicy, securityPolicy
+// keep their code-defined values.</code></pre>
+
+  <h2>10. Checklist — Adding Manifest to Existing Node</h2>
+  <ul>
+    <li>☐ Create <code>[NodeName].Config.cs</code> partial in the executor project</li>
+    <li>☐ Override <code>GetNodeExecutorManifest()</code> — return <code>Empty</code> or <code>From</code></li>
+    <li>☐ For each meaningful field: create a <code>NodeFieldDescriptor</code></li>
+    <li>☐ Set <code>FieldId</code> to match the camelCase property name on the settings class</li>
+    <li>☐ Set <code>ExpressionPolicy</code> stage and kind appropriately</li>
+    <li>☐ Set <code>DataFlowPolicy</code> for input/output participation</li>
+    <li>☐ Set <code>HilPolicy.SendToHil: true</code> for fields a human needs to see</li>
+    <li>☐ Set security masking for credentials and secrets</li>
+    <li>☐ Add <code>SuspensionPolicy</code> if the node suspends</li>
+    <li>☐ Verify <code>LogActivity()</code> is called on every exit path in the executor</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="08-suspension-policies.html">← Suspension Policies</a>
+    <a href="10-business-cases.html">Next: Business Cases →</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
