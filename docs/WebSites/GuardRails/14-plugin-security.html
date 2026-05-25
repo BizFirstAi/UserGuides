@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plugin Security — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html" class="active">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Plugins &amp; Custom</div>
+    <h1>Plugin Security</h1>
+    <p class="lead">GuardRails guards are security infrastructure. An untrusted guard plugin could bypass protections, exfiltrate data, or create false negatives. The plugin security model enforces that only reviewed, signed assemblies can be loaded.</p>
+  </div>
+
+  <div class="callout danger">
+    <strong>Guards run in-process with full access to execution context</strong>
+    A malicious guard can read <code>context.Input</code>, <code>context.Output</code>, <code>context.Metadata</code>, TenantId, UserId, and all node data. Never load unsigned or unreviewed guard assemblies.
+  </div>
+
+  <h2>Plugin Security Components</h2>
+
+  <table>
+    <thead><tr><th>Component</th><th>File</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>IPluginSignatureValidator</code></td>
+        <td><code>Registry/PluginSignatureValidator.cs</code></td>
+        <td>Verifies the assembly's cryptographic signature against trusted publisher certificates. Unsigned assemblies are rejected before any code loads.</td>
+      </tr>
+      <tr>
+        <td><code>IPluginCodeReviewMetadata</code></td>
+        <td><code>Registry/PluginCodeReviewMetadata.cs</code></td>
+        <td>Attaches code review evidence to loaded plugins. Guards the review requirement gate — plugins without review metadata are flagged in health checks.</td>
+      </tr>
+      <tr>
+        <td><code>IGuardPluginLoader</code></td>
+        <td><code>Registry/GuardPluginLoader.cs</code></td>
+        <td>Orchestrates the full load sequence: discover → verify signature → verify review → register. Any step failure rejects the plugin.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Plugin Load Sequence</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot pre">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Discover plugin assemblies</h4>
+        <p><code>GuardPluginLoader</code> scans configured plugin directories for DLLs matching the guard assembly naming convention.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot pre">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Verify signature</h4>
+        <p><code>IPluginSignatureValidator</code> checks the assembly's strong-name signature against trusted publisher keys. Any unsigned or tampered assembly fails here — no code from that DLL executes.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot pre">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Check code review metadata</h4>
+        <p><code>IPluginCodeReviewMetadata</code> looks up the assembly in the review registry. Plugins without a review record are rejected or flagged with a warning in the health endpoint.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot post">4</div></div>
+      <div class="body">
+        <h4>Register in GuardRegistry</h4>
+        <p>The verified plugin is registered as a <code>GuardDefinition</code> in <code>GuardRegistry</code>. It becomes available for configuration by name in node guard configs.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Fail-Secure at the Plugin Level</h2>
+  <p>The plugin loader fails closed. If a signature check fails, the plugin is rejected. If the review metadata is missing, behavior depends on configuration:</p>
+  <ul>
+    <li><strong>Strict mode:</strong> Missing review metadata → plugin rejected. Deployment fails safe.</li>
+    <li><strong>Permissive mode:</strong> Missing review metadata → plugin loaded with a warning in the health endpoint. Suitable for internal development environments.</li>
+  </ul>
+
+  <h2>Transient Failure Protection</h2>
+  <p>The <code>ITransientFailureWindow</code> service (50 transient failures per 60-second window) prevents a flaky guard from being excluded by the circuit breaker due to temporary network issues. Transient failures (timeouts, temporary unavailability) reset the failure counter rather than accumulating toward the circuit open threshold.</p>
+
+  <h2>Security Principles</h2>
+  <table>
+    <thead><tr><th>Principle</th><th>How GuardRails Enforces It</th></tr></thead>
+    <tbody>
+      <tr><td>Defense in Depth</td><td>Multiple independent guards cover the same concern (e.g., PiiDetection in Pre + PiiRedaction in Post)</td></tr>
+      <tr><td>Fail-Secure</td><td><code>IsSecurityCritical=true</code> guards block when their own circuit is open</td></tr>
+      <tr><td>Zero Trust</td><td>Every node execution runs the full guard pipeline regardless of caller identity</td></tr>
+      <tr><td>Supply Chain Protection</td><td>Plugin signature validation prevents tampered guard code from being loaded</td></tr>
+      <tr><td>Least Privilege</td><td>Guards receive only the execution context — they cannot call internal platform APIs unless injected via DI</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="13-bring-your-own-guard.html">← Bring Your Own Guard</a>
+    <a href="15-integration-processengine.html">ProcessEngine Wiring →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>
