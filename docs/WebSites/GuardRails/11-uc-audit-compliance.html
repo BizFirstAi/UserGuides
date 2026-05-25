@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audit &amp; Compliance — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html" class="active">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Use Case</div>
+    <h1>Audit Trail for Regulated Industries</h1>
+    <p class="lead">Build a tamper-evident, PII-free audit record of every guard violation — queryable by TenantId, UserId, GuardName, and TraceId — without slowing down workflow execution.</p>
+  </div>
+
+  <h2>What Gets Audited</h2>
+  <p>Every time a guard returns <code>IsAllowed=false</code>, <code>GuardRailsAuditLogger</code> writes an audit event. The audit logger operates <strong>asynchronously in batches</strong> — violations never block the execution path.</p>
+
+  <h3>Audit Event Structure</h3>
+  <pre><code>public class GuardRailViolationAuditEvent
+{
+    public DateTime OccurredAtUtc { get; set; }
+    public int TenantId { get; set; }
+    public int? UserId { get; set; }
+    public string GuardName { get; set; }    // e.g. "PiiDetectionGuard"
+    public GuardRailPhase Phase { get; set; } // Pre=0, Post=1, Error=2
+    public string OperationId { get; set; }  // unique per node execution
+    public string Reason { get; set; }       // human-readable violation description
+    public string TraceId { get; set; }      // distributed trace correlation
+    public string SourceIp { get; set; }
+
+    // NOTE: No Input or Output snapshots.
+    // The allowlist approach: log metadata, never log the data itself.
+}</code></pre>
+
+  <div class="callout info">
+    <strong>No PII in Audit Logs — Ever</strong>
+    The audit event contains no <code>Input</code> or <code>Output</code> snapshots. This is by design (the "allowlist approach"). If PII was in the input, the fact of the violation — <em>which guard blocked, at what time, for which tenant</em> — is sufficient for compliance evidence. The actual data is never written to the audit store.
+  </div>
+
+  <h2>Audit Trail Structure</h2>
+  <p>Each <code>GuardRailViolation</code> in the execution result also carries audit-relevant fields:</p>
+  <pre><code>public class GuardRailViolation
+{
+    public string GuardName { get; set; }
+    public GuardRailPhase Phase { get; set; }
+    public string Reason { get; set; }
+    public long TenantId { get; set; }
+    public string OperationId { get; set; }
+}</code></pre>
+
+  <h2>Execution Timeline for Forensics</h2>
+  <p>The <code>GuardRailsExecutionTimeline</code> in each execution result provides guard-by-guard forensics:</p>
+  <pre><code>// Sample timeline output
+Guard Timeline:
+  TimeoutGuard       (pre, 2ms)   ✓
+  RateLimitingGuard  (pre, 5ms)   ✓
+  PiiDetectionGuard  (pre, 12ms)  ✗  [BLOCKED: SSN, Email detected]</code></pre>
+
+  <p>This tells you exactly which guard blocked, in which phase, how long it took to make the decision, and why.</p>
+
+  <h2>Compliance Scenarios</h2>
+
+  <h3>GDPR Data Protection Audit</h3>
+  <p>Regulator asks: <em>"Show us evidence that personal data was not processed without lawful basis for TenantId 42 between January and March 2026."</em></p>
+  <ul>
+    <li>Query audit log for <code>TenantId=42</code>, <code>GuardName="PiiDetectionGuard"</code>, date range January–March</li>
+    <li>Each record shows: timestamp, operationId, reason ("PII detected: Email, SSN"), phase (Pre)</li>
+    <li>Zero violations = evidence that PII-containing inputs were always blocked</li>
+    <li>Some violations = show the violation was blocked, not processed</li>
+  </ul>
+
+  <h3>PCI-DSS Cardholder Data Access Audit</h3>
+  <p>Auditor asks: <em>"Was credit card data ever returned in an API response?"</em></p>
+  <ul>
+    <li>Query audit log for <code>GuardName="PiiRedactionGuard"</code> with <code>Reason</code> containing "CreditCard"</li>
+    <li>Each record shows the guard ran in Post phase and redacted the data</li>
+    <li><code>OutputModified=true</code> in execution result proves the redaction happened</li>
+  </ul>
+
+  <h3>SOC 2 Rate Limiting Evidence</h3>
+  <p>Auditor asks: <em>"How do you prevent one customer from monopolizing shared infrastructure?"</em></p>
+  <ul>
+    <li>Query audit log for <code>GuardName="RateLimitingGuard"</code></li>
+    <li>Records show per-tenant blocking events with <code>TenantId</code>, timestamp, operationId</li>
+    <li>Configuration history shows tenant-scoped limits were in place</li>
+  </ul>
+
+  <h2>Secrets Redaction in Logs</h2>
+  <p><code>ISecretsRedactor</code> is applied to all log output. It uses regex-based detection to scrub:</p>
+  <ul>
+    <li>API keys (common formats: <code>Bearer ...</code>, <code>api_key=...</code>)</li>
+    <li>Passwords in connection strings</li>
+    <li>JWT tokens</li>
+  </ul>
+  <p>This ensures that even if a node logs its own input, any secrets in that input are redacted before they reach the log aggregator.</p>
+
+  <h2>Non-Blocking Audit Design</h2>
+  <div class="callout success">
+    <strong>Audit writes never delay workflow execution</strong>
+    <code>GuardRailsAuditLogger</code> writes violations asynchronously in batches. A brief window exists where a violation may not yet be persisted — acceptable for all known regulatory frameworks where near-real-time audit is sufficient. The trade-off is zero performance impact on the execution hot path.
+  </div>
+
+  <div class="page-nav">
+    <a href="10-uc-input-validation.html">← Input Validation</a>
+    <a href="12-uc-email-redaction.html">Email Redaction →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

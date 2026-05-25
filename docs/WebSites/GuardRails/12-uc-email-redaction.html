@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Email Redaction — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html" class="active">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Use Case</div>
+    <h1>Email Node PII Redaction</h1>
+    <p class="lead">Ensure that PII appearing in email bodies, subjects, or delivery receipts returned by the email node is redacted before the result reaches workflow logs, downstream nodes, or the caller.</p>
+  </div>
+
+  <h2>The Problem</h2>
+  <p>An email node processes a customer service notification. The email template is assembled from workflow data and may contain:</p>
+  <ul>
+    <li>The recipient's email address in the "To" field</li>
+    <li>The customer's full name in the subject line</li>
+    <li>A reference number that includes a phone number: <code>REF: +1-555-987-6543</code></p>
+    <li>The SMTP delivery receipt which echoes the full message body</li>
+  </ul>
+  <p>The email node returns an execution result that includes message metadata. This result flows into the next node and is written to the execution log. Without redaction, PII from the email body appears in both places.</p>
+
+  <h2>The Solution: Post-Phase Redaction</h2>
+  <p><code>PiiRedactionGuard</code> runs in the <strong>Post phase</strong>, after the email is sent. It scans the node's output (the delivery receipt/metadata returned by the email executor), finds PII, and replaces it before the result propagates.</p>
+
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "PiiRedactionGuard",
+        "enabled": true,
+        "config": {
+          "redaction_method": "partial",  // keep first+last char: j**n@***.c*m
+          "fields": []                    // empty = scan entire output
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <h2>What the Redaction Does</h2>
+
+  <h3>Before redaction (raw output from email node):</h3>
+  <pre><code>{
+  "messageId": "msg-abc-123",
+  "to": "john.smith@company.com",
+  "subject": "Your order is confirmed",
+  "status": "delivered",
+  "deliveryReceipt": "Delivered to john.smith@company.com at 14:32:01"
+}</code></pre>
+
+  <h3>After PiiRedactionGuard (mask method):</h3>
+  <pre><code>{
+  "messageId": "msg-abc-123",
+  "to": "**********************",
+  "subject": "Your order is confirmed",
+  "status": "delivered",
+  "deliveryReceipt": "Delivered to ********************** at 14:32:01"
+}</code></pre>
+
+  <h3>After PiiRedactionGuard (partial method):</h3>
+  <pre><code>{
+  "messageId": "msg-abc-123",
+  "to": "j**************m",
+  "subject": "Your order is confirmed",
+  "status": "delivered",
+  "deliveryReceipt": "Delivered to j**************m at 14:32:01"
+}</code></pre>
+
+  <h2>Why Post-Phase Only?</h2>
+  <p>The email node <em>must</em> receive the recipient's email address to send the email — blocking it in Pre would prevent delivery. The correct pattern for email is:</p>
+  <ul>
+    <li><strong>Pre phase:</strong> No PII detection (or use <code>enableDelayedEnforcement: true</code> so violations are logged but not blocked)</li>
+    <li><strong>Post phase:</strong> PiiRedactionGuard redacts the output before it propagates</li>
+  </ul>
+
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      // Pre: allow input with email address (needed for delivery)
+      // but log that it contains PII
+      {
+        "name": "PiiDetectionGuard",
+        "enabled": true,
+        "order": 1,
+        "enableDelayedEnforcement": true,  // log violation but do not block
+        "config": { "sensitivityLevel": "medium" }
+      },
+
+      // Post: redact PII from the email node's output/receipt
+      {
+        "name": "PiiRedactionGuard",
+        "enabled": true,
+        "config": {
+          "redaction_method": "partial"
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <h2>Result Propagation</h2>
+  <p>After <code>PiiRedactionGuard</code> runs, <code>OutputModified=true</code> is set. <code>BaseNodeExecutor</code> detects this and updates the node execution result:</p>
+  <pre><code>// In BaseNodeExecutor.OnPostGuardRails():
+var postResult = await _guardExecutor.ExecutePostAsync(guardContext, nodeResult.OutputData);
+if (postResult.OutputModified)
+{
+    // The redacted output replaces the original
+    nodeResult.OutputData = guardContext.Output;
+}</code></pre>
+  <p>The downstream node and execution log receive the redacted version. The raw email address never appears outside the email delivery layer.</p>
+
+  <div class="callout success">
+    <strong>Redaction happens in reverse positional order</strong>
+    <code>PiiRedactionGuard</code> applies redactions from end to start of the string (reverse position order). This preserves string offsets — earlier redactions don't shift the positions used by later ones.
+  </div>
+
+  <div class="page-nav">
+    <a href="11-uc-audit-compliance.html">← Audit &amp; Compliance</a>
+    <a href="13-bring-your-own-guard.html">Bring Your Own Guard →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

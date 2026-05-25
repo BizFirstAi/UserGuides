@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bring Your Own Guard — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html" class="active">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Plugins &amp; Custom</div>
+    <h1>Bring Your Own Guard</h1>
+    <p class="lead">GuardRails is fully extensible. Any security or reliability concern that the built-in guards don't cover can be implemented as a custom guard and registered as a plugin — participating in the same pipeline, configuration system, and audit trail.</p>
+  </div>
+
+  <h2>The Guard Contract</h2>
+  <p>Every guard implements <code>IGuardRail</code>, a composite of three focused interfaces. Implement all three and your guard is a first-class citizen in the GuardRails pipeline.</p>
+
+  <pre><code>// A guard must implement all three:
+public interface IGuardRail : IGuardRailExecutor, IGuardRailConfigValidator, IGuardRailDescriptor { }
+
+// IGuardRailExecutor: the execution contract
+Task&lt;GuardRailCheckResult&gt; ExecuteAsync(
+    GuardRailExecutionContext context,
+    GuardRailPhase phase,
+    CancellationToken cancellationToken = default);
+
+// IGuardRailConfigValidator: validate configuration at load time
+GuardRailConfigValidationResult ValidateWithDetails(IDictionary&lt;string, object?&gt; configuration);
+
+// IGuardRailDescriptor: metadata for discovery and tooling
+string GuardName { get; }
+string Description { get; }
+string ConfigurationSchema { get; }  // JSON Schema as string
+IReadOnlyList&lt;GuardRailDependency&gt; Dependencies { get; }</code></pre>
+
+  <h2>Step-by-Step: Building a Custom Guard</h2>
+  <p>Example: a <strong>ContentModerationGuard</strong> that calls a moderation API to check if AI output is appropriate.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Implement the guard class</h4>
+        <pre><code>namespace MyCompany.Guards;
+
+public class ContentModerationGuard : IGuardRail
+{
+    private IDictionary&lt;string, object?&gt; _configuration = new Dictionary&lt;string, object?&gt;();
+    private readonly IContentModerationClient _client;
+
+    public ContentModerationGuard(IContentModerationClient client)
+    {
+        _client = client;
+    }
+
+    // IGuardRailExecutor
+    public string Name =&gt; "ContentModerationGuard";
+    public string Version =&gt; "1.0.0";
+    public IReadOnlyList&lt;GuardRailPhase&gt; SupportedPhases =&gt;
+        new[] { GuardRailPhase.Post };  // Post: check AI output
+    public bool IsSecurityCritical =&gt; true;  // fail-secure
+
+    public async Task&lt;GuardRailCheckResult&gt; ExecuteAsync(
+        GuardRailExecutionContext context,
+        GuardRailPhase phase,
+        CancellationToken cancellationToken = default)
+    {
+        if (phase != GuardRailPhase.Post || context.Output == null)
+            return GuardRailCheckResult.Success();
+
+        var outputText = context.Output.ToString() ?? string.Empty;
+        var threshold = GetConfigDouble("threshold", 0.8);
+
+        var result = await _client.CheckContentAsync(outputText, cancellationToken);
+
+        if (result.HarmScore &gt; threshold)
+        {
+            return GuardRailCheckResult.Blocked(
+                $"Content moderation failed: harm score {result.HarmScore:F2} exceeds threshold {threshold:F2}",
+                metadata: new Dictionary&lt;string, object?&gt;
+                {
+                    ["harm_score"] = result.HarmScore,
+                    ["threshold"] = threshold,
+                    ["categories"] = result.HarmCategories
+                });
+        }
+
+        return GuardRailCheckResult.Success();
+    }
+
+    // SetConfiguration — called by GuardConfigResolver before ExecuteAsync
+    public void SetConfiguration(IDictionary&lt;string, object?&gt; configuration)
+    {
+        _configuration = configuration ?? new Dictionary&lt;string, object?&gt;();
+    }
+
+    private double GetConfigDouble(string key, double defaultValue) =&gt;
+        _configuration.TryGetValue(key, out var v) &amp;&amp; v is double d ? d : defaultValue;
+
+    // IGuardRailConfigValidator
+    public bool Validate(IDictionary&lt;string, object?&gt; configuration) =&gt;
+        ValidateWithDetails(configuration).IsValid;
+
+    public GuardRailConfigValidationResult ValidateWithDetails(
+        IDictionary&lt;string, object?&gt; configuration)
+    {
+        var errors = new List&lt;string&gt;();
+        if (!configuration.ContainsKey("threshold"))
+            errors.Add("'threshold' is required");
+        return errors.Any()
+            ? GuardRailConfigValidationResult.Invalid(errors)
+            : GuardRailConfigValidationResult.Valid();
+    }
+
+    // IGuardRailDescriptor
+    public string GuardName =&gt; Name;
+    public string Description =&gt; "Calls content moderation API to check AI output safety.";
+    public string ConfigurationSchema =&gt; @"{
+        ""type"": ""object"",
+        ""required"": [""threshold""],
+        ""properties"": {
+            ""threshold"": { ""type"": ""number"", ""minimum"": 0, ""maximum"": 1 }
+        }
+    }";
+    public IReadOnlyList&lt;GuardRailDependency&gt; Dependencies =&gt; new[]
+    {
+        new GuardRailDependency
+        {
+            ServiceName = "ContentModerationApi",
+            Description = "External content moderation service",
+            IsRequired = true
+        }
+    };
+}</code></pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Register with DI</h4>
+        <pre><code>// Option A: Register directly via DI
+services.AddSingleton&lt;IContentModerationClient, AzureContentModerationClient&gt;();
+services.AddSingleton&lt;ContentModerationGuard&gt;();
+
+// Option B: Register as a named guard via GuardRegistry (for dynamic discovery)
+services.AddSingleton&lt;IGuardRail, ContentModerationGuard&gt;();</code></pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Register with GuardRegistry at startup</h4>
+        <pre><code>// In your application startup / hosted service:
+var registry = serviceProvider.GetRequiredService&lt;IGuardRegistry&gt;();
+registry.Register("ContentModerationGuard", new GuardDefinition
+{
+    Id = "ContentModerationGuard",
+    Type = "content-safety"
+});</code></pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Use in node configuration</h4>
+        <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "ContentModerationGuard",
+        "enabled": true,
+        "config": {
+          "threshold": 0.75
+        }
+      }
+    ]
+  }
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <h2>Plugin Assembly Loading</h2>
+  <p>For guards that live in external assemblies (shipped as DLLs), use the plugin loader:</p>
+  <pre><code>// GuardRegistry.LoadPluginsAsync() delegates to IGuardPluginLoader
+// which scans configured plugin paths, loads assemblies, and registers GuardDefinitions
+
+// The plugin is then accessible by name in any node config:
+{ "name": "ContentModerationGuard", "config": { "threshold": 0.8 } }</code></pre>
+
+  <div class="callout warning">
+    <strong>Plugin assemblies must be signed</strong>
+    <code>IPluginSignatureValidator</code> validates assembly signatures before loading. Unsigned plugins are rejected. See <a href="14-plugin-security.html">Plugin Security</a> for the signing requirements.
+  </div>
+
+  <h2>Guard Design Principles</h2>
+  <ul>
+    <li><strong>Stateless at construction:</strong> Never store execution state in instance fields. Use <code>context.Metadata</code> for cross-phase state.</li>
+    <li><strong>Only handle your phase:</strong> Check <code>phase == GuardRailPhase.Pre</code> (or Post/Error) at the start of <code>ExecuteAsync</code>. Return <code>Success()</code> for phases you don't handle.</li>
+    <li><strong>Declare <code>IsSecurityCritical</code> honestly:</strong> If your guard's failure leaves a security gap, set <code>true</code>. If it's an optimization guard that can safely be skipped, set <code>false</code>.</li>
+    <li><strong>Validate config at load time:</strong> Implement <code>ValidateWithDetails</code> to catch bad configuration at startup — not at runtime during a node execution.</li>
+    <li><strong>Declare dependencies:</strong> If your guard needs Redis, a moderation API, or another service, declare it in <code>Dependencies</code>. This enables health checking and documentation generation.</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="12-uc-email-redaction.html">← Email Redaction</a>
+    <a href="14-plugin-security.html">Plugin Security →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

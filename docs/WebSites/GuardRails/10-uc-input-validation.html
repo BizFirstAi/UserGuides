@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Input Validation — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html" class="active">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Use Case</div>
+    <h1>Input Validation at the Gate</h1>
+    <p class="lead">Validate workflow input data against a declared schema before any node processes it. Catch missing fields, wrong types, and malformed payloads at the earliest possible point — before any API calls, database writes, or AI invocations.</p>
+  </div>
+
+  <h2>The Problem</h2>
+  <p>A payment processing workflow expects:</p>
+  <pre><code>{ "userId": "user-123", "amount": 99.99, "currency": "USD" }</code></pre>
+  <p>Instead it receives:</p>
+  <pre><code>{ "userId": null, "amount": "ninety-nine", "currency": "USD" }</code></pre>
+  <p>Without input validation:</p>
+  <ul>
+    <li>The payment node attempts to parse <code>"ninety-nine"</code> as a number — throws an unhandled exception</li>
+    <li>The exception surfaces as a generic 500 error with no helpful context</li>
+    <li>The audit log shows an error but not <em>why</em> the input was wrong</li>
+    <li>The bug may have gone through integration testing unnoticed</li>
+  </ul>
+
+  <h2>The Solution</h2>
+  <p><code>InputValidationGuard</code> validates input against a JSON schema in the Pre phase. If validation fails and <code>strictMode=true</code>, the node never runs — the caller receives a structured error listing exactly which fields are wrong.</p>
+
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "InputValidationGuard",
+        "enabled": true,
+        "order": 1,
+        "config": {
+          "schema": {
+            "type": "object",
+            "required": ["userId", "amount", "currency"],
+            "properties": {
+              "userId":   { "type": "string" },
+              "amount":   { "type": "number" },
+              "currency": { "type": "string" }
+            }
+          },
+          "strictMode": true
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <h3>What the caller receives</h3>
+  <pre><code>{
+  "IsAllowed": false,
+  "ErrorMessage": "Input validation failed",
+  "Metadata": {
+    "validation_errors": [
+      "Required field 'userId' is missing or null",
+      "Field 'amount': expected 'number', got 'string'"
+    ]
+  }
+}</code></pre>
+
+  <h2>strictMode vs Warning Mode</h2>
+  <table>
+    <thead><tr><th>Mode</th><th>Result on failure</th><th>When to use</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>strictMode: true</code></td>
+        <td><code>Blocked</code> — workflow stops; node never runs</td>
+        <td>Production workflows where malformed input must never reach a node</td>
+      </tr>
+      <tr>
+        <td><code>strictMode: false</code> (default)</td>
+        <td><code>Warning</code> — workflow continues; violation logged</td>
+        <td>Monitoring mode; catch issues without breaking existing flows during rollout</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>JSON Type Mapping</h2>
+  <p>The guard maps CLR types to JSON schema types:</p>
+  <table>
+    <thead><tr><th>JSON schema type</th><th>Accepted CLR types</th></tr></thead>
+    <tbody>
+      <tr><td><code>"string"</code></td><td><code>string</code></td></tr>
+      <tr><td><code>"number"</code></td><td><code>int</code>, <code>long</code>, <code>double</code>, <code>decimal</code>, <code>float</code></td></tr>
+      <tr><td><code>"boolean"</code></td><td><code>bool</code></td></tr>
+      <tr><td><code>"array"</code></td><td><code>List&lt;object&gt;</code> or any <code>IList</code></td></tr>
+      <tr><td><code>"object"</code></td><td><code>IDictionary</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Combining Validation with PII Detection</h2>
+  <p>Input validation and PII detection are complementary guards. Run validation first to ensure the payload structure is correct, then check for PII in the validated input:</p>
+
+  <pre><code>"individual": [
+  // Step 1: Validate structure
+  { "name": "InputValidationGuard", "order": 1,
+    "config": { "schema": {...}, "strictMode": true } },
+
+  // Step 2: Check for PII in validated input
+  { "name": "PiiDetectionGuard", "order": 2,
+    "config": { "sensitivityLevel": "medium" } }
+]</code></pre>
+
+  <p>This order ensures that if the structure is wrong, the PII scanner never runs on malformed data — avoiding false positives from unexpected field positions.</p>
+
+  <div class="callout success">
+    <strong>Zero Code in Nodes</strong>
+    With InputValidationGuard, node executors can assume their input is always valid. No <code>if (input.UserId == null)</code> checks needed. The guard enforces the contract at the framework level.
+  </div>
+
+  <div class="page-nav">
+    <a href="09-uc-timeout-resilience.html">← Timeout &amp; Resilience</a>
+    <a href="11-uc-audit-compliance.html">Audit &amp; Compliance →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>
