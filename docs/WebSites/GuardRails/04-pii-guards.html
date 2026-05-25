@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PII Guards — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html" class="active">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Guard Reference</div>
+    <h1>PII Guards</h1>
+    <p class="lead">Four guards from <code>Provider.PII</code> provide a complete two-layer PII protection pipeline: detect and block in Pre, redact and anonymize in Post. <code>PiiNodeGuard</code> wires both layers into a single integration point.</p>
+  </div>
+
+  <div class="callout info">
+    <strong>Project:</strong> <code>BizFirst.Ai.GuardRails.Provider.PII</code> — Register with <code>services.AddGuardRailsPiiGuards()</code> or via the full-stack <code>services.AddGuardRailsExecution()</code>.
+  </div>
+
+  <div class="callout warning">
+    <strong>Use Provider.PII, not Provider.Core, for PII detection in production.</strong>
+    Provider.Core contains a placeholder <code>PiiDetectionGuard</code> (v1.0.0). Provider.PII contains the full implementation (v2.0.0) backed by <code>RegexPiiDetector</code> with 10 compiled patterns.
+  </div>
+
+  <!-- ── RegexPiiDetector ── -->
+  <h2>RegexPiiDetector</h2>
+  <p>The detection engine used by all PII guards. Patterns are compiled at construction time with <code>RegexOptions.Compiled | RegexOptions.IgnoreCase</code> for maximum performance.</p>
+
+  <h3>The 10 Detection Patterns</h3>
+  <table>
+    <thead><tr><th>PiiType</th><th>Example</th><th>Sensitivity</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>SSN</code></td><td>123-45-6789</td><td>low</td><td>Hyphenated format</td></tr>
+      <tr><td><code>SSN_NoHyphen</code></td><td>123456789</td><td>medium</td><td>9-digit number — context-dependent</td></tr>
+      <tr><td><code>CreditCard</code></td><td>4111-1111-1111-1111</td><td>low</td><td>Groups with optional spaces/hyphens</td></tr>
+      <tr><td><code>Email</code></td><td>user@domain.com</td><td>high</td><td>Standard RFC email pattern</td></tr>
+      <tr><td><code>Phone</code></td><td>+1-555-123-4567</td><td>high</td><td>US phone number with various separators</td></tr>
+      <tr><td><code>Passport</code></td><td>AB1234567</td><td>medium</td><td>1-2 letters + 6-9 digits</td></tr>
+      <tr><td><code>DriverLicense</code></td><td>A12345678</td><td>medium</td><td>1-2 letters + 5-8 digits</td></tr>
+      <tr><td><code>IPAddress</code></td><td>192.168.1.1</td><td>high</td><td>Standard IPv4 pattern</td></tr>
+      <tr><td><code>CVV</code></td><td>123</td><td>low</td><td>3-4 digit number — context-dependent</td></tr>
+      <tr><td><code>BankAccount</code></td><td>12345678901</td><td>medium</td><td>8-17 digit number</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Two detection methods</h3>
+  <pre><code>public interface IPiiDetector
+{
+    IReadOnlyList&lt;PatternDefinition&gt; DetectionRules { get; }
+
+    // Returns {piiType → count} — fast check for Pre-phase blocking
+    Dictionary&lt;string, int&gt; DetectPii(string text);
+
+    // Returns full match details — used by Post-phase redaction
+    List&lt;PiiMatch&gt; DetectPiiDetailed(string text);
+}
+
+public class PiiMatch
+{
+    public string PiiType { get; set; }       // e.g. "SSN", "Email"
+    public string MatchedText { get; set; }   // the actual matched string
+    public int StartPosition { get; set; }
+    public int EndPosition { get; set; }
+    public string Pattern { get; set; }       // the regex pattern that matched
+    public double ConfidenceLevel { get; set; } // always 0.95
+}</code></pre>
+
+  <!-- ── PiiDetectionGuard v2 ── -->
+  <h2 id="detection">PiiDetectionGuard v2</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td><code>"PiiDetectionGuard"</code></td></tr>
+      <tr><td>Version</td><td><code>2.0.0</code> <span class="badge badge-green">Production</span></td></tr>
+      <tr><td>Supported Phases</td><td><span class="phase phase-pre">Pre</span></td></tr>
+      <tr><td>IsSecurityCritical</td><td><code>true</code> → fail-secure</td></tr>
+    </tbody>
+  </table>
+
+  <h3>How it works</h3>
+  <p>Converts <code>context.Input</code> to string via <code>.ToString()</code>, calls <code>IPiiDetector.DetectPii(inputStr)</code>. If any PII is found, returns <code>Blocked</code> with detected types and counts in metadata.</p>
+
+  <h3>Configuration</h3>
+  <pre><code>{
+  "name": "PiiDetectionGuard",
+  "enabled": true,
+  "config": {
+    "sensitivityLevel": "medium",  // required; "low" | "medium" | "high"
+    "detection_rules": []          // optional; custom rules (currently all 10 patterns always run)
+  }
+}</code></pre>
+
+  <h3>Block result</h3>
+  <pre><code>{
+  "IsAllowed": false,
+  "ErrorMessage": "PII detected in input: SSN, Email",
+  "Metadata": {
+    "detected_pii_types": ["SSN", "Email"],
+    "pii_counts": { "SSN": 1, "Email": 2 },
+    "sensitivity_level": "medium"
+  }
+}</code></pre>
+
+  <!-- ── PiiRedactionGuard ── -->
+  <h2 id="redaction">PiiRedactionGuard</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td><code>"PiiRedactionGuard"</code></td></tr>
+      <tr><td>Version</td><td><code>1.0.0</code></td></tr>
+      <tr><td>Supported Phases</td><td><span class="phase phase-post">Post</span></td></tr>
+      <tr><td>IsSecurityCritical</td><td><code>true</code> → fail-secure</td></tr>
+    </tbody>
+  </table>
+
+  <h3>How it works</h3>
+  <p>Converts <code>context.Output</code> to string, calls <code>IPiiDetector.DetectPiiDetailed()</code> to get exact positions of all PII matches. Applies redaction in <strong>reverse positional order</strong> (to preserve string offsets). Directly sets <code>context.Output</code> to the redacted string and returns <code>Success(outputModified: true)</code>.</p>
+
+  <h3>Three redaction methods</h3>
+  <table>
+    <thead><tr><th>Method</th><th>How</th><th>Example input → output</th></tr></thead>
+    <tbody>
+      <tr><td><code>"mask"</code></td><td>Replace all characters with <code>*</code> (same length)</td><td><code>john@example.com</code> → <code>****************</code></td></tr>
+      <tr><td><code>"hash"</code></td><td>SHA256 → hex → first 16 characters (irreversible, consistent)</td><td><code>john@example.com</code> → <code>a3f9b2c1d4e5f678</code></td></tr>
+      <tr><td><code>"partial"</code></td><td>Keep first + last character, mask middle</td><td><code>john@example.com</code> → <code>j**************m</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>Configuration</h3>
+  <pre><code>{
+  "name": "PiiRedactionGuard",
+  "enabled": true,
+  "config": {
+    "redaction_method": "mask",  // required; "mask" | "hash" | "partial"
+    "fields": []                 // optional; target specific field names (empty = all output)
+  }
+}</code></pre>
+
+  <h3>Success result</h3>
+  <pre><code>{
+  "IsAllowed": true,
+  "OutputModified": true,
+  "Metadata": {
+    "redacted_pii_count": 3,
+    "redaction_method": "mask"
+  }
+}</code></pre>
+
+  <!-- ── PiiAnonymizationGuard ── -->
+  <h2 id="anonymization">PiiAnonymizationGuard</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td><code>"PiiAnonymizationGuard"</code></td></tr>
+      <tr><td>Version</td><td><code>1.0.0</code></td></tr>
+      <tr><td>Supported Phases</td><td><span class="phase phase-post">Post</span></td></tr>
+      <tr><td>IsSecurityCritical</td><td><code>true</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>Less destructive than redaction — preserves structure but replaces PII values with anonymized equivalents. Use when downstream systems need data in a recognizable format but without real personal data.</p>
+
+  <h3>Configuration</h3>
+  <pre><code>{
+  "name": "PiiAnonymizationGuard",
+  "enabled": true,
+  "config": {
+    "anonymization_method": "pseudonymize",  // required
+    "preserve_format": true                  // optional; keep same data type/format
+  }
+}</code></pre>
+
+  <!-- ── PiiNodeGuard ── -->
+  <h2 id="nodeguard">PiiNodeGuard (Composite)</h2>
+  <p>A composite <code>INodeGuardExecutor</code> that wires <code>PiiDetectionGuard</code> (Pre) and <code>PiiRedactionGuard</code> (Post) into a single integration point. Use this when you want full two-layer PII protection without configuring each guard separately.</p>
+
+  <pre><code>// PiiNodeGuard implements INodeGuardExecutor
+ExecutePreAsync()  → runs PiiDetectionGuard (blocks if PII found)
+ExecutePostAsync() → runs PiiRedactionGuard (redacts PII from output)
+ExecuteOnErrorAsync() → no-op (returns Success)</code></pre>
+
+  <h3>Registering PiiNodeGuard</h3>
+  <pre><code>// In DI setup, for nodes that need full PII protection:
+services.AddSingleton&lt;INodeGuardExecutor, PiiNodeGuard&gt;();
+
+// Or use the standard full-stack registration which includes PiiNodeGuard:
+services.AddGuardRailsExecution();</code></pre>
+
+  <h2>Full PII Workflow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot pre">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4><span class="phase phase-pre">Pre</span> — PiiDetectionGuard</h4>
+        <p>Scans <code>context.Input</code> for all 10 PII patterns. If any found: returns <code>Blocked</code>. Node never runs. Email never sent. API never called.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot node">N</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Node executes</h4>
+        <p>Input was clean. Node performs its operation (e.g., calls AI model, queries database, sends email).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot post">2</div></div>
+      <div class="body">
+        <h4><span class="phase phase-post">Post</span> — PiiRedactionGuard</h4>
+        <p>Scans <code>context.Output</code> (the node's result). Redacts any PII found. Sets <code>OutputModified=true</code>. Caller receives clean, redacted output.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-built-in-guards.html">← Built-in Guards</a>
+    <a href="05-configuration-reference.html">Configuration →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

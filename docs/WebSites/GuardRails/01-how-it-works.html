@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How It Works — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html" class="active">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Architecture</div>
+    <h1>How GuardRails Works</h1>
+    <p class="lead">A four-layer architecture where a single execution context flows through a pipeline of guards — Pre, Node, Post, Error — with every phase sharing state via a metadata dictionary.</p>
+  </div>
+
+  <h2>Four-Layer Architecture</h2>
+  <p>GuardRails is organized into four layers, each with a clear responsibility. Higher layers depend on lower ones; lower layers have zero knowledge of higher layers.</p>
+
+  <table>
+    <thead><tr><th>Layer</th><th>Project</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Domain</strong></td>
+        <td><code>BizFirst.Ai.GuardRails.Domain</code></td>
+        <td>Pure contracts: interfaces, models, enums. Zero external dependencies. All other layers reference this.</td>
+      </tr>
+      <tr>
+        <td><strong>Service</strong></td>
+        <td><code>BizFirst.Ai.GuardRails.Service</code></td>
+        <td>Orchestration, config resolution, circuit breaker, guard registry, logging. Infrastructure only — no guard business logic.</td>
+      </tr>
+      <tr>
+        <td><strong>Providers</strong></td>
+        <td><code>Provider.Core</code>, <code>Provider.PII</code></td>
+        <td>Guard implementations. Each guard is a focused class with a single security or reliability concern.</td>
+      </tr>
+      <tr>
+        <td><strong>Execution</strong></td>
+        <td><code>BizFirst.Ai.GuardRails.Execution</code></td>
+        <td>Public facade consumed by <code>BaseNodeExecutor</code>. Coordinates Pre/Post/Error handlers.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>The Execution Context</h2>
+  <p>A single <code>GuardRailExecutionContext</code> instance is created at the start of each node execution and flows through all phases. Guards read from it, write to it, and use its <code>Metadata</code> dictionary to pass state between phases.</p>
+
+  <pre><code>public class GuardRailExecutionContext
+{
+    public long TenantId { get; set; }       // multi-tenant isolation
+    public long UserId { get; set; }          // actor performing the operation
+    public string OperationId { get; set; }   // unique per node execution
+    public object? Input { get; set; }        // node input data
+    public object? Output { get; set; }       // set after node runs; guards may modify
+    public IDictionary&lt;string, object?&gt; Metadata { get; set; }  // shared state across all phases
+    public string TraceId { get; set; }       // distributed trace correlation
+    public string PhaseId { get; set; }       // current phase name ("Pre" / "Post" / "Error")
+    public DateTime CreatedAt { get; set; }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Metadata is the cross-phase communication channel</strong>
+    TimeoutGuard stores <code>context.Metadata["__timeout_start"]</code> in Pre, then reads it in Post to compute elapsed time. CostTrackingGuard stores a reservation ID in Pre, confirms it in Post. This pattern keeps guards stateless at the instance level.
+  </div>
+
+  <h2>Execution Flow</h2>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot node">▶</div><div class="line"></div></div>
+      <div class="body">
+        <h4>BaseNodeExecutor.ExecuteAsync()</h4>
+        <p>Entry point. Creates a <code>GuardRailExecutionContext</code> with TenantId, UserId, OperationId, Input from the node execution context.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot pre">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4><span class="phase phase-pre">Pre</span> — IGuardRailsExecutor.ExecutePreAsync(context)</h4>
+        <p>Runs all configured Pre-phase guards sequentially. Each guard calls <code>ExecuteAsync(context, GuardRailPhase.Pre)</code>. If any returns <code>IsAllowed=false</code>, execution stops — the node never runs.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot node">N</div><div class="line"></div></div>
+      <div class="body">
+        <h4>ExecuteInternalAsync() — node business logic runs</h4>
+        <p>The actual node: HTTP call, email send, database query, AI model call. If it throws, go to Error phase.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot post">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4><span class="phase phase-post">Post</span> — IGuardRailsExecutor.ExecutePostAsync(context, output)</h4>
+        <p>Sets <code>context.Output = output</code>. Runs Post-phase guards. If <code>OutputModified=true</code>, the node's output data is replaced with the modified value (e.g., PII redacted).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot error">!</div></div>
+      <div class="body">
+        <h4><span class="phase phase-error">Error</span> — IGuardRailsExecutor.ExecuteOnErrorAsync(context, exception)</h4>
+        <p>Only runs if the node threw. Records circuit breaker state, writes audit events. <strong>Always returns <code>IsAllowed=true</code></strong> — error handlers never block.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Guard Result: GuardRailCheckResult</h2>
+  <p>Every guard returns a <code>GuardRailCheckResult</code>. Three factory methods cover all outcomes:</p>
+
+  <table>
+    <thead><tr><th>Result</th><th>IsAllowed</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>Success(outputModified, metadata)</code></td><td>true</td><td>Guard passed. <code>outputModified=true</code> signals the caller to update output data from <code>context.Output</code>.</td></tr>
+      <tr><td><code>Blocked(message, retryAfter, metadata)</code></td><td>false</td><td>Guard blocked. Execution stops. <code>retryAfterSeconds</code> is optional retry hint.</td></tr>
+      <tr><td><code>Warning(message, metadata)</code></td><td>true</td><td>Guard noticed something but allows. <code>ErrorMessage</code> is set but <code>IsAllowed=true</code>. Used for non-critical violations.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Aggregated Result: GuardRailsExecutionResult</h2>
+  <p>The public facade returns <code>GuardRailsExecutionResult</code> which aggregates all individual guard results from a phase:</p>
+
+  <pre><code>public class GuardRailsExecutionResult
+{
+    public bool IsAllowed { get; set; }                   // false if any guard blocked
+    public IList&lt;string&gt; ExecutedGuards { get; set; }    // names of all guards that ran
+    public IList&lt;GuardRailViolation&gt; Violations { get; set; }  // all block reasons
+    public GuardRailsExecutionTimeline Timeline { get; set; }  // per-guard durations
+    public long TotalDurationMs { get; set; }
+}</code></pre>
+
+  <h2>The IsSecurityCritical Flag</h2>
+  <p>Each guard declares <code>IsSecurityCritical</code>. This controls behavior when the guard's own circuit breaker opens (i.e., the guard infrastructure itself fails):</p>
+
+  <table>
+    <thead><tr><th>IsSecurityCritical</th><th>Circuit Open Behavior</th><th>Examples</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>true</code> <span class="badge badge-red">Fail-Secure</span></td>
+        <td>Block execution. Unknown state = deny.</td>
+        <td>InputValidationGuard, RateLimitingGuard, PiiDetectionGuard, PiiRedactionGuard</td>
+      </tr>
+      <tr>
+        <td><code>false</code> <span class="badge badge-yellow">Fail-Open</span></td>
+        <td>Allow execution with a warning log.</td>
+        <td>TimeoutGuard, CircuitBreakerGuard</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Guard Interface</h2>
+  <p>Every guard implements <code>IGuardRail</code>, a composite of three focused interfaces:</p>
+
+  <pre><code>// Core execution
+public interface IGuardRailExecutor
+{
+    string Name { get; }                                       // e.g. "TimeoutGuard"
+    string Version { get; }                                    // e.g. "1.0.0"
+    IReadOnlyList&lt;GuardRailPhase&gt; SupportedPhases { get; }    // which phases this guard handles
+    bool IsSecurityCritical { get; }
+    Task&lt;GuardRailCheckResult&gt; ExecuteAsync(
+        GuardRailExecutionContext context,
+        GuardRailPhase phase,
+        CancellationToken cancellationToken = default);
+}
+
+// Config validation
+public interface IGuardRailConfigValidator
+{
+    bool Validate(IDictionary&lt;string, object?&gt; configuration);
+    GuardRailConfigValidationResult ValidateWithDetails(IDictionary&lt;string, object?&gt; configuration);
+}
+
+// Discovery / metadata
+public interface IGuardRailDescriptor
+{
+    string GuardName { get; }
+    string Description { get; }
+    string ConfigurationSchema { get; }  // JSON Schema as string
+    IReadOnlyList&lt;GuardRailDependency&gt; Dependencies { get; }
+}
+
+// Composite — every guard implements all three
+public interface IGuardRail : IGuardRailExecutor, IGuardRailConfigValidator, IGuardRailDescriptor { }</code></pre>
+
+  <h2>SetConfiguration Pattern</h2>
+  <p>Guards are stateless at construction time. Configuration is injected at resolution time via:</p>
+  <pre><code>public void SetConfiguration(IDictionary&lt;string, object?&gt; configuration)
+{
+    _configuration = configuration ?? new Dictionary&lt;string, object?&gt;();
+}</code></pre>
+  <p>This is called by <code>GuardConfigResolver</code> or <code>GuardFactory</code> before the guard's <code>ExecuteAsync</code> is called. Guards read their settings from <code>_configuration</code> during execution, never during construction.</p>
+
+  <div class="page-nav">
+    <a href="index.html">← Introduction</a>
+    <a href="02-business-benefits.html">Business Benefits →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

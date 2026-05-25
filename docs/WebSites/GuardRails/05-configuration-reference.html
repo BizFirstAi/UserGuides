@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Configuration Reference — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html" class="active">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Configuration</div>
+    <h1>Configuration Reference</h1>
+    <p class="lead">Guard configuration is JSON-based, embedded in each node's process element definition. The runtime resolves configs from cache, templates, or groups — with a 15-minute TTL.</p>
+  </div>
+
+  <h2>Top-Level Structure</h2>
+  <p>The root key is <code>"guardRails"</code> within a node's configuration JSON:</p>
+
+  <pre><code>{
+  "guardRails": {
+    "groups": [
+      "default-guard-rail-group",
+      "standard-security-group"
+    ],
+    "mandatoryGroups": [
+      "compliance-audit-group"
+    ],
+    "individual": [
+      { "name": "TimeoutGuard", ... },
+      { "name": "RateLimitingGuard", ... }
+    ]
+  }
+}</code></pre>
+
+  <table>
+    <thead><tr><th>Key</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>groups</code></td><td>string[]</td><td>Named groups of guards. Each group is a pre-registered list of guard configs resolved by <code>GuardConfigResolver</code>.</td></tr>
+      <tr><td><code>mandatoryGroups</code></td><td>string[]</td><td>Groups that always run and cannot be disabled by node-level overrides.</td></tr>
+      <tr><td><code>individual</code></td><td>object[]</td><td>Specific guard instances with per-node config. Merged with group configs.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Individual Guard Entry Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>string</td><td>yes</td><td>Guard name — must match <code>IGuardRailExecutor.Name</code> exactly (case-sensitive)</td></tr>
+      <tr><td><code>enabled</code></td><td>bool</td><td>yes</td><td><code>false</code> skips this guard entirely</td></tr>
+      <tr><td><code>order</code></td><td>int?</td><td>no</td><td>Execution order within the phase. <code>null</code> = default sequential order</td></tr>
+      <tr><td><code>enableDelayedEnforcement</code></td><td>bool</td><td>no</td><td>Guard runs but does not immediately block — violations are checked after execution completes</td></tr>
+      <tr><td><code>failMode</code></td><td>string</td><td>no</td><td><code>"block"</code> (default) or <code>"allow"</code> — override the guard's blocking behavior at node level</td></tr>
+      <tr><td><code>config</code></td><td>object</td><td>no</td><td>Guard-specific settings. Schema depends on the guard (see below).</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Complete Example: Full Node Config</h2>
+  <pre><code>{
+  "guardRails": {
+    "groups": ["default-guard-rail-group"],
+    "mandatoryGroups": ["compliance-audit-group"],
+    "individual": [
+
+      // 1. Timeout: block if node takes more than 5 seconds
+      {
+        "name": "TimeoutGuard",
+        "enabled": true,
+        "order": 1,
+        "config": { "timeoutMs": 5000, "action": "block" }
+      },
+
+      // 2. Input validation: require userId and amount fields
+      {
+        "name": "InputValidationGuard",
+        "enabled": true,
+        "order": 2,
+        "config": {
+          "schema": {
+            "type": "object",
+            "required": ["userId", "amount"],
+            "properties": {
+              "userId": { "type": "string" },
+              "amount": { "type": "number" }
+            }
+          },
+          "strictMode": true
+        }
+      },
+
+      // 3. Rate limiting: 50 requests/second per tenant
+      {
+        "name": "RateLimitingGuard",
+        "enabled": true,
+        "order": 3,
+        "config": { "rps": 50, "window": 60, "scope": "tenant" }
+      },
+
+      // 4. Circuit breaker: open after 5 failures, recover after 60s
+      {
+        "name": "CircuitBreakerGuard",
+        "enabled": true,
+        "order": 4,
+        "config": { "threshold": 5, "timeout": 60000 }
+      },
+
+      // 5. PII detection (Pre): block if SSN/Email/Phone in input
+      {
+        "name": "PiiDetectionGuard",
+        "enabled": true,
+        "order": 5,
+        "config": { "sensitivityLevel": "medium" }
+      },
+
+      // 6. PII redaction (Post): mask PII in output
+      {
+        "name": "PiiRedactionGuard",
+        "enabled": true,
+        "config": { "redaction_method": "mask" }
+      }
+    ]
+  }
+}</code></pre>
+
+  <h2>Config Resolution Chain</h2>
+  <p>When the runtime needs a guard config for a given node, <code>GuardConfigResolver</code> resolves it in this order:</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Check cache</h4>
+        <p>Cache key: <code>guard-config:{tenantId}:{nodeKey}</code>. 15-minute TTL. If hit, return immediately.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Check templates</h4>
+        <p>In-memory dictionary of registered templates (case-insensitive). If found, validates <code>TimeoutMs</code> via <code>IGuardTimeoutValidator</code>, caches result, returns.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Not found</h4>
+        <p>Logs a warning and returns <code>null</code>. The guard is skipped for this execution.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Group Resolution</h2>
+  <p>Groups are registered at startup:</p>
+  <pre><code>await resolver.RegisterGroupAsync("default-guard-rail-group", new[] {
+    "timeout-config",
+    "rate-limit-tenant-config",
+    "circuit-breaker-config"
+});
+
+// When a node references "default-guard-rail-group", it expands to all three configs</code></pre>
+
+  <p>Mandatory groups run even if the individual guard entry has <code>"enabled": false</code>. They cannot be bypassed at the node level.</p>
+
+  <h2>Timeout Validation (Design A.10)</h2>
+  <div class="callout warning">
+    <strong>Guard timeout must not exceed node timeout</strong>
+    When a guard config contains <code>TimeoutMs</code>, <code>GuardConfigResolver</code> calls <code>IGuardTimeoutValidator.ValidateBounds(guardId, timeoutMs)</code> at resolution time. If the guard timeout exceeds the node's configured timeout, an <code>InvalidOperationException</code> is thrown during startup — not at runtime. This catches misconfiguration before any request is processed.
+  </div>
+
+  <h2>Configuration Cache</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>TTL</td><td>15 minutes</td></tr>
+      <tr><td>Key format</td><td><code>guard-config:{tenantId}:{nodeKey}</code></td></tr>
+      <tr><td>Invalidation</td><td>TTL expiry only — no explicit invalidation</td></tr>
+      <tr><td>Implementation</td><td><code>GuardConfigCache</code> — in-memory Singleton</td></tr>
+      <tr><td>Multi-tenancy</td><td>TenantId in key ensures per-tenant isolation</td></tr>
+    </tbody>
+  </table>
+
+  <h2>SetConfiguration Pattern</h2>
+  <p>Every guard receives its resolved config before execution via:</p>
+  <pre><code>// Called by GuardConfigResolver / GuardFactory at resolution time
+public void SetConfiguration(IDictionary&lt;string, object?&gt; configuration)
+{
+    _configuration = configuration ?? new Dictionary&lt;string, object?&gt;();
+}
+
+// Guards read settings during ExecuteAsync (never during construction)
+private int TimeoutMs =&gt; _configuration.TryGetValue("timeoutMs", out var v) ? (int)v : 5000;</code></pre>
+
+  <div class="page-nav">
+    <a href="04-pii-guards.html">← PII Guards</a>
+    <a href="06-use-cases.html">Use Case Overview →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

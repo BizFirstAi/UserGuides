@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Built-in Guards — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html" class="active">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Guard Reference</div>
+    <h1>Built-in Guards</h1>
+    <p class="lead">Five guards from <code>Provider.Core</code> cover the most common reliability and security concerns: execution time, input schema, rate limiting, circuit breaking, and basic PII detection.</p>
+  </div>
+
+  <div class="callout info">
+    <strong>Project:</strong> <code>BizFirst.Ai.GuardRails.Provider.Core</code> — Register with <code>services.AddGuardRailsCoreGuards()</code> or via the full-stack <code>services.AddGuardRailsExecution()</code>.
+  </div>
+
+  <!-- ── TimeoutGuard ── -->
+  <h2 id="timeout">TimeoutGuard</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td><code>"TimeoutGuard"</code></td></tr>
+      <tr><td>Version</td><td><code>1.0.0</code></td></tr>
+      <tr><td>Supported Phases</td><td><span class="phase phase-pre">Pre</span> <span class="phase phase-post">Post</span></td></tr>
+      <tr><td>IsSecurityCritical</td><td><code>false</code> → fail-open (warns when circuit broken)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>How it works</h3>
+  <p><strong>Pre phase:</strong> Stores <code>DateTime.UtcNow</code> into <code>context.Metadata["__timeout_start"]</code> (only if not already set — idempotent). No blocking in Pre.</p>
+  <p><strong>Post phase:</strong> Reads the start time, calculates elapsed milliseconds. If elapsed exceeds <code>timeoutMs</code>:</p>
+  <ul>
+    <li><code>action = "block"</code> → returns <code>Blocked</code> with elapsed_ms and timeout_ms in metadata</li>
+    <li><code>action = "warn"</code> → returns <code>Warning</code> — allows execution but logs the overrun</li>
+  </ul>
+  <p>If <code>__timeout_start</code> is not in metadata (guard was not pre-initialized), the Post phase returns Success.</p>
+
+  <h3>Configuration</h3>
+  <pre><code>{
+  "name": "TimeoutGuard",
+  "enabled": true,
+  "config": {
+    "timeoutMs": 5000,   // required; integer; minimum 100ms
+    "action": "block"    // required; "block" | "warn"
+  }
+}</code></pre>
+
+  <h3>Block result metadata</h3>
+  <pre><code>{
+  "elapsed_ms": 6234.5,
+  "timeout_ms": 5000
+}</code></pre>
+
+  <!-- ── InputValidationGuard ── -->
+  <h2 id="inputvalidation">InputValidationGuard</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td><code>"InputValidationGuard"</code></td></tr>
+      <tr><td>Version</td><td><code>1.0.0</code></td></tr>
+      <tr><td>Supported Phases</td><td><span class="phase phase-pre">Pre</span></td></tr>
+      <tr><td>IsSecurityCritical</td><td><code>true</code> → fail-secure</td></tr>
+    </tbody>
+  </table>
+
+  <h3>How it works</h3>
+  <p>Validates <code>context.Input</code> against a JSON schema. If <code>context.Input == null</code>, returns Success (null is allowed). Otherwise:</p>
+  <ul>
+    <li>Checks each field listed in <code>required</code> is present and non-null</li>
+    <li>Checks each field in <code>properties</code> matches its declared JSON type (<code>string</code>, <code>number</code>, <code>boolean</code>, <code>array</code>, <code>object</code>)</li>
+    <li><code>strictMode=true</code> → returns <code>Blocked</code> with validation errors</li>
+    <li><code>strictMode=false</code> (default) → returns <code>Warning</code> — allows but logs</li>
+  </ul>
+
+  <h3>Configuration</h3>
+  <pre><code>{
+  "name": "InputValidationGuard",
+  "enabled": true,
+  "config": {
+    "schema": {
+      "type": "object",
+      "required": ["userId", "amount"],
+      "properties": {
+        "userId":   { "type": "string" },
+        "amount":   { "type": "number" },
+        "currency": { "type": "string" }
+      }
+    },
+    "strictMode": true   // optional; default false
+  }
+}</code></pre>
+
+  <h3>Block result metadata</h3>
+  <pre><code>{
+  "validation_errors": [
+    "Required field 'userId' is missing or null",
+    "Field 'amount': expected 'number', got 'string'"
+  ]
+}</code></pre>
+
+  <!-- ── RateLimitingGuard ── -->
+  <h2 id="ratelimiting">RateLimitingGuard</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td><code>"RateLimitingGuard"</code></td></tr>
+      <tr><td>Version</td><td><code>1.0.0</code></td></tr>
+      <tr><td>Supported Phases</td><td><span class="phase phase-pre">Pre</span></td></tr>
+      <tr><td>IsSecurityCritical</td><td><code>true</code> → fail-secure</td></tr>
+    </tbody>
+  </table>
+
+  <h3>How it works</h3>
+  <p>Checks request count in a sliding window against <code>rps × window</code> (maximum allowed requests). Determines the rate limit key from <code>scope</code>:</p>
+  <table>
+    <thead><tr><th>Scope</th><th>Key</th><th>When to use</th></tr></thead>
+    <tbody>
+      <tr><td><code>"global"</code></td><td><code>"global"</code></td><td>Platform-wide cap (rare)</td></tr>
+      <tr><td><code>"tenant"</code></td><td><code>"tenant:{context.TenantId}"</code></td><td>Per-tenant isolation (most common)</td></tr>
+      <tr><td><code>"user"</code></td><td><code>"user:{context.UserId}"</code></td><td>Per-user quota enforcement</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warning">
+    <strong>Production Note</strong>
+    The current implementation uses an in-memory sliding window suitable for single-instance deployments and testing. In production multi-instance deployments, inject <code>IRateLimitingOrchestrator</code> from <code>BizFirst.Platform.Operations.Guard</code> for Redis-backed distributed rate limiting.
+  </div>
+
+  <h3>Configuration</h3>
+  <pre><code>{
+  "name": "RateLimitingGuard",
+  "enabled": true,
+  "config": {
+    "rps": 50,          // required; number; minimum 0.1 — requests per second
+    "window": 60,       // required; integer; minimum 1 — time window in seconds
+    "scope": "tenant"   // required; "global" | "tenant" | "user"
+  }
+}</code></pre>
+
+  <h3>Block result</h3>
+  <pre><code>{
+  "IsAllowed": false,
+  "RetryAfterSeconds": 3,
+  "Metadata": {
+    "scope": "tenant",
+    "requests_in_window": 52,
+    "limit": 50
+  }
+}</code></pre>
+
+  <!-- ── CircuitBreakerGuard ── -->
+  <h2 id="circuitbreaker">CircuitBreakerGuard</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td><code>"CircuitBreakerGuard"</code></td></tr>
+      <tr><td>Version</td><td><code>1.0.0</code></td></tr>
+      <tr><td>Supported Phases</td><td><span class="phase phase-pre">Pre</span></td></tr>
+      <tr><td>IsSecurityCritical</td><td><code>false</code> → fail-open</td></tr>
+    </tbody>
+  </table>
+
+  <h3>How it works</h3>
+  <p>Monitors health of system dependencies (Redis, RateLimitService, AuditService). Maintains three states:</p>
+  <table>
+    <thead><tr><th>State</th><th>Behavior</th><th>Transition</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Closed</strong> <span class="badge badge-green">Normal</span></td><td>All requests allowed</td><td>→ Open when failures ≥ threshold</td></tr>
+      <tr><td><strong>Open</strong> <span class="badge badge-red">Blocking</span></td><td>Requests blocked; returns Blocked with retry-after</td><td>→ HalfOpen after <code>timeout</code> ms</td></tr>
+      <tr><td><strong>HalfOpen</strong> <span class="badge badge-yellow">Testing</span></td><td>One test request allowed</td><td>→ Closed on success; → Open on failure</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Production Note</strong>
+    The current implementation simulates health checks with <code>Task.Delay(10–100ms)</code> — always returns healthy. Production integration requires injecting <code>IHealthCheckService</code> to perform real dependency health checks.
+  </div>
+
+  <h3>Configuration</h3>
+  <pre><code>{
+  "name": "CircuitBreakerGuard",
+  "enabled": true,
+  "config": {
+    "threshold": 5,     // required; integer; ≥ 1 — failures before opening
+    "timeout": 60000    // required; integer; ≥ 1000ms — open duration before HalfOpen
+  }
+}</code></pre>
+
+  <h2>Guard Summary Table</h2>
+  <table>
+    <thead><tr><th>Guard</th><th>Phase</th><th>SecurityCritical</th><th>Blocks?</th><th>Modifies Output?</th></tr></thead>
+    <tbody>
+      <tr><td>TimeoutGuard</td><td><span class="phase phase-pre">Pre</span><span class="phase phase-post">Post</span></td><td>false</td><td>Yes (Post, action=block, timeout exceeded)</td><td>No</td></tr>
+      <tr><td>InputValidationGuard</td><td><span class="phase phase-pre">Pre</span></td><td>true</td><td>Yes (strictMode=true)</td><td>No</td></tr>
+      <tr><td>RateLimitingGuard</td><td><span class="phase phase-pre">Pre</span></td><td>true</td><td>Yes (limit exceeded)</td><td>No</td></tr>
+      <tr><td>CircuitBreakerGuard</td><td><span class="phase phase-pre">Pre</span></td><td>false</td><td>Yes (circuit open)</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-business-benefits.html">← Business Benefits</a>
+    <a href="04-pii-guards.html">PII Guards →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>
