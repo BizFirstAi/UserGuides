@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DI Setup — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html" class="active">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Integration</div>
+    <h1>DI Setup</h1>
+    <p class="lead">The entire GuardRails stack is wired by a single extension method. One call registers every layer — domain contracts, service implementations, providers, circuit breaker, audit logger, and all built-in guards.</p>
+  </div>
+
+  <h2>Minimal Setup</h2>
+  <p>In your application's <code>Program.cs</code> or startup class, call <code>AddGuardRailsExecution()</code>:</p>
+
+  <pre><code>// Program.cs / Startup.cs
+builder.Services.AddGuardRailsExecution();</code></pre>
+
+  <p>That's all that's required. Every component below is registered automatically.</p>
+
+  <h2>What AddGuardRailsExecution() Registers</h2>
+
+  <table>
+    <thead><tr><th>Service Interface</th><th>Implementation</th><th>Lifetime</th></tr></thead>
+    <tbody>
+      <tr><td><code>INodeGuardExecutor</code></td><td><code>NodeGuardExecutor</code></td><td>Scoped</td></tr>
+      <tr><td><code>IGuardRailsExecutor</code></td><td><code>GuardRailsExecutor</code></td><td>Scoped</td></tr>
+      <tr><td><code>IGuardRailsOrchestrator</code></td><td><code>GuardRailsOrchestrator</code></td><td>Scoped</td></tr>
+      <tr><td><code>IGuardConfigResolver</code></td><td><code>GuardConfigResolver</code></td><td>Singleton</td></tr>
+      <tr><td><code>IGuardRegistry</code></td><td><code>GuardRegistry</code></td><td>Singleton</td></tr>
+      <tr><td><code>IGuardCircuitBreaker</code></td><td><code>GuardCircuitBreaker</code></td><td>Singleton</td></tr>
+      <tr><td><code>IGuardRailsAuditLogger</code></td><td><code>GuardRailsAuditLogger</code></td><td>Singleton</td></tr>
+      <tr><td><code>ITransientFailureWindow</code></td><td><code>TransientFailureWindow</code></td><td>Singleton</td></tr>
+      <tr><td><code>IPiiDetector</code></td><td><code>RegexPiiDetector</code></td><td>Singleton</td></tr>
+      <tr><td><code>ISecretsRedactor</code></td><td><code>SecretsRedactor</code></td><td>Singleton</td></tr>
+      <tr><td><code>IGuardRail</code> (×6)</td><td>All 6 built-in guards</td><td>Singleton</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Custom Circuit Breaker Policy</h2>
+  <p>To override the default circuit breaker policy, use the overload that accepts a <code>CircuitBreakerPolicy</code>:</p>
+
+  <pre><code>builder.Services.AddGuardRailsExecution(new CircuitBreakerPolicy
+{
+    FailureThreshold          = 3,    // open after 3 failures (default: 5)
+    OpenDurationSeconds       = 30,   // stay open for 30s (default: 60)
+    SuccessThresholdForHalfOpen = 2,  // 2 successes to close again (default: 3)
+    FailSecure                = true, // block on open circuit (default: true)
+    ResetOnTransient          = true, // don't count transients (default: true)
+    FailureWindowSeconds      = 120   // sliding window (default: 300)
+});</code></pre>
+
+  <h2>Registering the PiiNodeGuard Composite</h2>
+  <p>The <code>PiiNodeGuard</code> is a composite that wires <code>PiiDetectionGuard</code> (Pre) and <code>PiiRedactionGuard</code> (Post) into a single pluggable unit. Register it separately if you want the composite behavior:</p>
+
+  <pre><code>builder.Services.AddGuardRailsExecution();
+
+// Register PiiNodeGuard as an additional INodeGuardExecutor
+// (complements the built-in guards, or replaces per-node PII config)
+builder.Services.AddSingleton&lt;PiiNodeGuard&gt;();</code></pre>
+
+  <h2>Registering a Custom Guard</h2>
+  <p>Custom guards register through DI as <code>IGuardRail</code> singletons. The <code>GuardRegistry</code> discovers them automatically on startup:</p>
+
+  <pre><code>// After AddGuardRailsExecution():
+builder.Services.AddSingleton&lt;IGuardRail, ContentModerationGuard&gt;();
+
+// If ContentModerationGuard needs its own dependencies:
+builder.Services.AddSingleton&lt;IContentModerationClient, AzureContentModerationClient&gt;();
+builder.Services.AddSingleton&lt;IGuardRail, ContentModerationGuard&gt;();</code></pre>
+
+  <h2>Loading Plugin Assemblies at Startup</h2>
+  <p>For external DLL plugins, call <code>LoadPluginsAsync()</code> from a hosted service or startup hook — after the DI container is built:</p>
+
+  <pre><code>// IHostedService or app.Lifetime.ApplicationStarted:
+var registry = serviceProvider.GetRequiredService&lt;IGuardRegistry&gt;();
+await registry.LoadPluginsAsync(pluginDirectory: "/opt/guardrails/plugins");
+
+// LoadPluginsAsync delegates to IGuardPluginLoader which:
+//   1. Scans the directory for guard DLLs
+//   2. Validates signatures via IPluginSignatureValidator
+//   3. Checks review metadata via IPluginCodeReviewMetadata
+//   4. Registers passing assemblies as GuardDefinitions</code></pre>
+
+  <h2>Guard Group Registration</h2>
+  <p>Guard groups are registered via <code>IGuardRegistry</code> during startup. Groups bundle related guards for node-level reuse:</p>
+
+  <pre><code>var registry = serviceProvider.GetRequiredService&lt;IGuardRegistry&gt;();
+
+registry.RegisterGroup("PiiCompliance", new GuardGroupDefinition
+{
+    Guards = new[]
+    {
+        new GuardEntry { Name = "PiiDetectionGuard",  Order = 1 },
+        new GuardEntry { Name = "PiiRedactionGuard",  Order = 2 }
+    }
+});
+
+registry.RegisterGroup("Resilience", new GuardGroupDefinition
+{
+    Guards = new[]
+    {
+        new GuardEntry { Name = "TimeoutGuard",        Order = 1, Config = new { TimeoutMs = 5000 } },
+        new GuardEntry { Name = "CircuitBreakerGuard", Order = 2 }
+    }
+});</code></pre>
+
+  <p>Once registered, these groups can be referenced by name in any node's <code>guardRails.groups</code> configuration.</p>
+
+  <h2>Backward Compatibility: RateLimitingOrchestrator</h2>
+  <p>Deployments that used the standalone rate limiting subsystem before GuardRails was introduced can continue to use <code>IRateLimitingOrchestrator</code> in parallel. <code>BaseNodeExecutor</code> checks for both:</p>
+
+  <pre><code>// BaseNodeExecutor uses pluggable tier: either INodeGuardExecutor
+// or IRateLimitingOrchestrator as a fallback, or both simultaneously.
+
+// Both registered → both run (guards take precedence, orchestrator handles rate-limiting checks)
+// Only orchestrator registered → legacy rate limiting, no guard pipeline
+// Only NodeGuardExecutor registered → full guard pipeline (recommended)
+
+builder.Services.AddGuardRailsExecution();
+// Remove IRateLimitingOrchestrator registration to retire the legacy tier</code></pre>
+
+  <h2>Health Check Integration</h2>
+  <p>GuardRails exposes a health check endpoint via the standard ASP.NET Core health check system. Register it alongside your other health checks:</p>
+
+  <pre><code>builder.Services.AddHealthChecks()
+    .AddGuardRailsHealthCheck();  // registered by AddGuardRailsExecution()
+
+// The health check reports:
+// - Each guard's circuit state (Closed / Open / HalfOpen)
+// - Plugin review metadata status
+// - Configuration cache freshness</code></pre>
+
+  <pre><code>// GET /health/guardrails
+{
+  "status": "healthy",
+  "guards": {
+    "TimeoutGuard":        { "circuit": "Closed",   "lastFailure": null },
+    "PiiDetectionGuard":   { "circuit": "Closed",   "lastFailure": null },
+    "RateLimitingGuard":   { "circuit": "HalfOpen", "lastFailure": "2026-05-25T14:00:00Z" },
+    "CircuitBreakerGuard": { "circuit": "Closed",   "lastFailure": null }
+  },
+  "plugins": {
+    "ContentModerationGuard": { "signed": true, "reviewed": true }
+  }
+}</code></pre>
+
+  <h2>Full Startup Example</h2>
+  <pre><code>// Program.cs — complete GuardRails wiring
+var builder = WebApplication.CreateBuilder(args);
+
+// 1. Core GuardRails stack
+builder.Services.AddGuardRailsExecution(new CircuitBreakerPolicy
+{
+    FailureThreshold    = 5,
+    OpenDurationSeconds = 60
+});
+
+// 2. Custom guard dependencies
+builder.Services.AddHttpClient&lt;IContentModerationClient, AzureContentModerationClient&gt;();
+builder.Services.AddSingleton&lt;IGuardRail, ContentModerationGuard&gt;();
+
+// 3. Health checks
+builder.Services.AddHealthChecks().AddGuardRailsHealthCheck();
+
+var app = builder.Build();
+
+// 4. Load plugin assemblies after container build
+app.Lifetime.ApplicationStarted.Register(async () =&gt;
+{
+    var registry = app.Services.GetRequiredService&lt;IGuardRegistry&gt;();
+    await registry.LoadPluginsAsync("/opt/guardrails/plugins");
+});
+
+// 5. Health endpoint
+app.MapHealthChecks("/health/guardrails");
+
+app.Run();</code></pre>
+
+  <div class="page-nav">
+    <a href="15-integration-processengine.html">← ProcessEngine Wiring</a>
+    <a href="17-samples.html">Samples →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

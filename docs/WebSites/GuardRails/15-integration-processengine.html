@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ProcessEngine Wiring — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html" class="active">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Integration</div>
+    <h1>ProcessEngine Wiring</h1>
+    <p class="lead">GuardRails integrates into the ProcessEngine at the <code>BaseNodeExecutor</code> level. Every node executor inherits the guard pipeline automatically — no per-node plumbing required.</p>
+  </div>
+
+  <h2>Integration Architecture</h2>
+  <p>The ProcessEngine uses a layered executor hierarchy. GuardRails hooks into <code>BaseNodeExecutor</code> — the common base class for all node executors — so every node type participates in the guard pipeline without any additional work:</p>
+
+  <table>
+    <thead><tr><th>Layer</th><th>Class</th><th>GuardRails Role</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Base</td>
+        <td><code>BaseNodeExecutor</code></td>
+        <td>Owns the guard hook sequence: Pre → Execute → Post. Calls <code>INodeGuardExecutor</code>.</td>
+      </tr>
+      <tr>
+        <td>Domain Contract</td>
+        <td><code>INodeGuardExecutor</code></td>
+        <td>The interface <code>BaseNodeExecutor</code> depends on. Three methods: <code>ExecutePreAsync</code>, <code>ExecutePostAsync</code>, <code>ExecuteOnErrorAsync</code>.</td>
+      </tr>
+      <tr>
+        <td>Implementation</td>
+        <td><code>NodeGuardExecutor</code> (Service layer)</td>
+        <td>Resolves config, instantiates guards, runs pipeline, returns <code>GuardRailsExecutionResult</code>.</td>
+      </tr>
+      <tr>
+        <td>Fallback</td>
+        <td><code>IRateLimitingOrchestrator</code></td>
+        <td>Optional complementary tier for rate limiting; pluggable alongside or instead of GuardRails when <code>INodeGuardExecutor</code> is not configured.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>The Guard Hook Sequence</h2>
+  <p><code>BaseNodeExecutor</code> is organized as a partial class. The guard hooks are in the guard-specific partial file and called from the main execution flow:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot pre">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4><code>OnPreGuardRails(context)</code></h4>
+        <p>Constructs <code>GuardRailExecutionContext</code> from the node's <code>NodeExecutionContext</code>. Calls <code>INodeGuardExecutor.ExecutePreAsync(guardContext)</code>. If <code>IsAllowed=false</code>, raises <code>GuardRailBlockedException</code> — the node never runs.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot post">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Node executes</h4>
+        <p>The node's own <code>ExecuteAsync()</code> runs normally. The guard context is held in scope — Metadata persists across phases.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot post">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4><code>OnPostGuardRails(context, nodeResult)</code></h4>
+        <p>Calls <code>INodeGuardExecutor.ExecutePostAsync(guardContext, nodeResult.OutputData)</code>. If <code>OutputModified=true</code>, replaces <code>nodeResult.OutputData</code> with the guard-modified output. If <code>IsAllowed=false</code>, raises exception.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot error">E</div></div>
+      <div class="body">
+        <h4><code>OnErrorGuardRails(context, exception)</code> (on exception)</h4>
+        <p>Called from the catch block when the node throws. Calls <code>ExecuteOnErrorAsync</code>. Error-phase guards observe and log — they never block execution. The original exception propagates normally.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Context Construction</h2>
+  <p><code>GuardRailExecutionContext</code> is built from the node's <code>NodeExecutionContext</code> at the start of <code>OnPreGuardRails</code>:</p>
+
+  <pre><code>var guardContext = new GuardRailExecutionContext
+{
+    TenantId    = context.TenantId,
+    UserId      = context.UserId,
+    NodeId      = context.NodeId,
+    NodeType    = context.NodeType,
+    ExecutionId = context.ExecutionId,
+    TraceId     = context.TraceId,
+    SourceIp    = context.SourceIp,
+    Input       = context.InputData,
+    Output      = null,        // populated after node runs, before Post phase
+    Metadata    = new Dictionary&lt;string, object?&gt;()  // persists across phases
+};</code></pre>
+
+  <div class="callout info">
+    <strong>Metadata persists across phases</strong>
+    The same <code>guardContext</code> instance is passed to Pre, Post, and Error phases. Guards that store state in <code>context.Metadata</code> (e.g., <code>__timeout_start</code> in TimeoutGuard) can read it back in later phases. This enables cross-phase correlation without shared mutable fields on the guard class.
+  </div>
+
+  <h2>OutputModified Propagation</h2>
+  <p>When a Post-phase guard modifies the output (e.g., PiiRedactionGuard scrubs an email address), it sets <code>OutputModified=true</code> in the <code>GuardRailCheckResult</code>. <code>BaseNodeExecutor</code> checks this and replaces the node's output:</p>
+
+  <pre><code>// In BaseNodeExecutor.OnPostGuardRails():
+var postResult = await _guardExecutor.ExecutePostAsync(guardContext, nodeResult.OutputData);
+
+if (postResult.OutputModified)
+{
+    // Replace node output with the guard-modified version
+    nodeResult.OutputData = guardContext.Output;
+}
+
+if (!postResult.IsAllowed)
+{
+    throw new GuardRailBlockedException(postResult);
+}</code></pre>
+
+  <p>The downstream node and execution log both receive the redacted/modified version. The original node output never escapes the execution boundary.</p>
+
+  <h2>Error Phase: Observe-Only</h2>
+  <p>Error-phase guards run when the node throws an exception. They are strictly observational — they can log, update metrics, or enrich the exception with context, but they cannot block execution or swallow the exception:</p>
+
+  <pre><code>// In BaseNodeExecutor, catch block:
+catch (Exception ex)
+{
+    await OnErrorGuardRails(guardContext, ex);
+    throw;  // original exception always re-thrown
+}</code></pre>
+
+  <p>This guarantees that guard failures in the error phase don't create double-exception scenarios or swallow legitimate errors.</p>
+
+  <h2>Guard Configuration Resolution</h2>
+  <p><code>NodeGuardExecutor</code> resolves the guard configuration for each node execution. The resolution chain:</p>
+
+  <pre><code>// NodeGuardExecutor calls GuardConfigResolver for each node:
+var config = await _configResolver.ResolveAsync(nodeId, tenantId);
+// → checks cache (15-min TTL)
+// → falls back to configured guard templates
+// → returns null if no guards configured (no-op)
+
+if (config == null) return GuardRailsExecutionResult.Empty();</code></pre>
+
+  <h2>Violation Audit Trail</h2>
+  <p>Every time a guard returns <code>IsAllowed=false</code>, <code>GuardRailsAuditLogger</code> writes an audit event asynchronously. The audit logger batches writes so violation recording never adds latency to the execution hot path:</p>
+
+  <pre><code>// GuardRailViolationAuditEvent (no Input/Output — allowlist approach)
+{
+    OccurredAtUtc: "2026-05-25T14:32:01Z",
+    TenantId:      42,
+    UserId:        1001,
+    GuardName:     "PiiDetectionGuard",
+    Phase:         0,  // Pre
+    OperationId:   "op-abc-123",
+    Reason:        "PII detected: Email, SSN",
+    TraceId:       "trace-xyz-789"
+}</code></pre>
+
+  <h2>Execution Timeline in Results</h2>
+  <p><code>GuardRailsExecutionResult</code> carries a <code>GuardRailsExecutionTimeline</code> showing guard-by-guard forensics. This is returned to the caller and is available for debugging and compliance reporting:</p>
+
+  <pre><code>// Sample timeline from execution result:
+Guard Timeline:
+  TimeoutGuard       (pre,  2ms)   ✓
+  RateLimitingGuard  (pre,  5ms)   ✓
+  PiiDetectionGuard  (pre, 12ms)   ✗  [BLOCKED: SSN, Email detected]</code></pre>
+
+  <h2>What Happens When No Guards Are Configured</h2>
+  <p>If <code>GuardConfigResolver</code> finds no configuration for a node, <code>NodeGuardExecutor</code> returns <code>GuardRailsExecutionResult.Empty()</code>. <code>BaseNodeExecutor</code> treats this as <code>IsAllowed=true</code> — the node runs without any guard overhead. Nodes without guard configuration are zero-cost.</p>
+
+  <h2>Future: Octopus / Phase 6 Plan</h2>
+  <p>The current integration is at the <code>BaseNodeExecutor</code> level (individual nodes). A planned Phase 6 extension will add guard execution at the <code>ProcessElementExecutor</code> level, enabling guards that span entire process steps rather than individual nodes. This will support workflow-level rate limiting and cross-node PII detection without duplicating per-node configuration.</p>
+
+  <div class="callout warning">
+    <strong>Phase 6 is planned — not yet implemented</strong>
+    ProcessElementExecutor-level guards were reverted from the Phase 5 implementation. Current guard execution is exclusively at BaseNodeExecutor level.
+  </div>
+
+  <div class="page-nav">
+    <a href="14-plugin-security.html">← Plugin Security</a>
+    <a href="16-integration-di.html">DI Setup →</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

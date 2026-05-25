@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Samples — GuardRails | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>GuardRails</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-business-benefits.html">Business Benefits</a>
+  <div class="section-label">Guard Reference</div>
+  <a href="03-built-in-guards.html">Built-in Guards</a>
+  <a href="04-pii-guards.html">PII Guards</a>
+  <a href="05-configuration-reference.html">Configuration</a>
+  <div class="section-label">Use Cases</div>
+  <a href="06-use-cases.html">Use Case Overview</a>
+  <a href="07-uc-pii-protection.html">PII Protection</a>
+  <a href="08-uc-rate-limiting.html">Rate Limiting</a>
+  <a href="09-uc-timeout-resilience.html">Timeout &amp; Resilience</a>
+  <a href="10-uc-input-validation.html">Input Validation</a>
+  <a href="11-uc-audit-compliance.html">Audit &amp; Compliance</a>
+  <a href="12-uc-email-redaction.html">Email Redaction</a>
+  <div class="section-label">Plugins &amp; Custom</div>
+  <a href="13-bring-your-own-guard.html">Bring Your Own Guard</a>
+  <a href="14-plugin-security.html">Plugin Security</a>
+  <div class="section-label">Integration</div>
+  <a href="15-integration-processengine.html">ProcessEngine Wiring</a>
+  <a href="16-integration-di.html">DI Setup</a>
+  <a href="17-samples.html" class="active">Samples</a>
+  <div class="section-label">Links</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="tag">Integration</div>
+    <h1>Samples</h1>
+    <p class="lead">Complete, ready-to-use configurations and code samples for common GuardRails scenarios. Copy, adapt, and deploy.</p>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 1 — Healthcare AI Node (HIPAA)</h2>
+  <p>An AI inference node that must never emit PHI in its output. Combines timeout protection, PII detection on input (delayed enforcement — the AI needs context), and PII redaction on output.</p>
+
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "TimeoutGuard",
+        "enabled": true,
+        "order": 1,
+        "config": {
+          "TimeoutMs": 8000,
+          "WarnAtMs": 6000
+        }
+      },
+      {
+        "name": "PiiDetectionGuard",
+        "enabled": true,
+        "order": 2,
+        "enableDelayedEnforcement": true,
+        "config": {
+          "sensitivityLevel": "high",
+          "piiTypes": ["SSN", "CreditCard", "Phone", "BankAccount"]
+        }
+      },
+      {
+        "name": "PiiRedactionGuard",
+        "enabled": true,
+        "order": 3,
+        "config": {
+          "redaction_method": "mask",
+          "fields": []
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <p><strong>What happens:</strong></p>
+  <ul>
+    <li>TimeoutGuard warns at 6 s, blocks at 8 s. AI inference that hangs is killed before it blocks the queue.</li>
+    <li>PiiDetectionGuard logs PHI in the input but does not block — the AI needs patient context to answer.</li>
+    <li>PiiRedactionGuard scrubs the AI's response before it reaches the caller or audit log.</li>
+  </ul>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 2 — Payment Processing Node (PCI-DSS)</h2>
+  <p>A payment node. Credit card numbers must never reach it. Strict mode blocks malformed payloads before the payment API call is made.</p>
+
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "InputValidationGuard",
+        "enabled": true,
+        "order": 1,
+        "config": {
+          "schema": {
+            "type": "object",
+            "required": ["userId", "amount", "currency", "paymentMethodToken"],
+            "properties": {
+              "userId":             { "type": "string" },
+              "amount":             { "type": "number", "minimum": 0 },
+              "currency":           { "type": "string", "minLength": 3, "maxLength": 3 },
+              "paymentMethodToken": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "strictMode": true
+        }
+      },
+      {
+        "name": "PiiDetectionGuard",
+        "enabled": true,
+        "order": 2,
+        "config": {
+          "sensitivityLevel": "high",
+          "piiTypes": ["CreditCard", "CVV", "BankAccount"]
+        }
+      },
+      {
+        "name": "RateLimitingGuard",
+        "enabled": true,
+        "order": 3,
+        "config": {
+          "scope": "user",
+          "maxRequests": 10,
+          "windowSeconds": 60
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <p><strong>What happens:</strong></p>
+  <ul>
+    <li>InputValidationGuard rejects malformed payloads (null userId, string amount) with a structured error before any API call.</li>
+    <li>PiiDetectionGuard blocks raw credit card numbers — only tokenized values should be in <code>paymentMethodToken</code>.</li>
+    <li>RateLimitingGuard prevents a single user from flooding the payment endpoint.</li>
+  </ul>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 3 — External API Caller with Circuit Breaking</h2>
+  <p>A node that calls a third-party API. Circuit breaker protects the downstream service during outages. Rate limiting prevents hammering.</p>
+
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "TimeoutGuard",
+        "enabled": true,
+        "order": 1,
+        "config": { "TimeoutMs": 5000, "WarnAtMs": 3000 }
+      },
+      {
+        "name": "CircuitBreakerGuard",
+        "enabled": true,
+        "order": 2,
+        "config": {
+          "failureThreshold":   5,
+          "openDurationSeconds": 60,
+          "halfOpenMaxCalls":    2
+        }
+      },
+      {
+        "name": "RateLimitingGuard",
+        "enabled": true,
+        "order": 3,
+        "config": {
+          "scope":          "tenant",
+          "maxRequests":    100,
+          "windowSeconds":  60
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <p><strong>What happens:</strong></p>
+  <ul>
+    <li>TimeoutGuard prevents hung API calls from blocking threads.</li>
+    <li>CircuitBreakerGuard opens after 5 failures, preventing cascading load on the downstream API.</li>
+    <li>RateLimitingGuard caps total tenant throughput to 100 req/min across all users in the tenant.</li>
+  </ul>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 4 — Compliance Audit Node (GDPR)</h2>
+  <p>A node that processes user-submitted text. Any PII must be detected and logged; the workflow should continue for compliance logging but the violation is recorded.</p>
+
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "PiiDetectionGuard",
+        "enabled": true,
+        "order": 1,
+        "enableDelayedEnforcement": true,
+        "config": {
+          "sensitivityLevel": "medium",
+          "piiTypes": ["Email", "Phone", "SSN", "Passport", "DriverLicense"]
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Delayed enforcement for monitoring rollouts</strong>
+    <code>enableDelayedEnforcement: true</code> logs violations to the audit trail without blocking execution. Use this when rolling out PII detection on existing workflows to assess false positive rates before switching to strict blocking.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 5 — Guard Groups (Reusable Bundles)</h2>
+  <p>Define groups once, reuse across many nodes. Register at startup, reference by name in node configs.</p>
+
+  <h3>Group registration (startup)</h3>
+  <pre><code>var registry = serviceProvider.GetRequiredService&lt;IGuardRegistry&gt;();
+
+registry.RegisterGroup("PiiCompliance", new GuardGroupDefinition
+{
+    Guards = new[]
+    {
+        new GuardEntry { Name = "PiiDetectionGuard", Order = 1,
+            Config = new { sensitivityLevel = "high" } },
+        new GuardEntry { Name = "PiiRedactionGuard", Order = 2,
+            Config = new { redaction_method = "partial" } }
+    }
+});
+
+registry.RegisterGroup("ApiResilience", new GuardGroupDefinition
+{
+    Guards = new[]
+    {
+        new GuardEntry { Name = "TimeoutGuard",        Order = 1, Config = new { TimeoutMs = 5000 } },
+        new GuardEntry { Name = "CircuitBreakerGuard", Order = 2 },
+        new GuardEntry { Name = "RateLimitingGuard",   Order = 3,
+            Config = new { scope = "tenant", maxRequests = 100, windowSeconds = 60 } }
+    }
+});</code></pre>
+
+  <h3>Node configuration using groups</h3>
+  <pre><code>{
+  "guardRails": {
+    "groups": ["PiiCompliance", "ApiResilience"]
+  }
+}</code></pre>
+
+  <h3>Mandatory groups (always run regardless of node config)</h3>
+  <pre><code>{
+  "guardRails": {
+    "mandatoryGroups": ["PiiCompliance"],
+    "groups": ["ApiResilience"],
+    "individual": [
+      {
+        "name": "InputValidationGuard",
+        "enabled": true,
+        "config": { "schema": {...}, "strictMode": true }
+      }
+    ]
+  }
+}</code></pre>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 6 — GuardRailCheckResult Patterns</h2>
+  <p>Guard return values that the pipeline uses to make allow/block decisions:</p>
+
+  <pre><code>// Success — guard passed, output not modified
+return GuardRailCheckResult.Success();
+
+// Success with output modification (Post phase, e.g., PiiRedactionGuard)
+return GuardRailCheckResult.Success(outputModified: true,
+    metadata: new Dictionary&lt;string, object?&gt; { ["redacted_count"] = 3 });
+
+// Blocked — halt execution, return error to caller
+return GuardRailCheckResult.Blocked(
+    "PII detected: Email, SSN",
+    metadata: new Dictionary&lt;string, object?&gt;
+    {
+        ["pii_types"] = new[] { "Email", "SSN" },
+        ["match_count"] = 2
+    });
+
+// Blocked with retry guidance (RateLimitingGuard)
+return GuardRailCheckResult.Blocked(
+    "Rate limit exceeded",
+    retryAfter: TimeSpan.FromSeconds(30),
+    metadata: new Dictionary&lt;string, object?&gt;
+    {
+        ["limit"]     = 100,
+        ["window_s"]  = 60,
+        ["tenant_id"] = tenantId
+    });
+
+// Warning — log violation but do not block (delayed enforcement)
+return GuardRailCheckResult.Warning("PII detected in input", metadata: ...);</code></pre>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 7 — Full Execution Result</h2>
+  <p>The <code>GuardRailsExecutionResult</code> returned to <code>BaseNodeExecutor</code> after each phase:</p>
+
+  <pre><code>{
+  "IsAllowed": false,
+  "IsBlocked": true,
+  "TotalDurationMs": 19,
+  "OutputModified": false,
+  "ExecutedGuards": [
+    "TimeoutGuard",
+    "RateLimitingGuard",
+    "PiiDetectionGuard"
+  ],
+  "Violations": [
+    {
+      "GuardName":   "PiiDetectionGuard",
+      "Phase":       0,
+      "Reason":      "PII detected: SSN, Email",
+      "TenantId":    42,
+      "OperationId": "op-abc-123"
+    }
+  ],
+  "Timeline": [
+    { "Guard": "TimeoutGuard",       "Phase": "Pre", "DurationMs": 2,  "Passed": true  },
+    { "Guard": "RateLimitingGuard",  "Phase": "Pre", "DurationMs": 5,  "Passed": true  },
+    { "Guard": "PiiDetectionGuard",  "Phase": "Pre", "DurationMs": 12, "Passed": false,
+      "Reason": "PII detected: SSN, Email" }
+  ]
+}</code></pre>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 8 — Minimal Custom Guard</h2>
+  <p>The smallest possible working guard — a business-hours check that blocks requests outside 08:00–18:00 UTC:</p>
+
+  <pre><code>public class BusinessHoursGuard : IGuardRail
+{
+    public string Name    =&gt; "BusinessHoursGuard";
+    public string Version =&gt; "1.0.0";
+    public IReadOnlyList&lt;GuardRailPhase&gt; SupportedPhases =&gt; new[] { GuardRailPhase.Pre };
+    public bool IsSecurityCritical =&gt; false;
+
+    public Task&lt;GuardRailCheckResult&gt; ExecuteAsync(
+        GuardRailExecutionContext context,
+        GuardRailPhase phase,
+        CancellationToken cancellationToken = default)
+    {
+        var hour = DateTime.UtcNow.Hour;
+        if (hour &lt; 8 || hour &gt;= 18)
+        {
+            return Task.FromResult(GuardRailCheckResult.Blocked(
+                $"Requests not accepted outside business hours (current UTC hour: {hour})"));
+        }
+        return Task.FromResult(GuardRailCheckResult.Success());
+    }
+
+    public void SetConfiguration(IDictionary&lt;string, object?&gt; configuration) { }
+    public bool Validate(IDictionary&lt;string, object?&gt; cfg) =&gt; true;
+    public GuardRailConfigValidationResult ValidateWithDetails(IDictionary&lt;string, object?&gt; cfg)
+        =&gt; GuardRailConfigValidationResult.Valid();
+
+    public string GuardName           =&gt; Name;
+    public string Description         =&gt; "Blocks requests outside 08:00–18:00 UTC.";
+    public string ConfigurationSchema =&gt; "{}";
+    public IReadOnlyList&lt;GuardRailDependency&gt; Dependencies =&gt; Array.Empty&lt;GuardRailDependency&gt;();
+}</code></pre>
+
+  <h3>Register and use</h3>
+  <pre><code>// Startup
+builder.Services.AddSingleton&lt;IGuardRail, BusinessHoursGuard&gt;();
+
+// Node config
+{
+  "guardRails": {
+    "individual": [
+      { "name": "BusinessHoursGuard", "enabled": true }
+    ]
+  }
+}</code></pre>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <h2>Sample 9 — All Six Guards Together</h2>
+  <p>A maximum-coverage configuration combining all built-in guards. Adapt thresholds for your specific node type.</p>
+
+  <pre><code>{
+  "guardRails": {
+    "individual": [
+      {
+        "name": "TimeoutGuard",
+        "enabled": true,
+        "order": 1,
+        "isSecurityCritical": false,
+        "config": { "TimeoutMs": 10000, "WarnAtMs": 7000 }
+      },
+      {
+        "name": "InputValidationGuard",
+        "enabled": true,
+        "order": 2,
+        "isSecurityCritical": true,
+        "config": {
+          "schema": {
+            "type": "object",
+            "required": ["userId", "payload"],
+            "properties": {
+              "userId":  { "type": "string" },
+              "payload": { "type": "object" }
+            }
+          },
+          "strictMode": true
+        }
+      },
+      {
+        "name": "PiiDetectionGuard",
+        "enabled": true,
+        "order": 3,
+        "isSecurityCritical": true,
+        "config": {
+          "sensitivityLevel": "high",
+          "piiTypes": ["SSN", "CreditCard", "Email", "Phone", "BankAccount", "CVV"]
+        }
+      },
+      {
+        "name": "RateLimitingGuard",
+        "enabled": true,
+        "order": 4,
+        "isSecurityCritical": false,
+        "config": {
+          "scope":         "tenant",
+          "maxRequests":   200,
+          "windowSeconds": 60
+        }
+      },
+      {
+        "name": "CircuitBreakerGuard",
+        "enabled": true,
+        "order": 5,
+        "isSecurityCritical": false,
+        "config": {
+          "failureThreshold":    5,
+          "openDurationSeconds": 60,
+          "halfOpenMaxCalls":    3
+        }
+      },
+      {
+        "name": "PiiRedactionGuard",
+        "enabled": true,
+        "order": 6,
+        "isSecurityCritical": true,
+        "config": {
+          "redaction_method": "partial",
+          "fields": []
+        }
+      }
+    ]
+  }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Order matters for Pre-phase guards</strong>
+    Guards run in ascending <code>order</code> within each phase. Put structural guards first (timeout, validation) so they reject bad inputs before heavier guards (PII detection, circuit breaker) process them.
+  </div>
+
+  <div class="page-nav">
+    <a href="16-integration-di.html">← DI Setup</a>
+    <a href="index.html">Back to Introduction</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>
