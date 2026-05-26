@@ -176,6 +176,26 @@ body {
   background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
   border-radius: 3px; padding: 1px 5px; font-size: 10px; font-family: inherit;
 }
+
+/* ── community section ── */
+#community-section {
+  max-width: 860px; margin: 0 auto;
+  padding: 24px 0 40px;
+  border-top: 1px solid var(--border);
+  margin-top: -8px;
+}
+.section-divider {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--text-dim);
+  display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+}
+.section-divider i { color: var(--accent2); font-size: 12px; }
+.comm-card .sr-breadcrumb { color: var(--accent2); }
+.comm-card:hover, .comm-card:focus {
+  border-color: var(--accent2);
+  box-shadow: 0 0 0 1px var(--accent2), 0 4px 16px rgba(167,139,250,.08);
+}
+.comm-meta { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -238,6 +258,15 @@ body {
       <p>Try different keywords, or switch to <strong>All Products</strong> to search everywhere.</p>
     </div>
   </div>
+
+  <div id="community-section" style="display:none; padding:24px 24px 40px;">
+    <div style="max-width:860px;margin:0 auto;">
+      <div class="section-divider">
+        <i class="fa-solid fa-people-group"></i> Community Discussions
+      </div>
+      <div id="community-results"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -250,13 +279,15 @@ body {
   var loadedData = [];   // pre-fetched + filtered result data
   var shown = 0;
 
-  var inputEl    = document.getElementById('search-input');
-  var clearBtn   = document.getElementById('search-clear');
-  var countEl    = document.getElementById('search-count');
-  var resultsEl  = document.getElementById('results-inner');
-  var hintEl     = document.getElementById('state-hint');
-  var emptyEl    = document.getElementById('state-empty');
-  var loadingEl  = document.getElementById('search-loading');
+  var inputEl         = document.getElementById('search-input');
+  var clearBtn        = document.getElementById('search-clear');
+  var countEl         = document.getElementById('search-count');
+  var resultsEl       = document.getElementById('results-inner');
+  var hintEl          = document.getElementById('state-hint');
+  var emptyEl         = document.getElementById('state-empty');
+  var loadingEl       = document.getElementById('search-loading');
+  var communityEl     = document.getElementById('community-section');
+  var communityResEl  = document.getElementById('community-results');
 
   /* ── Pagefind loader ── */
   function loadPagefind() {
@@ -281,7 +312,7 @@ body {
   clearBtn.addEventListener('click', function () {
     inputEl.value = ''; clearBtn.classList.remove('visible');
     countEl.textContent = ''; currentQuery = '';
-    reset(); inputEl.focus();
+    reset(); clearCommunity(); inputEl.focus();
     history.replaceState(null, '', location.pathname);
   });
   inputEl.addEventListener('keydown', function (e) {
@@ -299,7 +330,7 @@ body {
     clearTimeout(debounceTimer);
     if (!q) { countEl.textContent = ''; reset(); history.replaceState(null, '', location.pathname); return; }
     history.replaceState(null, '', '?q=' + encodeURIComponent(q));
-    debounceTimer = setTimeout(function () { runSearch(q); }, 220);
+    debounceTimer = setTimeout(function () { runSearch(q); runCommunitySearch(q); }, 220);
   }
 
   /* ── search ── */
@@ -375,6 +406,54 @@ body {
     }
   }
 
+  /* ── community search ── */
+  function runCommunitySearch(q) {
+    clearCommunity();
+    if (!q) return;
+    fetch('https://community.bizfirstai.com/search.json?q=' + encodeURIComponent(q))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var posts  = data.posts  || [];
+        var topics = data.topics || [];
+        var topicMap = {};
+        topics.forEach(function (t) { topicMap[t.id] = t; });
+        // one card per topic, ordered by Discourse relevance
+        var seen = {}, items = [];
+        posts.forEach(function (post) {
+          if (!seen[post.topic_id] && topicMap[post.topic_id]) {
+            seen[post.topic_id] = true;
+            items.push({ post: post, topic: topicMap[post.topic_id] });
+          }
+        });
+        if (!items.length) return;
+        communityEl.style.display = '';
+        items.slice(0, 8).forEach(function (item) {
+          var t   = item.topic;
+          var p   = item.post;
+          var url = 'https://community.bizfirstai.com/t/' + t.slug + '/' + t.id;
+          var date = p.created_at
+            ? new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+            : '';
+          var a = document.createElement('a');
+          a.className = 'sr-card comm-card';
+          a.href = url;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.innerHTML =
+            '<div class="sr-breadcrumb">community.bizfirstai.com</div>' +
+            '<div class="sr-title">'   + escHtml(t.title) + '</div>' +
+            (p.blurb ? '<div class="sr-excerpt">' + escHtml(p.blurb) + '</div>' : '') +
+            '<div class="comm-meta">By ' + escHtml(p.username) + (date ? ' · ' + date : '') + '</div>';
+          communityResEl.appendChild(a);
+        });
+      })
+      .catch(function () { /* community is supplementary — ignore failures */ });
+  }
+  function clearCommunity() {
+    communityEl.style.display = 'none';
+    communityResEl.innerHTML = '';
+  }
+
   function reset() {
     hintEl.style.display = ''; emptyEl.style.display = 'none';
     clearCards(); loadedData = []; shown = 0;
@@ -397,6 +476,7 @@ body {
     inputEl.value = initQ; currentQuery = initQ;
     clearBtn.classList.add('visible');
     runSearch(initQ);
+    runCommunitySearch(initQ);
   }
   loadPagefind(); // warm up eagerly
 })();
