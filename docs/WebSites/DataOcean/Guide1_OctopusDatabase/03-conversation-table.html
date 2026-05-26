@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Octopus_Conversations Table — Octopus Database | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Octopus Database</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema.html">Database Schema</a>
+  <a href="02-agent-table.html">Octopus_Agents Table</a>
+  <a href="03-conversation-table.html" class="active">Octopus_Conversations Table</a>
+  <a href="04-episodes-table.html">Octopus_Episodes Table</a>
+  <a href="05-procedures-table.html">Octopus_Procedures Table</a>
+  <a href="06-querying.html">Querying the Database</a>
+  <a href="07-maintenance.html">Database Maintenance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Octopus_Conversations Table</h1>
+    <p class="lead">The conversation session table — each row represents a single chat session between a user and an Octopus agent. It is the parent record for all episode (turn) data in Octopus_Episodes.</p>
+  </div>
+
+  <h2>Role in the Data Model</h2>
+  <p>A <strong>conversation</strong> in Octopus is a bounded interaction session. When a user opens a chat window and sends messages, all those message turns belong to a single conversation. The <code>Octopus_Conversations</code> table acts as the container record — it holds session identity, timing, status, and the link to the agent that handled it.</p>
+  <p>Every row in <code>Octopus_Episodes</code> is a child of a row in <code>Octopus_Conversations</code> via the <code>SessionId</code> foreign key. To retrieve a full conversation history, you query episodes filtered by <code>SessionId</code>.</p>
+
+  <h2>Column Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Constraints</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SessionId</code></td><td>uniqueidentifier</td><td>PK, NOT NULL</td><td>GUID primary key. Returned to the client on session creation and used in all subsequent episode writes.</td></tr>
+      <tr><td><code>AgentId</code></td><td>uniqueidentifier</td><td>FK, NOT NULL</td><td>References the agent that handled this conversation. Indexed for agent-level session reporting.</td></tr>
+      <tr><td><code>TenantId</code></td><td>int</td><td>NOT NULL, IX</td><td>Multi-tenancy discriminator. Always in the WHERE clause.</td></tr>
+      <tr><td><code>UserId</code></td><td>nvarchar(200)</td><td>NULL</td><td>The identity of the initiating user. Can be an internal user GUID, an email, or an anonymous session token. Null for system-initiated conversations.</td></tr>
+      <tr><td><code>StartedAt</code></td><td>datetime2</td><td>NOT NULL</td><td>UTC timestamp when the session was created. Used for duration calculations and time-based filtering.</td></tr>
+      <tr><td><code>EndedAt</code></td><td>datetime2</td><td>NULL</td><td>UTC timestamp when the session was explicitly closed. Null means the session is still active (or abandoned).</td></tr>
+      <tr><td><code>Status</code></td><td>nvarchar(50)</td><td>NOT NULL</td><td>Session lifecycle status. See status values below.</td></tr>
+      <tr><td><code>Metadata</code></td><td>nvarchar(max)</td><td>NULL</td><td>Caller-supplied JSON context attached at session creation. Useful for tracking channel, UI context, referrer, campaign ID, etc.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Session Status Values</h2>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Meaning</th><th>EndedAt</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Active</code></td><td>Session is open and accepting new messages</td><td>NULL</td></tr>
+      <tr><td><code>Ended</code></td><td>Session was explicitly closed by the user or application</td><td>Set</td></tr>
+      <tr><td><code>TimedOut</code></td><td>Session exceeded the inactivity timeout configured for the agent</td><td>Set (by retention job)</td></tr>
+      <tr><td><code>Error</code></td><td>Session ended due to an unrecoverable error in the agent pipeline</td><td>Set</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Metadata JSON Pattern</h2>
+  <p>The <code>Metadata</code> column accepts any valid JSON object. Common patterns used by BizFirstGO applications:</p>
+  <pre><code>{
+  "channel": "web-chat",
+  "referrer": "pricing-page",
+  "campaignId": "Q2-2026-trial",
+  "uiSessionId": "abc123",
+  "clientIp": "203.0.113.5",
+  "customTags": ["vip", "trial"]
+}</code></pre>
+  <p>This metadata is never interpreted by the Octopus framework itself — it is purely for application-layer reporting and filtering.</p>
+
+  <h2>Session Lifecycle Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Session Creation</h4>
+        <p>A new row is inserted with <code>Status = 'Active'</code>, <code>StartedAt = UTC_NOW()</code>, and <code>EndedAt = NULL</code>. The generated <code>SessionId</code> is returned to the caller.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Message Turns</h4>
+        <p>Each user message and agent response creates episode rows in <code>Octopus_Episodes</code> linked to this <code>SessionId</code>. The conversation row itself is not updated during messaging.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div></div>
+      <div class="body">
+        <h4>Session Close</h4>
+        <p>When the user ends the session (or the timeout job fires), <code>Status</code> is updated and <code>EndedAt</code> is set. No further episodes can be written to a closed session.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Common Queries</h2>
+  <pre><code>-- All active sessions for an agent
+SELECT SessionId, UserId, StartedAt,
+       DATEDIFF(MINUTE, StartedAt, GETUTCDATE()) AS DurationMinutes
+FROM Octopus_Conversations
+WHERE TenantId = @tenantId
+  AND AgentId = @agentId
+  AND Status = 'Active'
+ORDER BY StartedAt DESC;
+
+-- Session history for a specific user
+SELECT SessionId, AgentId, StartedAt, EndedAt, Status
+FROM Octopus_Conversations
+WHERE TenantId = @tenantId
+  AND UserId = @userId
+ORDER BY StartedAt DESC;
+
+-- Average session duration per agent (last 30 days)
+SELECT AgentId,
+       COUNT(*) AS SessionCount,
+       AVG(DATEDIFF(SECOND, StartedAt, EndedAt)) AS AvgDurationSecs
+FROM Octopus_Conversations
+WHERE TenantId = @tenantId
+  AND Status = 'Ended'
+  AND StartedAt >= DATEADD(DAY, -30, GETUTCDATE())
+GROUP BY AgentId;</code></pre>
+
+  <div class="callout info">
+    <strong>Abandoned Sessions</strong>
+    <p>Sessions where the user closed the browser without explicitly ending the conversation will remain <code>Active</code> with a null <code>EndedAt</code> indefinitely unless the <code>MemoryRetentionJob</code> times them out. Configure the <code>SessionInactivityTimeoutMinutes</code> setting in your Octopus agent config to control how long inactive sessions are kept open before being automatically set to <code>TimedOut</code>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-agent-table.html">&#8592; Octopus_Agents Table</a>
+    <a href="04-episodes-table.html">Next: Octopus_Episodes Table &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

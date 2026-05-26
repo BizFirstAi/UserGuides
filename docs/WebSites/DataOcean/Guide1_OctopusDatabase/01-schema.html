@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Database Schema — Octopus Database | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Octopus Database</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema.html" class="active">Database Schema</a>
+  <a href="02-agent-table.html">Octopus_Agents Table</a>
+  <a href="03-conversation-table.html">Octopus_Conversations Table</a>
+  <a href="04-episodes-table.html">Octopus_Episodes Table</a>
+  <a href="05-procedures-table.html">Octopus_Procedures Table</a>
+  <a href="06-querying.html">Querying the Database</a>
+  <a href="07-maintenance.html">Database Maintenance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Database Schema</h1>
+    <p class="lead">A complete overview of all four Octopus tables — their columns, types, relationships, and the design decisions behind the schema.</p>
+  </div>
+
+  <h2>Schema at a Glance</h2>
+  <p>The Octopus database schema is intentionally minimal. Four tables cover everything the framework needs: agent registry, session tracking, episodic memory, and procedural memory. The schema is managed via EF Core Code-First migrations, ensuring that deployments are reproducible and upgrades are tracked.</p>
+
+  <pre><code>-- Entity Relationship Summary
+Octopus_Agents (AgentId PK)
+    └── Octopus_Conversations (AgentId FK)
+            └── Octopus_Episodes (SessionId FK)
+    └── Octopus_Procedures (AgentId FK)</code></pre>
+
+  <h2>Octopus_Agents</h2>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>AgentId</code></td><td>uniqueidentifier</td><td>No</td><td>Primary key — GUID assigned at agent registration</td></tr>
+      <tr><td><code>TenantId</code></td><td>int</td><td>No</td><td>Multi-tenancy discriminator — required on all queries</td></tr>
+      <tr><td><code>Name</code></td><td>nvarchar(200)</td><td>No</td><td>Human-readable agent name, unique per tenant</td></tr>
+      <tr><td><code>SystemPrompt</code></td><td>nvarchar(max)</td><td>Yes</td><td>The base system prompt injected at the start of every conversation</td></tr>
+      <tr><td><code>PluginRefs</code></td><td>nvarchar(max)</td><td>Yes</td><td>JSON array of plugin identifiers the agent has access to</td></tr>
+      <tr><td><code>Config</code></td><td>nvarchar(max)</td><td>Yes</td><td>JSON blob for model settings: temperature, maxTokens, modelId, etc.</td></tr>
+      <tr><td><code>Version</code></td><td>int</td><td>No</td><td>Schema version of the agent definition — incremented on update</td></tr>
+      <tr><td><code>Status</code></td><td>nvarchar(50)</td><td>No</td><td>Active, Inactive, Draft, Deprecated</td></tr>
+      <tr><td><code>CreatedAt</code></td><td>datetime2</td><td>No</td><td>UTC creation timestamp</td></tr>
+      <tr><td><code>UpdatedAt</code></td><td>datetime2</td><td>No</td><td>UTC last-modified timestamp</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Octopus_Conversations</h2>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SessionId</code></td><td>uniqueidentifier</td><td>No</td><td>Primary key — GUID created when a new chat session starts</td></tr>
+      <tr><td><code>AgentId</code></td><td>uniqueidentifier</td><td>No</td><td>FK → Octopus_Agents.AgentId</td></tr>
+      <tr><td><code>TenantId</code></td><td>int</td><td>No</td><td>Multi-tenancy discriminator</td></tr>
+      <tr><td><code>UserId</code></td><td>nvarchar(200)</td><td>Yes</td><td>Identity of the user who initiated the conversation</td></tr>
+      <tr><td><code>StartedAt</code></td><td>datetime2</td><td>No</td><td>UTC timestamp when the session was opened</td></tr>
+      <tr><td><code>EndedAt</code></td><td>datetime2</td><td>Yes</td><td>UTC timestamp when the session was closed (null = still active)</td></tr>
+      <tr><td><code>Status</code></td><td>nvarchar(50)</td><td>No</td><td>Active, Ended, TimedOut, Error</td></tr>
+      <tr><td><code>Metadata</code></td><td>nvarchar(max)</td><td>Yes</td><td>JSON blob for caller-supplied context (channel, referrer, custom tags)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Octopus_Episodes</h2>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>EpisodeId</code></td><td>uniqueidentifier</td><td>No</td><td>Primary key</td></tr>
+      <tr><td><code>SessionId</code></td><td>uniqueidentifier</td><td>No</td><td>FK → Octopus_Conversations.SessionId</td></tr>
+      <tr><td><code>TenantId</code></td><td>int</td><td>No</td><td>Multi-tenancy discriminator</td></tr>
+      <tr><td><code>Role</code></td><td>nvarchar(50)</td><td>No</td><td>user, assistant, system, tool</td></tr>
+      <tr><td><code>Messages</code></td><td>varbinary(max)</td><td>No</td><td>Compressed JSON array of message objects in this episode</td></tr>
+      <tr><td><code>ToolCalls</code></td><td>varbinary(max)</td><td>Yes</td><td>Compressed JSON of tool/function call records, if any</td></tr>
+      <tr><td><code>EmbeddingRef</code></td><td>nvarchar(500)</td><td>Yes</td><td>ID pointing to the vector store entry for this episode</td></tr>
+      <tr><td><code>Timestamp</code></td><td>datetime2</td><td>No</td><td>UTC creation time of this episode turn</td></tr>
+      <tr><td><code>TokenCount</code></td><td>int</td><td>Yes</td><td>Approximate token count for this episode (for context window management)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Octopus_Procedures</h2>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Nullable</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ProcedureId</code></td><td>uniqueidentifier</td><td>No</td><td>Primary key</td></tr>
+      <tr><td><code>AgentId</code></td><td>uniqueidentifier</td><td>No</td><td>FK → Octopus_Agents.AgentId — the agent this procedure belongs to</td></tr>
+      <tr><td><code>TenantId</code></td><td>int</td><td>No</td><td>Multi-tenancy discriminator</td></tr>
+      <tr><td><code>Name</code></td><td>nvarchar(300)</td><td>No</td><td>Unique name for this procedure within the agent+tenant scope</td></tr>
+      <tr><td><code>Steps</code></td><td>nvarchar(max)</td><td>No</td><td>JSON array of procedure steps with type, action, params</td></tr>
+      <tr><td><code>ActivatedAt</code></td><td>datetime2</td><td>Yes</td><td>When this procedure was last activated/executed</td></tr>
+      <tr><td><code>CreatedAt</code></td><td>datetime2</td><td>No</td><td>UTC creation timestamp</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Indexes</h2>
+  <p>The following indexes are created by the EF Core migrations to support common query patterns:</p>
+  <table>
+    <thead>
+      <tr><th>Table</th><th>Index Columns</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Octopus_Agents</td><td>(TenantId, Status)</td><td>Filter active agents per tenant</td></tr>
+      <tr><td>Octopus_Agents</td><td>(TenantId, Name) UNIQUE</td><td>Enforce unique agent names within a tenant</td></tr>
+      <tr><td>Octopus_Conversations</td><td>(TenantId, AgentId, Status)</td><td>Find active sessions for an agent</td></tr>
+      <tr><td>Octopus_Conversations</td><td>(TenantId, UserId)</td><td>Look up all sessions for a user</td></tr>
+      <tr><td>Octopus_Episodes</td><td>(TenantId, SessionId, Timestamp DESC)</td><td>Retrieve episodes in reverse-chronological order (most recent first)</td></tr>
+      <tr><td>Octopus_Episodes</td><td>(TenantId, EmbeddingRef)</td><td>Retrieve SQL episode by vector store ID after semantic search</td></tr>
+      <tr><td>Octopus_Procedures</td><td>(TenantId, AgentId, Name) UNIQUE</td><td>Enforce unique procedure names per agent per tenant</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>EF Core Migrations</strong>
+    <p>The schema is managed via EF Core Code-First migrations located at <code>Octopus/Plugins/BuiltIn/SqlServerStorage/Migrations/</code>. Never modify the schema manually. Apply changes by running <code>dotnet ef migrations add &lt;MigrationName&gt;</code> and <code>dotnet ef database update</code>.</p>
+  </div>
+
+  <h2>JSON Column Conventions</h2>
+  <p>Several columns store structured data as JSON. Here are the conventions followed throughout the schema:</p>
+  <ul>
+    <li><strong>Compressed JSON</strong> (<code>varbinary(max)</code>): Used for high-volume columns like <code>Messages</code> and <code>ToolCalls</code> in Octopus_Episodes. Data is compressed with GZip before storage and decompressed on read by the EF Core value converter.</li>
+    <li><strong>Plain JSON</strong> (<code>nvarchar(max)</code>): Used for smaller, less frequent documents like <code>Config</code>, <code>PluginRefs</code>, and <code>Steps</code>. Can be queried directly with <code>OPENJSON()</code> in SQL.</li>
+  </ul>
+
+  <pre><code>-- Example: Query plugin refs using OPENJSON
+SELECT a.AgentId, a.Name, p.value AS PluginRef
+FROM Octopus_Agents a
+CROSS APPLY OPENJSON(a.PluginRefs) AS p
+WHERE a.TenantId = 42
+  AND a.Status = 'Active';</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-agent-table.html">Next: Octopus_Agents Table &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

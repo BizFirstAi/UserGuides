@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Message Envelope — Introduction to ANCP | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.field-req { color: var(--danger); font-size: 0.7rem; font-weight: 700; }
+.field-opt { color: var(--text-dim); font-size: 0.7rem; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>ANCP</h2>
+    <h1>Introduction to ANCP</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-message-envelope.html" class="active">Message Envelope</a>
+  <a href="02-message-types.html">Message Types</a>
+  <a href="03-transport.html">Transport Layer</a>
+  <a href="04-addressing.html">Addressing</a>
+  <a href="05-security.html">Security</a>
+  <a href="06-versioning.html">Protocol Versioning</a>
+  <a href="07-use-cases.html">Use Cases</a>
+  <a href="08-devtools.html">ANCP in DevTools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">ANCP</div>
+    <h1>Message Envelope</h1>
+    <p class="lead">A detailed field-by-field reference for the ANCP message envelope — the universal container that wraps every message exchanged in the BizFirstGO platform.</p>
+  </div>
+
+  <h2>The Envelope at a Glance</h2>
+  <p>The ANCP envelope is a flat JSON object. Every message — regardless of transport, message type, or payload content — shares this outer structure. The envelope contains all the metadata the router, security layer, and observability infrastructure need, while leaving the <code>payload</code> field free for arbitrary content.</p>
+
+  <pre><code>{
+  "id":              "3f7a9c1e-4b2d-4e8f-9a1c-0d5e7f8b3a2d",
+  "type":            "Command",
+  "source":          "node://tenant-acme/flow-42/data-transform",
+  "destination":     "node://tenant-acme/flow-42/approval-gate",
+  "tenantId":        "tenant-acme",
+  "timestamp":       "2026-05-25T09:14:00.000Z",
+  "protocolVersion": "1.0",
+  "correlationId":   "corr-7e8a9b0c-1d2e-3f4a-5b6c-7d8e9f0a1b2c",
+  "payload": {
+    "formData": { "employeeId": "E-1042", "amount": 750.00 },
+    "context":  { "requestedBy": "user-88", "workflowRunId": "run-9981" }
+  }
+}</code></pre>
+
+  <h2>Header Fields (Required)</h2>
+  <p>These fields must be present on every ANCP message. A missing or malformed required field causes the router to reject the message before any handler sees it.</p>
+
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>id</code> <span class="field-req">required</span></td>
+        <td><code>string</code> (UUID v4)</td>
+        <td>Globally unique message identifier. Producers must generate a fresh UUID for every message. Used for deduplication and audit trails.</td>
+      </tr>
+      <tr>
+        <td><code>type</code> <span class="field-req">required</span></td>
+        <td><code>"Command" | "Event" | "Query" | "Response"</code></td>
+        <td>Semantic message type. Determines routing behaviour, expected reply semantics, and how the message is logged.</td>
+      </tr>
+      <tr>
+        <td><code>source</code> <span class="field-req">required</span></td>
+        <td><code>string</code></td>
+        <td>Structured URI identifying the sender. Format: <code>{scheme}://{tenantId}/{...path}</code>. Example: <code>node://tenant-1/flow-7/step-3</code>.</td>
+      </tr>
+      <tr>
+        <td><code>destination</code> <span class="field-req">required</span></td>
+        <td><code>string</code></td>
+        <td>Structured URI identifying the intended recipient. The router resolves this to a transport endpoint or pub/sub topic.</td>
+      </tr>
+      <tr>
+        <td><code>tenantId</code> <span class="field-req">required</span></td>
+        <td><code>string</code></td>
+        <td>Tenant scope for this message. The router verifies that source, destination, and tenantId are all consistent. Cross-tenant messages are rejected.</td>
+      </tr>
+      <tr>
+        <td><code>timestamp</code> <span class="field-req">required</span></td>
+        <td><code>string</code> (ISO 8601)</td>
+        <td>UTC timestamp when the message was created by the producer. Always in ISO 8601 format with millisecond precision.</td>
+      </tr>
+      <tr>
+        <td><code>protocolVersion</code> <span class="field-req">required</span></td>
+        <td><code>string</code></td>
+        <td>ANCP version this message conforms to. Consumers use this to choose the correct deserializer. Current value: <code>"1.0"</code>.</td>
+      </tr>
+      <tr>
+        <td><code>payload</code> <span class="field-req">required</span></td>
+        <td><code>object</code></td>
+        <td>Message-specific content. Schema is defined per message type and documented in the relevant node or agent specification. May be an empty object <code>{}</code> for Events with no data.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Header Fields (Optional)</h2>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>correlationId</code> <span class="field-opt">optional</span></td>
+        <td><code>string</code> (UUID v4)</td>
+        <td>Links a Response back to its originating Query or Command. The producer of the original request sets this; the responder copies it into the reply.</td>
+      </tr>
+      <tr>
+        <td><code>replyTo</code> <span class="field-opt">optional</span></td>
+        <td><code>string</code></td>
+        <td>Address (same URI format as <code>source</code>) where the recipient should send its Response. Used when the reply destination differs from the source.</td>
+      </tr>
+      <tr>
+        <td><code>ttl</code> <span class="field-opt">optional</span></td>
+        <td><code>number</code> (milliseconds)</td>
+        <td>Time-to-live. The router discards the message if more than <code>ttl</code> ms have elapsed since <code>timestamp</code>. Useful for time-sensitive Commands.</td>
+      </tr>
+      <tr>
+        <td><code>priority</code> <span class="field-opt">optional</span></td>
+        <td><code>number</code> (0–9)</td>
+        <td>Delivery priority hint for queuing transports. Higher values are processed first. Default is 5.</td>
+      </tr>
+      <tr>
+        <td><code>traceId</code> <span class="field-opt">optional</span></td>
+        <td><code>string</code></td>
+        <td>Distributed trace ID (W3C Trace Context format). Set by the entry-point service and propagated unchanged through the call chain for end-to-end tracing.</td>
+      </tr>
+      <tr>
+        <td><code>sessionId</code> <span class="field-opt">optional</span></td>
+        <td><code>string</code></td>
+        <td>User session identifier. Carried by messages originating from browser clients; used by EdgeStream to scope subscriptions to a session.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>The Payload Field</h2>
+  <p>The <code>payload</code> field is a free-form JSON object. ANCP does not constrain its schema — that is defined by the node, agent, or service that produces the message. The convention is to structure payload with two sub-objects:</p>
+
+  <pre><code>"payload": {
+  "data": {
+    // The actual business content of the message
+  },
+  "meta": {
+    // Optional message-level metadata beyond the header fields
+    // e.g., pagination, content-type hints, schema reference
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Convention, Not Enforcement</strong>
+    <p>The <code>data</code>/<code>meta</code> split inside <code>payload</code> is a recommended convention. Individual nodes may use a flat payload structure when appropriate. Routers and infrastructure only read the header fields above — the payload is opaque to them.</p>
+  </div>
+
+  <h2>Relationship to EdgeStream IEnvelope</h2>
+  <p>At the transport layer, ANCP messages travel inside EdgeStream's <code>IEnvelope</code>. The mapping is:</p>
+
+  <table>
+    <thead>
+      <tr><th>ANCP Field</th><th>IEnvelope Location</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>id</code></td><td><code>meta.id</code></td><td>Direct mapping</td></tr>
+      <tr><td><code>type</code></td><td><code>meta.type</code></td><td>Stored as string</td></tr>
+      <tr><td><code>source</code></td><td><code>meta.source</code></td><td>Direct mapping</td></tr>
+      <tr><td><code>destination</code></td><td><code>meta.topic</code></td><td>Router resolves destination URI to pub/sub topic</td></tr>
+      <tr><td><code>tenantId</code></td><td><code>body.data.metadata.tenantId</code></td><td>Also verified against SignalR JWT claim</td></tr>
+      <tr><td><code>timestamp</code></td><td><code>meta.receivedAt</code></td><td>Transport records its own receivedAt; original timestamp in payload</td></tr>
+      <tr><td><code>correlationId</code></td><td><code>meta.correlationId</code></td><td>Direct mapping</td></tr>
+      <tr><td><code>payload</code></td><td><code>body</code></td><td>The ANCP payload becomes the envelope body</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Validation Rules</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Schema Check</h4><p>All required fields (<code>id</code>, <code>type</code>, <code>source</code>, <code>destination</code>, <code>tenantId</code>, <code>timestamp</code>, <code>protocolVersion</code>, <code>payload</code>) must be present and non-null.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Type Enum Check</h4><p>The <code>type</code> field must be exactly one of: <code>Command</code>, <code>Event</code>, <code>Query</code>, <code>Response</code>. Case-sensitive.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Tenant Consistency</h4><p>The <code>tenantId</code> in the envelope must match the tenant claim in the bearer token (SignalR) or the API key scope (HTTP). Mismatch = 403.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body"><h4>TTL Check</h4><p>If <code>ttl</code> is present, the router computes <code>now - timestamp</code>. If the result exceeds <code>ttl</code>, the message is discarded and a dead-letter event is emitted.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot dot success">5</div></div>
+      <div class="body"><h4>Route</h4><p>Message passes validation and is routed to the resolved destination handler.</p></div>
+    </div>
+  </div>
+
+  <div class="callout success">
+    <strong>Tip: Use correlationId for Request/Response Pairing</strong>
+    <p>When sending a Query, generate a UUID and set it as <code>correlationId</code>. Subscribe to your <code>replyTo</code> address and match incoming Responses by <code>correlationId</code>. This is the standard pattern for synchronous-style interactions over asynchronous ANCP.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-message-types.html">Next: Message Types &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

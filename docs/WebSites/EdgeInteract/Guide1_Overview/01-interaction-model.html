@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Interaction Model — Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interaction-model.html" class="active">The Interaction Model</a>
+  <a href="02-vs-edgestream.html">EdgeInteract vs. EdgeStream</a>
+  <a href="03-use-cases.html">Use Cases</a>
+  <a href="04-package-structure.html">Package Structure</a>
+  <a href="05-bizfirstgo-integration.html">BizFirstGO Integration</a>
+  <a href="06-getting-started.html">Getting Started</a>
+  <a href="07-security.html">Security Model</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>The Interaction Model</h1>
+    <p class="lead">EdgeInteract defines a precise five-stage interaction lifecycle: Request → Deliver → Display → Respond → Acknowledge. Understanding this model is the foundation for using EdgeInteract correctly.</p>
+  </div>
+
+  <h2>Overview of the Lifecycle</h2>
+  <p>Every EdgeInteract interaction follows the same five-stage lifecycle regardless of type. The stages are sequential and each stage must complete before the next begins. If a stage fails (e.g., timeout), the pipeline terminates with an error message on the callback topic.</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">R</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Request</h4>
+        <p>Server code constructs an <code>InteractionRequest</code> object and calls <code>IInteractionPublisher.PublishAsync(userId, request)</code>. The request is assigned a UUID <code>interactionId</code> and timestamped. Pre-send hooks run at this stage.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">D</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Deliver</h4>
+        <p>EdgeInteract publishes the serialized request to the EdgeStream topic <code>interactions.{userId}</code>. EdgeStream fans out the message to all active WebSocket sessions for that user. The timeout clock starts ticking.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot info">U</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Display</h4>
+        <p>The client's <code>InteractionContainer</code> receives the message, reads <code>interactionType</code>, and renders the appropriate UI component. The component receives the typed payload and a <code>respond()</code> callback.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">S</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Respond</h4>
+        <p>The user takes action (clicks Approve, submits a form, selects options). The component calls <code>respond(outcome, data)</code>. EdgeInteract publishes an <code>InteractionResponse</code> to <code>interactions.callback.{interactionId}</code>. Post-receive hooks run here.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">A</div></div>
+      <div class="body">
+        <h4>Acknowledge</h4>
+        <p>The server receives the response on the callback topic, processes it, and sends an <code>InteractionAck</code> back to the user's session. The UI dismisses the interaction component. The cycle is complete.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>InteractionRequest Schema</h2>
+  <p>The <code>InteractionRequest</code> object is the entry point to the pipeline. All fields are required unless marked optional:</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>interactionId</code></td><td>string (UUID)</td><td>Auto-generated unique ID for this interaction instance</td></tr>
+      <tr><td><code>type</code></td><td>string</td><td>Interaction type key: <code>"approval"</code>, <code>"confirmation"</code>, <code>"form"</code>, <code>"picker"</code>, <code>"notification"</code></td></tr>
+      <tr><td><code>targetUserId</code></td><td>string</td><td>The user ID of the intended recipient. Can also be a role key for fan-out.</td></tr>
+      <tr><td><code>title</code></td><td>string</td><td>Short title shown in the UI component header</td></tr>
+      <tr><td><code>description</code></td><td>string (optional)</td><td>Longer contextual description shown below the title</td></tr>
+      <tr><td><code>payload</code></td><td>object</td><td>Type-specific payload — structure depends on <code>type</code></td></tr>
+      <tr><td><code>timeoutMs</code></td><td>number</td><td>Milliseconds before an <code>InteractionTimeout</code> is fired on the callback topic</td></tr>
+      <tr><td><code>callbackTopic</code></td><td>string (optional)</td><td>Defaults to <code>interactions.callback.{interactionId}</code>. Override for custom routing.</td></tr>
+      <tr><td><code>correlationId</code></td><td>string (optional)</td><td>Attach your workflow execution ID or any correlation key for tracing</td></tr>
+      <tr><td><code>priority</code></td><td><code>"normal" | "high"</code> (optional)</td><td>High-priority interactions appear at the top of the HIL inbox</td></tr>
+    </tbody>
+  </table>
+
+  <h2>InteractionResponse Schema</h2>
+  <p>The <code>InteractionResponse</code> is published by the client after the user acts. It is received by the server on the callback topic:</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>interactionId</code></td><td>string</td><td>Matches the request's <code>interactionId</code></td></tr>
+      <tr><td><code>respondedBy</code></td><td>string</td><td>The user ID of the user who responded (matters for role-targeted interactions)</td></tr>
+      <tr><td><code>outcome</code></td><td>string</td><td>Type-specific outcome: <code>"approved"</code>, <code>"rejected"</code>, <code>"confirmed"</code>, <code>"submitted"</code>, <code>"selected"</code>, <code>"acknowledged"</code></td></tr>
+      <tr><td><code>data</code></td><td>object (optional)</td><td>Type-specific response data (form values, selected IDs, comments)</td></tr>
+      <tr><td><code>timestamp</code></td><td>ISO 8601 string</td><td>When the user responded</td></tr>
+      <tr><td><code>sessionId</code></td><td>string</td><td>The EdgeStream session ID of the responding session</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Timeout Behavior</h2>
+  <p>Every interaction has a <code>timeoutMs</code>. When the timeout expires without a response:</p>
+  <ul>
+    <li>EdgeInteract publishes an <code>InteractionTimeout</code> message to <code>interactions.callback.{interactionId}</code></li>
+    <li>The message has <code>outcome: "timeout"</code> and no data</li>
+    <li>The server's awaiting code receives this and should handle accordingly (escalate, retry, or fail the workflow branch)</li>
+    <li>The UI component on the client receives a dismissal signal and removes the interaction from the inbox</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Always Handle Timeout</strong>
+    Never assume a response will arrive. Your server code must handle <code>outcome: "timeout"</code> explicitly. Workflows that ignore timeout will hang indefinitely.
+  </div>
+
+  <h2>TypeScript Types</h2>
+  <pre><code>// Core types
+interface InteractionRequest&lt;TPayload = unknown&gt; {
+  interactionId: string;
+  type: InteractionTypeKey;
+  targetUserId: string;
+  title: string;
+  description?: string;
+  payload: TPayload;
+  timeoutMs: number;
+  callbackTopic?: string;
+  correlationId?: string;
+  priority?: 'normal' | 'high';
+}
+
+interface InteractionResponse&lt;TData = unknown&gt; {
+  interactionId: string;
+  respondedBy: string;
+  outcome: string;
+  data?: TData;
+  timestamp: string;
+  sessionId: string;
+}
+
+interface InteractionTimeout {
+  interactionId: string;
+  outcome: 'timeout';
+  timestamp: string;
+}
+
+type InteractionTypeKey =
+  | 'approval'
+  | 'confirmation'
+  | 'form'
+  | 'picker'
+  | 'notification'
+  | string; // custom types
+</code></pre>
+
+  <h2>State Machine Summary</h2>
+  <table>
+    <thead><tr><th>State</th><th>Transitions To</th><th>Trigger</th></tr></thead>
+    <tbody>
+      <tr><td><code>pending</code></td><td><code>delivered</code></td><td>Request published to EdgeStream topic</td></tr>
+      <tr><td><code>delivered</code></td><td><code>displayed</code></td><td>Client session receives the message</td></tr>
+      <tr><td><code>delivered</code></td><td><code>timed_out</code></td><td>No session receives it within <code>timeoutMs</code></td></tr>
+      <tr><td><code>displayed</code></td><td><code>responded</code></td><td>User takes action, respond() called</td></tr>
+      <tr><td><code>displayed</code></td><td><code>timed_out</code></td><td>User does not respond within <code>timeoutMs</code></td></tr>
+      <tr><td><code>responded</code></td><td><code>acknowledged</code></td><td>Server sends InteractionAck</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-vs-edgestream.html">Next: EdgeInteract vs. EdgeStream &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

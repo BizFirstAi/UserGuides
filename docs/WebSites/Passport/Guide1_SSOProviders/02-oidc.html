@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OIDC Provider — SSO Providers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Providers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-saml.html">SAML 2.0 Provider</a>
+  <a href="02-oidc.html" class="active">OIDC Provider</a>
+  <a href="03-application-trust.html">Application Trust</a>
+  <a href="04-attribute-mapping.html">Attribute Mapping</a>
+  <a href="05-session-management.html">SSO Session Management</a>
+  <a href="06-mfa.html">MFA in SSO Flows</a>
+  <a href="07-testing.html">Testing SSO Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>OIDC Provider</h1>
+    <p class="lead">Passport implements OpenID Connect 1.0 on top of OAuth 2.0 — publish a standard discovery document, register clients, and issue signed JWTs for modern web and mobile applications.</p>
+  </div>
+
+  <h2>OIDC Discovery Document</h2>
+  <p>Any OIDC-compliant library can auto-configure itself from Passport's discovery endpoint. This is the recommended way to integrate — the document provides all endpoints, supported scopes, signing algorithms, and claims.</p>
+  <pre><code>GET /passport/.well-known/openid-configuration
+Content-Type: application/json
+
+{
+  "issuer": "https://passport.bizfirst.ai",
+  "authorization_endpoint": "https://passport.bizfirst.ai/passport/authorize",
+  "token_endpoint": "https://passport.bizfirst.ai/passport/token",
+  "userinfo_endpoint": "https://passport.bizfirst.ai/passport/userinfo",
+  "jwks_uri": "https://passport.bizfirst.ai/passport/.well-known/jwks.json",
+  "end_session_endpoint": "https://passport.bizfirst.ai/passport/logout",
+  "response_types_supported": ["code", "token", "id_token"],
+  "grant_types_supported": [
+    "authorization_code",
+    "refresh_token",
+    "client_credentials"
+  ],
+  "subject_types_supported": ["public"],
+  "id_token_signing_alg_values_supported": ["RS256"],
+  "scopes_supported": ["openid", "profile", "email", "roles", "tenant"],
+  "claims_supported": [
+    "sub", "iss", "aud", "exp", "iat",
+    "email", "name", "given_name", "family_name",
+    "roles", "tenant_id", "permissions"
+  ],
+  "token_endpoint_auth_methods_supported": [
+    "client_secret_basic",
+    "client_secret_post",
+    "private_key_jwt"
+  ],
+  "code_challenge_methods_supported": ["S256"]
+}</code></pre>
+
+  <h2>Client Registration</h2>
+  <p>Each application that connects to Passport as an OIDC client must be registered. Registration is performed by a Passport administrator via the Admin API or the Passport Admin UI.</p>
+  <pre><code>POST /passport/admin/clients
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "clientId": "myapp-prod",
+  "clientName": "My Application (Production)",
+  "clientSecret": "generated-by-passport",
+  "redirectUris": [
+    "https://myapp.example.com/auth/callback",
+    "https://myapp.example.com/auth/silent-callback"
+  ],
+  "postLogoutRedirectUris": [
+    "https://myapp.example.com/logged-out"
+  ],
+  "allowedScopes": ["openid", "profile", "email", "roles"],
+  "grantTypes": ["authorization_code", "refresh_token"],
+  "requirePkce": true,
+  "accessTokenLifetime": 900,
+  "refreshTokenLifetime": 604800,
+  "tenantId": "tenant-abc"
+}</code></pre>
+
+  <h2>Supported Scopes and Claims</h2>
+  <table>
+    <thead>
+      <tr><th>Scope</th><th>Claims Included</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>openid</code></td><td><code>sub</code>, <code>iss</code>, <code>aud</code>, <code>exp</code>, <code>iat</code></td><td>Required — establishes the OIDC context</td></tr>
+      <tr><td><code>profile</code></td><td><code>name</code>, <code>given_name</code>, <code>family_name</code>, <code>picture</code></td><td>Basic profile info</td></tr>
+      <tr><td><code>email</code></td><td><code>email</code>, <code>email_verified</code></td><td>User's email address and verification status</td></tr>
+      <tr><td><code>roles</code></td><td><code>roles</code> (array)</td><td>Passport roles assigned to the user in this tenant</td></tr>
+      <tr><td><code>tenant</code></td><td><code>tenant_id</code>, <code>tenant_name</code></td><td>Tenant context — required for multi-tenant apps</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Authorization Code Flow with PKCE</h2>
+  <p>This is the recommended flow for web applications and SPAs. PKCE (Proof Key for Code Exchange) prevents authorization code interception attacks.</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Generate PKCE Parameters</h4>
+        <pre><code>// Client generates code_verifier + code_challenge
+const code_verifier = crypto.randomBytes(64).toString('base64url');
+const code_challenge = crypto.createHash('sha256')
+  .update(code_verifier).digest('base64url');</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Authorization Request</h4>
+        <pre><code>GET /passport/authorize
+  ?response_type=code
+  &client_id=myapp-prod
+  &redirect_uri=https://myapp.example.com/auth/callback
+  &scope=openid%20profile%20email%20roles%20tenant
+  &state=random-csrf-state
+  &code_challenge=S256-hashed-verifier
+  &code_challenge_method=S256</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>User Authenticates</h4>
+        <p>Passport presents the login UI. User enters credentials (or uses an existing SSO session). MFA is triggered if required by the client's policy.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Callback with Authorization Code</h4>
+        <pre><code>GET https://myapp.example.com/auth/callback
+  ?code=authorization-code-short-lived
+  &state=random-csrf-state</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Token Exchange</h4>
+        <pre><code>POST /passport/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code
+&code=authorization-code-short-lived
+&redirect_uri=https://myapp.example.com/auth/callback
+&client_id=myapp-prod
+&code_verifier=original-code-verifier</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot muted">6</div></div>
+      <div class="body">
+        <h4>Token Response</h4>
+        <pre><code>{
+  "access_token": "eyJhbGciOiJSUzI1NiJ9...",
+  "id_token": "eyJhbGciOiJSUzI1NiJ9...",
+  "refresh_token": "opaque-refresh-token",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "scope": "openid profile email roles tenant"
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <h2>id_token Structure</h2>
+  <p>The <code>id_token</code> is a signed JWT containing the authenticated user's identity. Verify the signature using Passport's JWKS before trusting the claims.</p>
+  <pre><code>// Header
+{
+  "alg": "RS256",
+  "kid": "signing-key-id-2026",
+  "typ": "JWT"
+}
+
+// Payload
+{
+  "iss": "https://passport.bizfirst.ai",
+  "sub": "user-guid-here",
+  "aud": "myapp-prod",
+  "exp": 1748120400,
+  "iat": 1748119500,
+  "nonce": "random-nonce-from-auth-request",
+  "email": "jane.smith@example.com",
+  "email_verified": true,
+  "name": "Jane Smith",
+  "given_name": "Jane",
+  "family_name": "Smith",
+  "roles": ["manager", "finance-user"],
+  "tenant_id": "tenant-abc",
+  "tenant_name": "Acme Corp"
+}</code></pre>
+
+  <h2>Client Credentials Flow</h2>
+  <p>For service-to-service calls (no user involved), use the client credentials grant. This is how managed identities and background services authenticate.</p>
+  <pre><code>POST /passport/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic base64(clientId:clientSecret)
+
+grant_type=client_credentials
+&scope=openid%20roles
+
+// Response
+{
+  "access_token": "eyJhbGciOiJSUzI1NiJ9...",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Token Lifetimes</strong>
+    <p>Access tokens are short-lived (15 minutes by default). Refresh tokens are valid for 7 days and are rotated on each use — storing the new refresh token after each refresh is mandatory. Configure these values per client registration to match your security requirements.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-saml.html">&#8592; SAML 2.0 Provider</a>
+    <a href="03-application-trust.html">Next: Application Trust &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

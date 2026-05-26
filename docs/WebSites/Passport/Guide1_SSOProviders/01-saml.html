@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAML 2.0 Provider — SSO Providers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Providers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-saml.html" class="active">SAML 2.0 Provider</a>
+  <a href="02-oidc.html">OIDC Provider</a>
+  <a href="03-application-trust.html">Application Trust</a>
+  <a href="04-attribute-mapping.html">Attribute Mapping</a>
+  <a href="05-session-management.html">SSO Session Management</a>
+  <a href="06-mfa.html">MFA in SSO Flows</a>
+  <a href="07-testing.html">Testing SSO Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>SAML 2.0 Provider</h1>
+    <p class="lead">Configure Passport as a SAML 2.0 Identity Provider — publish metadata, configure signing certificates, and map user attributes to SAML assertion statements.</p>
+  </div>
+
+  <h2>SAML Overview in Passport</h2>
+  <p>In the SAML 2.0 protocol, Passport is the <strong>Identity Provider (IdP)</strong> and your enterprise application is the <strong>Service Provider (SP)</strong>. Passport authenticates the user and issues a signed SAML Assertion containing the user's identity and attributes. The SP validates this assertion and establishes a local session.</p>
+
+  <div class="callout info">
+    <strong>Metadata-First Configuration</strong>
+    <p>Always start by exchanging metadata. Give the SP your IdP metadata URL: <code>GET /passport/saml/metadata</code>. Then upload the SP's metadata into Passport. This automates endpoint discovery and certificate exchange.</p>
+  </div>
+
+  <h2>IdP Metadata</h2>
+  <p>Passport publishes a standards-compliant SAML 2.0 metadata document. Provide this URL to your SP's administrator — most enterprise SaaS platforms accept a metadata URL directly.</p>
+  <pre><code>GET /passport/saml/metadata
+Content-Type: application/samlmetadata+xml
+
+&lt;?xml version="1.0"?&gt;
+&lt;EntityDescriptor
+    xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+    entityID="https://passport.bizfirst.ai/saml"&gt;
+  &lt;IDPSSODescriptor
+      WantAuthnRequestsSigned="true"
+      protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"&gt;
+
+    &lt;KeyDescriptor use="signing"&gt;
+      &lt;ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"&gt;
+        &lt;ds:X509Data&gt;
+          &lt;ds:X509Certificate&gt;MIID...base64-encoded-cert...&lt;/ds:X509Certificate&gt;
+        &lt;/ds:X509Data&gt;
+      &lt;/ds:KeyInfo&gt;
+    &lt;/KeyDescriptor&gt;
+
+    &lt;SingleLogoutService
+        Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        Location="https://passport.bizfirst.ai/passport/saml/slo"/&gt;
+
+    &lt;SingleSignOnService
+        Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+        Location="https://passport.bizfirst.ai/sso/provider/{consumerKey}"/&gt;
+
+    &lt;SingleSignOnService
+        Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        Location="https://passport.bizfirst.ai/sso/provider/{consumerKey}"/&gt;
+
+  &lt;/IDPSSODescriptor&gt;
+&lt;/EntityDescriptor&gt;</code></pre>
+
+  <h2>Entity ID and Endpoints</h2>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Value</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Entity ID</td><td><code>https://passport.bizfirst.ai/saml</code></td><td>Register this in your SP as the IdP entity ID</td></tr>
+      <tr><td>SSO URL (POST)</td><td><code>/sso/provider/{consumerKey}</code></td><td>HTTP POST binding — preferred for enterprise apps</td></tr>
+      <tr><td>SSO URL (Redirect)</td><td><code>/sso/provider/{consumerKey}</code></td><td>HTTP Redirect binding — used for IdP-initiated flows</td></tr>
+      <tr><td>SLO URL</td><td><code>/passport/saml/slo</code></td><td>Single Logout endpoint</td></tr>
+      <tr><td>Metadata URL</td><td><code>/passport/saml/metadata</code></td><td>Auto-updating — include in SP configuration</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Signing Certificate</h2>
+  <p>Passport signs all SAML assertions with an RSA-2048 X.509 certificate. The certificate is embedded in the metadata document and is automatically used by SPs that consume the metadata URL. Certificate rotation is supported without downtime.</p>
+
+  <h3>Certificate Rotation (Zero-Downtime)</h3>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Generate New Certificate</h4>
+        <p>In Passport Admin, navigate to <strong>Security &rarr; Signing Certificates &rarr; Generate New</strong>. The new certificate is added to the metadata with <code>use="signing"</code> while the old one remains active.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>SP Picks Up New Certificate</h4>
+        <p>SPs that consume the dynamic metadata URL automatically pick up the new certificate on their next metadata refresh (typically 24 hours). For SPs with static certificate configuration, update them manually.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Switch Primary</h4>
+        <p>After all SPs have updated, promote the new certificate to primary. Passport now signs new assertions with the new key.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Revoke Old Certificate</h4>
+        <p>Once the rotation window has closed (typically 48 hours), revoke the old certificate. It is removed from the metadata document.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>SAML Assertion Structure</h2>
+  <p>A successful authentication produces a signed SAML Assertion. The structure includes:</p>
+  <pre><code>&lt;saml:Assertion
+    xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+    Version="2.0"
+    IssueInstant="2026-05-25T10:00:00Z"
+    ID="_unique-assertion-id"&gt;
+
+  &lt;saml:Issuer&gt;https://passport.bizfirst.ai/saml&lt;/saml:Issuer&gt;
+
+  &lt;ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"&gt;
+    &lt;!-- RSA-SHA256 signature over assertion --&gt;
+  &lt;/ds:Signature&gt;
+
+  &lt;saml:Subject&gt;
+    &lt;saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"&gt;
+      user@example.com
+    &lt;/saml:NameID&gt;
+    &lt;saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"&gt;
+      &lt;saml:SubjectConfirmationData
+          Recipient="https://sp.example.com/saml/acs"
+          NotOnOrAfter="2026-05-25T10:05:00Z"
+          InResponseTo="_original-request-id"/&gt;
+    &lt;/saml:SubjectConfirmation&gt;
+  &lt;/saml:Subject&gt;
+
+  &lt;saml:Conditions NotBefore="2026-05-25T09:59:00Z"
+                   NotOnOrAfter="2026-05-25T10:05:00Z"&gt;
+    &lt;saml:AudienceRestriction&gt;
+      &lt;saml:Audience&gt;https://sp.example.com/saml&lt;/saml:Audience&gt;
+    &lt;/saml:AudienceRestriction&gt;
+  &lt;/saml:Conditions&gt;
+
+  &lt;saml:AttributeStatement&gt;
+    &lt;saml:Attribute Name="email"&gt;
+      &lt;saml:AttributeValue&gt;user@example.com&lt;/saml:AttributeValue&gt;
+    &lt;/saml:Attribute&gt;
+    &lt;saml:Attribute Name="firstName"&gt;
+      &lt;saml:AttributeValue&gt;Jane&lt;/saml:AttributeValue&gt;
+    &lt;/saml:Attribute&gt;
+    &lt;saml:Attribute Name="lastName"&gt;
+      &lt;saml:AttributeValue&gt;Smith&lt;/saml:AttributeValue&gt;
+    &lt;/saml:Attribute&gt;
+    &lt;saml:Attribute Name="roles"&gt;
+      &lt;saml:AttributeValue&gt;manager&lt;/saml:AttributeValue&gt;
+      &lt;saml:AttributeValue&gt;finance-user&lt;/saml:AttributeValue&gt;
+    &lt;/saml:Attribute&gt;
+  &lt;/saml:AttributeStatement&gt;
+
+&lt;/saml:Assertion&gt;</code></pre>
+
+  <h2>NameID Formats</h2>
+  <table>
+    <thead>
+      <tr><th>Format</th><th>Value</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Email Address</td><td><code>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</code></td><td>Default — most SaaS apps expect email as NameID</td></tr>
+      <tr><td>Persistent</td><td><code>urn:oasis:names:tc:SAML:2.0:nameid-format:persistent</code></td><td>Opaque stable identifier — use when email may change</td></tr>
+      <tr><td>Transient</td><td><code>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</code></td><td>Session-only identifier — new value each login</td></tr>
+      <tr><td>Unspecified</td><td><code>urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified</code></td><td>Passport UserId (GUID) — for custom applications</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Assertion Validity Window</strong>
+    <p>SAML assertions are valid for 5 minutes by default (<code>NotOnOrAfter</code>). Ensure clock synchronization (NTP) between Passport and your SP. Clock skew &gt; 60 seconds will cause assertion rejection. The validity window is configurable per consumer registration.</p>
+  </div>
+
+  <h2>Single Logout (SLO)</h2>
+  <p>Passport supports SAML 2.0 SLO. When a user logs out from any SP, Passport receives the SLO request and terminates all active SSO sessions for that user across all connected SPs. Each SP is notified via an SLO request, in parallel, before the Passport session is destroyed.</p>
+
+  <pre><code>// SLO Request Flow
+SP → POST /passport/saml/slo (LogoutRequest, signed)
+Passport → validates signature, finds all active sessions for NameID
+Passport → sends LogoutRequest to each connected SP (parallel)
+Passport → destroys the Passport session
+Passport → returns LogoutResponse to originating SP</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-oidc.html">Next: OIDC Provider &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Octopus_Agents Table — Octopus Database | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Octopus Database</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema.html">Database Schema</a>
+  <a href="02-agent-table.html" class="active">Octopus_Agents Table</a>
+  <a href="03-conversation-table.html">Octopus_Conversations Table</a>
+  <a href="04-episodes-table.html">Octopus_Episodes Table</a>
+  <a href="05-procedures-table.html">Octopus_Procedures Table</a>
+  <a href="06-querying.html">Querying the Database</a>
+  <a href="07-maintenance.html">Database Maintenance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Octopus_Agents Table</h1>
+    <p class="lead">The agent registry table — every AI agent that can run in the Octopus framework must have a record here. This table holds the agent's identity, system prompt, plugin access list, and runtime configuration.</p>
+  </div>
+
+  <h2>Purpose of the Table</h2>
+  <p>Before an Octopus agent can process a conversation, the framework looks up its configuration in <code>Octopus_Agents</code>. This table is the <strong>source of truth for agent identity and capability</strong>. A missing or inactive agent record means no conversations can start for that agent.</p>
+  <p>The table is read-heavy at runtime (agent config is cached in memory after the first load) and write-light (agents are registered and updated infrequently compared to episode writes).</p>
+
+  <h2>Column Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Constraints</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>AgentId</code></td><td>uniqueidentifier</td><td>PK, NOT NULL</td><td>GUID primary key. Generated server-side using <code>NEWSEQUENTIALID()</code> for index-friendly insertion order.</td></tr>
+      <tr><td><code>TenantId</code></td><td>int</td><td>NOT NULL, IX</td><td>Tenant discriminator. Part of every compound index on this table.</td></tr>
+      <tr><td><code>Name</code></td><td>nvarchar(200)</td><td>NOT NULL, UNIQUE(TenantId, Name)</td><td>Human-readable unique name within the tenant. Used in API calls and logs.</td></tr>
+      <tr><td><code>SystemPrompt</code></td><td>nvarchar(max)</td><td>NULL</td><td>The instructional context injected as the first system message of every conversation. Can be multi-paragraph.</td></tr>
+      <tr><td><code>PluginRefs</code></td><td>nvarchar(max)</td><td>NULL</td><td>JSON array of plugin identifiers: <code>["sql-server", "web-driver", "mcp-tools"]</code></td></tr>
+      <tr><td><code>Config</code></td><td>nvarchar(max)</td><td>NULL</td><td>JSON object with model configuration. See Config JSON schema below.</td></tr>
+      <tr><td><code>Version</code></td><td>int</td><td>NOT NULL, DEFAULT 1</td><td>Incremented each time the agent definition is updated. Used for optimistic concurrency and cache invalidation.</td></tr>
+      <tr><td><code>Status</code></td><td>nvarchar(50)</td><td>NOT NULL</td><td>Lifecycle status: <code>Active</code>, <code>Inactive</code>, <code>Draft</code>, <code>Deprecated</code>.</td></tr>
+      <tr><td><code>CreatedAt</code></td><td>datetime2</td><td>NOT NULL</td><td>UTC timestamp of initial registration.</td></tr>
+      <tr><td><code>UpdatedAt</code></td><td>datetime2</td><td>NOT NULL</td><td>UTC timestamp of last modification. Updated by EF Core on every save.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Config JSON Schema</h2>
+  <p>The <code>Config</code> column holds a JSON object that controls how the agent calls the underlying LLM:</p>
+  <pre><code>{
+  "modelId": "gpt-4o",
+  "temperature": 0.7,
+  "maxTokens": 4096,
+  "topP": 1.0,
+  "frequencyPenalty": 0.0,
+  "presencePenalty": 0.0,
+  "contextWindowLimit": 32000,
+  "memoryStrategyId": "sliding-window",
+  "responseFormat": "text"
+}</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Type</th><th>Default</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>modelId</code></td><td>string</td><td>gpt-4o</td><td>The LLM model identifier passed to the AI provider</td></tr>
+      <tr><td><code>temperature</code></td><td>float</td><td>0.7</td><td>Controls response randomness (0 = deterministic, 2 = very random)</td></tr>
+      <tr><td><code>maxTokens</code></td><td>int</td><td>4096</td><td>Maximum tokens in the model response</td></tr>
+      <tr><td><code>contextWindowLimit</code></td><td>int</td><td>32000</td><td>Total token budget for the context window — older episodes are dropped when this limit is approached</td></tr>
+      <tr><td><code>memoryStrategyId</code></td><td>string</td><td>sliding-window</td><td>Which memory retrieval strategy to use: <code>sliding-window</code>, <code>semantic-recall</code>, <code>full-history</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>PluginRefs JSON Schema</h2>
+  <p>The <code>PluginRefs</code> column is a JSON array of plugin identifiers. The Octopus framework resolves these identifiers to registered plugin implementations at agent initialization time:</p>
+  <pre><code>["sql-server", "web-driver", "semantic-kernel", "mcp-brave-search"]</code></pre>
+  <p>Only plugins in this list are available to the agent. If a plugin is listed but not registered in the plugin registry, initialization fails with a descriptive error.</p>
+
+  <h2>Status Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot muted">D</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Draft</h4>
+        <p>Agent is being configured — cannot accept conversations yet. Use this status while iterating on system prompts and plugin selection.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">A</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Active</h4>
+        <p>Agent is live and accepting conversations. The framework will load this agent's config and allow session creation.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">I</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Inactive</h4>
+        <p>Agent is temporarily paused. Existing sessions can complete but no new sessions can be started. Use for maintenance windows.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot" style="background:var(--danger);">X</div></div>
+      <div class="body">
+        <h4>Deprecated</h4>
+        <p>Agent has been superseded by a newer version. Historical records are preserved but no new sessions are permitted. Data is retained for audit purposes.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Common Queries</h2>
+  <pre><code>-- List all active agents for a tenant
+SELECT AgentId, Name, Version, UpdatedAt
+FROM Octopus_Agents
+WHERE TenantId = @tenantId
+  AND Status = 'Active'
+ORDER BY Name;
+
+-- Find agents using a specific plugin
+SELECT AgentId, Name
+FROM Octopus_Agents
+WHERE TenantId = @tenantId
+  AND JSON_QUERY(PluginRefs) LIKE '%sql-server%'
+  AND Status = 'Active';
+
+-- Get full agent config for runtime initialization
+SELECT AgentId, Name, SystemPrompt, PluginRefs, Config, Version
+FROM Octopus_Agents
+WHERE TenantId = @tenantId
+  AND AgentId = @agentId
+  AND Status = 'Active';</code></pre>
+
+  <div class="callout warning">
+    <strong>Cache Invalidation via Version</strong>
+    <p>The Octopus runtime caches agent configuration in memory keyed by <code>(TenantId, AgentId)</code>. When an agent record is updated, the <code>Version</code> column is incremented. The cache checks for version mismatches and reloads the config when a newer version is detected. Always let the application layer update agents — do not update directly in SQL, as the cache will not be notified.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-schema.html">&#8592; Database Schema</a>
+    <a href="03-conversation-table.html">Next: Octopus_Conversations Table &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
