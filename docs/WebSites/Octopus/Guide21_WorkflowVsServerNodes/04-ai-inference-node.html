@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Inference Server Node — Workflow vs Server Nodes | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Workflow vs Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-workflow-mode.html">Workflow Mode</a>
+  <a href="02-server-group-mode.html">Server Group Mode</a>
+  <a href="03-server-node-as-service.html">Server Node as a Service</a>
+  <a href="04-ai-inference-node.html" class="active">AI Inference Server Node</a>
+  <a href="05-decision-framework.html">Decision Framework</a>
+  <a href="06-satellite-nodes.html">Satellite Nodes</a>
+  <a href="07-octopus-as-server-node.html">Octopus as a Server Node</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — AI</div>
+    <h1>AI Inference Server Node</h1>
+    <p class="lead">An AI inference server node hosts a local or self-managed AI model (LLM, embedding model, classifier) as a server group member. Octopus agents and workflows call the inference node over HTTP — the same as any other server group service.</p>
+  </div>
+
+  <h2>Why Run Inference as a Server Node?</h2>
+  <ul>
+    <li><strong>Cold start elimination</strong> — GPU model loading takes 30-120 seconds. A persistent server node loads once and stays warm.</li>
+    <li><strong>Cost control</strong> — Run inference on your own hardware instead of paying per-token to a cloud provider for high-volume workloads.</li>
+    <li><strong>Data sovereignty</strong> — Sensitive prompts never leave your network when using a locally-hosted model.</li>
+    <li><strong>Model versioning</strong> — Deploy a specific model checkpoint and roll it forward on your own schedule, independent of cloud provider updates.</li>
+    <li><strong>Batching</strong> — A persistent server node can batch inference requests across concurrent callers, increasing GPU utilisation.</li>
+  </ul>
+
+  <h2>Common Inference Server Backends</h2>
+  <table>
+    <thead>
+      <tr><th>Backend</th><th>Use Case</th><th>API Surface</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Ollama</td><td>Local LLM inference (Llama, Mistral, Gemma)</td><td>OpenAI-compatible REST API</td></tr>
+      <tr><td>vLLM</td><td>High-throughput LLM serving with PagedAttention</td><td>OpenAI-compatible REST API</td></tr>
+      <tr><td>Triton Inference Server</td><td>NVIDIA GPU inference for any ONNX/TensorRT model</td><td>gRPC + HTTP/2</td></tr>
+      <tr><td>HuggingFace TGI</td><td>Text Generation Inference — streaming LLM output</td><td>OpenAI-compatible REST API</td></tr>
+      <tr><td>LM Studio</td><td>Developer local inference (Windows/Mac)</td><td>OpenAI-compatible REST API</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Wrapping an Inference Backend as a Server Node</h2>
+  <p>Most inference backends expose an OpenAI-compatible API. The simplest server node is a thin proxy that adds health registration and tenant header forwarding:</p>
+
+  <pre><code>// Minimal inference proxy server node
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.Configure&lt;InferenceNodeConfig&gt;(
+    builder.Configuration.GetSection("InferenceNode"));
+builder.Services.AddHttpClient("inference");
+builder.Services.AddSingleton&lt;IServerGroupRegistrar, ServerGroupRegistrar&gt;();
+
+var app = builder.Build();
+
+app.MapGet("/health", async (IHttpClientFactory factory,
+                              IOptions&lt;InferenceNodeConfig&gt; cfg) =&gt;
+{
+    try
+    {
+        var client   = factory.CreateClient("inference");
+        var response = await client.GetAsync($"{cfg.Value.BackendUrl}/health");
+        return response.IsSuccessStatusCode
+            ? Results.Ok(new { status = "ok" })
+            : Results.Json(new { status = "degraded" }, statusCode: 503);
+    }
+    catch
+    {
+        return Results.Json(new { status = "unhealthy" }, statusCode: 503);
+    }
+});
+
+// Proxy inference calls, adding audit headers
+app.MapPost("/infer", async (HttpRequest req,
+                              IHttpClientFactory factory,
+                              IOptions&lt;InferenceNodeConfig&gt; cfg) =&gt;
+{
+    var tenantId  = req.Headers["X-Octopus-Tenant-Id"].FirstOrDefault();
+    var corrId    = req.Headers["X-Octopus-Correlation-Id"].FirstOrDefault();
+
+    var client    = factory.CreateClient("inference");
+    var upstream  = new HttpRequestMessage(HttpMethod.Post,
+                        $"{cfg.Value.BackendUrl}/v1/chat/completions");
+
+    upstream.Headers.TryAddWithoutValidation("X-Tenant-Id",      tenantId ?? "");
+    upstream.Headers.TryAddWithoutValidation("X-Correlation-Id", corrId   ?? "");
+    upstream.Content = new StreamContent(req.Body)
+    {
+        Headers = { ContentType = req.ContentType is null ? null
+                    : new MediaTypeHeaderValue(req.ContentType) }
+    };
+
+    var response = await client.SendAsync(upstream,
+                       HttpCompletionOption.ResponseHeadersRead);
+
+    // Stream the response back (for SSE / token streaming)
+    return Results.Stream(await response.Content.ReadAsStreamAsync(),
+                          contentType: "application/json");
+});
+
+app.Run();</code></pre>
+
+  <h2>GPU Allocation Configuration</h2>
+  <pre><code"># Kubernetes: request GPU resources for the inference server node
+spec:
+  containers:
+  - name: inference-node
+    image: mycompany/inference-proxy:1.0.0
+    resources:
+      limits:
+        nvidia.com/gpu: 1        # Request 1 GPU
+      requests:
+        nvidia.com/gpu: 1
+    env:
+    - name: InferenceNode__BackendUrl
+      value: "http://localhost:11434"   # Ollama sidecar
+    - name: InferenceNode__GroupName
+      value: "inference-cluster"
+
+  # Ollama sidecar — runs the actual model on the GPU
+  - name: ollama
+    image: ollama/ollama:latest
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+    volumeMounts:
+    - name: model-cache
+      mountPath: /root/.ollama</code></pre>
+
+  <h2>Token Streaming from Inference Nodes</h2>
+  <p>For Octopus agents that stream LLM token output to the chatbot UI, the inference node must support SSE streaming. Configure the Octopus LLM provider to point at the server group endpoint with streaming enabled:</p>
+
+  <pre><code>{
+  "OctopusConfig": {
+    "SemanticKernelPlugin": {
+      "LLM": {
+        "Provider":    "CustomEndpoint",
+        "BaseUrl":     "https://server-group.internal/inference-cluster",
+        "ModelId":     "llama3.1:70b",
+        "EnableStream": true
+      }
+    }
+  }
+}</code></pre>
+
+  <h2>Inference Node Capacity Planning</h2>
+  <table>
+    <thead>
+      <tr><th>Model Size</th><th>Min GPU VRAM</th><th>Typical Throughput</th><th>Batching Benefit</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>7B parameters (Q4)</td><td>8 GB</td><td>40-80 tokens/sec</td><td>Moderate</td></tr>
+      <tr><td>13B parameters (Q4)</td><td>12 GB</td><td>25-50 tokens/sec</td><td>Moderate</td></tr>
+      <tr><td>34B parameters (Q4)</td><td>24 GB</td><td>10-20 tokens/sec</td><td>High</td></tr>
+      <tr><td>70B parameters (Q4)</td><td>48 GB (2x GPU)</td><td>5-12 tokens/sec</td><td>High</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>GPU memory is not shared.</strong> Each inference server node claims its GPU VRAM exclusively. If you need to host multiple models, either use separate nodes per model or a multiplexing backend like Ollama (which can swap models on-demand at the cost of cold-start delay).
+  </div>
+
+  <div class="page-nav">
+    <a href="03-server-node-as-service.html">&#8592; Server Node as a Service</a>
+    <a href="05-decision-framework.html">Next: Decision Framework &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

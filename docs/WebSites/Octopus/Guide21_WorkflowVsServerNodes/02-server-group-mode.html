@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Group Mode — Workflow vs Server Nodes | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Workflow vs Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-workflow-mode.html">Workflow Mode</a>
+  <a href="02-server-group-mode.html" class="active">Server Group Mode</a>
+  <a href="03-server-node-as-service.html">Server Node as a Service</a>
+  <a href="04-ai-inference-node.html">AI Inference Server Node</a>
+  <a href="05-decision-framework.html">Decision Framework</a>
+  <a href="06-satellite-nodes.html">Satellite Nodes</a>
+  <a href="07-octopus-as-server-node.html">Octopus as a Server Node</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — Server Groups</div>
+    <h1>Server Group Mode</h1>
+    <p class="lead">In server group mode, an execution node runs as a persistent HTTP service registered in a Server Group. Workflows, agents, and other services call it over HTTP. The server group handles load balancing, health monitoring, and failover — callers just call the group endpoint.</p>
+  </div>
+
+  <h2>What Is a Server Group?</h2>
+  <p>A Server Group is a named set of server node instances that all implement the same HTTP API surface. The process engine routes calls to the group by name; the group's load balancer picks the least-busy healthy instance.</p>
+
+  <pre><code>// Server Group: "inference-cluster"
+//   Instance 1: https://ai-node-01.internal:8080
+//   Instance 2: https://ai-node-02.internal:8080
+//   Instance 3: https://ai-node-03.internal:8080
+
+// Caller (workflow node or Octopus MCP tool) calls the group by name:
+var result = await _serverGroupClient.PostAsync(
+    groupName: "inference-cluster",
+    endpoint:  "/infer",
+    body:      new { prompt = "Summarize the following...", maxTokens = 512 });</code></pre>
+
+  <h2>Registering a Server Node</h2>
+  <pre><code">// POST /api/server-groups/{groupName}/nodes
+{
+  "name":      "ai-node-01",
+  "baseUrl":   "https://ai-node-01.internal:8080",
+  "healthUrl": "https://ai-node-01.internal:8080/health",
+  "weight":    1,
+  "metadata": {
+    "gpu":    "A100",
+    "region": "eastus"
+  }
+}
+
+// Response
+{
+  "nodeId":    "node-abc123",
+  "groupName": "inference-cluster",
+  "status":    "healthy"
+}</code></pre>
+
+  <h2>Health Monitoring and Failover</h2>
+  <p>The Server Group controller polls each node's <code>healthUrl</code> every 15 seconds. A node that fails 3 consecutive checks is marked unhealthy and removed from the routing pool. It is re-admitted automatically when health checks resume passing.</p>
+
+  <table>
+    <thead>
+      <tr><th>Node State</th><th>Routing Behaviour</th><th>Recovery</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Healthy</td><td>Receives new requests according to weight</td><td>—</td></tr>
+      <tr><td>Degraded (1-2 fails)</td><td>Still receives requests; alert raised</td><td>Auto-recover on next passing check</td></tr>
+      <tr><td>Unhealthy (3+ fails)</td><td>Removed from pool; no new requests routed</td><td>Auto-readmit when health passes</td></tr>
+      <tr><td>Draining</td><td>No new requests; existing in-flight requests complete</td><td>Manual — operator removes node</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Load Balancing Strategies</h2>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>Description</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Round Robin</td><td>Requests distributed evenly in order</td><td>Uniform, stateless workloads</td></tr>
+      <tr><td>Weighted Round Robin</td><td>Higher-weight nodes receive proportionally more requests</td><td>Mixed-capacity nodes (different GPU sizes)</td></tr>
+      <tr><td>Least Connections</td><td>Route to the node with fewest active requests</td><td>Variable-duration requests (LLM inference)</td></tr>
+      <tr><td>Sticky Session</td><td>Route the same tenant/session to the same node</td><td>Stateful nodes that cache per-tenant data</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Calling a Server Group from a Workflow Node</h2>
+  <pre><code>// Workflow executor that calls a server group
+public class InferenceWorkflowNodeExecutor : BaseNodeExecutor
+{
+    private readonly IServerGroupClient _serverGroup;
+
+    public InferenceWorkflowNodeExecutor(IServerGroupClient serverGroup)
+        =&gt; _serverGroup = serverGroup;
+
+    public override async Task ExecuteAsync(
+        INodeExecutionContext context,
+        CancellationToken ct)
+    {
+        var prompt    = GetInput&lt;string&gt;(context, "Prompt");
+        var maxTokens = GetInput&lt;int&gt;(context, "MaxTokens");
+
+        var response  = await _serverGroup.PostAsync&lt;InferenceResponse&gt;(
+            groupName: "inference-cluster",
+            endpoint:  "/infer",
+            body:      new { prompt, maxTokens },
+            ct);
+
+        SetOutput(context, "GeneratedText", response.Text);
+        SetOutput(context, "TokensUsed",    response.TokensUsed);
+    }
+}</code></pre>
+
+  <h2>Calling a Server Group from an Octopus MCP Tool</h2>
+  <pre><code>// MCP tool handler that calls a server group
+public async Task&lt;JsonElement&gt; HandleInferAsync(JsonElement args)
+{
+    var prompt    = args.GetProperty("prompt").GetString()!;
+    var maxTokens = args.TryGetProperty("max_tokens", out var mt)
+                        ? mt.GetInt32() : 512;
+
+    var response = await _serverGroupClient.PostAsync&lt;InferenceResponse&gt;(
+        groupName: "inference-cluster",
+        endpoint:  "/infer",
+        body:      new { prompt, maxTokens });
+
+    return JsonSerializer.SerializeToElement(new
+    {
+        generated_text = response.Text,
+        tokens_used    = response.TokensUsed,
+        model          = response.Model
+    });
+}</code></pre>
+
+  <h2>When to Use Server Group Mode</h2>
+  <table>
+    <thead>
+      <tr><th>Use Case</th><th>Reason Server Group Fits</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>AI inference endpoint</td><td>GPU warmup is expensive; keep the model loaded 24/7</td></tr>
+      <tr><td>High-throughput data processing</td><td>Many parallel callers; horizontal scaling via more nodes</td></tr>
+      <tr><td>Shared enterprise service</td><td>Multiple workflows and agents call the same service</td></tr>
+      <tr><td>Independent deployment cadence</td><td>Update the server node without redeploying the Octopus host</td></tr>
+      <tr><td>Multi-region execution</td><td>Register nodes in different regions; route by metadata tag</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-workflow-mode.html">&#8592; Workflow Mode</a>
+    <a href="03-server-node-as-service.html">Next: Server Node as a Service &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

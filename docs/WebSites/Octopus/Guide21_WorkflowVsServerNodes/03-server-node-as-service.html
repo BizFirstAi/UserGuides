@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Node as a Service — Workflow vs Server Nodes | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Workflow vs Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-workflow-mode.html">Workflow Mode</a>
+  <a href="02-server-group-mode.html">Server Group Mode</a>
+  <a href="03-server-node-as-service.html" class="active">Server Node as a Service</a>
+  <a href="04-ai-inference-node.html">AI Inference Server Node</a>
+  <a href="05-decision-framework.html">Decision Framework</a>
+  <a href="06-satellite-nodes.html">Satellite Nodes</a>
+  <a href="07-octopus-as-server-node.html">Octopus as a Server Node</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — Architecture</div>
+    <h1>Server Node as a Powerful Service</h1>
+    <p class="lead">A server node is not just a scaled-out executor — it is a full-featured ASP.NET Core service with its own DI container, database connections, caches, background workers, and API surface. Understanding this distinction unlocks powerful design patterns.</p>
+  </div>
+
+  <h2>What a Server Node Actually Is</h2>
+  <p>A server node is an ordinary ASP.NET Core (or other runtime) web service that:</p>
+  <ul>
+    <li>Implements the Server Group health contract (<code>GET /health</code> returns 200 when ready)</li>
+    <li>Exposes one or more HTTP endpoints that callers invoke</li>
+    <li>Registers itself in the central Server Group registry at startup</li>
+    <li>De-registers itself during graceful shutdown</li>
+  </ul>
+  <p>It carries no other obligation. It can have its own database, its own cache, its own background threads, its own authentication model, its own GPU allocation — anything a normal microservice can have.</p>
+
+  <h2>Self-Registration at Startup</h2>
+  <pre><code>// In your server node's Program.cs
+var builder = WebApplication.CreateBuilder(args);
+// ... register your services ...
+
+var app = builder.Build();
+
+// Standard health endpoint
+app.MapGet("/health", () =&gt; Results.Ok(new { status = "ok" }));
+
+// Your business endpoints
+app.MapPost("/infer", InferenceEndpoint.Handle);
+
+// Register with the central Server Group on startup
+var lifetime = app.Lifetime;
+var registry = app.Services.GetRequiredService&lt;IServerGroupRegistrar&gt;();
+var config   = app.Services.GetRequiredService&lt;IOptions&lt;ServerNodeConfig&gt;&gt;().Value;
+
+lifetime.ApplicationStarted.Register(async () =&gt;
+{
+    await registry.RegisterAsync(new ServerNodeRegistration
+    {
+        GroupName  = config.GroupName,
+        Name       = config.NodeName,
+        BaseUrl    = config.PublicBaseUrl,
+        HealthUrl  = $"{config.PublicBaseUrl}/health",
+        Weight     = config.Weight,
+        Metadata   = config.Metadata
+    });
+});
+
+lifetime.ApplicationStopping.Register(async () =&gt;
+{
+    await registry.DeregisterAsync(config.GroupName, config.NodeName);
+});
+
+app.Run();</code></pre>
+
+  <h2>Common Server Node Patterns</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Warm-Cache Node</h4>
+      <p>Server node pre-loads expensive data at startup (product catalog, ML embeddings) into an in-memory cache. Callers get sub-millisecond responses instead of hitting the database on each request.</p>
+    </div>
+    <div class="card">
+      <h4>Stateful Session Node</h4>
+      <p>Server node maintains per-session state (e.g. active browser sessions via Playwright). Sticky routing directs all calls for a given session to the same node instance.</p>
+    </div>
+    <div class="card">
+      <h4>GPU-Resident Inference Node</h4>
+      <p>Server node loads an AI model onto GPU at startup and holds it there. Removing cold-start latency from every inference call.</p>
+    </div>
+    <div class="card">
+      <h4>Queue-Draining Worker Node</h4>
+      <p>Server node polls a queue (Service Bus, SQS) in the background and exposes a <code>/status</code> endpoint. The workflow checks status rather than blocking.</p>
+    </div>
+  </div>
+
+  <h2>Server Node vs Microservice</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Traditional Microservice</th><th>BizFirstGO Server Node</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Discovery</td><td>Service mesh / DNS</td><td>Server Group registry + process engine routing</td></tr>
+      <tr><td>Health monitoring</td><td>K8s liveness/readiness probes</td><td>Server Group controller polls <code>/health</code></td></tr>
+      <tr><td>Load balancing</td><td>K8s Service / Ingress</td><td>Server Group load balancing strategy</td></tr>
+      <tr><td>Workflow integration</td><td>Custom — caller must know the URL</td><td>Built-in — workflow nodes call by group name</td></tr>
+      <tr><td>Agent tool integration</td><td>Custom MCP adapter</td><td>Register as MCP server pointing at group endpoint</td></tr>
+      <tr><td>Telemetry</td><td>Custom instrumentation</td><td>Server Group adds correlation headers automatically</td></tr>
+    </tbody>
+  </table>
+
+  <h2>High-Throughput Design Patterns</h2>
+
+  <h3>Response Caching</h3>
+  <pre><code>// Cache expensive computation results keyed by input hash
+app.MapPost("/classify", async (ClassifyRequest req, IMemoryCache cache) =&gt;
+{
+    var cacheKey = $"classify:{req.GetHashCode()}";
+
+    if (cache.TryGetValue(cacheKey, out ClassifyResponse? cached))
+        return Results.Ok(cached);
+
+    var result = await classifier.ClassifyAsync(req.Text);
+    cache.Set(cacheKey, result, TimeSpan.FromMinutes(10));
+    return Results.Ok(result);
+});</code></pre>
+
+  <h3>Request Batching</h3>
+  <pre><code">// Buffer individual requests and process in batches
+public class BatchingInferenceService : BackgroundService
+{
+    private readonly Channel&lt;InferenceRequest&gt; _queue =
+        Channel.CreateBounded&lt;InferenceRequest&gt;(
+            new BoundedChannelOptions(1000)
+            { FullMode = BoundedChannelFullMode.Wait });
+
+    public async Task&lt;InferenceResult&gt; EnqueueAsync(
+        InferenceRequest request, CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource&lt;InferenceResult&gt;();
+        request.Completion = tcs;
+        await _queue.Writer.WriteAsync(request, ct);
+        return await tcs.Task;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        var batch = new List&lt;InferenceRequest&gt;(32);
+        while (!ct.IsCancellationRequested)
+        {
+            batch.Clear();
+            // Drain up to 32 requests or wait 50ms
+            var deadline = DateTime.UtcNow.AddMilliseconds(50);
+            while (batch.Count &lt; 32 && DateTime.UtcNow &lt; deadline)
+            {
+                if (_queue.Reader.TryRead(out var req))
+                    batch.Add(req);
+                else
+                    await Task.Delay(5, ct);
+            }
+
+            if (batch.Count == 0) continue;
+
+            var results = await _model.InferBatchAsync(
+                batch.Select(r =&gt; r.Prompt).ToArray(), ct);
+
+            for (int i = 0; i &lt; batch.Count; i++)
+                batch[i].Completion!.SetResult(results[i]);
+        }
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Server node startup time.</strong> The Server Group controller will not route requests to a node until its health check passes. For nodes with long startup times (GPU model loading), configure the readiness probe with a generous <code>initialDelaySeconds</code> so the node is not routed to before it is ready.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-server-group-mode.html">&#8592; Server Group Mode</a>
+    <a href="04-ai-inference-node.html">Next: AI Inference Server Node &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

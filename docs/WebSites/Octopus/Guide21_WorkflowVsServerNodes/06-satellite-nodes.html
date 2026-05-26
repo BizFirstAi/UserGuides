@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Satellite Nodes — Workflow vs Server Nodes | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Workflow vs Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-workflow-mode.html">Workflow Mode</a>
+  <a href="02-server-group-mode.html">Server Group Mode</a>
+  <a href="03-server-node-as-service.html">Server Node as a Service</a>
+  <a href="04-ai-inference-node.html">AI Inference Server Node</a>
+  <a href="05-decision-framework.html">Decision Framework</a>
+  <a href="06-satellite-nodes.html" class="active">Satellite Nodes</a>
+  <a href="07-octopus-as-server-node.html">Octopus as a Server Node</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — Edge</div>
+    <h1>Satellite Nodes</h1>
+    <p class="lead">Satellite nodes are server group members deployed at the network edge — in remote offices, factory floors, retail locations, or IoT gateways. They execute locally, reducing latency and network dependency, while reporting status and results back to the central BizFirstGO server group.</p>
+  </div>
+
+  <h2>What Is a Satellite Node?</h2>
+  <p>A satellite node is a server node that runs in a location physically or logically remote from the central BizFirstGO deployment. It joins the same server group as cloud nodes but is tagged with location metadata so the server group can route calls to the nearest or most appropriate node.</p>
+
+  <pre><code>// Satellite node self-registration at startup
+await registry.RegisterAsync(new ServerNodeRegistration
+{
+    GroupName = "document-processor",
+    Name      = "satellite-london-office-01",
+    BaseUrl   = "https://satellite-london-01.internal:8080",
+    HealthUrl = "https://satellite-london-01.internal:8080/health",
+    Weight    = 1,
+    Metadata  = new Dictionary&lt;string, string&gt;
+    {
+        ["region"]   = "europe",
+        ["location"] = "london-office",
+        ["tier"]     = "satellite"
+    }
+});</code></pre>
+
+  <h2>Topology Diagram</h2>
+  <pre><code>         Central Data Centre
+    ┌────────────────────────────┐
+    │   BizFirstGO Host           │
+    │   Server Group Controller  │
+    │   "document-processor"     │
+    │     ├── cloud-node-01      │
+    │     └── cloud-node-02      │
+    └────────────┬───────────────┘
+                 │  HTTPS (outbound from satellite)
+         ┌───────┴────────┐
+         │                │
+  London Office     Frankfurt Office
+  satellite-lon-01  satellite-fra-01
+  (local network)   (local network)</code></pre>
+
+  <h2>Routing to Satellite Nodes</h2>
+  <p>Use metadata-based routing to direct calls to the geographically appropriate satellite. The server group client accepts a routing hint that filters available nodes by metadata tags before applying the load balancing strategy.</p>
+
+  <pre><code">// Call the nearest satellite for a tenant in the EU
+var result = await _serverGroupClient.PostAsync&lt;ProcessResult&gt;(
+    groupName:   "document-processor",
+    endpoint:    "/process",
+    body:        new { documentId = 12345, tenantId = "tenant-eu" },
+    routingHint: new { region = "europe" });  // only route to EU nodes</code></pre>
+
+  <h2>Connectivity Resilience</h2>
+  <p>Satellite nodes operate over potentially unreliable WAN links. Design them for connectivity resilience:</p>
+
+  <table>
+    <thead>
+      <tr><th>Pattern</th><th>Implementation</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Outbound-only registration</td><td>Satellite calls the registry; registry never initiates to satellite</td><td>Satellite can be behind NAT/firewall</td></tr>
+      <tr><td>Heartbeat re-registration</td><td>Satellite re-registers every 60 seconds</td><td>Recover after central controller restart</td></tr>
+      <tr><td>Local queue buffering</td><td>Accept requests locally; process if cloud unreachable</td><td>Offline operation during WAN outage</td></tr>
+      <tr><td>Result sync on reconnect</td><td>Upload buffered results when connectivity restores</td><td>No data loss during disconnection</td></tr>
+      <tr><td>Graceful degradation</td><td>Serve cached data when upstream unavailable</td><td>Partial functionality during outage</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Offline Operation Pattern</h2>
+  <pre><code">// Satellite document processor with local queue
+public class SatelliteDocumentProcessor
+{
+    private readonly ILocalQueue         _localQueue;
+    private readonly ICentralSyncService _sync;
+    private readonly IDocumentEngine     _engine;
+
+    public async Task&lt;ProcessResult&gt; ProcessAsync(
+        ProcessRequest request, CancellationToken ct)
+    {
+        // Always process locally — no dependency on central server
+        var result = await _engine.ProcessAsync(request.DocumentId, ct);
+
+        // Attempt to sync result to central; queue locally if unavailable
+        var synced = await _sync.TrySyncResultAsync(result, ct);
+        if (!synced)
+        {
+            await _localQueue.EnqueueAsync(result, ct);
+            // Background service will drain queue when connectivity restores
+        }
+
+        return result;
+    }
+}
+
+// Background sync service
+public class LocalQueueSyncService : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+
+            var pending = await _localQueue.GetPendingAsync(batchSize: 50, ct);
+            foreach (var item in pending)
+            {
+                var synced = await _sync.TrySyncResultAsync(item, ct);
+                if (synced)
+                    await _localQueue.AcknowledgeAsync(item.Id, ct);
+            }
+        }
+    }
+}</code></pre>
+
+  <h2>Security Considerations for Satellite Nodes</h2>
+  <table>
+    <thead>
+      <tr><th>Risk</th><th>Mitigation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Satellite node compromised at physical location</td><td>Encrypt local queue at rest; use TPM-backed certificate for mTLS</td></tr>
+      <tr><td>WAN traffic interception</td><td>Mutual TLS between satellite and central; certificate pinning</td></tr>
+      <tr><td>Replay attacks via buffered results</td><td>Include request timestamp + nonce; central validates within a 5-minute window</td></tr>
+      <tr><td>Satellite impersonation</td><td>Per-node certificates issued by internal CA; revoke on decommission</td></tr>
+      <tr><td>Escalation of privilege via local access</td><td>Run satellite service as non-root; separate OS user; no local admin rights</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Satellite vs cloud node mix.</strong> A server group can contain both satellite nodes (edge) and cloud nodes (central) simultaneously. When a satellite is offline, the server group automatically routes to the healthy cloud nodes — providing transparent failover without any caller-side changes.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-decision-framework.html">&#8592; Decision Framework</a>
+    <a href="07-octopus-as-server-node.html">Next: Octopus as a Server Node &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

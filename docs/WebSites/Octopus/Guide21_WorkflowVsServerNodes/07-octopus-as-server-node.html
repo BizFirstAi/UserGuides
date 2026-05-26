@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Octopus as a Server Node — Workflow vs Server Nodes | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Workflow vs Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-workflow-mode.html">Workflow Mode</a>
+  <a href="02-server-group-mode.html">Server Group Mode</a>
+  <a href="03-server-node-as-service.html">Server Node as a Service</a>
+  <a href="04-ai-inference-node.html">AI Inference Server Node</a>
+  <a href="05-decision-framework.html">Decision Framework</a>
+  <a href="06-satellite-nodes.html">Satellite Nodes</a>
+  <a href="07-octopus-as-server-node.html" class="active">Octopus as a Server Node</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — Architecture</div>
+    <h1>Octopus as a Server Node</h1>
+    <p class="lead">The Octopus agent runtime itself can be deployed as a member of a Server Group. This means workflows can invoke Octopus agents as a service — getting AI-powered reasoning and tool-use capabilities as just another HTTP call in their execution pipeline.</p>
+  </div>
+
+  <h2>The Concept</h2>
+  <p>Deploying Octopus as a server node inverts the usual relationship. Normally, Octopus calls workflows via the ProcessPlugin's <code>start_workflow</code> tool. As a server node, workflows call Octopus — treating the agent runtime as a shared AI service.</p>
+
+  <pre><code">┌─────────────────────────────────────────────────────────┐
+│             Flow Studio Workflow                         │
+│                                                          │
+│  [Collect Data] → [Call AI Analysis Server]             │
+│                       (server group: "ai-agents")        │
+│                                ↓                         │
+│                   ┌──────────────────────────┐           │
+│                   │  Octopus Server Node      │           │
+│                   │  Agent: "data-analyst"    │           │
+│                   │  Tools: SQL, Charts, ML   │           │
+│                   │                          │           │
+│                   │  Receives the data, uses │           │
+│                   │  tools, returns analysis │           │
+│                   └──────────────────────────┘           │
+│                                ↓                         │
+│  [Send Report] ← [Generate PDF from Analysis]            │
+└─────────────────────────────────────────────────────────┘</code></pre>
+
+  <h2>Registering Octopus in a Server Group</h2>
+  <p>When the Octopus host registers itself as a server group member, it exposes its agent chat endpoint to the group controller.</p>
+
+  <pre><code>{
+  "OctopusConfig": {
+    "ServerGroup": {
+      "Enabled":    true,
+      "GroupName":  "ai-agents",
+      "NodeName":   "octopus-node-01",
+      "PublicBaseUrl": "https://octopus-01.internal:5000",
+      "Weight":     1,
+      "Metadata": {
+        "tier":    "primary",
+        "region":  "eastus"
+      }
+    }
+  }
+}</code></pre>
+
+  <pre><code>// Octopus server group registration in Program.cs
+if (octopusConfig.ServerGroup.Enabled)
+{
+    var registrar = app.Services.GetRequiredService&lt;IServerGroupRegistrar&gt;();
+    app.Lifetime.ApplicationStarted.Register(async () =&gt;
+    {
+        await registrar.RegisterAsync(new ServerNodeRegistration
+        {
+            GroupName = octopusConfig.ServerGroup.GroupName,
+            Name      = octopusConfig.ServerGroup.NodeName,
+            BaseUrl   = octopusConfig.ServerGroup.PublicBaseUrl,
+            HealthUrl = $"{octopusConfig.ServerGroup.PublicBaseUrl}/health",
+            Weight    = octopusConfig.ServerGroup.Weight,
+            Metadata  = octopusConfig.ServerGroup.Metadata
+        });
+    });
+}</code></pre>
+
+  <h2>Calling Octopus from a Workflow Node</h2>
+  <pre><code>// Workflow node that calls the Octopus AI agent server group
+public class AiAnalysisWorkflowNodeExecutor : BaseNodeExecutor
+{
+    private readonly IServerGroupClient _serverGroup;
+
+    public AiAnalysisWorkflowNodeExecutor(IServerGroupClient serverGroup)
+        =&gt; _serverGroup = serverGroup;
+
+    public override async Task ExecuteAsync(
+        INodeExecutionContext context,
+        CancellationToken ct)
+    {
+        var dataPayload = GetInput&lt;string&gt;(context, "DataJson");
+        var agentId     = GetInput&lt;string&gt;(context, "AgentId");
+
+        // Call the Octopus server group — routes to any healthy Octopus instance
+        var response = await _serverGroup.PostAsync&lt;AgentChatResponse&gt;(
+            groupName: "ai-agents",
+            endpoint:  $"/api/agents/{agentId}/chat",
+            body: new AgentChatRequest
+            {
+                SessionId = context.CorrelationId,
+                Message   = $"Analyse the following data and provide a summary:\n\n{dataPayload}",
+                TenantId  = context.TenantId
+            },
+            ct);
+
+        SetOutput(context, "AnalysisSummary",     response.AssistantMessage);
+        SetOutput(context, "ToolCallsPerformed",  response.ToolCallCount);
+        SetOutput(context, "TokensConsumed",      response.TokensUsed);
+    }
+}</code></pre>
+
+  <h2>Multi-Instance Octopus Deployment</h2>
+  <p>Registering multiple Octopus instances in the same server group provides horizontal scaling for agent workloads. Each instance has its own plugin set, episode store, and LLM connection — but they all serve the same agent definitions stored in the shared SQL database.</p>
+
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Single Octopus Instance</th><th>Octopus Server Group</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Throughput</td><td>Limited to single host capacity</td><td>Linear scaling — add nodes to group</td></tr>
+      <tr><td>Availability</td><td>Single point of failure</td><td>Automatic failover to healthy nodes</td></tr>
+      <tr><td>Agent definitions</td><td>In shared SQL (SqlServerPlugin)</td><td>Shared — all nodes read same database</td></tr>
+      <tr><td>Episode history</td><td>In shared SQL</td><td>Shared — sessions resume on any node</td></tr>
+      <tr><td>Plugin config</td><td>Per-node appsettings.json</td><td>Must be identical across all nodes in the group</td></tr>
+      <tr><td>LLM connections</td><td>Per-node</td><td>Per-node — each instance has its own connection pool</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Session Affinity Considerations</h2>
+  <p>If an agent conversation has multiple turns, all turns must reach the same Octopus node — or the node must be able to reconstruct the session from the shared SQL database. Configure the server group with sticky session routing keyed on the session/episode ID:</p>
+
+  <pre><code>{
+  "ServerGroup": {
+    "GroupName":     "ai-agents",
+    "LoadBalancing": "StickySession",
+    "StickyKey":     "X-Octopus-Session-Id"
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Stateless agents.</strong> If the SqlServerPlugin is enabled and all Octopus nodes share the same SQL database, agents are effectively stateless at the node level — any node can continue any session. In this configuration, use round-robin load balancing for better throughput.
+  </div>
+
+  <h2>Complete Integration Pattern</h2>
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Technology</th><th>Role</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Business Process</td><td>Flow Studio Workflow</td><td>Orchestrates steps, manages state, handles branching</td></tr>
+      <tr><td>AI Reasoning</td><td>Octopus Server Group</td><td>Provides LLM reasoning and tool use as a service</td></tr>
+      <tr><td>Inference</td><td>Inference Server Group</td><td>Hosts the LLM model — called by Octopus nodes</td></tr>
+      <tr><td>Integration</td><td>MCP Tool Server Group</td><td>External system connectors — called by Octopus agents</td></tr>
+      <tr><td>Data</td><td>Shared SQL (SqlServerPlugin)</td><td>Agent definitions, episodes, procedures — shared state</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-satellite-nodes.html">&#8592; Satellite Nodes</a>
+    <a href="index.html">Back to Overview &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
