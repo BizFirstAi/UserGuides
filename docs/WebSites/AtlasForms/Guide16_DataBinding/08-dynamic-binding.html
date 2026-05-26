@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dynamic Binding — Data Binding | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Data Binding</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-binding-object.html">The Binding Object</a>
+  <a href="02-json-source.html">$json Source</a>
+  <a href="03-context-source.html">$context Source</a>
+  <a href="04-path-syntax.html">Path Syntax</a>
+  <a href="05-two-way-binding.html">Two-Way Binding</a>
+  <a href="06-shared-paths.html">Shared Binding Paths</a>
+  <a href="07-transforms.html">Binding Transforms</a>
+  <a href="08-dynamic-binding.html" class="active">Dynamic Binding</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Dynamic Binding</h1>
+    <p class="lead">Dynamic binding allows the path used in a binding to be resolved at runtime from an expression, rather than being a static string in the schema. This is useful when the target path depends on a value chosen earlier in the form — for example, binding to <code>items[{selectedIndex}].price</code>.</p>
+  </div>
+
+  <h2>Dynamic Path Expression</h2>
+  <p>Prefix the path with <code>expr:</code> to signal that it is an expression, not a literal path. The expression is evaluated using the form's current value map:</p>
+  <pre><code>// Static path (always binds to items[0].price):
+"binding": { "source": "$json", "path": "items[0].price" }
+
+// Dynamic path (binds to items[n].price where n comes from another field):
+"binding": {
+  "source": "$json",
+  "path":   "expr:items[values['selected-index']].price"
+}</code></pre>
+
+  <h2>Example — Item Detail Form</h2>
+  <p>A user selects a line item from a grid, then edits its details in a separate panel. The detail fields dynamically bind to the selected item's index:</p>
+  <pre><code>// Form schema (abridged)
+{
+  "controls": [
+    // Hidden field — populated programmatically when user clicks a row
+    {
+      "id":   "selected-index",
+      "type": "hidden",
+      "binding": { "source": "$json", "path": "selectedIndex" }
+    },
+
+    // Detail fields — paths depend on selected-index
+    {
+      "id":    "item-name",
+      "type":  "text",
+      "label": "Item Name",
+      "binding": {
+        "source": "$json",
+        "path":   "expr:items[values['selected-index']].name"
+      }
+    },
+    {
+      "id":    "item-price",
+      "type":  "number",
+      "label": "Unit Price",
+      "binding": {
+        "source": "$json",
+        "path":   "expr:items[values['selected-index']].price"
+      }
+    }
+  ]
+}
+
+// When the user selects row 2:
+engine.setValue('selected-index', 2);
+// item-name now reads from items[2].name
+// item-price now reads from items[2].price</code></pre>
+
+  <h2>Expression Evaluation Rules</h2>
+  <ul>
+    <li>Expressions are evaluated using the same expression engine as <code>visibilityRule</code></li>
+    <li>The expression has access to the <code>values</code> object (current form value map)</li>
+    <li>The expression must evaluate to a valid path string</li>
+    <li>Expressions are re-evaluated whenever the value map changes — the binding path updates reactively</li>
+    <li>If the expression throws or returns a non-string, the path is treated as undefined and the control value is <code>undefined</code></li>
+  </ul>
+
+  <h2>When Not to Use Dynamic Binding</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Better Approach</th></tr></thead>
+    <tbody>
+      <tr><td>The path is always static</td><td>Use a plain <code>path</code> string — simpler and faster</td></tr>
+      <tr><td>You need to show an array of items</td><td>Use a <code>repeater</code> control — designed for this use case</td></tr>
+      <tr><td>The path depends on a server-side value</td><td>Compute the path server-side and pass as a static schema string at load time</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Dynamic Binding Has Performance Overhead</strong>
+    Every change to the value map triggers re-evaluation of all dynamic path expressions. For forms with many dynamic bindings, this can cause extra re-render cycles. Prefer static paths where possible, and use dynamic binding only when the path genuinely cannot be known at schema authoring time.
+  </div>
+
+  <div class="page-nav">
+    <a href="07-transforms.html">&#8592; Binding Transforms</a>
+    <a href="index.html">&#8592; Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

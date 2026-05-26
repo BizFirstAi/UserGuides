@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Packaging and Publishing — Bring MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Bring MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-mcp-protocol.html">MCP Server Protocol</a>
+  <a href="02-tool-schema.html">Defining Tool Schemas</a>
+  <a href="03-minimal-api.html">C# MinimalAPI Server</a>
+  <a href="04-agent-registration.html">Agent Registration</a>
+  <a href="05-authentication.html">Authentication</a>
+  <a href="06-testing.html">Testing MCP Tools</a>
+  <a href="07-packaging.html" class="active">Packaging and Publishing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — MCP</div>
+    <h1>Packaging and Publishing</h1>
+    <p class="lead">Package your MCP tool server as a Docker image for reproducible deployment. This page covers the Dockerfile, Kubernetes health probes, versioning strategy, and how to submit your server to the BizFirstAI community registry.</p>
+  </div>
+
+  <h2>Dockerfile</h2>
+  <pre><code"># ── Build stage ────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+COPY *.csproj ./
+RUN dotnet restore
+
+COPY . .
+RUN dotnet publish -c Release -o /app/publish --no-restore
+
+# ── Runtime stage ───────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+
+# Non-root user for security
+RUN addgroup --system mcp && adduser --system --ingroup mcp mcp
+USER mcp
+
+COPY --from=build /app/publish .
+
+EXPOSE 8080
+
+ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_ENVIRONMENT=Production
+
+ENTRYPOINT ["dotnet", "MyCompany.Octopus.ZendeskMcpServer.dll"]</code></pre>
+
+  <pre><code"># Build and tag
+docker build -t mycompany/zendesk-mcp-server:1.2.0 .
+docker build -t mycompany/zendesk-mcp-server:latest .
+
+# Run locally for testing
+docker run -p 8080:8080 \
+  -e Zendesk__Subdomain=mycompany \
+  -e Zendesk__AdminEmail=admin@mycompany.com \
+  -e Zendesk__CredentialId=50 \
+  -e Auth__Authority=https://... \
+  -e Auth__Audience=api://... \
+  mycompany/zendesk-mcp-server:1.2.0</code></pre>
+
+  <h2>Kubernetes Deployment</h2>
+  <pre><code">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zendesk-mcp-server
+  namespace: octopus-tools
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zendesk-mcp-server
+  template:
+    metadata:
+      labels:
+        app: zendesk-mcp-server
+    spec:
+      containers:
+      - name: server
+        image: mycompany/zendesk-mcp-server:1.2.0
+        ports:
+        - containerPort: 8080
+        env:
+        - name: Zendesk__Subdomain
+          value: "mycompany"
+        - name: Zendesk__AdminEmail
+          value: "admin@mycompany.com"
+        - name: Zendesk__ApiKey
+          valueFrom:
+            secretKeyRef:
+              name: zendesk-mcp-secrets
+              key: api-key
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu:    "100m"
+          limits:
+            memory: "512Mi"
+            cpu:    "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zendesk-mcp-server
+  namespace: octopus-tools
+spec:
+  selector:
+    app: zendesk-mcp-server
+  ports:
+  - port: 443
+    targetPort: 8080
+  type: ClusterIP</code></pre>
+
+  <h2>Versioning Strategy</h2>
+  <table>
+    <thead>
+      <tr><th>Change Type</th><th>Version Bump</th><th>Examples</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>New tool added</td><td>Minor (1.x.0)</td><td>Add <code>zendesk_get_user</code> tool</td></tr>
+      <tr><td>Tool description improved</td><td>Patch (1.x.y)</td><td>Better wording in a description field</td></tr>
+      <tr><td>New optional parameter added</td><td>Minor (1.x.0)</td><td>Add optional <code>max_results</code> to search tool</td></tr>
+      <tr><td>Required parameter added</td><td>Major (x.0.0)</td><td>Existing callers will fail — breaking change</td></tr>
+      <tr><td>Tool renamed or removed</td><td>Major (x.0.0)</td><td>Octopus cached the old name; agents break</td></tr>
+      <tr><td>Response shape changed</td><td>Major (x.0.0)</td><td>LLM-parsed fields disappear or change type</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Tool renames break agents.</strong> If you rename a tool between deployments, any Octopus agent that cached the old name will send calls to a non-existent endpoint until the agent config is refreshed. Use additive changes (new tools, new optional params) to avoid breaking existing agents.
+  </div>
+
+  <h2>Health Check Implementation</h2>
+  <pre><code">// Add deep health check — verify external connectivity
+app.MapGet("/health", async (IZendeskClient zendesk) =&gt;
+{
+    try
+    {
+        // Cheap connectivity check — e.g. list 1 ticket
+        var healthy = await zendesk.PingAsync();
+        return healthy
+            ? Results.Ok(new  { status = "ok",      version = "1.2.0" })
+            : Results.Json(new { status = "degraded",
+                                 reason = "Zendesk API unreachable" },
+                           statusCode: 503);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { status = "unhealthy", error = ex.Message },
+                            statusCode: 503);
+    }
+});</code></pre>
+
+  <h2>Publishing to the Community Registry</h2>
+  <ol>
+    <li>Tag your Docker image with a stable, versioned tag (e.g. <code>mycompany/zendesk-mcp-server:1.2.0</code>)</li>
+    <li>Push to Docker Hub or a public container registry</li>
+    <li>Publish a GitHub repository with:
+      <ul>
+        <li><code>README.md</code> — tools list, configuration reference, getting started</li>
+        <li><code>SECURITY.md</code> — credential handling, tenant isolation description</li>
+        <li><code>docker-compose.yml</code> — local test setup</li>
+      </ul>
+    </li>
+    <li>Open a <strong>Community MCP Server Submission</strong> thread on <a href="https://community.bizfirstai.com" target="_blank">community.bizfirstai.com</a> with:
+      <ul>
+        <li>Server name and purpose</li>
+        <li>Tool list (names and one-line descriptions)</li>
+        <li>Docker image reference</li>
+        <li>Link to source repository</li>
+      </ul>
+    </li>
+    <li>The community team verifies the MCP contract and SECURITY.md, then adds your server to the registry listing.</li>
+  </ol>
+
+  <h2>Production Deployment Checklist</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Item</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>HTTPS enforced — no plain HTTP accepted</td></tr>
+      <tr><td>2</td><td>Bearer token validated on every request (no public endpoints except <code>/health</code>)</td></tr>
+      <tr><td>3</td><td>Secrets loaded from environment variables or secret manager — not baked into image</td></tr>
+      <tr><td>4</td><td>Non-root container user</td></tr>
+      <tr><td>5</td><td>Liveness and readiness probes configured</td></tr>
+      <tr><td>6</td><td>Resource limits set (memory + CPU)</td></tr>
+      <tr><td>7</td><td>Structured JSON logging enabled</td></tr>
+      <tr><td>8</td><td>All tool handlers return structured error JSON — no unhandled exceptions</td></tr>
+      <tr><td>9</td><td>Tenant ID read from <code>X-Octopus-Tenant-Id</code> header and applied to all data access</td></tr>
+      <tr><td>10</td><td>Integration tests pass against the staging external service</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-testing.html">&#8592; Testing MCP Tools</a>
+    <a href="index.html">Back to Overview &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

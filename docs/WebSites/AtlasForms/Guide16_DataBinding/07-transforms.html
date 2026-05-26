@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Binding Transforms — Data Binding | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Data Binding</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-binding-object.html">The Binding Object</a>
+  <a href="02-json-source.html">$json Source</a>
+  <a href="03-context-source.html">$context Source</a>
+  <a href="04-path-syntax.html">Path Syntax</a>
+  <a href="05-two-way-binding.html">Two-Way Binding</a>
+  <a href="06-shared-paths.html">Shared Binding Paths</a>
+  <a href="07-transforms.html" class="active">Binding Transforms</a>
+  <a href="08-dynamic-binding.html">Dynamic Binding</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Binding Transforms</h1>
+    <p class="lead">Transforms are named functions that convert a value between the format stored in the data source and the format displayed in the control. A <code>read</code> transform formats the stored value for display; a <code>write</code> transform parses the displayed value back to the stored format.</p>
+  </div>
+
+  <h2>When to Use Transforms</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>read transform</th><th>write transform</th></tr></thead>
+    <tbody>
+      <tr><td>Date stored as ISO 8601, displayed as locale string</td><td>ISO → locale date</td><td>Locale date → ISO</td></tr>
+      <tr><td>Amount stored in cents, displayed in pounds</td><td>÷ 100</td><td>× 100</td></tr>
+      <tr><td>Boolean stored as 0/1 integer, displayed as Yes/No</td><td>0/1 → false/true</td><td>false/true → 0/1</td></tr>
+      <tr><td>CSV string stored, displayed as array of tags</td><td>split(',')</td><td>join(',')</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Registering a Transform</h2>
+  <pre><code>import { registerBindingTransform } from '@atlas-forms/form-engine-js';
+
+// Register once at application startup
+registerBindingTransform('isoToLocaleDate', (value: string): string =&gt; {
+  if (!value) return '';
+  const date = new Date(value);
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  // e.g. '15 Jan 2026'
+});
+
+registerBindingTransform('localeDateToIso', (value: string): string =&gt; {
+  if (!value) return '';
+  // Parse '15 Jan 2026' → '2026-01-15'
+  const date = new Date(value);
+  return date.toISOString().split('T')[0];
+});
+
+registerBindingTransform('centsToGbp', (value: number): number =&gt; {
+  return typeof value === 'number' ? value / 100 : 0;
+});
+
+registerBindingTransform('gbpToCents', (value: number): number =&gt; {
+  return typeof value === 'number' ? Math.round(value * 100) : 0;
+});</code></pre>
+
+  <h2>Using Transforms in a Schema</h2>
+  <pre><code>// Date field: stored as ISO, displayed as locale date
+{
+  "id":   "contract-start",
+  "type": "date-picker",
+  "label": "Contract Start Date",
+  "binding": {
+    "source": "$json",
+    "path":   "contract.startDate",
+    "transform": {
+      "read":  "isoToLocaleDate",
+      "write": "localeDateToIso"
+    }
+  }
+}
+
+// Amount field: stored in cents, displayed in pounds
+{
+  "id":   "invoice-amount",
+  "type": "number",
+  "label": "Invoice Amount (£)",
+  "binding": {
+    "source": "$json",
+    "path":   "invoice.amountPence",
+    "transform": {
+      "read":  "centsToGbp",
+      "write": "gbpToCents"
+    }
+  }
+}</code></pre>
+
+  <h2>One-Directional Transforms</h2>
+  <p>You can apply only a read transform (display formatting without write-back conversion) or only a write transform:</p>
+  <pre><code>// Read-only display transform: show a code as a human-readable label
+{
+  "binding": {
+    "source": "$json",
+    "path":   "statusCode",
+    "transform": {
+      "read": "statusCodeToLabel"   // write omitted — raw code is saved on submit
+    }
+  }
+}</code></pre>
+
+  <h2>Transform Function Signature</h2>
+  <pre><code>type BindingTransformFn = (value: any) =&gt; any;
+
+// Transforms must be pure functions — no side effects
+// They may receive undefined/null and should handle gracefully
+registerBindingTransform('myTransform', (value) =&gt; {
+  if (value == null) return '';   // Safe null handling
+  return String(value).toUpperCase();
+});</code></pre>
+
+  <div class="callout success">
+    <strong>Register Transforms Early</strong>
+    Transforms are looked up by name at mount time. If a schema references a transform name that has not been registered, the engine logs a warning and skips the transform (the raw value is used). Always register all transforms in your application bootstrap before any forms are rendered.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-shared-paths.html">&#8592; Shared Binding Paths</a>
+    <a href="08-dynamic-binding.html">Next: Dynamic Binding &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

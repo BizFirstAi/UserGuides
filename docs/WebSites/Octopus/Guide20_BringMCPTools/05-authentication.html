@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Authentication — Bring MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Bring MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-mcp-protocol.html">MCP Server Protocol</a>
+  <a href="02-tool-schema.html">Defining Tool Schemas</a>
+  <a href="03-minimal-api.html">C# MinimalAPI Server</a>
+  <a href="04-agent-registration.html">Agent Registration</a>
+  <a href="05-authentication.html" class="active">Authentication</a>
+  <a href="06-testing.html">Testing MCP Tools</a>
+  <a href="07-packaging.html">Packaging and Publishing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — MCP</div>
+    <h1>Authentication</h1>
+    <p class="lead">Octopus authenticates to your external MCP server using a Bearer token resolved at runtime from the credential store via <code>ICredentialResolver</code>. The token is sent on every request — tool discovery and tool calls alike.</p>
+  </div>
+
+  <h2>Authentication Flow</h2>
+  <ol>
+    <li>Operator stores a shared secret (API key or JWT) in the Octopus credential store via the Credentials API</li>
+    <li>The resulting <code>credentialId</code> integer is set in the agent's <code>mcpServers[].credentialId</code> field</li>
+    <li>At agent initialization, Octopus calls <code>ICredentialResolver.GetPasswordAsync(credentialId)</code></li>
+    <li>The resolved secret is sent as <code>Authorization: Bearer {secret}</code> on all requests to the MCP server</li>
+    <li>Your MCP server validates the token on every incoming request</li>
+  </ol>
+
+  <pre><code>// Octopus — how the token is resolved and sent (internal)
+var token = await _credentialResolver.GetPasswordAsync(server.CredentialId);
+var request = new HttpRequestMessage(HttpMethod.Get, $"{server.BaseUrl}/tools");
+request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+var response = await _httpClient.SendAsync(request);</code></pre>
+
+  <h2>Storing the Credential</h2>
+  <pre><code>// POST /api/credentials — store the MCP server's shared secret
+{
+  "name":        "Zendesk MCP Server Token",
+  "description": "Bearer token for the Zendesk MCP tool server",
+  "type":        "ApiKey",
+  "value":       "sk-zendesk-mcp-prod-1234567890abcdef"
+}
+
+// Response
+{
+  "credentialId": 55,   // use this in mcpServers[].credentialId
+  "name":        "Zendesk MCP Server Token"
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Never put the token in appsettings.</strong> The credential value must be stored in the Octopus credential store — not in <code>appsettings.json</code>, environment variables, or source control. The credential store encrypts values at rest.
+  </div>
+
+  <h2>Validating the Token on Your MCP Server (Static API Key)</h2>
+  <p>For servers that use a static API key (not JWT), validate the token using a simple middleware or policy:</p>
+
+  <pre><code">// C# MinimalAPI — static API key validation middleware
+app.Use(async (context, next) =&gt;
+{
+    if (context.Request.Path == "/health")
+    {
+        await next(context);
+        return;
+    }
+
+    var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+    if (authHeader is null || !authHeader.StartsWith("Bearer "))
+    {
+        context.Response.StatusCode = 401;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error   = "unauthorized",
+            message = "Missing or invalid Authorization header."
+        });
+        return;
+    }
+
+    var providedToken = authHeader["Bearer ".Length..].Trim();
+    var expectedToken = context.RequestServices
+                               .GetRequiredService&lt;IConfiguration&gt;()["McpServer:ApiKey"];
+
+    if (!CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(providedToken),
+            Encoding.UTF8.GetBytes(expectedToken ?? "")))
+    {
+        context.Response.StatusCode = 401;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error   = "unauthorized",
+            message = "Invalid token."
+        });
+        return;
+    }
+
+    await next(context);
+});</code></pre>
+
+  <h2>Validating the Token on Your MCP Server (JWT)</h2>
+  <p>If your MCP server is registered as an Azure AD application (recommended for enterprise deployments), validate the JWT using the standard <code>AddJwtBearer</code> middleware:</p>
+
+  <pre><code">// Program.cs
+builder.Services.AddAuthentication("Bearer")
+    .AddJwtBearer("Bearer", options =&gt;
+    {
+        // Azure AD — validates iss, aud, exp, sig
+        options.Authority = "https://login.microsoftonline.com/{tenantId}/v2.0";
+        options.Audience  = "api://my-mcp-server";
+
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer           = true,
+            ValidateAudience         = true,
+            ValidateLifetime         = true,
+            ValidateIssuerSigningKey = true
+        };
+    });
+
+builder.Services.AddAuthorization(options =&gt;
+{
+    // Optional: require a specific scope on tool calls
+    options.AddPolicy("McpToolCaller", policy =&gt;
+        policy.RequireClaim("scp", "MCP.Call"));
+});
+
+// Map endpoints with RequireAuthorization
+app.MapGet("/tools", ...)
+   .RequireAuthorization("McpToolCaller");
+
+app.MapPost("/tool/{name}/call", ...)
+   .RequireAuthorization("McpToolCaller");</code></pre>
+
+  <h2>Authentication Options Comparison</h2>
+  <table>
+    <thead>
+      <tr><th>Option</th><th>Complexity</th><th>Token Rotation</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Static API key</td><td>Low</td><td>Manual (update credential store)</td><td>Internal / single-operator deployments</td></tr>
+      <tr><td>Azure AD JWT (app-to-app)</td><td>Medium</td><td>Automatic (1-hour JWT expiry)</td><td>Enterprise / multi-tenant deployments</td></tr>
+      <tr><td>mTLS (mutual TLS)</td><td>High</td><td>Certificate rotation</td><td>High-security / zero-trust environments</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Rotating Credentials</h2>
+  <p>When you rotate the API key or token on your MCP server, update the Octopus credential store with the new value. Octopus re-reads credentials on each tool-discovery cycle — no agent restart is required for the new token to take effect.</p>
+
+  <pre><code>// PATCH /api/credentials/{credentialId}
+{
+  "value": "sk-zendesk-mcp-prod-NEW-key-abcdef1234"
+}</code></pre>
+
+  <h2>Per-Tenant Token Support</h2>
+  <p>If your MCP server manages multiple tenants and each has its own API key, store a separate credential per tenant and register different MCP server entries per agent:</p>
+
+  <pre><code>// Agent for tenant A
+{
+  "mcpServers": [
+    {
+      "name":         "zendesk",
+      "baseUrl":      "https://mcp-zendesk.internal",
+      "credentialId": 55   // tenant A's Zendesk token
+    }
+  ]
+}
+
+// Agent for tenant B
+{
+  "mcpServers": [
+    {
+      "name":         "zendesk",
+      "baseUrl":      "https://mcp-zendesk.internal",
+      "credentialId": 56   // tenant B's Zendesk token
+    }
+  ]
+}</code></pre>
+
+  <p>On your MCP server, read the <code>X-Octopus-Tenant-Id</code> header to scope the Zendesk API calls to the correct tenant — and validate that the Bearer token is authorised for that tenant ID.</p>
+
+  <div class="page-nav">
+    <a href="04-agent-registration.html">&#8592; Agent Registration</a>
+    <a href="06-testing.html">Next: Testing MCP Tools &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

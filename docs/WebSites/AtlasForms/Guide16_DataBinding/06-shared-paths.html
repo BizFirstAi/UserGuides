@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shared Binding Paths — Data Binding | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Data Binding</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-binding-object.html">The Binding Object</a>
+  <a href="02-json-source.html">$json Source</a>
+  <a href="03-context-source.html">$context Source</a>
+  <a href="04-path-syntax.html">Path Syntax</a>
+  <a href="05-two-way-binding.html">Two-Way Binding</a>
+  <a href="06-shared-paths.html" class="active">Shared Binding Paths</a>
+  <a href="07-transforms.html">Binding Transforms</a>
+  <a href="08-dynamic-binding.html">Dynamic Binding</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Shared Binding Paths</h1>
+    <p class="lead">Two or more controls can bind to the same path in the same source. When the user changes either control, the other reflects the update immediately. This is the foundation of the <em>quick-pick</em> pattern — a shortcut selector that pre-fills a text field.</p>
+  </div>
+
+  <h2>How Shared Paths Work</h2>
+  <p>Both controls read the same initial value on mount. When either control fires a change, the engine updates the shared value in its map and both controls re-render with the new value. The last write wins.</p>
+
+  <h2>Quick-Pick Pattern</h2>
+  <p>A common use case: a free-text input paired with a button group that lets the user quickly select common values without typing:</p>
+  <pre><code>// Schema — two controls sharing the same binding path
+{
+  "controls": [
+    // Button group — quick-pick shortcuts
+    {
+      "id":    "reason-quick-pick",
+      "type":  "button-group",
+      "label": "Common Reasons",
+      "options": [
+        { "value": "Incorrect address",   "label": "Wrong address" },
+        { "value": "Duplicate entry",     "label": "Duplicate" },
+        { "value": "Missing information", "label": "Incomplete" }
+      ],
+      "binding": {
+        "source": "$json",
+        "path":   "rejectionReason"
+      }
+    },
+
+    // Free-text input — manual entry
+    {
+      "id":    "reason-text",
+      "type":  "textarea",
+      "label": "Rejection Reason",
+      "placeholder": "Select above or type a custom reason...",
+      "binding": {
+        "source": "$json",
+        "path":   "rejectionReason"   // ← same path
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>Interaction Flow</h2>
+  <ol>
+    <li>Form loads: both controls read <code>$json.rejectionReason</code> — both show the same initial value</li>
+    <li>User clicks "Duplicate" in the button group: <code>engine.setValue('reason-quick-pick', 'Duplicate entry')</code></li>
+    <li>Engine updates the value map; <code>reason-text</code> re-renders showing "Duplicate entry"</li>
+    <li>User edits the textarea to "Duplicate entry (system error)": <code>engine.setValue('reason-text', 'Duplicate entry (system error)')</code></li>
+    <li>Engine updates the value map; button group re-renders — no button is active (custom value)</li>
+    <li>On submit: <code>values['reason-text']</code> === <code>'Duplicate entry (system error)'</code></li>
+  </ol>
+
+  <h2>Important: Values Are Keyed by Control ID</h2>
+  <p>Even though both controls share the same binding path, they have different control IDs. The value map contains both keys:</p>
+  <pre><code>// After user selects "Duplicate" from the button group:
+engine.getValues() === {
+  'reason-quick-pick': 'Duplicate entry',
+  'reason-text':       'Duplicate entry',
+}
+
+// After user edits the textarea:
+engine.getValues() === {
+  'reason-quick-pick': 'Duplicate entry',       // ← NOT updated (user didn't touch it)
+  'reason-text':       'Duplicate entry (system error)',   // ← updated by user
+}</code></pre>
+
+  <div class="callout">
+    <strong>Submit the Control That Owns the Final Value</strong>
+    When using the quick-pick pattern, your submit handler should read from the textarea (<code>reason-text</code>), not from the button group. The textarea is the "primary" control that the user edited last. Alternatively, use <code>engine.getComputedValue()</code> with an expression that resolves which control was last modified.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-two-way-binding.html">&#8592; Two-Way Binding</a>
+    <a href="07-transforms.html">Next: Binding Transforms &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

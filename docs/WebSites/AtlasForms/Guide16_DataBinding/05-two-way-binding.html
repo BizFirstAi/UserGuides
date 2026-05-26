@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Two-Way Binding — Data Binding | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Data Binding</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-binding-object.html">The Binding Object</a>
+  <a href="02-json-source.html">$json Source</a>
+  <a href="03-context-source.html">$context Source</a>
+  <a href="04-path-syntax.html">Path Syntax</a>
+  <a href="05-two-way-binding.html" class="active">Two-Way Binding</a>
+  <a href="06-shared-paths.html">Shared Binding Paths</a>
+  <a href="07-transforms.html">Binding Transforms</a>
+  <a href="08-dynamic-binding.html">Dynamic Binding</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Two-Way Binding</h1>
+    <p class="lead">By default, every binding in Atlas Forms is two-way: the control reads from the source path on mount, and writes back to the form's value map whenever the user changes the value. The write is not to the original source object — it is to the engine's internal value map, which your submit handler then persists.</p>
+  </div>
+
+  <h2>Read Phase (On Mount)</h2>
+  <pre><code>// 1. initialValues is the $json source:
+const initialValues = {
+  firstName: 'Jane',
+  address: { city: 'London' }
+};
+
+// 2. Engine initialises value map from binding paths:
+// Control 'first-name' has binding { source: '$json', path: 'firstName' }
+//   → engine.getValue('first-name') === 'Jane'
+//
+// Control 'city' has binding { source: '$json', path: 'address.city' }
+//   → engine.getValue('city') === 'London'</code></pre>
+
+  <h2>Write Phase (On User Change)</h2>
+  <pre><code>// 3. User types 'Manchester' in the city field
+
+// ControlRenderer calls:
+setFieldValue('city', 'Manchester')
+
+// Which calls:
+engine.setValue('city', 'Manchester')
+
+// The engine fires the 'change' event with fieldId='city', value='Manchester'
+// FormStateProvider re-renders; useAtlasForm() returns updated values:
+// values['city'] === 'Manchester'
+
+// The original initialValues object is NOT mutated:
+// initialValues.address.city === 'London'  ← still unchanged</code></pre>
+
+  <h2>Submit Phase</h2>
+  <pre><code>// 4. User clicks Submit
+
+// submitForm() runs validation, then calls onSubmit with current values:
+const handleSubmit = async (values: Record&lt;string, any&gt;) =&gt; {
+  // values is the engine's value map — NOT the original initialValues
+  // values['first-name'] === 'Jane'
+  // values['city']       === 'Manchester'  ← updated value
+
+  await api.put('/applicants/42', {
+    firstName: values['first-name'],
+    address: {
+      city: values['city'],
+    }
+  });
+};</code></pre>
+
+  <h2>One-Way Binding (readOnly)</h2>
+  <p>Setting <code>readOnly: true</code> makes the binding one-way — read on mount, but user changes do not update the value map. Use this for display-only fields that should not be submitted:</p>
+  <pre><code>// readOnly binding — shows the value but prevents user writes
+{
+  "id":   "applicant-id",
+  "type": "label",
+  "binding": {
+    "source":   "$json",
+    "path":     "id",
+    "readOnly": true
+  }
+}
+
+// engine.getValue('applicant-id') is set from initialValues.id on mount
+// If the user somehow triggers a change event (e.g., via programmatic setValue),
+// readOnly does NOT prevent the write — it only disables write from user interaction</code></pre>
+
+  <h2>Two-Way Binding Data Flow Summary</h2>
+  <table>
+    <thead><tr><th>Phase</th><th>Direction</th><th>What Happens</th></tr></thead>
+    <tbody>
+      <tr><td>Mount</td><td>Source → Engine</td><td>Engine reads <code>path</code> from <code>source</code>; sets initial value in value map</td></tr>
+      <tr><td>User change</td><td>Engine (internal)</td><td>Engine updates value map; fires change event; React re-renders</td></tr>
+      <tr><td>Submit</td><td>Engine → Handler</td><td><code>onSubmit(values)</code> called with full value map; handler persists</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>The Source Object Is Never Mutated</strong>
+    Atlas Forms never mutates the <code>initialValues</code> object you pass in. It reads from it once on mount, then maintains its own internal copy. This ensures your application state outside the form is not affected by form edits — until you explicitly call <code>onSubmit</code> and persist the new values yourself.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-path-syntax.html">&#8592; Path Syntax</a>
+    <a href="06-shared-paths.html">Next: Shared Binding Paths &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

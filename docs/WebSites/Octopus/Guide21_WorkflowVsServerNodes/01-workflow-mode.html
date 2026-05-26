@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow Mode — Workflow vs Server Nodes | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Workflow vs Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-workflow-mode.html" class="active">Workflow Mode</a>
+  <a href="02-server-group-mode.html">Server Group Mode</a>
+  <a href="03-server-node-as-service.html">Server Node as a Service</a>
+  <a href="04-ai-inference-node.html">AI Inference Server Node</a>
+  <a href="05-decision-framework.html">Decision Framework</a>
+  <a href="06-satellite-nodes.html">Satellite Nodes</a>
+  <a href="07-octopus-as-server-node.html">Octopus as a Server Node</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — Workflow</div>
+    <h1>Workflow Mode</h1>
+    <p class="lead">In workflow mode, an execution node is a step inside a Flow Studio workflow. The process engine creates a node executor instance, passes it the execution context, and calls <code>ExecuteAsync</code>. When the method returns, the node is done and the next step begins.</p>
+  </div>
+
+  <h2>Node Executor Lifecycle</h2>
+  <ol>
+    <li>Flow Studio designer places a node on the canvas and wires its input/output ports</li>
+    <li>Operator triggers the workflow (manually, on a schedule, or via an API event)</li>
+    <li>Process engine resolves the node's executor type from the DI container</li>
+    <li>Process engine calls <code>ExecuteAsync(INodeExecutionContext context)</code></li>
+    <li>Executor reads input data from <code>context.Inputs</code>, performs its work, writes to <code>context.Outputs</code></li>
+    <li>Process engine reads outputs and routes them to the next node in the graph</li>
+    <li>Executor is released (disposed if IDisposable)</li>
+  </ol>
+
+  <h2>BaseNodeExecutor Pattern</h2>
+  <pre><code>public abstract class BaseNodeExecutor : INodeExecutor
+{
+    // Implement in your subclass
+    public abstract Task ExecuteAsync(INodeExecutionContext context,
+                                       CancellationToken cancellationToken);
+
+    // Helpers available to all executors
+    protected T GetInput&lt;T&gt;(INodeExecutionContext ctx, string portName)
+        =&gt; ctx.Inputs.Get&lt;T&gt;(portName);
+
+    protected void SetOutput&lt;T&gt;(INodeExecutionContext ctx, string portName, T value)
+        =&gt; ctx.Outputs.Set(portName, value);
+
+    protected ILogger Logger =&gt; ctx.Logger;
+}
+
+// Example: Invoice approval node
+public class InvoiceApprovalNodeExecutor : BaseNodeExecutor
+{
+    private readonly IInvoiceService _invoices;
+    private readonly IEmailService   _email;
+
+    public InvoiceApprovalNodeExecutor(IInvoiceService invoices,
+                                        IEmailService email)
+    {
+        _invoices = invoices;
+        _email    = email;
+    }
+
+    public override async Task ExecuteAsync(
+        INodeExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        var invoiceId  = GetInput&lt;int&gt;(context, "InvoiceId");
+        var approver   = GetInput&lt;string&gt;(context, "ApproverEmail");
+
+        var invoice    = await _invoices.GetAsync(invoiceId, cancellationToken);
+
+        // Send approval request email
+        await _email.SendApprovalRequestAsync(approver, invoice, cancellationToken);
+
+        // Write decision port — downstream gateway reads this
+        SetOutput(context, "ApprovalRequestSent", true);
+        SetOutput(context, "InvoiceAmount", invoice.TotalAmount);
+    }
+}</code></pre>
+
+  <h2>Input / Output Port Wiring</h2>
+  <p>Ports are declared in the node's JSON descriptor and wired in Flow Studio. The process engine validates that required input ports are connected before the workflow starts.</p>
+
+  <pre><code>// Node descriptor JSON (registered in the node catalogue)
+{
+  "nodeType":    "InvoiceApprovalNode",
+  "displayName": "Invoice Approval Request",
+  "category":    "Finance",
+  "inputPorts": [
+    { "name": "InvoiceId",     "type": "integer", "required": true },
+    { "name": "ApproverEmail", "type": "string",  "required": true }
+  ],
+  "outputPorts": [
+    { "name": "ApprovalRequestSent", "type": "boolean" },
+    { "name": "InvoiceAmount",       "type": "decimal" }
+  ]
+}</code></pre>
+
+  <h2>When to Use Workflow Mode</h2>
+  <table>
+    <thead>
+      <tr><th>Use Case</th><th>Reason Workflow Mode Fits</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Multi-step approval process</td><td>Each step is sequential; state carried in workflow context</td></tr>
+      <tr><td>ETL / data transformation</td><td>Input → transform → output maps naturally to node ports</td></tr>
+      <tr><td>Scheduled report generation</td><td>Triggered once per schedule; no need for a persistent service</td></tr>
+      <tr><td>Conditional branching logic</td><td>Gateway nodes route based on output port values</td></tr>
+      <tr><td>Human-in-the-loop tasks</td><td>Workflow suspends at HIL node; resumes on approval signal</td></tr>
+      <tr><td>Infrequent batch operations</td><td>No value in keeping a server running 24/7 for rare executions</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Workflow Mode Constraints</h2>
+  <table>
+    <thead>
+      <tr><th>Constraint</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>No persistent state between executions</td><td>Each workflow run is independent; shared state goes in a database</td></tr>
+      <tr><td>Execution timeout</td><td>Long-running nodes (hours) must use suspend/resume — not blocking async</td></tr>
+      <tr><td>Single-caller per execution</td><td>A workflow node instance is not shared; no concurrency within the node</td></tr>
+      <tr><td>DI scope is per-execution</td><td>Scoped services (DbContext) are fresh per run — correct behaviour</td></tr>
+      <tr><td>No streaming to caller</td><td>Workflow output is delivered at completion, not incrementally</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Long-running nodes.</strong> If a node performs work that takes more than a few minutes (e.g. waiting for an external event), implement the suspend/resume pattern using the HIL actor mechanism rather than blocking <code>await</code> inside <code>ExecuteAsync</code>.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-server-group-mode.html">Next: Server Group Mode &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Registration — Bring MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Bring MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-mcp-protocol.html">MCP Server Protocol</a>
+  <a href="02-tool-schema.html">Defining Tool Schemas</a>
+  <a href="03-minimal-api.html">C# MinimalAPI Server</a>
+  <a href="04-agent-registration.html" class="active">Agent Registration</a>
+  <a href="05-authentication.html">Authentication</a>
+  <a href="06-testing.html">Testing MCP Tools</a>
+  <a href="07-packaging.html">Packaging and Publishing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — MCP</div>
+    <h1>Agent Registration</h1>
+    <p class="lead">External MCP servers are registered per-agent via the Octopus Agent API. At startup, the agent calls <code>GET /tools</code> on each registered server and merges the discovered tools into its capability set alongside built-in plugin tools.</p>
+  </div>
+
+  <h2>Registration via the Agent API</h2>
+  <p>Use the Octopus Management API to add an external MCP server to an agent. The <code>mcpServers</code> array on the agent record holds one entry per external server.</p>
+
+  <pre><code>// POST /api/agents
+{
+  "name":        "Zendesk Support Agent",
+  "description": "Handles customer support tickets via Zendesk.",
+  "systemPrompt": "You are a support specialist. Use the Zendesk tools to " +
+                  "create, update, and search support tickets on behalf of users.",
+  "llmModel":    "gpt-4o",
+  "mcpServers": [
+    {
+      "name":         "zendesk",
+      "baseUrl":      "https://mcp-zendesk.internal",
+      "credentialId": 55,
+      "timeoutMs":    30000,
+      "enabled":      true
+    }
+  ]
+}</code></pre>
+
+  <h2>mcpServers Registration Fields</h2>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>string</td><td>Yes</td><td>Logical name for the server — used in logs and the UI</td></tr>
+      <tr><td><code>baseUrl</code></td><td>string (uri)</td><td>Yes</td><td>HTTPS base URL of the MCP server (no trailing slash)</td></tr>
+      <tr><td><code>credentialId</code></td><td>integer</td><td>Yes</td><td>ID of the credential containing the Bearer token</td></tr>
+      <tr><td><code>timeoutMs</code></td><td>integer</td><td>No</td><td>Per-tool-call timeout in milliseconds (default: 30000)</td></tr>
+      <tr><td><code>enabled</code></td><td>boolean</td><td>No</td><td>Set to false to disable without removing (default: true)</td></tr>
+      <tr><td><code>toolFilter</code></td><td>string[]</td><td>No</td><td>Allowlist of tool names to expose — omit to expose all</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Tool Discovery Lifecycle</h2>
+  <ol>
+    <li>Agent starts up (or is refreshed via the API)</li>
+    <li>Octopus calls <code>GET {baseUrl}/tools</code> with the resolved Bearer token</li>
+    <li>Discovered tools are merged into the agent's tool registry alongside built-in plugin tools</li>
+    <li>If <code>toolFilter</code> is set, only the listed tool names are registered</li>
+    <li>On each agent conversation turn, the merged tool list is sent to the LLM as function definitions</li>
+    <li>When the LLM calls an external tool, Octopus routes the call to <code>POST {baseUrl}/tool/{name}/call</code></li>
+  </ol>
+
+  <h2>Filtering Tools from a Server</h2>
+  <p>If your MCP server exposes 20 tools but a particular agent only needs 3, use <code>toolFilter</code> to limit what the LLM sees. This reduces prompt token usage and prevents agents from calling tools outside their intended scope.</p>
+
+  <pre><code>{
+  "mcpServers": [
+    {
+      "name":         "zendesk",
+      "baseUrl":      "https://mcp-zendesk.internal",
+      "credentialId": 55,
+      "toolFilter": [
+        "zendesk_create_ticket",
+        "zendesk_search_tickets"
+      ]
+    }
+  ]
+}</code></pre>
+
+  <h2>Registering Multiple External Servers</h2>
+  <p>An agent can connect to multiple MCP servers simultaneously. Tool names must be unique across all registered servers — Octopus rejects registrations that produce naming conflicts.</p>
+
+  <pre><code>{
+  "mcpServers": [
+    {
+      "name":         "zendesk",
+      "baseUrl":      "https://mcp-zendesk.internal",
+      "credentialId": 55
+    },
+    {
+      "name":         "jira",
+      "baseUrl":      "https://mcp-jira.internal",
+      "credentialId": 56
+    },
+    {
+      "name":         "slack",
+      "baseUrl":      "https://mcp-slack.internal",
+      "credentialId": 57
+    }
+  ]
+}</code></pre>
+
+  <h2>Updating Server Registration</h2>
+  <p>To update a server's URL, credential, or timeout — PATCH the agent with the updated <code>mcpServers</code> array. Octopus will re-discover tools from the updated configuration on the next agent turn.</p>
+
+  <pre><code>// PATCH /api/agents/{agentId}
+{
+  "mcpServers": [
+    {
+      "name":         "zendesk",
+      "baseUrl":      "https://mcp-zendesk-v2.internal",  // updated URL
+      "credentialId": 58,                                   // new credential
+      "timeoutMs":    45000
+    }
+  ]
+}</code></pre>
+
+  <h2>Tool Discovery Errors</h2>
+  <table>
+    <thead>
+      <tr><th>Error Condition</th><th>Agent Behavior</th><th>Resolution</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>MCP server unreachable at startup</td><td>Agent starts; external tools unavailable; warning logged</td><td>Fix server URL or network; refresh agent config</td></tr>
+      <tr><td><code>GET /tools</code> returns 401</td><td>Agent starts; external tools unavailable; error logged</td><td>Update credential ID with a valid token</td></tr>
+      <tr><td>Tool name collision with built-in tool</td><td>Registration rejected; error returned from PATCH</td><td>Rename the conflicting tool on your MCP server</td></tr>
+      <tr><td>Invalid JSON Schema in tool definition</td><td>Tool skipped; warning logged per affected tool</td><td>Fix the <code>inputSchema</code> on your server and restart it</td></tr>
+      <tr><td><code>POST /tool/{name}/call</code> times out</td><td>Agent receives timeout error result; LLM notifies user</td><td>Increase <code>timeoutMs</code> or optimize the handler</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Tool count and token cost.</strong> Every registered tool is included in the LLM's system prompt as a function definition. Registering 50+ tools on a single agent significantly increases per-turn token cost and may push the context window past model limits. Use <code>toolFilter</code> to keep each agent's tool set focused.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-minimal-api.html">&#8592; C# MinimalAPI Server</a>
+    <a href="05-authentication.html">Next: Authentication &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

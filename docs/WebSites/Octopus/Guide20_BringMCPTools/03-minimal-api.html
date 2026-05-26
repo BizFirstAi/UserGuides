@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C# MinimalAPI Server — Bring MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Bring MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-mcp-protocol.html">MCP Server Protocol</a>
+  <a href="02-tool-schema.html">Defining Tool Schemas</a>
+  <a href="03-minimal-api.html" class="active">C# MinimalAPI Server</a>
+  <a href="04-agent-registration.html">Agent Registration</a>
+  <a href="05-authentication.html">Authentication</a>
+  <a href="06-testing.html">Testing MCP Tools</a>
+  <a href="07-packaging.html">Packaging and Publishing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — MCP</div>
+    <h1>C# MinimalAPI MCP Server</h1>
+    <p class="lead">This page shows a complete, production-ready MCP tool server using ASP.NET Core MinimalAPI. The pattern uses a tool registry for clean routing, DI for business logic, and bearer-token authentication middleware.</p>
+  </div>
+
+  <h2>Project Structure</h2>
+  <pre><code>MyCompany.Octopus.ZendeskMcpServer/
+├── Program.cs                    // Minimal API host setup
+├── Tools/
+│   ├── IMcpToolHandler.cs        // Handler interface
+│   ├── McpToolRegistry.cs        // Tool registration + routing
+│   ├── ZendeskToolDefinitions.cs // inputSchema definitions
+│   └── ZendeskToolHandler.cs     // Business logic
+├── Services/
+│   └── ZendeskClient.cs          // External API client
+├── Models/
+│   └── ZendeskConfig.cs          // Typed configuration
+└── appsettings.json</code></pre>
+
+  <h2>Program.cs — Host Setup</h2>
+  <pre><code>var builder = WebApplication.CreateBuilder(args);
+
+// Configuration
+builder.Services.Configure&lt;ZendeskConfig&gt;(
+    builder.Configuration.GetSection("Zendesk"));
+
+// DI services
+builder.Services.AddSingleton&lt;IZendeskClient, ZendeskClient&gt;();
+builder.Services.AddSingleton&lt;IMcpToolHandler, ZendeskToolHandler&gt;();
+builder.Services.AddSingleton&lt;McpToolRegistry&gt;();
+
+// Authentication — validate Bearer tokens
+builder.Services.AddAuthentication("Bearer")
+    .AddJwtBearer("Bearer", options =&gt;
+    {
+        options.Authority = builder.Configuration["Auth:Authority"];
+        options.Audience  = builder.Configuration["Auth:Audience"];
+    });
+
+builder.Services.AddAuthorization();
+
+var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+// ── MCP endpoints ──────────────────────────────────────────────
+app.MapGet("/tools", (McpToolRegistry registry) =&gt;
+{
+    return Results.Ok(registry.GetAllDefinitions());
+})
+.RequireAuthorization();
+
+app.MapPost("/tool/{name}/call",
+    async (string name,
+           HttpRequest request,
+           McpToolRegistry registry,
+           CancellationToken ct) =&gt;
+{
+    using var doc  = await JsonDocument.ParseAsync(request.Body, ct);
+    var       args = doc.RootElement;
+
+    var result = await registry.CallAsync(name, args, request.HttpContext, ct);
+    return result is null
+        ? Results.NotFound(new { error = "tool_not_found",
+                                 message = $"No tool named '{name}'" })
+        : Results.Ok(result);
+})
+.RequireAuthorization();
+
+app.MapGet("/health", () =&gt; Results.Ok(new { status = "ok", version = "1.0.0" }));
+
+app.Run();</code></pre>
+
+  <h2>McpToolRegistry — Tool Registration and Routing</h2>
+  <pre><code">public interface IMcpToolHandler
+{
+    IEnumerable&lt;McpToolDefinition&gt; GetDefinitions();
+    bool CanHandle(string toolName);
+    Task&lt;JsonElement?&gt; HandleAsync(string toolName,
+                                    JsonElement args,
+                                    HttpContext ctx,
+                                    CancellationToken ct);
+}
+
+public class McpToolRegistry
+{
+    private readonly IEnumerable&lt;IMcpToolHandler&gt; _handlers;
+
+    public McpToolRegistry(IEnumerable&lt;IMcpToolHandler&gt; handlers)
+        =&gt; _handlers = handlers;
+
+    public IEnumerable&lt;McpToolDefinition&gt; GetAllDefinitions()
+        =&gt; _handlers.SelectMany(h =&gt; h.GetDefinitions());
+
+    public async Task&lt;JsonElement?&gt; CallAsync(
+        string toolName, JsonElement args,
+        HttpContext ctx, CancellationToken ct)
+    {
+        var handler = _handlers.FirstOrDefault(h =&gt; h.CanHandle(toolName));
+        if (handler is null) return null;
+        return await handler.HandleAsync(toolName, args, ctx, ct);
+    }
+}</code></pre>
+
+  <h2>ZendeskToolHandler — Business Logic</h2>
+  <pre><code">public class ZendeskToolHandler : IMcpToolHandler
+{
+    private readonly IZendeskClient _zendesk;
+    private readonly ILogger&lt;ZendeskToolHandler&gt; _logger;
+
+    private static readonly HashSet&lt;string&gt; _supportedTools =
+    [
+        "zendesk_create_ticket",
+        "zendesk_search_tickets",
+        "zendesk_get_ticket"
+    ];
+
+    public ZendeskToolHandler(IZendeskClient zendesk,
+                               ILogger&lt;ZendeskToolHandler&gt; logger)
+    {
+        _zendesk = zendesk;
+        _logger  = logger;
+    }
+
+    public IEnumerable&lt;McpToolDefinition&gt; GetDefinitions()
+        =&gt; ZendeskToolDefinitions.All;
+
+    public bool CanHandle(string toolName)
+        =&gt; _supportedTools.Contains(toolName);
+
+    public async Task&lt;JsonElement?&gt; HandleAsync(
+        string toolName, JsonElement args,
+        HttpContext ctx, CancellationToken ct)
+    {
+        // Read tenant context from Octopus headers
+        var tenantId      = ctx.Request.Headers["X-Octopus-Tenant-Id"]
+                              .FirstOrDefault() ?? "unknown";
+        var correlationId = ctx.Request.Headers["X-Octopus-Correlation-Id"]
+                              .FirstOrDefault();
+
+        using var _ = _logger.BeginScope(new Dictionary&lt;string, object&gt;
+        {
+            ["TenantId"]      = tenantId,
+            ["CorrelationId"] = correlationId ?? "",
+            ["Tool"]          = toolName
+        });
+
+        try
+        {
+            return toolName switch
+            {
+                "zendesk_create_ticket"  =&gt; await CreateTicketAsync(args, tenantId, ct),
+                "zendesk_search_tickets" =&gt; await SearchTicketsAsync(args, tenantId, ct),
+                "zendesk_get_ticket"     =&gt; await GetTicketAsync(args, tenantId, ct),
+                _                        =&gt; null
+            };
+        }
+        catch (ZendeskRateLimitException ex)
+        {
+            _logger.LogWarning(ex, "Zendesk rate limit hit");
+            return JsonSerializer.SerializeToElement(new
+            {
+                error       = "rate_limit",
+                message     = "Zendesk rate limit reached. Please retry in 60 seconds.",
+                retry_after = 60
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unhandled error in tool {Tool}", toolName);
+            return JsonSerializer.SerializeToElement(new
+            {
+                error   = "internal_error",
+                message = "An unexpected error occurred. Please try again."
+            });
+        }
+    }
+
+    private async Task&lt;JsonElement&gt; CreateTicketAsync(
+        JsonElement args, string tenantId, CancellationToken ct)
+    {
+        var subject     = args.GetProperty("subject").GetString()!;
+        var description = args.GetProperty("description").GetString()!;
+        var priority    = args.TryGetProperty("priority", out var p)
+                              ? p.GetString() ?? "normal"
+                              : "normal";
+
+        var ticket = await _zendesk.CreateTicketAsync(tenantId, new CreateTicketRequest
+        {
+            Subject     = subject,
+            Description = description,
+            Priority    = priority
+        }, ct);
+
+        return JsonSerializer.SerializeToElement(new
+        {
+            ticket_id  = ticket.Id,
+            ticket_url = ticket.Url,
+            status     = ticket.Status
+        });
+    }
+
+    private async Task&lt;JsonElement&gt; SearchTicketsAsync(
+        JsonElement args, string tenantId, CancellationToken ct)
+    {
+        var query      = args.GetProperty("query").GetString()!;
+        var statusFilter = args.TryGetProperty("status", out var s)
+                               ? s.GetString()
+                               : null;
+
+        var tickets = await _zendesk.SearchAsync(tenantId, query, statusFilter, ct);
+
+        return JsonSerializer.SerializeToElement(new
+        {
+            count   = tickets.Count,
+            tickets = tickets.Select(t =&gt; new
+            {
+                t.Id, t.Subject, t.Status, t.Priority, t.UpdatedAt
+            })
+        });
+    }
+
+    private async Task&lt;JsonElement&gt; GetTicketAsync(
+        JsonElement args, string tenantId, CancellationToken ct)
+    {
+        var ticketId = args.GetProperty("ticket_id").GetInt32();
+        var ticket   = await _zendesk.GetTicketAsync(tenantId, ticketId, ct);
+
+        if (ticket is null)
+            return JsonSerializer.SerializeToElement(new
+            {
+                error   = "not_found",
+                message = $"Ticket {ticketId} was not found."
+            });
+
+        return JsonSerializer.SerializeToElement(ticket);
+    }
+}</code></pre>
+
+  <h2>Configuration (appsettings.json)</h2>
+  <pre><code>{
+  "Zendesk": {
+    "Subdomain":    "mycompany",
+    "AdminEmail":   "admin@mycompany.com",
+    "CredentialId": 50
+  },
+  "Auth": {
+    "Authority": "https://login.microsoftonline.com/my-tenant-id/v2.0",
+    "Audience":  "api://my-mcp-server"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default":     "Information",
+      "Microsoft":   "Warning"
+    }
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Scoped services.</strong> If any of your tool handlers use scoped DI services (e.g. EF Core DbContext), register <code>IServiceScopeFactory</code> in the handler and create a new scope per tool call. Singleton handlers cannot directly depend on scoped services.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-tool-schema.html">&#8592; Defining Tool Schemas</a>
+    <a href="04-agent-registration.html">Next: Agent Registration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

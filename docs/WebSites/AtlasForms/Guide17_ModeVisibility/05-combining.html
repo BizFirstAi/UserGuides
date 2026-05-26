@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Combining Both Systems — Mode Visibility | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Mode Visibility</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-mode-visibility.html">modeVisibilitySettings</a>
+  <a href="02-default-visibility.html">Default Visibility</a>
+  <a href="03-visibility-rule.html">visibilityRule</a>
+  <a href="04-expression-syntax.html">Expression Syntax</a>
+  <a href="05-combining.html" class="active">Combining Both Systems</a>
+  <a href="06-useFormVisibility.html">useFormVisibility Hook</a>
+  <a href="07-examples.html">Practical Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Combining Both Systems</h1>
+    <p class="lead">A control is visible only when BOTH <code>modeVisibilitySettings</code> and <code>visibilityRule</code> say it is visible. This AND logic lets you create controls that are conditional on field values <em>and</em> restricted to specific modes simultaneously.</p>
+  </div>
+
+  <h2>AND Logic</h2>
+  <pre><code>// A control is shown only when:
+isVisible(control, currentMode, values) =
+  modeVisibilitySettings[currentMode] !== false
+  AND
+  (visibilityRule === undefined OR evaluateExpression(visibilityRule, values) === truthy)</code></pre>
+
+  <h2>Example 1 — Admin-Only Conditional Field</h2>
+  <p>Show an internal fraud-risk note only in admin mode AND only when the risk score exceeds 80:</p>
+  <pre><code>{
+  "id":   "fraud-risk-note",
+  "type": "textarea",
+  "label": "Internal Fraud Note",
+
+  "modeVisibilitySettings": {
+    "edit":    false,
+    "view":    false,
+    "admin":   true,     // ← only in admin mode
+    "design":  false,
+    "preview": false
+  },
+
+  "visibilityRule": "values['risk-score'] > 80"  // ← only when risk is high
+}
+
+// In edit mode:   hidden (modeVisibilitySettings blocks it)
+// In admin mode, risk = 60: hidden (visibilityRule blocks it)
+// In admin mode, risk = 95: VISIBLE (both conditions pass)</code></pre>
+
+  <h2>Example 2 — Preview-Safe Conditional</h2>
+  <p>Show the VAT number field when country is in the EU, but always hide in preview mode (clean preview layout):</p>
+  <pre><code>{
+  "id":   "vat-number",
+  "type": "text",
+  "label": "VAT Number",
+
+  "modeVisibilitySettings": {
+    "preview": false   // hidden in preview regardless of country selection
+  },
+
+  "visibilityRule": "['DE','FR','NL','IT','ES','BE','AT'].includes(values['country'])"
+
+  // In edit mode with country = 'DE': VISIBLE
+  // In edit mode with country = 'US': hidden (visibilityRule)
+  // In preview mode with country = 'DE': hidden (modeVisibilitySettings)
+}</code></pre>
+
+  <h2>Evaluation Order</h2>
+  <p>The engine evaluates <code>modeVisibilitySettings</code> first (it is a simple lookup), then only evaluates the <code>visibilityRule</code> expression if the mode check passes. This avoids unnecessary expression evaluation for hidden-by-mode controls:</p>
+  <pre><code>// Internal evaluation order:
+
+// Step 1: mode check (cheap — no expression evaluation)
+const modeVisible = (control.modeVisibilitySettings?.[currentMode] ?? true);
+if (!modeVisible) return false;   // short-circuit — skip expression evaluation
+
+// Step 2: expression check (only reached if mode check passes)
+if (!control.visibilityRule) return true;
+return evaluateExpression(control.visibilityRule, values);</code></pre>
+
+  <h2>Decision Guide</h2>
+  <table>
+    <thead><tr><th>Requirement</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td>Always visible</td><td>Omit both properties</td></tr>
+      <tr><td>Visible in some modes only</td><td><code>modeVisibilitySettings</code> only</td></tr>
+      <tr><td>Visible when a field has a specific value</td><td><code>visibilityRule</code> only</td></tr>
+      <tr><td>Visible in a specific mode AND when a condition is true</td><td>Both properties combined</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Independent Systems — No Shared State</strong>
+    The two systems are completely independent. <code>modeVisibilitySettings</code> never reads field values, and <code>visibilityRule</code> never checks the current mode. This separation keeps each system simple and predictable — you can reason about them independently and compose them without side effects.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-expression-syntax.html">&#8592; Expression Syntax</a>
+    <a href="06-useFormVisibility.html">Next: useFormVisibility Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

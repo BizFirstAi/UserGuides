@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Testing MCP Tools — Bring MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Bring MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-mcp-protocol.html">MCP Server Protocol</a>
+  <a href="02-tool-schema.html">Defining Tool Schemas</a>
+  <a href="03-minimal-api.html">C# MinimalAPI Server</a>
+  <a href="04-agent-registration.html">Agent Registration</a>
+  <a href="05-authentication.html">Authentication</a>
+  <a href="06-testing.html" class="active">Testing MCP Tools</a>
+  <a href="07-packaging.html">Packaging and Publishing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — MCP</div>
+    <h1>Testing MCP Tools</h1>
+    <p class="lead">A well-tested MCP server verifies the wire contract, handler business logic, error paths, and end-to-end agent behaviour. This page covers unit tests, integration tests, curl examples, and Octopus-level smoke tests.</p>
+  </div>
+
+  <h2>Testing Strategy</h2>
+  <table>
+    <thead>
+      <tr><th>Test Layer</th><th>What It Tests</th><th>Tools</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Unit tests</td><td>Handler logic, error handling, JSON serialization</td><td>xUnit, Moq, FluentAssertions</td></tr>
+      <tr><td>Contract tests</td><td><code>GET /tools</code> schema validity, <code>POST /tool/.../call</code> wire format</td><td>WebApplicationFactory, JsonSchema.Net</td></tr>
+      <tr><td>Integration tests</td><td>Real external API calls (against sandbox)</td><td>xUnit + test Zendesk tenant</td></tr>
+      <tr><td>Curl smoke tests</td><td>Quick manual verification of running server</td><td>curl / HTTPie</td></tr>
+      <tr><td>Agent end-to-end</td><td>Agent calls the tool via Octopus; correct LLM behaviour</td><td>Octopus test agent + staging MCP server</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Unit Testing Tool Handlers</h2>
+  <pre><code>public class ZendeskToolHandlerTests
+{
+    private readonly Mock&lt;IZendeskClient&gt; _zendesk = new();
+    private readonly Mock&lt;ILogger&lt;ZendeskToolHandler&gt;&gt; _logger = new();
+    private ZendeskToolHandler CreateHandler()
+        =&gt; new(_zendesk.Object, _logger.Object);
+
+    [Fact]
+    public async Task CreateTicket_Returns_TicketId_On_Success()
+    {
+        // Arrange
+        _zendesk.Setup(z =&gt; z.CreateTicketAsync(
+                It.IsAny&lt;string&gt;(),
+                It.IsAny&lt;CreateTicketRequest&gt;(),
+                It.IsAny&lt;CancellationToken&gt;()))
+            .ReturnsAsync(new ZendeskTicket
+            {
+                Id  = 12345,
+                Url = "https://mycompany.zendesk.com/tickets/12345",
+                Status = "open"
+            });
+
+        var args = JsonDocument.Parse("""
+        {
+          "subject":     "Cannot log in",
+          "description": "Getting 401 on /auth/login",
+          "priority":    "high"
+        }
+        """).RootElement;
+
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Headers["X-Octopus-Tenant-Id"] = "tenant-abc";
+
+        var handler = CreateHandler();
+
+        // Act
+        var result = await handler.HandleAsync(
+            "zendesk_create_ticket", args, ctx, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Value.GetProperty("ticket_id").GetInt32().Should().Be(12345);
+        result.Value.GetProperty("status").GetString().Should().Be("open");
+    }
+
+    [Fact]
+    public async Task CreateTicket_Returns_Error_On_RateLimit()
+    {
+        _zendesk.Setup(z =&gt; z.CreateTicketAsync(
+                It.IsAny&lt;string&gt;(),
+                It.IsAny&lt;CreateTicketRequest&gt;(),
+                It.IsAny&lt;CancellationToken&gt;()))
+            .ThrowsAsync(new ZendeskRateLimitException());
+
+        var args = JsonDocument.Parse("""
+        { "subject": "Test", "description": "Test" }
+        """).RootElement;
+
+        var handler = CreateHandler();
+        var result = await handler.HandleAsync(
+            "zendesk_create_ticket", args, new DefaultHttpContext(), CancellationToken.None);
+
+        result!.Value.GetProperty("error").GetString().Should().Be("rate_limit");
+        result.Value.GetProperty("retry_after").GetInt32().Should().BePositive();
+    }
+}</code></pre>
+
+  <h2>Contract Testing the Wire Format</h2>
+  <pre><code">public class McpContractTests : IClassFixture&lt;WebApplicationFactory&lt;Program&gt;&gt;
+{
+    private readonly HttpClient _client;
+
+    public McpContractTests(WebApplicationFactory&lt;Program&gt; factory)
+    {
+        _client = factory.CreateClient();
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", "test-token");
+    }
+
+    [Fact]
+    public async Task GET_tools_Returns_Valid_ToolDescriptors()
+    {
+        var response = await _client.GetAsync("/tools");
+        response.EnsureSuccessStatusCode();
+
+        var body    = await response.Content.ReadAsStringAsync();
+        var tools   = JsonSerializer.Deserialize&lt;JsonElement[]&gt;(body)!;
+
+        tools.Should().NotBeEmpty();
+
+        foreach (var tool in tools)
+        {
+            // Every tool must have name, description, inputSchema
+            tool.GetProperty("name").GetString().Should().NotBeNullOrEmpty();
+            tool.GetProperty("description").GetString().Should().NotBeNullOrEmpty();
+            tool.TryGetProperty("inputSchema", out _).Should().BeTrue();
+
+            // inputSchema must be a valid object type
+            var schema = tool.GetProperty("inputSchema");
+            schema.GetProperty("type").GetString().Should().Be("object");
+            schema.TryGetProperty("properties", out _).Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task POST_tool_call_Returns_200_With_Result_Object()
+    {
+        var payload = JsonContent.Create(new
+        {
+            subject     = "Integration test ticket",
+            description = "Created by contract test",
+            priority    = "low"
+        });
+
+        var response = await _client.PostAsync(
+            "/tool/zendesk_create_ticket/call", payload);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body   = await response.Content.ReadAsStringAsync();
+        var result = JsonSerializer.Deserialize&lt;JsonElement&gt;(body);
+
+        // Either success with ticket_id, or a structured error — never an exception
+        var hasTicketId = result.TryGetProperty("ticket_id", out _);
+        var hasError    = result.TryGetProperty("error", out _);
+
+        (hasTicketId || hasError).Should().BeTrue("result must have ticket_id or error");
+    }
+
+    [Fact]
+    public async Task POST_unknown_tool_Returns_404()
+    {
+        var response = await _client.PostAsync(
+            "/tool/does_not_exist/call",
+            JsonContent.Create(new { }));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}</code></pre>
+
+  <h2>Curl Smoke Tests</h2>
+  <pre><code"># 1. Health check
+curl -s https://mcp-zendesk.internal/health
+# Expected: {"status":"ok","version":"1.0.0"}
+
+# 2. Discover tools
+curl -s -H "Authorization: Bearer $TOKEN" \
+     https://mcp-zendesk.internal/tools | jq '.[].name'
+# Expected: ["zendesk_create_ticket","zendesk_search_tickets","zendesk_get_ticket"]
+
+# 3. Call a tool
+curl -s -X POST \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -H "X-Octopus-Tenant-Id: tenant-abc" \
+     -d '{"subject":"Test","description":"Curl test","priority":"low"}' \
+     https://mcp-zendesk.internal/tool/zendesk_create_ticket/call
+# Expected: {"ticket_id":12346,"ticket_url":"...","status":"open"}
+
+# 4. Verify auth enforcement
+curl -s https://mcp-zendesk.internal/tools
+# Expected: HTTP 401 {"error":"unauthorized","message":"..."}</code></pre>
+
+  <h2>Common Test Failure Patterns</h2>
+  <table>
+    <thead>
+      <tr><th>Failure</th><th>Root Cause</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>GET /tools</code> returns empty array</td><td>No <code>IMcpToolHandler</code> registered in DI</td><td>Register handler in <code>AddSingleton&lt;IMcpToolHandler, ...&gt;()</code></td></tr>
+      <tr><td>Tool call returns 404</td><td><code>CanHandle</code> returns false for the tool name</td><td>Check the tool name matches exactly (case-sensitive)</td></tr>
+      <tr><td>JSON deserialization fails in handler</td><td>Missing property accessed with <code>GetProperty</code> (not <code>TryGetProperty</code>)</td><td>Use <code>TryGetProperty</code> for optional fields</td></tr>
+      <tr><td>Auth test passes without token</td><td>Auth middleware not applied to the test route</td><td>Add <code>.RequireAuthorization()</code> to the endpoint</td></tr>
+      <tr><td>Integration test hits production API</td><td>Test environment config points to production</td><td>Use a test credential and Zendesk sandbox tenant</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-authentication.html">&#8592; Authentication</a>
+    <a href="07-packaging.html">Next: Packaging and Publishing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
