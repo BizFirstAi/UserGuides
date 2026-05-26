@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SK Memory Integration — Semantic Kernel Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Kernel Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-llm-routing.html">LLM Routing via SK</a>
+  <a href="03-planner.html">SK Planner Integration</a>
+  <a href="04-sk-skills.html">Using SK Skills</a>
+  <a href="05-native-functions.html">Native Functions</a>
+  <a href="06-memory-integration.html" class="active">SK Memory Integration</a>
+  <a href="07-limitations.html">Limitations and Trade-offs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>SK Memory Integration</h1>
+    <p class="lead">When <code>BridgeToOctopusStore</code> is enabled, SK memory calls are routed through the Octopus <code>ISemanticMemoryStore</code>, so both SK and Octopus share a single vector store (Qdrant or PGVector) without duplication.</p>
+  </div>
+
+  <h2>The Memory Bridge</h2>
+  <p>By default, SK uses its own memory abstraction (<code>ISemanticTextMemory</code>). The bridge replaces SK's default memory implementation with an adapter that delegates to Octopus's <code>ISemanticMemoryStore</code>:</p>
+  <pre><code>// OctopusSKMemoryAdapter — implements SK's ISemanticTextMemory
+// delegating all calls to Octopus ISemanticMemoryStore
+public class OctopusSKMemoryAdapter : ISemanticTextMemory
+{
+    private readonly ISemanticMemoryStore    _octopusStore;
+    private readonly IEmbeddingProvider      _embeddingProvider;
+    private readonly string                  _collectionPrefix;
+
+    public OctopusSKMemoryAdapter(
+        ISemanticMemoryStore    octopusStore,
+        IEmbeddingProvider      embeddingProvider,
+        IOptions&lt;SemanticKernelPluginConfig&gt; config)
+    {
+        _octopusStore      = octopusStore;
+        _embeddingProvider = embeddingProvider;
+        _collectionPrefix  = config.Value.Memory.CollectionPrefix;
+    }
+
+    public async Task&lt;string&gt; SaveInformationAsync(
+        string collection, string text, string id,
+        string? description = null, string? additionalMetadata = null,
+        CancellationToken cancellationToken = default)
+    {
+        var embedding = await _embeddingProvider.EmbedAsync(text, cancellationToken);
+        var prefixedCollection = $"{_collectionPrefix}{collection}";
+
+        await _octopusStore.UpsertAsync(prefixedCollection, new SemanticPoint
+        {
+            Id        = id,
+            Embedding = embedding,
+            Payload   = new { text, description, additionalMetadata }
+        }, cancellationToken);
+
+        return id;
+    }
+
+    public async Task&lt;MemoryQueryResult?&gt; GetAsync(
+        string collection, string key, bool withEmbedding = false,
+        CancellationToken cancellationToken = default)
+    {
+        var prefixedCollection = $"{_collectionPrefix}{collection}";
+        var point = await _octopusStore.GetByIdAsync(prefixedCollection, key, cancellationToken);
+        return point is null ? null : MapToSKResult(point);
+    }
+
+    public async IAsyncEnumerable&lt;MemoryQueryResult&gt; SearchAsync(
+        string collection, string query, int limit = 1, double minRelevanceScore = 0.7,
+        bool withEmbeddings = false,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var queryEmbedding     = await _embeddingProvider.EmbedAsync(query, cancellationToken);
+        var prefixedCollection = $"{_collectionPrefix}{collection}";
+
+        var results = await _octopusStore.SearchAsync(
+            prefixedCollection, queryEmbedding, limit, (float)minRelevanceScore, cancellationToken);
+
+        foreach (var result in results)
+            yield return MapToSKResult(result);
+    }
+}</code></pre>
+
+  <h2>Collection Naming with Prefix</h2>
+  <p>SK memory calls use the <code>CollectionPrefix</code> to namespace SK collections within the shared vector store, preventing collisions with Octopus-managed collections:</p>
+  <table>
+    <thead>
+      <tr><th>SK collection name</th><th>Actual Qdrant/PGVector collection</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>hr_policies</code></td><td><code>sk_hr_policies</code></td></tr>
+      <tr><td><code>product_docs</code></td><td><code>sk_product_docs</code></td></tr>
+      <tr><td><code>tenant_abc_knowledge</code></td><td><code>sk_tenant_abc_knowledge</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Bridge Configuration</h2>
+  <pre><code>{
+  "SemanticKernelPlugin": {
+    "Memory": {
+      "BridgeToOctopusStore": true,
+      "CollectionPrefix":      "sk_"
+    }
+  }
+}</code></pre>
+  <p>When <code>BridgeToOctopusStore</code> is false, SK uses its own separate memory store. This is useful when SK needs a completely isolated vector store independent of Octopus semantic memory.</p>
+
+  <div class="callout info">
+    <strong>Single embedding model.</strong> With the bridge enabled, SK memory and Octopus semantic memory both use the same <code>IEmbeddingProvider</code>. This ensures vectors are compatible for cross-system searches, and avoids running two separate embedding models.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-native-functions.html">&#8592; Native Functions</a>
+    <a href="07-limitations.html">Next: Limitations and Trade-offs &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

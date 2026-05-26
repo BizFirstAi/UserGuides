@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backend Executor Overview — Flow Studio | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Backend Executor Overview</h1>
+    <p class="lead">Every node type in Flow Studio has a corresponding backend executor — a C# class that runs when the workflow engine reaches that node. Executors implement <code>IProcessElementExecution</code> and are discovered at startup via the <code>ExecutorRegistry</code>.</p>
+  </div>
+
+  <h2>What an Executor Does</h2>
+  <p>The process engine calls the executor's <code>ExecuteAsync</code> method with a <code>NodeExecutionContext</code> containing everything the executor needs: the node's configuration, upstream output data, tenant identity, and a cancellation token. The executor performs its work and returns a <code>NodeExecutionResult</code> indicating which output port to follow next.</p>
+
+  <h2>Where Executors Live</h2>
+  <table>
+    <thead><tr><th>Category</th><th>Project Path</th></tr></thead>
+    <tbody>
+      <tr><td>Core (built-in logic)</td><td><code>ExecutionNodes/Core/BizFirst.Ai.ExecutionNodes.Core/</code></td></tr>
+      <tr><td>Standard integrations</td><td><code>ExecutionNodes/Standard/*/</code></td></tr>
+      <tr><td>Social integrations</td><td><code>ExecutionNodes/Social/*/</code></td></tr>
+      <tr><td>Enterprise integrations</td><td><code>ExecutionNodes/Enterprise/*/</code></td></tr>
+      <tr><td>AI execution nodes</td><td><code>ExecutionNodes/Ai/*/</code></td></tr>
+      <tr><td>Custom (your node)</td><td><code>ExecutionNodes/Custom/*/</code> (new project per node family)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Executor Pipeline Stages</h2>
+  <p><code>BaseNodeExecutor</code> runs every executor through a multi-stage pipeline before calling your <code>ExecuteInternalAsync</code>:</p>
+  <ol>
+    <li><strong>Entry</strong> — load node definition and context</li>
+    <li><strong>EntryValidate</strong> — parse and validate configuration</li>
+    <li><strong>PreGuardRails</strong> — run pre-execution guard rails (rate limit, quota)</li>
+    <li><strong>PreProcess</strong> — HIL check; suspension if waiting for approval</li>
+    <li><strong>Process</strong> — calls <code>ExecuteInternalAsync</code> (your code)</li>
+    <li><strong>PostProcess</strong> — post-execution hooks</li>
+    <li><strong>PostGuardRails</strong> — content policy, output validation</li>
+    <li><strong>Exit</strong> — emit SignalR event, persist result</li>
+    <li><strong>Error</strong> — called if any stage throws</li>
+  </ol>
+  <p>You only implement stage 5. The base class handles all others.</p>
+
+  <h2>Three-File Structure</h2>
+  <p>Each executor typically splits across three files following the single-responsibility principle:</p>
+  <table>
+    <thead><tr><th>File</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td><code>MyNodeExecutor.cs</code></td><td>Class declaration, <code>NodeTypeName</code> const, constructor, <code>ExecuteInternalAsync</code> routing</td></tr>
+      <tr><td><code>MyNodeExecutor.Config.cs</code></td><td><code>CreateExecutorSettings()</code> override, settings property accessor</td></tr>
+      <tr><td><code>MyNodeSettings.cs</code></td><td>Settings class extending <code>BaseNodeExecutorSettings</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Key Source Locations</h2>
+  <table>
+    <thead><tr><th>Component</th><th>File</th></tr></thead>
+    <tbody>
+      <tr><td><code>IProcessElementExecution</code></td><td><code>ProcessEngine/Domain/Node/Interfaces/IProcessElementExecution.cs</code></td></tr>
+      <tr><td><code>BaseNodeExecutor</code></td><td><code>ProcessEngine/Service/Services/Executor/Service/Base/Executor/BaseNodeExecutor.cs</code></td></tr>
+      <tr><td><code>NodeExecutionContext</code></td><td><code>ProcessEngine/Domain/Execution/NodeExecutionContext.cs</code></td></tr>
+      <tr><td><code>NodeExecutionResult</code></td><td><code>ProcessEngine/Domain/Execution/Context/ExecutionResult/NodeExecutionResult.cs</code></td></tr>
+      <tr><td><code>BaseNodeExecutorSettings</code></td><td><code>ProcessEngine/Domain/Node/Configuration/Settings/Base/BaseNodeExecutorSettings.cs</code></td></tr>
+      <tr><td>Registration example</td><td><code>ExecutionNodes/Core/Dependency/CoreExecutorDependency.cs</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="../Guide13_BringYourOwnNodes/07-checklist.html">&#8592; Guide 13: Bring Your Own Nodes</a>
+    <a href="01-interface.html">Next: IProcessElementExecution &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

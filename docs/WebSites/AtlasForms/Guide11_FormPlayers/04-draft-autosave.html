@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Draft Auto-Save — Form Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-props.html">FormRenderer Props</a>
+  <a href="02-operating-modes.html">Operating Modes</a>
+  <a href="03-rendering-pipeline.html">Rendering Pipeline</a>
+  <a href="04-draft-autosave.html" class="active">Draft Auto-Save</a>
+  <a href="05-theming.html">Theming</a>
+  <a href="06-viewmode-renderer.html">ViewModeRenderer</a>
+  <a href="07-page-player.html">FormPlayerPage</a>
+  <a href="08-hooks.html">Player State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Draft Auto-Save</h1>
+    <p class="lead">Atlas Forms automatically saves form state to local storage as the user types, with a 500ms debounce. When the user returns to the form after a navigation, crash, or session close, they are offered the option to restore their in-progress data from the draft. The draft is cleared on successful submission.</p>
+  </div>
+
+  <h2>How It Works</h2>
+  <ol>
+    <li>On every field change, the <code>FormEngine</code> fires a <code>change</code> event.</li>
+    <li>The draft system listens to this event with a 500ms debounce.</li>
+    <li>After 500ms of inactivity, it serialises the current form values to JSON.</li>
+    <li>The JSON is saved via <code>StorageManager</code> which uses a fallback chain: <strong>localStorage → IndexedDB → memory</strong>.</li>
+    <li>The storage key is <code>atlas-forms-draft:{draftKey}</code> where <code>draftKey</code> defaults to the form's ID.</li>
+    <li>On form mount, if a draft exists for this key, the player shows a "Restore draft?" prompt.</li>
+    <li>On successful submit, the draft is deleted from storage.</li>
+  </ol>
+
+  <h2>StorageManager Fallback Chain</h2>
+  <pre><code>// packages/storage-js/src/StorageManager.ts
+
+class StorageManager {
+  async save(key: string, value: any): Promise&lt;void&gt; {
+    const json = JSON.stringify(value);
+    try {
+      localStorage.setItem(key, json);
+    } catch (localStorageError) {
+      // localStorage full or unavailable — try IndexedDB
+      try {
+        await this.idb.put(key, json);
+      } catch (idbError) {
+        // IndexedDB unavailable — fall back to in-memory map
+        this.memoryStore.set(key, json);
+      }
+    }
+  }
+}</code></pre>
+
+  <h2>Draft Restore Prompt</h2>
+  <p>When a draft is found on form mount, <code>FormPlayerPage</code> and <code>FormRenderer</code> show a non-intrusive banner at the top of the form:</p>
+  <pre><code>// Conceptual prompt behaviour (handled internally)
+"You have unsaved changes from [timestamp]. Would you like to restore them?"
+[Restore Draft]   [Start Fresh]
+
+// "Restore Draft" → initialValues are replaced with the saved draft values
+// "Start Fresh" → draft is deleted; form initialises with the provided initialValues</code></pre>
+
+  <h2>Configuring Draft Behaviour</h2>
+  <pre><code>// Disable draft saving entirely
+&lt;FormRenderer draftEnabled={false} /&gt;
+
+// Custom draft key — use when multiple form instances exist on the same page
+&lt;FormRenderer
+  draftKey={`onboarding-${userId}-step-${stepNumber}`}
+/&gt;
+
+// For single-submission forms where draft restore would be confusing,
+// clear any existing draft on mount:
+useEffect(() =&gt; {
+  storageManager.delete(`atlas-forms-draft:${formId}`);
+}, [formId]);</code></pre>
+
+  <h2>Draft Storage Size</h2>
+  <p>Draft data is the serialised form values — typically a few KB for most forms. Forms with large binary fields (file uploads, json-editor with large objects) should use custom <code>draftKey</code> strategies and may need to exclude large fields from draft saving:</p>
+  <pre><code>// Exclude file upload fields from draft by using a custom serialiser
+// (advanced — requires a custom FormStateProvider setup)
+const draftSerializer = (values: Record&lt;string, any&gt;) =&gt; {
+  const { 'file-upload-field': _, ...saveable } = values;
+  return saveable;
+};</code></pre>
+
+  <h2>Draft Lifecycle Events</h2>
+  <table>
+    <thead><tr><th>Event</th><th>When Fired</th></tr></thead>
+    <tbody>
+      <tr><td><code>draft:saved</code></td><td>After each debounced auto-save completes</td></tr>
+      <tr><td><code>draft:restored</code></td><td>When the user accepts the restore prompt</td></tr>
+      <tr><td><code>draft:discarded</code></td><td>When the user declines the restore prompt</td></tr>
+      <tr><td><code>draft:cleared</code></td><td>After successful form submission</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-rendering-pipeline.html">&#8592; Rendering Pipeline</a>
+    <a href="05-theming.html">Next: Theming &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

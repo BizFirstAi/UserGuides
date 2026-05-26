@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Schema — SQL Server Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>SQL Server Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-connection.html">Connection Configuration</a>
+  <a href="03-schema.html" class="active">SQL Schema</a>
+  <a href="04-migrations.html">Running Migrations</a>
+  <a href="05-multi-tenant.html">Multi-Tenant Configuration</a>
+  <a href="06-performance.html">Performance Considerations</a>
+  <a href="07-backup.html">Backup and Recovery</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>SQL Schema</h1>
+    <p class="lead">The SqlServerPlugin manages six primary tables. All are prefixed with <code>Octopus_</code> and include a <code>TenantId</code> column. The schema is created and updated automatically via EF Core migrations.</p>
+  </div>
+
+  <h2>Schema Overview</h2>
+  <table>
+    <thead>
+      <tr><th>Table</th><th>Stores</th><th>Primary Consumer</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Octopus_Agents</code></td><td>Agent definitions and configuration</td><td><code>IAgentStore</code></td></tr>
+      <tr><td><code>Octopus_Episodes</code></td><td>Conversation session metadata</td><td><code>IEpisodicMemoryStore</code></td></tr>
+      <tr><td><code>Octopus_EpisodeMessages</code></td><td>Individual messages within episodes</td><td><code>IEpisodicMemoryStore</code></td></tr>
+      <tr><td><code>Octopus_Procedures</code></td><td>Skill sequences for procedural memory</td><td><code>IProceduralMemoryStore</code></td></tr>
+      <tr><td><code>Octopus_AIFunctions</code></td><td>JavaScript AI functions</td><td><code>IAIFunctionStore</code></td></tr>
+      <tr><td><code>Octopus_Areas</code></td><td>Agent area definitions and memberships</td><td><code>IAreaStore</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Octopus_Agents</h2>
+  <pre><code>CREATE TABLE Octopus_Agents (
+    Id                   UNIQUEIDENTIFIER NOT NULL DEFAULT NEWSEQUENTIALID() PRIMARY KEY,
+    TenantId             NVARCHAR(100)    NOT NULL,
+    Name                 NVARCHAR(200)    NOT NULL,
+    DisplayName          NVARCHAR(200)    NOT NULL,
+    SystemPrompt         NVARCHAR(MAX)    NOT NULL,
+    LLMModel             NVARCHAR(100)    NOT NULL,
+    LLMCredentialId      INT              NOT NULL,
+    MaxTokensPerTurn     INT              NOT NULL DEFAULT 4096,
+    Temperature          FLOAT            NOT NULL DEFAULT 0.7,
+
+    -- Episodic memory settings
+    EpisodicEnabled      BIT              NOT NULL DEFAULT 1,
+    EpisodicMaxMessages  INT              NOT NULL DEFAULT 20,
+    EpisodicPruning      NVARCHAR(50)     NOT NULL DEFAULT 'FIFO',
+
+    -- Semantic memory settings
+    SemanticEnabled      BIT              NOT NULL DEFAULT 0,
+    SemanticTopK         INT              NOT NULL DEFAULT 5,
+    SemanticThreshold    FLOAT            NOT NULL DEFAULT 0.7,
+
+    -- Procedural memory settings
+    ProceduralEnabled    BIT              NOT NULL DEFAULT 0,
+
+    IsActive             BIT              NOT NULL DEFAULT 1,
+    CreatedAt            DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    UpdatedAt            DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT UQ_Octopus_Agents_Tenant_Name UNIQUE (TenantId, Name)
+);
+
+CREATE INDEX IX_Octopus_Agents_TenantId ON Octopus_Agents (TenantId);
+CREATE INDEX IX_Octopus_Agents_Active    ON Octopus_Agents (TenantId, IsActive);</code></pre>
+
+  <h2>Octopus_Episodes and Octopus_EpisodeMessages</h2>
+  <pre><code>CREATE TABLE Octopus_Episodes (
+    Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWSEQUENTIALID() PRIMARY KEY,
+    TenantId     NVARCHAR(100)    NOT NULL,
+    AgentId      UNIQUEIDENTIFIER NOT NULL,
+    UserId       NVARCHAR(200)    NOT NULL,
+    SessionId    NVARCHAR(200)    NOT NULL,
+    Summary      NVARCHAR(MAX)    NULL,
+    StartedAt    DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    LastActiveAt DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    IsActive     BIT              NOT NULL DEFAULT 1,
+
+    CONSTRAINT FK_Episodes_Agent FOREIGN KEY (AgentId)
+        REFERENCES Octopus_Agents(Id) ON DELETE CASCADE
+);
+
+CREATE INDEX IX_Octopus_Episodes_Tenant_User
+    ON Octopus_Episodes (TenantId, UserId, LastActiveAt DESC);
+CREATE INDEX IX_Octopus_Episodes_Session
+    ON Octopus_Episodes (TenantId, SessionId);
+
+-- ──────────────────────────────────────────────────────────────────────
+CREATE TABLE Octopus_EpisodeMessages (
+    Id           BIGINT           NOT NULL IDENTITY PRIMARY KEY,
+    TenantId     NVARCHAR(100)    NOT NULL,
+    EpisodeId    UNIQUEIDENTIFIER NOT NULL,
+    Role         NVARCHAR(20)     NOT NULL,  -- user | assistant | system | tool
+    Content      NVARCHAR(MAX)    NOT NULL,
+    TokenCount   INT              NOT NULL DEFAULT 0,
+    ToolCallId   NVARCHAR(200)    NULL,
+    ToolName     NVARCHAR(200)    NULL,
+    CreatedAt    DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT FK_Messages_Episode FOREIGN KEY (EpisodeId)
+        REFERENCES Octopus_Episodes(Id) ON DELETE CASCADE
+);
+
+CREATE INDEX IX_Octopus_EpisodeMessages_Episode
+    ON Octopus_EpisodeMessages (EpisodeId, CreatedAt ASC);
+CREATE INDEX IX_Octopus_EpisodeMessages_Tenant
+    ON Octopus_EpisodeMessages (TenantId, CreatedAt DESC);</code></pre>
+
+  <h2>Octopus_Procedures</h2>
+  <pre><code>CREATE TABLE Octopus_Procedures (
+    Id              UNIQUEIDENTIFIER NOT NULL DEFAULT NEWSEQUENTIALID() PRIMARY KEY,
+    TenantId        NVARCHAR(100)    NOT NULL,
+    Name            NVARCHAR(200)    NOT NULL,
+    Description     NVARCHAR(500)    NOT NULL,
+    TriggerPhrases  NVARCHAR(MAX)    NOT NULL,  -- JSON array of strings
+    Steps           NVARCHAR(MAX)    NOT NULL,  -- JSON array of step objects
+    Priority        INT              NOT NULL DEFAULT 0,
+    IsActive        BIT              NOT NULL DEFAULT 1,
+    CreatedAt       DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    UpdatedAt       DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+
+    CONSTRAINT UQ_Octopus_Procedures_Tenant_Name UNIQUE (TenantId, Name)
+);
+
+CREATE INDEX IX_Octopus_Procedures_TenantActive
+    ON Octopus_Procedures (TenantId, IsActive, Priority DESC);</code></pre>
+
+  <h2>Octopus_AIFunctions</h2>
+  <pre><code>CREATE TABLE Octopus_AIFunctions (
+    Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWSEQUENTIALID() PRIMARY KEY,
+    TenantId     NVARCHAR(100)    NOT NULL,
+    Name         NVARCHAR(200)    NOT NULL,
+    Description  NVARCHAR(500)    NOT NULL,
+    Code         NVARCHAR(MAX)    NOT NULL,  -- JavaScript source
+    InputSchema  NVARCHAR(MAX)    NULL,      -- JSON Schema for LLM tool registration
+    IsActive     BIT              NOT NULL DEFAULT 1,
+    CreatedAt    DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    UpdatedAt    DATETIMEOFFSET   NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    CreatedBy    NVARCHAR(200)    NULL,
+    UpdatedBy    NVARCHAR(200)    NULL,
+
+    CONSTRAINT UQ_Octopus_AIFunctions_Tenant_Name UNIQUE (TenantId, Name)
+);
+
+CREATE INDEX IX_Octopus_AIFunctions_TenantActive
+    ON Octopus_AIFunctions (TenantId, IsActive);</code></pre>
+
+  <div class="callout info">
+    <strong>Never alter these tables directly.</strong> All schema changes are managed by EF Core migrations. Direct ALTER TABLE commands will cause migration conflicts and may break the application on next startup.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-connection.html">&#8592; Connection Configuration</a>
+    <a href="04-migrations.html">Next: Running Migrations &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

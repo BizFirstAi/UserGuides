@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cross-Field Validation — Form Validation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Validation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-built-in-rules.html">Built-In Rules</a>
+  <a href="02-validation-schema.html">Validation Schema</a>
+  <a href="03-custom-validators.html">Custom Validators</a>
+  <a href="04-error-display.html">Error Display</a>
+  <a href="05-cross-field.html" class="active">Cross-Field Validation</a>
+  <a href="06-async-validation.html">Async Validation</a>
+  <a href="07-security-validation.html">Security Validation</a>
+  <a href="08-validation-guide.html">Complete Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Cross-Field Validation</h1>
+    <p class="lead">Cross-field validation enforces rules that involve two or more fields — such as password confirmation, date range checks (start before end), or ensuring at least one contact method is provided. It uses the <code>allValues</code> argument available to all custom validators, or the <code>matchesField</code> built-in shorthand.</p>
+  </div>
+
+  <h2>Built-In: matchesField</h2>
+  <p>The <code>matchesField</code> rule is the simplest cross-field check — it verifies that two fields have identical values. It is the standard approach for confirm-password and confirm-email patterns:</p>
+  <pre><code>{
+  "id": "password",
+  "type": "password",
+  "label": "Password",
+  "validation": {
+    "required": true,
+    "minLength": 12
+  }
+},
+{
+  "id": "confirm-password",
+  "type": "password",
+  "label": "Confirm Password",
+  "validation": {
+    "required": true,
+    "matchesField": "password",
+    "matchesFieldMessage": "Passwords do not match"
+  }
+}</code></pre>
+
+  <h2>Cross-Field via Inline Expression</h2>
+  <p>For date range validation, use an inline expression in <code>customRule</code>. The expression has access to <code>value</code> (current field) and <code>allValues</code> (all form values):</p>
+  <pre><code>{
+  "id": "start-date",
+  "type": "date",
+  "label": "Start Date",
+  "validation": { "required": true }
+},
+{
+  "id": "end-date",
+  "type": "date",
+  "label": "End Date",
+  "validation": {
+    "required": true,
+    "customRule": {
+      "expression": "!allValues['start-date'] || value &gt; allValues['start-date']",
+      "message": "End date must be after start date"
+    }
+  }
+}</code></pre>
+
+  <h2>Cross-Field via Custom Validator</h2>
+  <p>For more complex cross-field logic, write a named custom validator that reads <code>allValues</code>:</p>
+  <pre><code>// Register a cross-field validator
+import { registerValidator } from '@atlas-forms/validation-js';
+
+registerValidator('contractValueWithinBudget', (value, fieldId, allValues) =&gt; {
+  const contractValue = parseFloat(value) || 0;
+  const approvedBudget = parseFloat(allValues['approved-budget']) || 0;
+  return {
+    valid: contractValue &lt;= approvedBudget,
+    message: `Contract value ($${contractValue.toLocaleString()}) exceeds approved budget ($${approvedBudget.toLocaleString()})`
+  };
+});
+
+// Use in schema
+{
+  "id": "contract-value",
+  "type": "number",
+  "label": "Contract Value",
+  "validation": {
+    "required": true,
+    "min": 0,
+    "customRule": {
+      "name": "contractValueWithinBudget",
+      "message": "Contract value exceeds approved budget"
+    }
+  }
+}</code></pre>
+
+  <h2>Form-Level Validators</h2>
+  <p>Form-level validators run after all field-level validation and can produce errors that are not tied to a specific field. Define them in the schema root's <code>formValidators</code> array:</p>
+  <pre><code>// Schema root-level formValidators
+{
+  "formValidators": [
+    {
+      "name": "atLeastOneContactMethod",
+      "message": "At least one contact method (email, phone, or post) must be provided"
+    }
+  ]
+}
+
+// Register the validator
+registerValidator('atLeastOneContactMethod', (value, fieldId, allValues) =&gt; {
+  const hasEmail = !!allValues['contact-email'];
+  const hasPhone = !!allValues['contact-phone'];
+  const hasPost  = allValues['contact-method'] === 'post';
+  return {
+    valid: hasEmail || hasPhone || hasPost,
+    message: 'Provide at least one contact method: email, phone, or postal address'
+  };
+});</code></pre>
+
+  <h2>Re-triggering Cross-Field Validation</h2>
+  <p>When the user changes field A that a cross-field rule on field B depends on, field B's validation must re-run. Configure this with <code>revalidateOnChange</code>:</p>
+  <pre><code>// The confirm-password field re-validates whenever "password" changes
+{
+  "id": "confirm-password",
+  "type": "password",
+  "label": "Confirm Password",
+  "validation": {
+    "matchesField": "password",
+    "revalidateOnChange": ["password"]
+  }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Best Practice</strong>
+    Place the cross-field error message on the dependent field (the one doing the comparison), not on the source field. Users expect the "Confirm Password" field to show an error, not the original "Password" field. This also means clearing the error naturally when the dependent field is corrected.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-error-display.html">&#8592; Error Display</a>
+    <a href="06-async-validation.html">Next: Async Validation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

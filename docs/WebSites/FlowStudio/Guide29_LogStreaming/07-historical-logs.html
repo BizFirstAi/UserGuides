@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loading Historical Logs — Log Streaming | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Log Streaming</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-backend-emission.html">Backend Log Emission</a>
+  <a href="02-signalr-channel.html">SignalR Log Channel</a>
+  <a href="03-buffering.html">Log Buffering</a>
+  <a href="04-client-append.html">Client-Side Append</a>
+  <a href="05-virtual-scroll.html">Virtual Scrolling</a>
+  <a href="06-filtering.html">Client-Side Filtering</a>
+  <a href="07-historical-logs.html" class="active">Loading Historical Logs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Loading Historical Logs</h1>
+    <p class="lead">When a user opens a past execution (one that has already completed), logs are not available via SignalR — the execution is over and no hub group exists. Instead, the Observer Panel fetches logs from the REST API and loads them into <code>executionStore</code> via the same <code>appendLogs</code> action used during live streaming. The display path is identical.</p>
+  </div>
+
+  <h2>API Endpoint</h2>
+  <pre><code>GET /api/executions/{executionId}/logs?page={page}&pageSize={pageSize}
+
+// Response envelope
+{
+    "page"       : 1,
+    "pageSize"   : 500,
+    "totalCount" : 12400,
+    "items"      : [ /* LogEntry[] */ ]
+}
+
+// LogEntry schema is identical to the SignalR payload
+{
+    "logId"     : "3f8e1a2c-...",
+    "nodeId"    : "node-abc",
+    "level"     : "Information",
+    "message"   : "HTTP request completed",
+    "timestamp" : "2026-05-21T14:33:01.123Z",
+    "fields"    : { "executionId": "...", "tenantId": "..." },
+    "traceId"   : "4bf92f3577b34da6..."
+}</code></pre>
+
+  <h2>Client — executionLogsApiClient</h2>
+  <pre><code">// executionLogsApiClient.ts
+export async function fetchExecutionLogs(
+    executionId : string,
+    page        : number,
+    pageSize    : number = 500
+): Promise&lt;PagedResult&lt;LogEntry&gt;&gt; {
+    const response = await apiClient.get(
+        `/api/executions/${executionId}/logs`,
+        { params: { page, pageSize } }
+    );
+    return response.data;
+}</code></pre>
+
+  <h2>Loading Strategy — Full Fetch with Pagination</h2>
+  <p>For historical views the Observer Panel fetches all pages sequentially and calls <code>appendLogs</code> after each page. This loads the complete log set into <code>executionStore</code> so that in-memory filters (level, nodeId, text search) work over the full history without additional round-trips.</p>
+  <pre><code">// useHistoricalLogs.ts
+export async function loadAllHistoricalLogs(executionId: string) {
+    const PAGE_SIZE = 500;
+    let page = 1;
+    let totalLoaded = 0;
+
+    useExecutionStore.getState().setLoading(true);
+
+    try {
+        while (true) {
+            const result = await fetchExecutionLogs(executionId, page, PAGE_SIZE);
+            useExecutionStore.getState().appendLogs(result.items);
+            totalLoaded += result.items.length;
+
+            // appendLogs is idempotent — duplicates from live streaming are silently skipped
+
+            if (totalLoaded >= result.totalCount) break;
+            page++;
+        }
+    } finally {
+        useExecutionStore.getState().setLoading(false);
+    }
+}</code></pre>
+
+  <h2>Invocation — When Logs Load</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>How Historical Logs Are Triggered</th></tr></thead>
+    <tbody>
+      <tr><td>User opens a completed execution</td><td><code>loadAllHistoricalLogs(executionId)</code> called in the Observer Panel's <code>useEffect</code> on mount</td></tr>
+      <tr><td>Live execution completes while panel is open</td><td>SignalR sends <code>ExecutionCompleted</code> — panel calls <code>loadAllHistoricalLogs</code> to fill any gaps from reconnects</td></tr>
+      <tr><td>User reconnects mid-execution</td><td>Panel calls <code>loadAllHistoricalLogs</code> for logs missed during disconnect, then re-joins SignalR group for live streaming</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Deduplication During Mixed Load</h2>
+  <p>When a live execution completes and the panel immediately loads historical logs, some entries may have already been appended via SignalR. The <code>appendLogs</code> action uses a <code>Set</code>-based logId check — duplicate entries are discarded without modifying state, so no re-render is triggered for already-known entries.</p>
+  <pre><code">// executionStore.ts — appendLogs is always safe to call, even with overlapping data
+appendLogs: (entries: LogEntry[]) => set(state => {
+    const existingIds = new Set(state.logs.map(l => l.logId));
+    const newEntries  = entries.filter(e => !existingIds.has(e.logId));
+
+    if (newEntries.length === 0) return state;  // No change — no re-render
+
+    return { logs: [...state.logs, ...newEntries] };
+})</code></pre>
+
+  <h2>Backend — Log Storage</h2>
+  <p>All log entries are written to Loki via the Serilog pipeline at emission time (see Backend Log Emission). The REST API reads from Loki using the <code>executionId</code> label as the query filter. Loki returns entries in insertion order; the API preserves this ordering in the paginated response.</p>
+  <pre><code">// Loki label query used by the backend API handler
+{executionId="3f8e1a2c-..."}
+    | json
+    | line_format "{{.message}}"
+
+// Equivalent LogQL query for all entries in an execution
+{executionId="3f8e1a2c-..."} | json | __error__=""</code></pre>
+
+  <div class="callout info">
+    <strong>Same display path as live streaming.</strong> The Logs tab component (<code>ExecutionLogsTabContent</code>) has no knowledge of whether its logs arrived via SignalR or REST API. It reads <code>executionStore.logs</code>, applies the filter memo, and passes the result to <code>VirtualLogList</code>. The source of the data is irrelevant to the rendering layer.
+  </div>
+
+  <div class="callout info">
+    <strong>Logs are always durable.</strong> Because Serilog routes entries to Loki independently of SignalR, historical logs are available even if no client was connected during the execution. The REST API can retrieve logs for any execution that ran within the Loki retention window.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-filtering.html">&#8592; Client-Side Filtering</a>
+    <a href="index.html">Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

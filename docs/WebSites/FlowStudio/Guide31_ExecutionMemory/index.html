@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Execution Memory Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Execution Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-structure.html">Memory Structure</a>
+  <a href="02-node-outputs.html">nodeOutputs Map</a>
+  <a href="03-reading-upstream.html">Reading Upstream Output</a>
+  <a href="04-global-variables.html">Global Variables</a>
+  <a href="05-lifetime.html">Memory Lifetime</a>
+  <a href="06-serialization.html">HIL Serialization</a>
+  <a href="07-security.html">Memory Isolation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Execution Memory</h1>
+    <p class="lead"><code>ExecutionMemory</code> is the in-process data store that carries all node outputs through a single workflow execution. It is created at execution start, lives for the lifetime of the run, and is destroyed (or serialized to the database for HIL suspension) when the execution ends. Every node executor accesses it via <code>ctx.ExecutionMemory</code>.</p>
+  </div>
+
+  <h2>What ExecutionMemory Is</h2>
+  <p>ExecutionMemory is the primary mechanism for passing data between nodes in a workflow. When a node runs and returns output, that output is written into ExecutionMemory under the node's ID. Downstream nodes read from it by calling <code>GetNodeOutput</code>.</p>
+  <table>
+    <thead>
+      <tr><th>Concept</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Scope</td><td>One instance per execution run. Multiple concurrent executions of the same workflow have completely independent ExecutionMemory instances.</td></tr>
+      <tr><td>Lifetime</td><td>Created when the execution starts; destroyed when the execution completes or fails. For HIL suspensions, serialized and stored in the database.</td></tr>
+      <tr><td>Storage</td><td>In-memory (not a database table). Fast, no I/O cost for reads.</td></tr>
+      <tr><td>Access</td><td>Via <code>ctx.ExecutionMemory</code> inside any executor — read-write access.</td></tr>
+      <tr><td>Relationship to pinned data</td><td>Completely separate. ExecutionMemory is ephemeral; pinned data is durable.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Three Storage Areas</h2>
+  <table>
+    <thead><tr><th>Area</th><th>Key</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>nodeOutputs</code></td><td>nodeId (string)</td><td>Output from each node execution — the primary data bus between nodes</td></tr>
+      <tr><td><code>globalVariables</code></td><td>variable name (string)</td><td>Shared state any node can read or write within the execution</td></tr>
+      <tr><td><code>executionMetadata</code></td><td>key (string)</td><td>Engine-managed fields: executionId, processId, triggeredBy, startedAt</td></tr>
+    </tbody>
+  </table>
+
+  <h2>How Data Flows Through a Workflow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">Node A runs → <code>NodeExecutionResult.Success(outputA)</code></div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step">BaseNodeExecutor calls <code>ExecutionMemory.SetNodeOutput("node-a", outputA)</code></div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step">Node B runs → calls <code>ctx.ExecutionMemory.GetNodeOutput&lt;T&gt;("node-a")</code></div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step">Node B uses the data, returns its own output → stored under "node-b"</div>
+  </div>
+
+  <h2>Guide Contents</h2>
+  <table>
+    <thead><tr><th>Page</th><th>What You Will Learn</th></tr></thead>
+    <tbody>
+      <tr><td><a href="01-structure.html">Memory Structure</a></td><td>The complete ExecutionMemory class layout and the three storage dictionaries</td></tr>
+      <tr><td><a href="02-node-outputs.html">nodeOutputs Map</a></td><td>How node output is keyed, stored, and typed</td></tr>
+      <tr><td><a href="03-reading-upstream.html">Reading Upstream Output</a></td><td><code>GetNodeOutput&lt;T&gt;</code> and <code>GetPreviousNodeOutput&lt;T&gt;</code> usage</td></tr>
+      <tr><td><a href="04-global-variables.html">Global Variables</a></td><td><code>SetGlobal</code> and <code>GetGlobal</code> for cross-node shared state</td></tr>
+      <tr><td><a href="05-lifetime.html">Memory Lifetime</a></td><td>When memory is created, when it is destroyed, and what happens on failure</td></tr>
+      <tr><td><a href="06-serialization.html">HIL Serialization</a></td><td>How ExecutionMemory is serialized to JSON for HIL suspension and restored on resume</td></tr>
+      <tr><td><a href="07-security.html">Memory Isolation</a></td><td>Tenant and execution-level isolation guarantees</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>ExecutionMemory is distinct from pinned data.</strong> <code>nodeOutputs</code> in ExecutionMemory is ephemeral — it lives only for the current run. Pinned data (stored in <code>Process_NodePinnedData</code>) survives across runs. Use <code>ctx.ExecutionMemory.GetNodeOutput</code> for same-run cross-node data; use <code>ctx.ExecutionMemory.GetPinnedData</code> for cross-run persistence.
+  </div>
+
+  <div class="page-nav">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+    <a href="01-structure.html">Next: Memory Structure &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

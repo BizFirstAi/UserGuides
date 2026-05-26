@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Error Handling — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html" class="active">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Error Handling</h1>
+    <p class="lead">Executors have two error paths: returning a <code>NodeExecutionResult</code> with <code>IsSuccess = false</code> (soft error — routes to the error port if connected), or throwing an exception (hard error — caught by the base class error handler). Choose based on whether the error is recoverable or fatal.</p>
+  </div>
+
+  <h2>Soft Error — Return a Failure Result</h2>
+  <p>Return a failure result when the error is an expected operational condition (e.g. 404 from an external API, validation failure) and you want to route to the node's error output port:</p>
+  <pre><code>// Soft error — routes to error output port
+if (response.StatusCode == 404)
+{
+    return new NodeExecutionResult
+    {
+        IsSuccess     = false,
+        OutputPortKey = ExecutionConstants.OutputPorts.Error,  // "error"
+        ErrorMessage  = $"Resource not found: {url}",
+        OutputData    = new Dictionary&lt;string, object&gt;
+        {
+            { "status",    "error" },
+            { "errorCode", "NOT_FOUND" },
+            { "url",       url     }
+        }
+    };
+}</code></pre>
+
+  <h2>Hard Error — Throw an Exception</h2>
+  <p>Throw (or let propagate) an exception when the error is unexpected or unrecoverable. <code>BaseNodeExecutor.ErrorHandler</code> catches it, marks the node as failed, and emits a SignalR failure event. If the node has an error output port, the engine will still attempt to route there:</p>
+  <pre><code>// Hard error — unexpected condition, let it propagate
+var config = mySettings ?? throw new InvalidOperationException(
+    "Settings were not initialized before execution.");
+
+// Or throw directly:
+throw new ExternalServiceException(
+    $"Slack API returned unexpected status {statusCode}: {body}");</code></pre>
+
+  <h2>Error Handling Flow</h2>
+  <ol>
+    <li>Your code throws or returns <code>IsSuccess = false</code></li>
+    <li><code>BaseNodeExecutor.ErrorHandler</code> catches the exception and sets <code>NodeExecutionResult.IsSuccess = false</code></li>
+    <li>Engine checks if the node has an error output port (<code>isErrorPort: true</code> in the port definition)</li>
+    <li>If error port is connected — engine routes to the next node on the error path; execution continues</li>
+    <li>If error port is not connected — engine marks the execution as Failed and stops</li>
+  </ol>
+
+  <h2>Error Output Port Contract</h2>
+  <p>For a node to support error routing, its NodeType must declare an error output port:</p>
+  <pre><code>// In NodeType DB record — ports array
+{
+    "portKey":     "error",
+    "portType":    "source",
+    "isErrorPort": true,
+    "isMainPort":  false,
+    "label":       "On Error"
+}
+
+// In the frontend renderer
+&lt;CustomHandle
+    type="source"
+    position={Position.Right}
+    id="error"
+    isErrorPort={true}
+    label="On Error"
+    style={{ top: '75%' }}
+/&gt;
+
+// In the executor — return this portKey on failure
+OutputPortKey = "error"   // must match the portKey above</code></pre>
+
+  <h2>Retry Policy</h2>
+  <p><code>BaseNodeExecutor</code> reads a retry configuration from the node's settings. If present, it retries <code>ExecuteInternalAsync</code> the specified number of times with exponential backoff before marking the node as failed. The retry count and delay are configured per-node in the Atlas Form using the capability configuration pattern.</p>
+  <table>
+    <thead><tr><th>Config Field</th><th>Default</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td><code>maxRetries</code></td><td>0</td><td>Number of retry attempts after first failure</td></tr>
+      <tr><td><code>retryDelayMs</code></td><td>1000</td><td>Base delay between retries in ms</td></tr>
+      <tr><td><code>retryBackoffMultiplier</code></td><td>2.0</td><td>Exponential backoff multiplier</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Prefer Soft Errors for Operational Conditions</strong>
+    External APIs returning 4xx/5xx, network timeouts, and validation failures are expected conditions. Return a failure result with a meaningful <code>ErrorMessage</code> and <code>OutputData</code> so the error path in the workflow can inspect the details. Reserve exceptions for programming errors and unexpected states.
+  </div>
+
+  <div class="page-nav">
+    <a href="07-pinned-data.html">&#8592; Returning Pinned Data</a>
+    <a href="09-registration.html">Next: Registering the Executor &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

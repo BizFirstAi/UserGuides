@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Standard Workflow Nodes — Guide48 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow vs. Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-workflow-nodes.html" class="active"><i class="fa-solid fa-bolt"></i> Standard Workflow Nodes</a>
+  <a href="02-server-nodes.html"><i class="fa-solid fa-server"></i> Server-Side Nodes</a>
+  <a href="03-when-to-use.html"><i class="fa-solid fa-scale-balanced"></i> Decision Framework</a>
+  <a href="04-server-node-contract.html"><i class="fa-solid fa-file-contract"></i> Server Node Contract</a>
+  <a href="05-registration.html"><i class="fa-solid fa-plug"></i> Registration</a>
+  <a href="06-calling-from-workflow.html"><i class="fa-solid fa-arrow-right-arrow-left"></i> Calling from Workflows</a>
+  <a href="07-examples.html"><i class="fa-solid fa-flask"></i> Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Standard Workflow Nodes</h1>
+    <p class="lead">The default node pattern — stateless, short-lived, resolved fresh for every node execution by the DI container. The right choice for the vast majority of workflow steps.</p>
+  </div>
+
+  <h2>Execution Model</h2>
+  <p>When the workflow engine reaches a standard node, it resolves the executor from the DI container using a scoped lifetime, calls <code>ExecuteAsync</code>, waits for it to complete, stores the result in the execution context, then disposes the executor. There is no persistent state between invocations.</p>
+  <pre><code>
+WorkflowEngine (per-node step)
+    │
+    ├── Resolve IProcessElementExecution from DI (scoped)
+    │
+    ├── await executor.ExecuteAsync(ctx, ct)
+    │       └── performs operation, returns NodeExecutionResult
+    │
+    ├── Store result in NodeExecutionContext.OutputStore
+    │
+    └── Dispose executor (end of DI scope)
+  </code></pre>
+
+  <h2>The Executor Interface</h2>
+  <pre><code class="language-csharp">public interface IProcessElementExecution
+{
+    Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext ctx,
+        CancellationToken ct);
+}
+
+// BaseNodeExecutor provides settings deserialization:
+public abstract class BaseNodeExecutor&lt;TSettings&gt; : IProcessElementExecution
+    where TSettings : class, new()
+{
+    public async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext ctx,
+        CancellationToken ct)
+    {
+        var settings = ctx.Node.DeserializeSettings&lt;TSettings&gt;();
+        return await ExecuteAsync(ctx, settings, ct);
+    }
+
+    protected abstract Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext ctx,
+        TSettings settings,
+        CancellationToken ct);
+}</code></pre>
+
+  <h2>Characteristics of Standard Nodes</h2>
+  <table>
+    <thead><tr><th>Characteristic</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>DI lifetime</td><td>Scoped — new instance per workflow node execution</td></tr>
+      <tr><td>State</td><td>None carried between executions — all state comes from <code>NodeExecutionContext</code></td></tr>
+      <tr><td>Concurrency</td><td>Inherently safe — each execution is isolated</td></tr>
+      <tr><td>Startup cost</td><td>Near-zero — DI resolution plus constructor injection only</td></tr>
+      <tr><td>Testing</td><td>Simple unit testing — construct executor, call ExecuteAsync, assert result</td></tr>
+      <tr><td>Failure isolation</td><td>A crashed executor affects only that execution — the host process continues</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Example: A Typical Standard Node Executor</h2>
+  <pre><code class="language-csharp">public class HttpCallExecutor : BaseNodeExecutor&lt;HttpCallSettings&gt;
+{
+    private readonly IHttpClientFactory _http;
+
+    public HttpCallExecutor(IHttpClientFactory http) { _http = http; }
+
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext ctx,
+        HttpCallSettings settings,
+        CancellationToken ct)
+    {
+        var client = _http.CreateClient();
+        var response = await client.GetAsync(settings.Url, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+
+        return NodeExecutionResult.Success(new
+        {
+            statusCode = (int)response.StatusCode,
+            body       = body,
+            headers    = response.Headers.ToDictionary(h => h.Key, h => h.Value.First())
+        });
+    }
+}</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>HttpClientFactory is scoped-safe:</strong> <code>IHttpClientFactory</code> is singleton and manages connection pooling internally. Injecting it into a scoped executor is correct — you get a fresh <code>HttpClient</code> instance each time, but the underlying connections are pooled at the factory level.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-server-nodes.html">Next: Server-Side Nodes &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

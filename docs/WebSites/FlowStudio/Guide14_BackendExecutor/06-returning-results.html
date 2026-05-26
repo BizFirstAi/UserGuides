@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Returning Results — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html" class="active">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Returning Results</h1>
+    <p class="lead"><code>NodeExecutionResult</code> is what your executor returns from <code>ExecuteInternalAsync</code>. It tells the engine which output port to follow next, what data to store in <code>ExecutionMemory</code>, and whether the node succeeded or failed.</p>
+  </div>
+
+  <h2>NodeExecutionResult Shape</h2>
+  <pre><code>public class NodeExecutionResult
+{
+    // Output data — stored as $output.{nodeId} in ExecutionMemory
+    public Dictionary&lt;string, object&gt; OutputData { get; set; } = new();
+
+    // Which output port the engine should follow next
+    // Typical values: "main", "error", "true", "false", or a portKey
+    public string OutputPortKey { get; set; } = "main";
+
+    // Whether the node succeeded
+    public bool IsSuccess { get; set; } = true;
+
+    // Whether this node was skipped (branch not taken)
+    public bool IsSkipped { get; set; } = false;
+
+    // Error message (set when IsSuccess = false)
+    public string? ErrorMessage { get; set; }
+
+    // Exception object (captured, not rethrown)
+    public Exception? Exception { get; set; }
+
+    // Binary output (e.g. file bytes for download/pass-through)
+    public byte[]? OutputBinary { get; set; }
+}</code></pre>
+
+  <h2>Success Result</h2>
+  <pre><code>// Minimal success — engine follows the "main" output port
+return new NodeExecutionResult
+{
+    IsSuccess     = true,
+    OutputPortKey = "main",
+    OutputData    = new Dictionary&lt;string, object&gt;
+    {
+        { "statusCode", 200             },
+        { "body",       responseBody    },
+        { "headers",    responseHeaders }
+    }
+};</code></pre>
+
+  <h2>Error Result (Error Port)</h2>
+  <pre><code>// Error — engine follows the "error" output port if one is connected
+return new NodeExecutionResult
+{
+    IsSuccess     = false,
+    OutputPortKey = ExecutionConstants.OutputPorts.Error,  // "error"
+    ErrorMessage  = "External API returned 500: Internal Server Error",
+    OutputData    = new Dictionary&lt;string, object&gt;
+    {
+        { "status",    "error"    },
+        { "errorCode", "API_500"  },
+        { "message",   errorText  }
+    }
+};</code></pre>
+
+  <h2>Conditional Branch Result</h2>
+  <p>Decision nodes (if-condition, switch) return results where <code>OutputPortKey</code> indicates which branch was taken:</p>
+  <pre><code>// If-condition node — true branch
+return new NodeExecutionResult
+{
+    IsSuccess     = true,
+    OutputPortKey = "true",    // follows the "true" output handle
+    OutputData    = new Dictionary&lt;string, object&gt; { { "matched", true } }
+};
+
+// Switch node — specific case
+return new NodeExecutionResult
+{
+    IsSuccess     = true,
+    OutputPortKey = "case-premium",  // matches a portKey on the switch node
+    OutputData    = new Dictionary&lt;string, object&gt; { { "tier", "premium" } }
+};</code></pre>
+
+  <h2>Skip Result</h2>
+  <p>A skipped result means the node ran but produced no meaningful output. The engine counts it as completed and continues without routing:</p>
+  <pre><code>// Skip — node execution was a no-op (e.g. loop has no items)
+return new NodeExecutionResult
+{
+    IsSuccess     = true,
+    IsSkipped     = true,
+    OutputPortKey = "main",
+    OutputData    = new Dictionary&lt;string, object&gt;()
+};</code></pre>
+
+  <h2>OutputPortKey Convention</h2>
+  <table>
+    <thead><tr><th>OutputPortKey</th><th>When to Use</th></tr></thead>
+    <tbody>
+      <tr><td><code>"main"</code></td><td>Success path — most nodes (default)</td></tr>
+      <tr><td><code>"error"</code></td><td>Error path — only if node has an error output port configured</td></tr>
+      <tr><td><code>"true"</code> / <code>"false"</code></td><td>If-condition branches</td></tr>
+      <tr><td>Custom portKey</td><td>Switch branches, multi-output nodes — must match ProcessElementPort.portKey</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>OutputData Becomes $output.{nodeId}</strong>
+    Everything in <code>OutputData</code> is accessible downstream via <code>$output.{nodeId}.{field}</code> expressions. Keep keys descriptive and flat where possible. Nested objects are supported but make expressions more verbose.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-reading-upstream.html">&#8592; Reading Upstream Output</a>
+    <a href="07-pinned-data.html">Next: Returning Pinned Data &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

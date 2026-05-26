@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reading Pinned Data — Pinned Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Pinned Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-returning-pinned.html">Returning Pinned Data</a>
+  <a href="02-storage-model.html">Pinned Data Storage</a>
+  <a href="03-reading-pinned.html" class="active">Reading Pinned Data</a>
+  <a href="04-inspector-display.html">Node Inspector Display</a>
+  <a href="05-clearing-pinned.html">Clearing Pinned Data</a>
+  <a href="06-use-cases.html">Use Cases</a>
+  <a href="07-security.html">Security Considerations</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Reading Pinned Data in Executors</h1>
+    <p class="lead"><code>ctx.ExecutionMemory.GetPinnedData(nodeId)</code> retrieves the pinned data that was stored by a previous run of the specified node. The call hits the database — it is a real async read, not an in-memory lookup. The data returned was written by the most recent run that set non-null pinned data for that node.</p>
+  </div>
+
+  <h2>IExecutionMemory — Pinned Data Methods</h2>
+  <pre><code">// IExecutionMemory.cs (pinned data methods only)
+public interface IExecutionMemory
+{
+    // Read pinned data for any node in this workflow by nodeId
+    Task&lt;object?&gt;  GetPinnedDataAsync(string nodeId, CancellationToken ct = default);
+
+    // Typed convenience overload — deserializes JSON to T
+    Task&lt;T?&gt;      GetPinnedDataAsync&lt;T&gt;(string nodeId, CancellationToken ct = default)
+                      where T : class;
+
+    // ... ephemeral output methods are separate (GetNodeOutput, SetNodeOutput, etc.)
+}</code></pre>
+
+  <h2>Basic Pattern — Reading Own Previous Pinned Data</h2>
+  <p>The most common pattern is a node reading its own pinned data from the last run in order to build on it.</p>
+  <pre><code">// ConversationMemoryNode.cs
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    // Read what this node pinned in the previous run
+    var history = await ctx.ExecutionMemory
+        .GetPinnedDataAsync&lt;ConversationHistory&gt;(ctx.NodeId, ct);
+
+    // history is null on first run (no previous pinned data)
+    history ??= new ConversationHistory { Messages = new List&lt;ChatMessage&gt;() };
+
+    // Add new message from this run's input
+    var userMessage = ctx.ExecutionMemory.GetNodeOutput&lt;string&gt;("input-node");
+    history.Messages.Add(new ChatMessage { Role = "user", Content = userMessage });
+
+    var aiReply = await _llm.ChatAsync(history.Messages, ct);
+    history.Messages.Add(new ChatMessage { Role = "assistant", Content = aiReply });
+
+    // Return the reply as output, and the updated history as pinned data
+    return NodeExecutionResult.Success(
+        output     : aiReply,
+        pinnedData : history
+    );
+}</code></pre>
+
+  <h2>Reading Another Node's Pinned Data</h2>
+  <p>A node can read the pinned data set by any other node in the same workflow by passing that node's ID. This enables cross-node durable state sharing.</p>
+  <pre><code">// DownstreamAnalyticsNode.cs
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    // Read pinned data from a different node in this workflow
+    var cacheData = await ctx.ExecutionMemory
+        .GetPinnedDataAsync&lt;ApiResponseCache&gt;("api-fetch-node", ct);
+
+    if (cacheData is not null &amp;&amp; cacheData.FetchedAt &gt; DateTime.UtcNow.AddHours(-1))
+    {
+        // Cache is fresh — use pinned data instead of making a new API call
+        ctx.Observability.Logger.LogInformation("Using cached API response from previous run");
+        return NodeExecutionResult.Success(cacheData.Data);
+    }
+
+    // Cache stale or absent — fetch fresh
+    var fresh = await _apiClient.FetchAsync(ct);
+    return NodeExecutionResult.Success(
+        output     : fresh,
+        pinnedData : new ApiResponseCache { Data = fresh, FetchedAt = DateTime.UtcNow }
+    );
+}</code></pre>
+
+  <h2>Read vs. Get — Method Differences</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Return Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>GetPinnedDataAsync(nodeId)</code></td><td><code>Task&lt;object?&gt;</code></td><td>Untyped — returns <code>JsonElement</code> or <code>null</code></td></tr>
+      <tr><td><code>GetPinnedDataAsync&lt;T&gt;(nodeId)</code></td><td><code>Task&lt;T?&gt;</code></td><td>Typed — deserializes JSON to <code>T</code>; returns <code>null</code> if no data or deserialization fails</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Null Handling</h2>
+  <p><code>GetPinnedDataAsync</code> returns <code>null</code> in three cases:</p>
+  <ul>
+    <li>The node has never set pinned data (first run).</li>
+    <li>The pinned data row has expired (ExpiresAt is in the past).</li>
+    <li>The pinned data was explicitly cleared via <code>ClearPinnedDataAsync</code>.</li>
+  </ul>
+  <p>Always null-check the return value and provide a sensible default before using it.</p>
+
+  <div class="callout info">
+    <strong>GetPinnedData reads from the database, not from memory.</strong> Unlike <code>GetNodeOutput</code> (which reads from an in-memory dictionary populated during this execution), <code>GetPinnedDataAsync</code> always makes a database query. Call it once and cache the result in a local variable if you need it multiple times within the same <code>ExecuteAsync</code> call.
+  </div>
+
+  <div class="callout info">
+    <strong>Pinned data scope is processId, not executionId.</strong> If the same process runs concurrently (multiple simultaneous executions), all of them share the same pinned data row. Last-write-wins — concurrent writes are not conflicted. Design your pinned data schema to handle this if concurrent execution is expected.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-storage-model.html">&#8592; Pinned Data Storage</a>
+    <a href="04-inspector-display.html">Next: Node Inspector Display &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

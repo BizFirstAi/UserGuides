@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Structure — Execution Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Execution Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structure.html" class="active">Memory Structure</a>
+  <a href="02-node-outputs.html">nodeOutputs Map</a>
+  <a href="03-reading-upstream.html">Reading Upstream Output</a>
+  <a href="04-global-variables.html">Global Variables</a>
+  <a href="05-lifetime.html">Memory Lifetime</a>
+  <a href="06-serialization.html">HIL Serialization</a>
+  <a href="07-security.html">Memory Isolation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Memory Structure</h1>
+    <p class="lead">The <code>ExecutionMemory</code> class contains three dictionaries: <code>nodeOutputs</code> for per-node output data, <code>globalVariables</code> for shared state, and <code>executionMetadata</code> for engine-managed fields. All three are in-memory and live for the duration of the execution.</p>
+  </div>
+
+  <h2>ExecutionMemory Class</h2>
+  <pre><code">// ExecutionMemory.cs
+public class ExecutionMemory : IExecutionMemory
+{
+    // Primary data bus — stores output from each node, keyed by nodeId
+    private readonly Dictionary&lt;string, object?&gt; _nodeOutputs = new();
+
+    // Cross-node shared state — any node can read or write
+    private readonly Dictionary&lt;string, object?&gt; _globalVariables = new();
+
+    // Engine-managed metadata — read-only to executors
+    public ExecutionMetadata Metadata { get; init; }
+
+    // --- nodeOutputs ---
+    public void   SetNodeOutput(string nodeId, object? value)   =&gt; _nodeOutputs[nodeId] = value;
+    public object? GetNodeOutput(string nodeId)                  =&gt; _nodeOutputs.GetValueOrDefault(nodeId);
+    public T?     GetNodeOutput&lt;T&gt;(string nodeId) where T : class
+                  =&gt; GetNodeOutput(nodeId) as T;
+
+    // --- globalVariables ---
+    public void   SetGlobal(string key, object? value)          =&gt; _globalVariables[key] = value;
+    public object? GetGlobal(string key)                         =&gt; _globalVariables.GetValueOrDefault(key);
+    public T?     GetGlobal&lt;T&gt;(string key) where T : class      =&gt; GetGlobal(key) as T;
+
+    // --- pinned data (delegates to PinnedDataService — async database call) ---
+    public Task&lt;object?&gt; GetPinnedDataAsync(string nodeId, CancellationToken ct = default);
+    public Task&lt;T?&gt;      GetPinnedDataAsync&lt;T&gt;(string nodeId, CancellationToken ct = default)
+                          where T : class;
+    public Task           ClearPinnedDataAsync(string nodeId, CancellationToken ct = default);
+}</code></pre>
+
+  <h2>ExecutionMetadata</h2>
+  <pre><code">// ExecutionMetadata — read-only, set by the engine before execution starts
+public record ExecutionMetadata
+{
+    public string  ExecutionId  { get; init; }  // GUID — unique per run
+    public int     ProcessId    { get; init; }  // The workflow definition ID
+    public string  TenantId     { get; init; }
+    public string? TriggeredBy  { get; init; }  // UserId, scheduled job name, or API key label
+    public DateTimeOffset StartedAt { get; init; }
+}</code></pre>
+
+  <h2>IExecutionMemory Interface</h2>
+  <p>Executors always receive <code>IExecutionMemory</code>, not the concrete <code>ExecutionMemory</code> class. This enables unit testing with mocks and ensures executors cannot reach internal state.</p>
+  <pre><code">// IExecutionMemory.cs
+public interface IExecutionMemory
+{
+    // Node output store (ephemeral — this run only)
+    void    SetNodeOutput(string nodeId, object? value);
+    object? GetNodeOutput(string nodeId);
+    T?      GetNodeOutput&lt;T&gt;(string nodeId) where T : class;
+
+    // Previous node shortcut (see reading-upstream.html)
+    object? GetPreviousNodeOutput();
+    T?      GetPreviousNodeOutput&lt;T&gt;() where T : class;
+
+    // Global variables (ephemeral — this run only)
+    void    SetGlobal(string key, object? value);
+    object? GetGlobal(string key);
+    T?      GetGlobal&lt;T&gt;(string key) where T : class;
+
+    // Pinned data (durable — persists across runs, async database calls)
+    Task&lt;object?&gt; GetPinnedDataAsync(string nodeId, CancellationToken ct = default);
+    Task&lt;T?&gt;      GetPinnedDataAsync&lt;T&gt;(string nodeId, CancellationToken ct = default) where T : class;
+    Task           ClearPinnedDataAsync(string nodeId, CancellationToken ct = default);
+
+    // Metadata
+    ExecutionMetadata Metadata { get; }
+}</code></pre>
+
+  <h2>Dictionary Characteristics</h2>
+  <table>
+    <thead><tr><th>Dictionary</th><th>Thread Safety</th><th>Key Type</th><th>Value Type</th></tr></thead>
+    <tbody>
+      <tr><td><code>_nodeOutputs</code></td><td>Synchronised — single-threaded execution engine; nodes do not run concurrently</td><td>string (nodeId)</td><td>object? (any JSON-serializable value)</td></tr>
+      <tr><td><code>_globalVariables</code></td><td>Same — no concurrent access during normal execution</td><td>string (variable name)</td><td>object?</td></tr>
+      <tr><td><code>Metadata</code></td><td>Immutable record — always safe to read</td><td>—</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Nodes do not run concurrently in the current engine.</strong> The execution engine processes nodes in topological order — upstream nodes complete before downstream nodes begin. This means <code>_nodeOutputs</code> does not need to be a <code>ConcurrentDictionary</code>. If the engine ever supports parallel branches in the future, this design will need to be revisited.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-node-outputs.html">Next: nodeOutputs Map &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

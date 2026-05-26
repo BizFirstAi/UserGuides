@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Using FormEngine Directly — Custom Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Custom Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Player Architecture</a>
+  <a href="02-minimal-player.html">Minimal Custom Player</a>
+  <a href="03-section-cards.html">Section Cards Layout</a>
+  <a href="04-form-engine.html" class="active">Using FormEngine Directly</a>
+  <a href="05-registering-player.html">Registering a Player</a>
+  <a href="06-schema-override.html">Per-Form Player Override</a>
+  <a href="07-mobile-player.html">Mobile Player Example</a>
+  <a href="08-state-hooks.html">Using State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Using FormEngine Directly</h1>
+    <p class="lead"><code>FormEngine</code> is the headless JavaScript engine that manages form state independently of any React rendering. You can use it directly in non-React contexts (server-side rendering, React Native, Electron), or access it from inside a custom player to perform advanced operations.</p>
+  </div>
+
+  <h2>FormEngine API</h2>
+  <pre><code>import { FormEngine } from '@atlas-forms/form-engine-js';
+import { parseSchema } from '@atlas-forms/schema-js';
+
+const schema       = parseSchema(rawJson);
+const initialValues = { country: 'UK', vatRegistered: false };
+const engine       = new FormEngine(schema, initialValues);
+
+// Reading values
+const firstName  = engine.getValue('first-name');
+const allValues  = engine.getValues();  // { 'first-name': '', 'last-name': '', ... }
+
+// Writing values
+engine.setValue('first-name', 'Jane');
+engine.setValues({ 'first-name': 'Jane', 'last-name': 'Smith' });
+
+// Validation
+const errors = await engine.validate();
+// Returns: { 'email': 'Must be a valid email address', ... }
+
+const fieldError = await engine.validateField('email');
+// Returns: 'Must be a valid email address' or null
+
+// Events
+engine.on('change', (fieldId: string, value: any) =&gt; {
+  console.log(`${fieldId} changed to`, value);
+});
+
+// Schema access
+const schema       = engine.getSchema();
+const control      = engine.getControl('email');    // FormControl | undefined
+const section      = engine.getSection('personal'); // FormSection | undefined
+const computedVal  = engine.getComputedValue('total'); // Evaluates computed expression
+
+// Reset
+engine.reset();       // Reset to initialValues
+engine.reset(newValues); // Reset to a different set of values</code></pre>
+
+  <h2>Using engine from useAtlasForm</h2>
+  <pre><code>// Inside a component within FormStateProvider
+import { useAtlasForm } from '@atlas-forms/player-components-react';
+
+const MyComponent: React.FC = () =&gt; {
+  const { engine } = useAtlasForm();
+
+  // Programmatically validate and get all errors
+  const handlePreValidate = async () =&gt; {
+    const errors = await engine.validate();
+    if (Object.keys(errors).length === 0) {
+      console.log('All fields valid!');
+    }
+  };
+
+  // Access a computed field value directly
+  const totalAmount = engine.getComputedValue('invoice-total');
+
+  // Export form data as structured JSON for external processing
+  const exportData = () =&gt; {
+    return {
+      schema: engine.getSchema().metadata,
+      values: engine.getValues()
+    };
+  };
+};</code></pre>
+
+  <h2>Headless Usage (No React)</h2>
+  <pre><code>// Server-side form processing — validate submitted data against schema
+import { FormEngine } from '@atlas-forms/form-engine-js';
+import { parseSchema } from '@atlas-forms/schema-js';
+import { registerAllValidators } from './validators';
+
+registerAllValidators();
+
+async function validateFormSubmission(
+  schemaJson: object,
+  submittedValues: Record&lt;string, any&gt;
+): Promise&lt;Record&lt;string, string&gt;&gt; {
+  const schema = parseSchema(schemaJson);
+  const engine = new FormEngine(schema, submittedValues);
+  return await engine.validate();
+}
+
+// Usage in an API endpoint
+const errors = await validateFormSubmission(schema, req.body);
+if (Object.keys(errors).length &gt; 0) {
+  return res.status(422).json({ errors });
+}</code></pre>
+
+  <div class="callout">
+    <strong>Dispose the Engine</strong>
+    <code>FormEngine</code> attaches event listeners internally. If you create an engine outside of <code>FormStateProvider</code> (which handles cleanup automatically), call <code>engine.dispose()</code> when it is no longer needed to prevent memory leaks.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-section-cards.html">&#8592; Section Cards Layout</a>
+    <a href="05-registering-player.html">Next: Registering a Player &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

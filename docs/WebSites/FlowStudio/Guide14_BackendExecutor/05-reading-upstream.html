@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reading Upstream Output — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html" class="active">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Reading Upstream Output</h1>
+    <p class="lead">Each node's output data is stored in the execution's <code>ExecutionMemory</code> keyed by node ID. Downstream executors read this data via expression references (<code>$output.{nodeId}.fieldName</code>) that are resolved at configuration parse time, or directly from the memory object at runtime.</p>
+  </div>
+
+  <h2>How Data Flows</h2>
+  <p>When a node returns a <code>NodeExecutionResult</code> with <code>OutputData</code>, the engine stores that dictionary in <code>ExecutionMemory.nodeOutputs[nodeId]</code>. The next node's configuration expressions (e.g. <code>$output.http-request-1.body</code>) are resolved against this memory before the config is passed to the executor.</p>
+
+  <h2>Expression Resolution (Most Common Pattern)</h2>
+  <p>In most cases, upstream data is already resolved into your node's configuration by the time <code>ExecuteInternalAsync</code> runs. The user writes an expression like <code>$output.http-request-1.statusCode</code> in the Atlas Form field, and the engine substitutes the actual value before calling your executor. You read it as a normal config key:</p>
+  <pre><code>// Node config JSON after expression resolution:
+// { "recipientEmail": "alice@example.com" }  ← resolved from $output.form-1.email
+
+// In settings class:
+public string RecipientEmail =&gt; ReadConfigByKey("recipientEmail", string.Empty)!;
+
+// In executor — just reads the already-resolved value
+var recipient = mySettings!.RecipientEmail;  // "alice@example.com"</code></pre>
+
+  <h2>Direct Memory Access (Advanced)</h2>
+  <p>For cases where you need to read upstream output programmatically at runtime (e.g. iterating a collection produced by a previous node), access <code>ExecutionMemory</code> directly:</p>
+  <pre><code>protected override async Task&lt;NodeExecutionResult&gt; ExecuteInternalAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    var elCtx  = ctx.ElementExecutionContext!;
+    var memory = elCtx.ExecutionMemory;
+
+    // Get the ID of the previous node (from the definition)
+    var prevNodeId = elCtx.Definition.PreviousNodeId;
+
+    // Get the output dictionary from that node
+    if (memory.nodeOutputs.TryGetValue(prevNodeId, out var prevOutput))
+    {
+        var items = prevOutput["items"] as List&lt;object&gt;;
+        // ... process items ...
+    }
+}</code></pre>
+
+  <h2>ExecutionMemory Keys</h2>
+  <table>
+    <thead><tr><th>Key</th><th>Type</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td><code>nodeOutputs</code></td><td><code>Dictionary&lt;string, Dictionary&lt;string, object&gt;&gt;</code></td><td>Output data keyed by node ID. All completed nodes.</td></tr>
+      <tr><td><code>variables</code></td><td><code>Dictionary&lt;string, object&gt;</code></td><td>Workflow-scoped variables set by Variable Assignment nodes</td></tr>
+      <tr><td><code>globalData</code></td><td><code>Dictionary&lt;string, object&gt;</code></td><td>Execution-wide data (trigger payload, initial input)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Expression Syntax Reference</h2>
+  <table>
+    <thead><tr><th>Expression</th><th>Resolves To</th></tr></thead>
+    <tbody>
+      <tr><td><code>$output.{nodeId}.{field}</code></td><td>Specific field from a completed node's output</td></tr>
+      <tr><td><code>$output.{nodeId}</code></td><td>Full output dictionary from a node</td></tr>
+      <tr><td><code>$var.{name}</code></td><td>A workflow variable</td></tr>
+      <tr><td><code>$global.{field}</code></td><td>Execution-wide global data (e.g. trigger payload)</td></tr>
+      <tr><td><code>$context.tenantId</code></td><td>Current tenant ID</td></tr>
+      <tr><td><code>$context.executionId</code></td><td>Current execution ID</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Prefer Expression Resolution Over Direct Memory Access</strong>
+    Expression resolution (configured in the Atlas Form) is the preferred pattern. It is declarative, visible in the designer, and survives future engine changes. Direct memory access is appropriate only for dynamic runtime logic that cannot be expressed declaratively.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-reading-config.html">&#8592; Reading Node Configuration</a>
+    <a href="06-returning-results.html">Next: Returning Results &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

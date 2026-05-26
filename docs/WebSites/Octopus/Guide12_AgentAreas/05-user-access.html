@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User Access — Agent Areas | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Agent Areas</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Agent Areas Overview</a>
+  <a href="01-what-are-areas.html">What Are Agent Areas</a>
+  <a href="02-area-configuration.html">Area Configuration</a>
+  <a href="03-knowledge-scoping.html">Knowledge Scoping</a>
+  <a href="04-tool-scoping.html">Tool Scoping</a>
+  <a href="05-user-access.html" class="active">User Access</a>
+  <a href="06-area-routing.html">Area Routing</a>
+  <a href="07-multi-area.html">Multi-Area Deployments</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>User Access</h1>
+    <p class="lead">User access to Agent Areas is controlled via user group membership. A user sees only the areas they are a member of. Area access is resolved from the user's JWT claims at request time — no additional database query needed per request.</p>
+  </div>
+
+  <h2>Access Control Model</h2>
+  <pre><code>// Access check at chat session start:
+public async Task&lt;IReadOnlyList&lt;AgentArea&gt;&gt; GetAccessibleAreasAsync(
+    string userId, Guid tenantId, CancellationToken ct)
+{
+    // User group membership comes from JWT claims (populated by IdP)
+    var userGroups = _httpContext.User.FindAll("group_id")
+        .Select(c => Guid.Parse(c.Value))
+        .ToList();
+
+    // Areas the user can access = areas with at least one matching user group
+    return await _db.Areas
+        .Where(a => a.TenantId == tenantId
+                 && a.IsActive
+                 && a.UserGroups.Any(g => userGroups.Contains(g.GroupId)))
+        .ToListAsync(ct);
+}</code></pre>
+
+  <h2>Assigning Users to an Area</h2>
+  <pre><code>// Via API: assign a user group to an area
+POST /api/octopus/areas/{areaId}/user-groups
+Authorization: Bearer {areaAdminToken}
+
+{
+  "userGroupIds": [
+    "group_all_employees",
+    "group_hr_managers"
+  ]
+}
+
+// Via admin UI: Area settings → Access Control → Add User Group
+
+// User groups are typically sourced from your Identity Provider (Azure AD, Okta, etc.)
+// and appear as JWT group claims in the user's token.</code></pre>
+
+  <h2>Access Roles Within an Area</h2>
+  <table>
+    <thead>
+      <tr><th>Role</th><th>Permissions</th><th>Typical Assignment</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Area User</td><td>Chat with area agents; view own conversation history</td><td>All employees in the area</td></tr>
+      <tr><td>Area Admin</td><td>Manage area agents, knowledge, tools; view all conversations in area</td><td>Department head, IT administrator</td></tr>
+      <tr><td>Octopus Tenant Admin</td><td>Manage all areas and agents; billing; tenant configuration</td><td>Platform administrator</td></tr>
+      <tr><td>OctopusDebug</td><td>Access Context Inspector; view system prompts</td><td>Developers, trusted admins</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Anonymous (Public) Areas</h2>
+  <p>An area can be configured as public — accessible without authentication. Useful for public-facing chatbots:</p>
+  <pre><code>// PATCH /api/octopus/areas/{areaId}
+{
+  "isPublic": true  // No JWT required; UserComposite is populated as anonymous
+}
+
+// In public mode:
+// - UserId = "anonymous_{sessionId}"
+// - EpisodicMemory.Enabled defaults to false (no cross-session memory for anonymous)
+// - Tool handlers must treat anonymous users with minimal trust</code></pre>
+
+  <div class="page-nav">
+    <a href="04-tool-scoping.html">&#8592; Tool Scoping</a>
+    <a href="06-area-routing.html">Next: Area Routing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

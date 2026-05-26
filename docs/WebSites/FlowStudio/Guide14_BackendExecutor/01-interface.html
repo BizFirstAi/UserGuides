@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IProcessElementExecution — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html" class="active">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>IProcessElementExecution</h1>
+    <p class="lead">Every node executor implements <code>IProcessElementExecution</code>. The interface defines four methods: <code>ExecuteAsync</code>, <code>ValidateAsync</code>, <code>HandleErrorAsync</code>, and <code>CleanupAsync</code>. In practice, you only implement <code>ExecuteAsync</code> — the others are handled by <code>BaseNodeExecutor</code>.</p>
+  </div>
+
+  <h2>The Full Interface</h2>
+  <pre><code>// BizFirst.Ai.ProcessEngine.Domain/Node/Interfaces/IProcessElementExecution.cs
+
+public interface IProcessElementExecution
+{
+    /// Execute this node with the given context and return a result.
+    Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext nodeExecutionContext,
+        CancellationToken cancellationToken = default);
+
+    /// Validate configuration before the workflow runs (pre-flight check).
+    Task&lt;ValidationResult&gt; ValidateAsync(
+        ProcessElementValidationContext validationContext,
+        CancellationToken cancellationToken = default);
+
+    /// Handle an exception that occurred during ExecuteAsync.
+    Task&lt;NodeExecutionResult&gt; HandleErrorAsync(
+        ProcessElementExecutionContext executionContext,
+        Exception error,
+        CancellationToken cancellationToken = default);
+
+    /// Release resources after execution (successful or failed).
+    Task CleanupAsync(
+        ProcessElementExecutionContext executionContext,
+        CancellationToken cancellationToken = default);
+}</code></pre>
+
+  <h2>Method Responsibilities</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Called When</th><th>Your Responsibility</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>ExecuteAsync</code></td>
+        <td>Engine reaches this node during execution</td>
+        <td>Implement your node's logic here. Must return <code>NodeExecutionResult</code>.</td>
+      </tr>
+      <tr>
+        <td><code>ValidateAsync</code></td>
+        <td>Designer validates the workflow before saving or running</td>
+        <td><code>BaseNodeExecutor</code> handles this — parses config and calls <code>settings.Validate()</code>. Override <code>settings.Validate()</code> for custom rules.</td>
+      </tr>
+      <tr>
+        <td><code>HandleErrorAsync</code></td>
+        <td>An unhandled exception is thrown in <code>ExecuteAsync</code></td>
+        <td><code>BaseNodeExecutor.ErrorHandler</code> handles this — routes to error port or rethrows. Rarely overridden.</td>
+      </tr>
+      <tr>
+        <td><code>CleanupAsync</code></td>
+        <td>After execution completes (success or failure)</td>
+        <td>No-op by default in <code>BaseNodeExecutor</code>. Override if you hold resources (DB connections, file handles).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>TypeCode Property</h2>
+  <p>The interface does not declare a <code>TypeCode</code> property, but the convention (enforced by the ExecutorRegistry) is that each executor class exposes a <code>public const string NodeTypeName</code> or a <code>public override string ProcessElementTypeCode</code>:</p>
+  <pre><code>public partial class MyCustomNodeExecutor : BaseNodeExecutor
+{
+    // Used as the registry key AND as the DB NodeType.typeCode
+    public const string NodeTypeName = "my-custom-node";
+
+    public override string ProcessElementTypeCode =&gt; NodeTypeName;
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Do Not Implement IProcessElementExecution Directly</strong>
+    Always extend <code>BaseNodeExecutor</code> instead. Implementing the interface directly means you must write all the error handling, configuration loading, GuardRails integration, and SignalR event emission yourself. <code>BaseNodeExecutor</code> provides all of this out of the box.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Executor Overview</a>
+    <a href="02-base-executor.html">Next: BaseNodeExecutor Pattern &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Area Deployments — Agent Areas | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Agent Areas</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Agent Areas Overview</a>
+  <a href="01-what-are-areas.html">What Are Agent Areas</a>
+  <a href="02-area-configuration.html">Area Configuration</a>
+  <a href="03-knowledge-scoping.html">Knowledge Scoping</a>
+  <a href="04-tool-scoping.html">Tool Scoping</a>
+  <a href="05-user-access.html">User Access</a>
+  <a href="06-area-routing.html">Area Routing</a>
+  <a href="07-multi-area.html" class="active">Multi-Area Deployments</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Multi-Area Deployments</h1>
+    <p class="lead">A multi-area Octopus deployment serves multiple business domains from a single installation. This page covers architecture patterns, performance considerations, area-level monitoring, and the recommended approach for enterprise-scale deployments with 10+ areas.</p>
+  </div>
+
+  <h2>Architecture Overview</h2>
+  <pre><code>// Typical enterprise multi-area deployment:
+Octopus API Cluster (3 nodes)
+├── Shared Infrastructure
+│   ├── SQL Server (Octopus_* tables — all tenants, all areas)
+│   ├── Qdrant (separate collection per agent → per area effectively)
+│   └── Redis (session cache, distributed token counting)
+└── Logic Layer
+    ├── Area: HR       → 3 agents × 5 knowledge docs × 8 tools
+    ├── Area: Finance  → 2 agents × 4 knowledge docs × 6 tools
+    ├── Area: IT       → 4 agents × 10 knowledge docs × 12 tools
+    ├── Area: Legal    → 1 agent  × 8 knowledge docs × 3 tools
+    └── Area: Public   → 1 agent  × 3 knowledge docs × 0 tools (public chatbot)</code></pre>
+
+  <h2>Performance Considerations at Scale</h2>
+  <table>
+    <thead>
+      <tr><th>Concern</th><th>Impact</th><th>Mitigation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Many vector collections in Qdrant</td><td>Memory overhead per collection</td><td>Qdrant's collection memory is lazy-loaded; 50+ collections are fine on a 16GB instance</td></tr>
+      <tr><td>SQL connection pool</td><td>Concurrent agents share the same pool</td><td>Set appropriate pool size; read replicas for read-heavy areas</td></tr>
+      <tr><td>LLM API rate limits</td><td>High concurrent usage hits provider limits</td><td>Configure per-area rate limiting; use multiple API keys if needed</td></tr>
+      <tr><td>Embedding API calls</td><td>Every turn triggers an embedding call</td><td>Cache query embeddings for identical messages within a short window</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Area-Level Monitoring</h2>
+  <pre><code>// Per-area metrics exposed via /metrics (Prometheus format):
+octopus_turns_total{area="HR", agent="hr_assistant"} 1247
+octopus_turns_total{area="Finance", agent="expense_advisor"} 328
+
+octopus_tool_calls_total{area="HR", tool="get_leave_balance"} 892
+octopus_semantic_retrievals{area="HR", agent="hr_assistant", score_bucket="0.75-0.85"} 456
+
+octopus_token_usage{area="HR", type="input"}  1_234_567
+octopus_token_usage{area="HR", type="output"}   312_890
+
+// Area-specific dashboards recommended in Grafana for area-by-area monitoring</code></pre>
+
+  <h2>Multi-Tenant vs. Multi-Area</h2>
+  <table>
+    <thead>
+      <tr><th>Dimension</th><th>Multi-Tenant</th><th>Multi-Area</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Separation boundary</td><td>Company / organisation</td><td>Department / business domain</td></tr>
+      <tr><td>Data isolation</td><td>Hard isolation — different SQL rows by TenantId</td><td>Logical isolation — different agents within same tenant</td></tr>
+      <tr><td>Admin scope</td><td>Tenant admin cannot see other tenants</td><td>Area admin cannot see other areas (unless they have OctopusTenantAdmin)</td></tr>
+      <tr><td>Knowledge sharing</td><td>Not possible across tenants</td><td>Possible via shared agent collection</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Start Simple — Add Areas as Needed</strong>
+    <p>Begin with a single area and add more areas as your deployment matures and distinct domain requirements emerge. Migrating agents between areas is straightforward — it is a configuration change, not a data migration.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-area-routing.html">&#8592; Area Routing</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowledge Scoping — Agent Areas | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Agent Areas</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Agent Areas Overview</a>
+  <a href="01-what-are-areas.html">What Are Agent Areas</a>
+  <a href="02-area-configuration.html">Area Configuration</a>
+  <a href="03-knowledge-scoping.html" class="active">Knowledge Scoping</a>
+  <a href="04-tool-scoping.html">Tool Scoping</a>
+  <a href="05-user-access.html">User Access</a>
+  <a href="06-area-routing.html">Area Routing</a>
+  <a href="07-multi-area.html">Multi-Area Deployments</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Knowledge Scoping</h1>
+    <p class="lead">Knowledge in Octopus is scoped at the agent level — each agent has its own vector collection. Because agents belong to areas, knowledge is effectively area-scoped. This page explains how knowledge scoping works and how to share knowledge across agents within an area.</p>
+  </div>
+
+  <h2>Per-Agent Knowledge Isolation</h2>
+  <p>Every agent's semantic memory lives in its own vector collection: <code>agent_{agentId}</code>. Agents in the HR area cannot retrieve documents indexed into the Finance area's agent collections — the collection boundary provides hard isolation:</p>
+  <pre><code>// HR Area agents:
+// - agent_hr_assistant   → collection "agent_HR_ASSISTANT_ID"
+// - agent_leave_manager  → collection "agent_LEAVE_MANAGER_ID"
+
+// Finance Area agents:
+// - agent_expense_advisor → collection "agent_EXPENSE_ADVISOR_ID"
+
+// HR Assistant CAN search its own collection
+// HR Assistant CANNOT search Finance agent's collection — different collection name</code></pre>
+
+  <h2>Shared Knowledge Within an Area</h2>
+  <p>When multiple agents in the same area need to answer from the same documents, there are two approaches:</p>
+  <table>
+    <thead>
+      <tr><th>Approach</th><th>How</th><th>Trade-offs</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Index documents into each agent's collection</td><td>Upload to each agent separately</td><td>Duplicate storage; each agent searches independently; simpler</td></tr>
+      <tr><td>Shared agent collection</td><td>Create a "knowledge" agent whose collection is searched by other area agents via tool</td><td>Single copy; slightly more complex routing</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Uploading Knowledge to an Area Agent</h2>
+  <pre><code>// Upload knowledge for a specific agent in an area
+POST /api/octopus/areas/{areaId}/agents/{agentId}/knowledge/documents
+Authorization: Bearer {areaAdminToken}
+Content-Type: multipart/form-data
+
+file: HR_Policy_2025.pdf
+category: Leave
+waitForIndexing: true
+
+// This is equivalent to:
+POST /api/octopus/knowledge/{agentId}/documents
+// The area context validates the agent belongs to the area before allowing upload.</code></pre>
+
+  <h2>Area-Scoped Knowledge Management</h2>
+  <pre><code>// List all documents across all agents in an area
+GET /api/octopus/areas/{areaId}/knowledge/documents
+
+// Response includes the agent each document belongs to:
+{
+  "documents": [
+    { "documentId": "doc_1", "agentId": "agent_hr_01", "fileName": "HR_Policy.pdf", "chunkCount": 42 },
+    { "documentId": "doc_2", "agentId": "agent_hr_01", "fileName": "Leave_Guide.pdf", "chunkCount": 18 },
+    { "documentId": "doc_3", "agentId": "agent_leave_01", "fileName": "Leave_Calculator.xlsx", "chunkCount": 6 }
+  ]
+}
+
+// Delete a document from an area agent
+DELETE /api/octopus/areas/{areaId}/agents/{agentId}/knowledge/documents/{documentId}</code></pre>
+
+  <h2>Cross-Area Knowledge Sharing</h2>
+  <p>Sharing knowledge across areas requires explicit routing — there is no automatic cross-area retrieval. The recommended pattern is a "shared knowledge" agent that agents in multiple areas can invoke via a <code>search_knowledge</code> tool call:</p>
+  <pre><code>// Shared knowledge agent (not in any specific area — tenant-wide)
+// Agents in HR and Finance areas both have the "search_company_handbook" tool registered
+// The tool handler queries the shared knowledge agent's collection:
+Handler = async (input, ctx, ct) =>
+{
+    string query = input.GetProperty("query").GetString()!;
+    float[] embedding = await _embedder.EmbedAsync(query, ct);
+    var results = await _store.SearchAsync("agent_shared_handbook", embedding, 5, 0.75f, ct);
+    return JsonSerializer.Serialize(results.Select(r => new { r.Content, r.Metadata.Source }));
+};</code></pre>
+
+  <div class="page-nav">
+    <a href="02-area-configuration.html">&#8592; Area Configuration</a>
+    <a href="04-tool-scoping.html">Next: Tool Scoping &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>$var.{name} — Variable Scoping | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Variable Scoping</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-json.html">$json — Trigger Input</a>
+  <a href="02-input.html">$input — Upstream Node</a>
+  <a href="03-output.html">$output.{nodeId} — Named Node</a>
+  <a href="04-var.html" class="active">$var.{name} — Workflow Variables</a>
+  <a href="05-global.html">$global — Tenant Globals</a>
+  <a href="06-context.html">$context — Execution Context</a>
+  <a href="07-availability.html">Availability Table</a>
+  <a href="08-mistakes.html">Common Mistakes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>$var.{name} — Workflow Variables</h1>
+    <p class="lead"><code>$var.{name}</code> accesses mutable execution variables set by <strong>SetVariable</strong> nodes in the workflow. Unlike <code>$output.{nodeId}</code>, which reads a node's computed output, <code>$var</code> reads explicitly named values that can be updated at any point in the graph by placing a SetVariable node.</p>
+  </div>
+
+  <h2>How $var Variables Are Set</h2>
+  <p>Workflow variables are populated by the <strong>SetVariable</strong> built-in node. The designer configures a variable name and a value expression. When the SetVariable node runs, it calls <code>ctx.ExecutionMemory.SetGlobal(name, value)</code> internally.</p>
+  <pre><code">// SetVariable node configuration (in the node's config panel)
+{
+  "variableName": "selectedRegion",
+  "valueExpression": "$json.body.region ?? 'us-east-1'"
+}
+
+// After this node runs, $var.selectedRegion resolves to the computed value
+// Any downstream node can use:
+$var.selectedRegion</code></pre>
+
+  <h2>Expression Examples</h2>
+  <pre><code">// Read a simple string variable
+$var.selectedRegion
+
+// Read a variable and use it in a URL template
+"https://api.{{$var.selectedRegion}}.example.com/orders"
+
+// Use in a condition
+$var.retryCount < 3
+
+// Use in arithmetic
+$var.basePrice * 1.2
+
+// Nested object variable
+$var.userProfile.role == "admin"</code></pre>
+
+  <h2>Updating Variables — Multiple SetVariable Nodes</h2>
+  <p>A <code>$var</code> variable can be updated during the execution by placing additional SetVariable nodes further in the graph. Each SetVariable call overwrites the previous value. This enables patterns like counters and accumulators within a single run.</p>
+  <pre><code">// Pattern: counter incremented by a SetVariable node in a loop
+// SetVariable node config — reads current value and increments
+{
+  "variableName": "itemCount",
+  "valueExpression": "($var.itemCount ?? 0) + 1"
+}
+
+// Each time this SetVariable node runs, $var.itemCount increases by 1</code></pre>
+
+  <h2>$var vs. SetGlobal in Executors</h2>
+  <table>
+    <thead><tr><th>Attribute</th><th>$var.{name} (SetVariable node)</th><th>ctx.ExecutionMemory.SetGlobal (executor code)</th></tr></thead>
+    <tbody>
+      <tr><td>Who sets it</td><td>Workflow designer via SetVariable node</td><td>Backend engineer via executor C# code</td></tr>
+      <tr><td>Expression prefix</td><td><code>$var.{name}</code></td><td><code>$global.{name}</code> (not the same as $global tenant constants)</td></tr>
+      <tr><td>Mutable</td><td>Yes — multiple SetVariable nodes can update it</td><td>Yes — any executor can call SetGlobal</td></tr>
+      <tr><td>Scope</td><td>One execution</td><td>One execution</td></tr>
+      <tr><td>Visible to designers</td><td>Yes — declared and managed in the canvas</td><td>Partially — visible via expression if name is known</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Lifetime</h2>
+  <p><code>$var</code> variables are ephemeral — they exist only for the current execution run. They are NOT accessible in future runs. If cross-run persistence is needed, use pinned data.</p>
+
+  <div class="callout info">
+    <strong>$var.{name} is null until a SetVariable node sets it.</strong> If you reference <code>$var.retryCount</code> in a node that runs before any SetVariable node has set <code>retryCount</code>, the expression evaluates to null. Always place the initializing SetVariable node upstream of any node that reads the variable, and use null-coalescing where appropriate: <code>$var.retryCount ?? 0</code>.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-output.html">&#8592; $output.{nodeId} — Named Node</a>
+    <a href="05-global.html">Next: $global — Tenant Globals &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

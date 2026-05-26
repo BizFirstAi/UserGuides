@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Server Plugin Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>SQL Server Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-connection.html">Connection Configuration</a>
+  <a href="03-schema.html">SQL Schema</a>
+  <a href="04-migrations.html">Running Migrations</a>
+  <a href="05-multi-tenant.html">Multi-Tenant Configuration</a>
+  <a href="06-performance.html">Performance Considerations</a>
+  <a href="07-backup.html">Backup and Recovery</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>SQL Server Storage Plugin</h1>
+    <p class="lead">The <code>SqlServerPlugin</code> replaces Octopus's default in-memory storage with durable SQL Server persistence. Without it, all agent configurations, conversations, and memory are lost on every restart.</p>
+  </div>
+
+  <h2>What It Persists</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Agent Configurations</h4>
+      <p>System prompt, LLM model, memory settings, tool assignments, area memberships. The source of truth for all agent behaviour.</p>
+    </div>
+    <div class="card">
+      <h4>Episodic Memory</h4>
+      <p>Conversation episodes and individual messages — the long-term conversation history recalled into context on each turn.</p>
+    </div>
+    <div class="card">
+      <h4>Procedural Memory</h4>
+      <p>Named skill sequences that guide agents through multi-step processes. Matched by intent and injected as system instructions.</p>
+    </div>
+    <div class="card">
+      <h4>AI Functions</h4>
+      <p>JavaScript snippets stored in the database and exposed to agents as MCP tools. Editable at runtime without deployment.</p>
+    </div>
+    <div class="card">
+      <h4>Areas</h4>
+      <p>Logical deployment boundaries grouping agents, knowledge, and users. Each area is a row with its routing and isolation config.</p>
+    </div>
+  </div>
+
+  <h2>In-Memory vs SQL Server</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>In-Memory (default)</th><th>SqlServerPlugin</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Data survives restart</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Multi-instance deployment</td><td>No (per-process state)</td><td>Yes (shared DB)</td></tr>
+      <tr><td>Production use</td><td>Dev/test only</td><td>Required</td></tr>
+      <tr><td>EF Core migrations</td><td>Not applicable</td><td>Run on each startup</td></tr>
+      <tr><td>Tenant isolation</td><td>Not enforced</td><td>TenantId on every row</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Plugin Registration</h2>
+  <pre><code>// Program.cs — SqlServerPlugin must be the first plugin registered
+builder.Services.AddOctopus(config =>
+{
+    config.AddPlugin&lt;SqlServerPlugin&gt;();   // Must be first
+
+    config.AddPlugin&lt;SemanticKernelPlugin&gt;();
+    config.AddPlugin&lt;ChatbotUIPlugin&gt;();
+    // ... other plugins
+});</code></pre>
+
+  <h2>Services Provided to Other Plugins</h2>
+  <table>
+    <thead>
+      <tr><th>Service Interface</th><th>Implementation</th><th>Consumers</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>OctopusDbContext</code></td><td>EF Core DbContext</td><td>All plugins that access Octopus tables</td></tr>
+      <tr><td><code>IEpisodicMemoryStore</code></td><td><code>SqlEpisodicMemoryStore</code></td><td>MemoryOrchestrator, conversation engine</td></tr>
+      <tr><td><code>IProceduralMemoryStore</code></td><td><code>SqlProceduralMemoryStore</code></td><td>MemoryOrchestrator, agent reasoning loop</td></tr>
+      <tr><td><code>IAgentStore</code></td><td><code>SqlAgentStore</code></td><td>All agent resolution paths</td></tr>
+      <tr><td><code>IAIFunctionStore</code></td><td><code>SqlAIFunctionStore</code></td><td>AI Function runtime, tool registry</td></tr>
+      <tr><td><code>IAreaStore</code></td><td><code>SqlAreaStore</code></td><td>Area routing, user access checks</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Required for production.</strong> Never deploy Octopus to production without <code>SqlServerPlugin</code>. The in-memory fallback is intentionally limited and loses all data on restart.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-enabling.html">Next: Enabling the Plugin &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

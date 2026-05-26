@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emitting Custom Logs — Node Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structured-logs.html">Structured Logs</a>
+  <a href="02-node-metrics.html">Node Metrics</a>
+  <a href="03-otel-traces.html">OpenTelemetry Traces</a>
+  <a href="04-correlation-ids.html">Correlation IDs</a>
+  <a href="05-custom-logs.html" class="active">Emitting Custom Logs</a>
+  <a href="06-custom-metrics.html">Emitting Custom Metrics</a>
+  <a href="07-observer-panel.html">Observer Panel Display</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Emitting Custom Logs</h1>
+    <p class="lead">Executors emit custom logs via ctx.Observability.Logger. Use structured logging patterns — pass data as named arguments, not string concatenation. Entries appear in the Observer Panel Logs tab and are shipped to Loki.</p>
+  </div>
+
+  <h2>Basic Usage</h2>
+  <pre><code">public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx, CancellationToken ct)
+{
+    var logger = ctx.Observability.Logger;
+
+    logger.LogInformation("Processing payment for order {OrderId}, amount {Amount}",
+        orderId, amount);
+
+    try
+    {
+        var result = await _paymentService.ProcessAsync(orderId, amount, ct);
+        logger.LogInformation("Payment processed successfully. TransactionId: {TxId}",
+            result.TransactionId);
+        return NodeExecutionResult.Success(result);
+    }
+    catch (PaymentDeclinedException ex)
+    {
+        logger.LogWarning("Payment declined for order {OrderId}: {Reason}",
+            orderId, ex.Reason);
+        return NodeExecutionResult.Fail("Payment declined: " + ex.Reason);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Unexpected error processing payment for order {OrderId}", orderId);
+        throw;  // Let BaseNodeExecutor handle retry logic
+    }
+}</code></pre>
+
+  <h2>Do and Don't</h2>
+  <table>
+    <thead><tr><th>Do</th><th>Don't</th></tr></thead>
+    <tbody>
+      <tr><td><code>logger.LogInformation("Order {Id}", orderId)</code></td><td><code>logger.LogInformation($"Order {orderId}")</code> (string interpolation — loses structure)</td></tr>
+      <tr><td>Log milestones and key values</td><td>Log every loop iteration at Info (use Debug/Trace)</td></tr>
+      <tr><td>Log exceptions with <code>LogError(ex, ...)</code></td><td>Log exception.Message only — log the full exception object</td></tr>
+      <tr><td>Use ctx.Observability.Logger</td><td>Inject ILogger&lt;T&gt; directly into the executor constructor</td></tr>
+      <tr><td>Redact PII before logging</td><td>Log raw email addresses, phone numbers, or payment details</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Structured Fields Are Automatically Included</h2>
+  <pre><code">// When you call:
+logger.LogInformation("Payment processed. TxId: {TxId}", txId);
+
+// The resulting Loki entry contains:
+{
+  "message"    : "Payment processed. TxId: ABC123",
+  "TxId"       : "ABC123",          // ← named argument becomes a field
+  "nodeId"     : "node-payment",    // ← added by INodeLogger
+  "executionId": "exec-abc-123",    // ← added by INodeLogger
+  "tenantId"   : "tenant-001",      // ← added by INodeLogger
+  "traceId"    : "3d7f..."          // ← added by INodeLogger
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>PII in logs:</strong> Do not log customer names, email addresses, phone numbers, national ID numbers, or payment card details. Use reference IDs (orderId, customerId) in log messages. If you need PII for debugging, use the encrypted audit log API instead.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-correlation-ids.html">&#8592; Correlation IDs</a>
+    <a href="06-custom-metrics.html">Next: Emitting Custom Metrics &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

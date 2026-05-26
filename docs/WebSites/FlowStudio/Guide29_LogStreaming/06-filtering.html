@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client-Side Filtering — Log Streaming | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Log Streaming</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-backend-emission.html">Backend Log Emission</a>
+  <a href="02-signalr-channel.html">SignalR Log Channel</a>
+  <a href="03-buffering.html">Log Buffering</a>
+  <a href="04-client-append.html">Client-Side Append</a>
+  <a href="05-virtual-scroll.html">Virtual Scrolling</a>
+  <a href="06-filtering.html" class="active">Client-Side Filtering</a>
+  <a href="07-historical-logs.html">Loading Historical Logs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Client-Side Filtering</h1>
+    <p class="lead">The Logs tab provides three in-memory filters: level, nodeId, and text search. All filtering is applied on the client against the <code>logs</code> array in <code>executionStore</code> — no server round-trips are involved. The filtered result is passed directly to <code>VirtualLogList</code>.</p>
+  </div>
+
+  <h2>Filter State</h2>
+  <p>Filter state lives in <code>flowObserverPanelStore</code> because it is UI state, not data state. The <code>executionStore</code> is never modified when filters change.</p>
+  <pre><code>// flowObserverPanelStore — filter fields
+interface LogFilterState {
+    levelFilter  : LogLevel | 'All';     // 'All' | 'Trace' | 'Debug' | 'Information' | 'Warning' | 'Error'
+    nodeIdFilter : string | null;        // null = show all nodes
+    textSearch   : string;               // '' = no text filter (case-insensitive substring)
+}
+
+// Initial state — no filters active
+const defaultLogFilter: LogFilterState = {
+    levelFilter  : 'All',
+    nodeIdFilter : null,
+    textSearch   : ''
+};</code></pre>
+
+  <h2>Filter Application</h2>
+  <p>Filtering runs inside a <code>useMemo</code> — it re-executes only when <code>logs</code> or the filter state changes. The memoized result is passed to <code>VirtualLogList</code>.</p>
+  <pre><code>// ExecutionLogsTabContent.tsx
+const logs       = useExecutionStore(s => s.logs);
+const { levelFilter, nodeIdFilter, textSearch } = useFlowObserverPanelStore(
+    s => s.logFilter,
+    shallow
+);
+
+const filteredLogs = useMemo(() => {
+    let result = logs;
+
+    // 1. Level filter
+    if (levelFilter !== 'All') {
+        result = result.filter(l => l.level === levelFilter);
+    }
+
+    // 2. Node filter
+    if (nodeIdFilter !== null) {
+        result = result.filter(l => l.nodeId === nodeIdFilter);
+    }
+
+    // 3. Text search (case-insensitive substring on message)
+    if (textSearch.trim() !== '') {
+        const q = textSearch.toLowerCase();
+        result = result.filter(l => l.message.toLowerCase().includes(q));
+    }
+
+    return result;
+}, [logs, levelFilter, nodeIdFilter, textSearch]);
+
+return &lt;VirtualLogList logs={filteredLogs} /&gt;;</code></pre>
+
+  <h2>Level Filter</h2>
+  <p>The level filter is a dropdown showing the five log levels plus an "All" option. The label also shows the count of entries at that level.</p>
+  <pre><code">// LogLevelFilter.tsx
+const LOG_LEVELS: Array&lt;LogLevel | 'All'&gt; = [
+    'All', 'Error', 'Warning', 'Information', 'Debug', 'Trace'
+];
+
+export function LogLevelFilter() {
+    const levelFilter = useFlowObserverPanelStore(s => s.logFilter.levelFilter);
+    const setLevelFilter = useFlowObserverPanelStore(s => s.setLevelFilter);
+    const logs = useExecutionStore(s => s.logs);
+
+    const counts = useMemo(() => {
+        const map: Record&lt;string, number&gt; = { All: logs.length };
+        logs.forEach(l => { map[l.level] = (map[l.level] ?? 0) + 1; });
+        return map;
+    }, [logs]);
+
+    return (
+        &lt;select value={levelFilter} onChange={e => setLevelFilter(e.target.value as LogLevel | 'All')}&gt;
+            {LOG_LEVELS.map(level => (
+                &lt;option key={level} value={level}&gt;
+                    {level} ({counts[level] ?? 0})
+                &lt;/option&gt;
+            ))}
+        &lt;/select&gt;
+    );
+}</code></pre>
+
+  <h2>Node Filter</h2>
+  <p>The node filter is a dropdown populated from the distinct <code>nodeId</code> values present in <code>logs</code>. It is not seeded from the workflow definition — only nodes that have actually emitted logs appear in the list.</p>
+  <pre><code">// NodeIdFilter.tsx
+export function NodeIdFilter() {
+    const nodeIdFilter = useFlowObserverPanelStore(s => s.logFilter.nodeIdFilter);
+    const setNodeIdFilter = useFlowObserverPanelStore(s => s.setNodeIdFilter);
+    const logs = useExecutionStore(s => s.logs);
+
+    // Build distinct nodeId list from actual log entries
+    const nodeIds = useMemo(() => {
+        return [...new Set(logs.map(l => l.nodeId))];
+    }, [logs]);
+
+    return (
+        &lt;select
+            value={nodeIdFilter ?? ''}
+            onChange={e => setNodeIdFilter(e.target.value || null)}
+        &gt;
+            &lt;option value=""&gt;All Nodes&lt;/option&gt;
+            {nodeIds.map(id => (
+                &lt;option key={id} value={id}&gt;{id}&lt;/option&gt;
+            ))}
+        &lt;/select&gt;
+    );
+}</code></pre>
+
+  <h2>Text Search</h2>
+  <p>The text search input performs a case-insensitive substring match on the <code>message</code> field. It does not search structured fields — only the human-readable message string.</p>
+  <pre><code">// LogSearchInput.tsx — debounced to avoid filtering on every keystroke
+export function LogSearchInput() {
+    const textSearch = useFlowObserverPanelStore(s => s.logFilter.textSearch);
+    const setTextSearch = useFlowObserverPanelStore(s => s.setTextSearch);
+    const [localValue, setLocalValue] = useState(textSearch);
+
+    // Debounce 200ms — avoids running useMemo on each keystroke
+    useEffect(() => {
+        const timer = setTimeout(() => setTextSearch(localValue), 200);
+        return () => clearTimeout(timer);
+    }, [localValue]);
+
+    return (
+        &lt;input
+            type="text"
+            placeholder="Search logs..."
+            value={localValue}
+            onChange={e => setLocalValue(e.target.value)}
+        /&gt;
+    );
+}</code></pre>
+
+  <h2>Filter Interactions</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>Level = Error AND Node = node-abc</td><td>Both conditions applied — entry must match both</td></tr>
+      <tr><td>Text search while level filter active</td><td>Text search narrows already-level-filtered results</td></tr>
+      <tr><td>Filters change while live streaming</td><td>filteredLogs recomputes on next render — no data lost in executionStore</td></tr>
+      <tr><td>Clear all filters</td><td>Set levelFilter='All', nodeIdFilter=null, textSearch='' — full log list visible</td></tr>
+      <tr><td>resetExecutionStore() called</td><td>Logs cleared in executionStore; filter state in panelStore NOT reset (user's filter preference preserved)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Filters never mutate executionStore.</strong> The raw <code>logs</code> array in <code>executionStore</code> always holds every received log entry. Filters are view-only transformations. Switching from "Error only" back to "All" restores the full list without any API call.
+  </div>
+
+  <div class="callout info">
+    <strong>Node names vs. nodeIds in the filter dropdown.</strong> The filter dropdown currently shows raw nodeIds. If you want to show node labels, read the matching <code>WorkflowNode.data.label</code> from <code>workflowStore</code> using the nodeId as a key.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-virtual-scroll.html">&#8592; Virtual Scrolling</a>
+    <a href="07-historical-logs.html">Next: Loading Historical Logs &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

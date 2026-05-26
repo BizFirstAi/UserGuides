@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enabling the Plugin — Semantic Kernel Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Kernel Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html" class="active">Enabling the Plugin</a>
+  <a href="02-llm-routing.html">LLM Routing via SK</a>
+  <a href="03-planner.html">SK Planner Integration</a>
+  <a href="04-sk-skills.html">Using SK Skills</a>
+  <a href="05-native-functions.html">Native Functions</a>
+  <a href="06-memory-integration.html">SK Memory Integration</a>
+  <a href="07-limitations.html">Limitations and Trade-offs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Enabling the Plugin</h1>
+    <p class="lead">Enabling the SemanticKernelPlugin requires the NuGet package, plugin registration, and an appsettings section that references API key credential IDs rather than raw keys.</p>
+  </div>
+
+  <h2>Package Reference</h2>
+  <pre><code>&lt;PackageReference Include="BizFirst.Octopus.SemanticKernelPlugin" Version="*" /&gt;
+&lt;!-- Pulls in Microsoft.SemanticKernel transitively --&gt;</code></pre>
+
+  <h2>Plugin Registration</h2>
+  <pre><code>builder.Services.AddOctopus(config =>
+{
+    config.AddPlugin&lt;SqlServerPlugin&gt;();        // Must be before SemanticKernelPlugin
+    config.AddPlugin&lt;SemanticKernelPlugin&gt;();   // Requires IAgentStore from SqlServerPlugin
+    config.AddPlugin&lt;ChatbotUIPlugin&gt;();
+});</code></pre>
+
+  <h2>appsettings.json Configuration</h2>
+  <pre><code>{
+  "SemanticKernelPlugin": {
+    "DefaultProvider": "AzureOpenAI",
+
+    "AzureOpenAI": {
+      "ApiKeyCredentialId":    10,
+      "Endpoint":              "https://myoai.openai.azure.com/",
+      "ChatDeployment":        "gpt-4o",
+      "EmbeddingDeployment":   "text-embedding-3-large"
+    },
+
+    "OpenAI": {
+      "ApiKeyCredentialId":    11,
+      "ChatModel":             "gpt-4o",
+      "EmbeddingModel":        "text-embedding-3-large"
+    },
+
+    "Planner": {
+      "Enabled":               true,
+      "MaxSteps":              10,
+      "AllowLoops":            false
+    },
+
+    "Memory": {
+      "BridgeToOctopusStore":  true,
+      "CollectionPrefix":      "sk_"
+    }
+  }
+}</code></pre>
+
+  <h2>Config Properties</h2>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>DefaultProvider</code></td><td>string</td><td><code>AzureOpenAI</code> or <code>OpenAI</code> — which provider the SK kernel uses by default</td></tr>
+      <tr><td><code>AzureOpenAI.ApiKeyCredentialId</code></td><td>int</td><td>Credential ID for the Azure OpenAI API key</td></tr>
+      <tr><td><code>AzureOpenAI.Endpoint</code></td><td>string</td><td>Azure OpenAI resource endpoint URL</td></tr>
+      <tr><td><code>AzureOpenAI.ChatDeployment</code></td><td>string</td><td>Deployment name for the chat completion model</td></tr>
+      <tr><td><code>AzureOpenAI.EmbeddingDeployment</code></td><td>string</td><td>Deployment name for the embedding model</td></tr>
+      <tr><td><code>Planner.Enabled</code></td><td>bool</td><td>Whether to activate the SK stepwise planner</td></tr>
+      <tr><td><code>Planner.MaxSteps</code></td><td>int</td><td>Maximum steps the planner may execute (safety cap)</td></tr>
+      <tr><td><code>Memory.BridgeToOctopusStore</code></td><td>bool</td><td>If true, SK memory calls go through <code>ISemanticMemoryStore</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>OnStartAsync — Kernel Construction</h2>
+  <pre><code>public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+{
+    var config = sp.GetRequiredService&lt;IOptions&lt;SemanticKernelPluginConfig&gt;&gt;().Value;
+    var creds  = sp.GetRequiredService&lt;ICredentialResolver&gt;();
+
+    // Resolve API key at startup
+    var apiKey = await creds.GetPasswordAsync(
+        config.AzureOpenAI.ApiKeyCredentialId);
+
+    // Build the SK kernel
+    var kernelBuilder = Kernel.CreateBuilder();
+
+    if (config.DefaultProvider == "AzureOpenAI")
+    {
+        kernelBuilder.AddAzureOpenAIChatCompletion(
+            deploymentName: config.AzureOpenAI.ChatDeployment,
+            endpoint:       config.AzureOpenAI.Endpoint,
+            apiKey:         apiKey);
+
+        kernelBuilder.AddAzureOpenAITextEmbeddingGeneration(
+            deploymentName: config.AzureOpenAI.EmbeddingDeployment,
+            endpoint:       config.AzureOpenAI.Endpoint,
+            apiKey:         apiKey);
+    }
+    else
+    {
+        kernelBuilder.AddOpenAIChatCompletion(config.OpenAI.ChatModel, apiKey);
+        kernelBuilder.AddOpenAITextEmbeddingGeneration(config.OpenAI.EmbeddingModel, apiKey);
+    }
+
+    var kernel = kernelBuilder.Build();
+
+    // Register kernel as singleton for other components
+    var kernelRegistry = sp.GetRequiredService&lt;ISKKernelRegistry&gt;();
+    kernelRegistry.Register("default", kernel);
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-llm-routing.html">Next: LLM Routing via SK &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

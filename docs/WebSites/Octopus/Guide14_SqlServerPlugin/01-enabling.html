@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enabling the Plugin — SQL Server Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>SQL Server Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html" class="active">Enabling the Plugin</a>
+  <a href="02-connection.html">Connection Configuration</a>
+  <a href="03-schema.html">SQL Schema</a>
+  <a href="04-migrations.html">Running Migrations</a>
+  <a href="05-multi-tenant.html">Multi-Tenant Configuration</a>
+  <a href="06-performance.html">Performance Considerations</a>
+  <a href="07-backup.html">Backup and Recovery</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Enabling the Plugin</h1>
+    <p class="lead">Enabling the SqlServerPlugin requires three steps: adding the NuGet package reference, registering the plugin in Program.cs, and providing the connection string credential ID in appsettings.json.</p>
+  </div>
+
+  <h2>Step 1 — Package Reference</h2>
+  <pre><code>&lt;!-- Add to your Octopus host project's .csproj --&gt;
+&lt;PackageReference Include="BizFirst.Octopus.SqlServerPlugin" Version="*" /&gt;</code></pre>
+
+  <h2>Step 2 — Register in Program.cs</h2>
+  <pre><code>// Program.cs
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddOctopus(config =>
+{
+    // SqlServerPlugin MUST be the first plugin registered.
+    // All other plugins depend on the services it provides
+    // (OctopusDbContext, IAgentStore, IEpisodicMemoryStore, etc.)
+    config.AddPlugin&lt;SqlServerPlugin&gt;();
+
+    // Other plugins follow
+    config.AddPlugin&lt;SemanticKernelPlugin&gt;();
+    config.AddPlugin&lt;ChatbotUIPlugin&gt;();
+    config.AddPlugin&lt;ProcessPlugin&gt;();
+});
+
+var app = builder.Build();
+app.UseOctopus();
+app.Run();</code></pre>
+
+  <h2>Step 3 — appsettings.json Configuration</h2>
+  <pre><code>{
+  "SqlServerPlugin": {
+    "ConnectionStringCredentialId": 1,
+    "CommandTimeoutSeconds": 30,
+    "EnableRetryOnFailure": true,
+    "MaxRetryCount": 3,
+    "MaxRetryDelaySeconds": 30,
+    "RunMigrationsOnStartup": true,
+    "MigrationTimeout": 120
+  }
+}</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Setting</th><th>Type</th><th>Default</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ConnectionStringCredentialId</code></td><td>int</td><td>— (required)</td><td>Credential ID for the SQL Server connection string</td></tr>
+      <tr><td><code>CommandTimeoutSeconds</code></td><td>int</td><td>30</td><td>EF Core command timeout for individual queries</td></tr>
+      <tr><td><code>EnableRetryOnFailure</code></td><td>bool</td><td>true</td><td>Enables Polly-backed transient fault retry</td></tr>
+      <tr><td><code>MaxRetryCount</code></td><td>int</td><td>3</td><td>Retry attempts before propagating the exception</td></tr>
+      <tr><td><code>MaxRetryDelaySeconds</code></td><td>int</td><td>30</td><td>Max delay between retries (exponential backoff)</td></tr>
+      <tr><td><code>RunMigrationsOnStartup</code></td><td>bool</td><td>true</td><td>Whether to run pending EF Core migrations automatically</td></tr>
+      <tr><td><code>MigrationTimeout</code></td><td>int</td><td>120</td><td>Seconds to allow for migration on startup</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Credential Setup</h2>
+  <p>The connection string is stored as a credential — never in appsettings.json directly. Register it once via the Octopus admin API:</p>
+  <pre><code>POST /api/credentials
+Content-Type: application/json
+
+{
+  "name":        "OctopusSqlServer",
+  "description": "Connection string for Octopus SQL Server database",
+  "type":        "ConnectionString",
+  "value":       "Server=sql.internal.company.com;Database=OctopusAI;Integrated Security=True;TrustServerCertificate=True;"
+}</code></pre>
+  <pre><code>// Response:
+{
+  "id":   1,
+  "name": "OctopusSqlServer"
+}
+
+// Use the returned id as ConnectionStringCredentialId in appsettings.json</code></pre>
+
+  <h2>Verifying the Setup</h2>
+  <p>On a successful startup, the application log will contain the following lines in order:</p>
+  <pre><code>[SqlServerPlugin] Resolving connection string from credential 1
+[SqlServerPlugin] Connection to OctopusAI verified
+[SqlServerPlugin] Running pending EF Core migrations...
+[SqlServerPlugin] Applied migration: 20240101_InitialOctopusSchema
+[SqlServerPlugin] Applied migration: 20240615_AddAreaTables
+[SqlServerPlugin] Database schema is up to date
+[SqlServerPlugin] Startup complete — all Octopus SQL services available</code></pre>
+
+  <div class="callout info">
+    <strong>Cold start time.</strong> On first deployment, migrations create all tables and indexes. This can take 5–30 seconds depending on SQL Server load. Subsequent startups are fast — only pending migrations run.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-connection.html">Next: Connection Configuration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

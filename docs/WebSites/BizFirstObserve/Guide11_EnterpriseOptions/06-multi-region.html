@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Region Observability — Enterprise Options | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Enterprise Options</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Enterprise Options Overview</a>
+  <a href="01-loki-distributed.html">Loki Distributed Mode</a>
+  <a href="02-thanos.html">Thanos for Metrics HA</a>
+  <a href="03-tempo-ha.html">Tempo HA</a>
+  <a href="04-grafana-enterprise.html">Grafana Enterprise</a>
+  <a href="05-kubernetes.html">Kubernetes Native Scaling</a>
+  <a href="06-multi-region.html" class="active">Multi-Region Observability</a>
+  <a href="07-cost.html">Enterprise Cost Model</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Multi-Region Observability</h1>
+    <p class="lead">When BizFirstGO is deployed in multiple AWS/Azure regions, each region runs its own OTel Collector, Loki, Prometheus, and Tempo. A central Grafana instance federates across all regions — providing a unified global view while keeping telemetry data within each region's boundaries.</p>
+  </div>
+
+  <h2>Multi-Region Architecture</h2>
+  <pre><code># Architecture: one observability stack per region, one central Grafana
+
+# Region: us-east-1
+# - OTel Collector (receives from BizFirstGO services in us-east-1)
+# - Loki (logs for us-east-1 tenants)
+# - Prometheus (metrics for us-east-1 services)
+# - Tempo (traces for us-east-1 executions)
+
+# Region: eu-west-1
+# - OTel Collector (receives from BizFirstGO services in eu-west-1)
+# - Loki (logs for eu-west-1 tenants)
+# - Prometheus (metrics for eu-west-1 services)
+# - Tempo (traces for eu-west-1 executions)
+
+# Central Grafana (can be in either region or a dedicated control region):
+# - Data sources: one Loki per region, one Prometheus/Thanos Querier per region, one Tempo per region
+# - Dashboards: use $region template variable to switch between regions
+# - Global dashboards: Thanos Querier federates metrics across regions</code></pre>
+
+  <h2>Prometheus Federation for Cross-Region Metrics</h2>
+  <pre><code># Central Thanos Querier — queries both regions' Prometheus instances:
+thanos query \
+  --store=prometheus-us-east-1.observe.internal:10901 \
+  --store=prometheus-eu-west-1.observe.internal:10901 \
+  --store=thanos-store-gateway-us:10901 \
+  --store=thanos-store-gateway-eu:10901 \
+  --query.replica-label=region \
+  --http-address=0.0.0.0:10902
+
+# In Grafana: one Prometheus data source pointing to the central Thanos Querier:
+# url: http://central-thanos-querier:10902
+# Now PromQL queries aggregate across all regions automatically.
+
+# Example: error rate across ALL regions:
+sum by (region) (rate(bizfirst_workflow_executions_total{status="failed"}[5m]))</code></pre>
+
+  <h2>Loki Multi-Region Query</h2>
+  <pre><code># In Grafana, create one Loki data source per region:
+# Loki-US: http://loki-us-east-1.observe.internal:3100
+# Loki-EU: http://loki-eu-west-1.observe.internal:3100
+
+# Add a $region template variable to dashboards:
+# Variable: region, Type: Custom, Values: us-east-1,eu-west-1
+
+# In panel queries, use the variable to select the correct data source:
+# Panel data source: Loki-$region (uses the selected region's Loki)
+
+# For cross-region log search (finding a trace that spans regions):
+# Use Grafana's "Mixed" data source feature to query multiple Loki instances
+# and merge results in one panel</code></pre>
+
+  <h2>Data Residency Considerations</h2>
+  <table>
+    <thead>
+      <tr><th>Region</th><th>Data Residency Rule</th><th>BizFirstObserve Configuration</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>EU (GDPR)</td><td>EU user data must not leave the EU</td><td>Separate eu-west-1 Loki with EU S3 bucket; no cross-region log replication</td></tr>
+      <tr><td>US (SOX tenants)</td><td>Financial logs may be required in specific jurisdiction</td><td>Dedicated us-east-1 stack with US S3 bucket</td></tr>
+      <tr><td>Metrics (aggregate)</td><td>Aggregated metrics (no PII) can cross regions</td><td>Thanos federation of aggregated PromQL is acceptable</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-kubernetes.html">&#8592; Kubernetes Native Scaling</a>
+    <a href="07-cost.html">Next: Enterprise Cost Model &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

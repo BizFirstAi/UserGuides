@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Default Engine — Jint | Expression Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Expression Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-default-jint.html" class="active">Default Engine — Jint</a>
+  <a href="02-expression-context.html">ExpressionContext</a>
+  <a href="03-context-variables.html">Context Variable Reference</a>
+  <a href="04-interface.html">IExpressionEvaluator Interface</a>
+  <a href="05-custom-engine.html">Building a Custom Engine</a>
+  <a href="06-form-fields.html">Expression Fields in Forms</a>
+  <a href="07-resolution-pipeline.html">Resolution Pipeline</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Default Engine — Jint</h1>
+    <p class="lead">Jint is an embedded JavaScript interpreter for .NET. It is the default expression evaluation engine in Flow Studio — no external process or runtime is required. Jint evaluates JavaScript expressions synchronously within the ASP.NET Core process with security constraints based on node certification.</p>
+  </div>
+
+  <h2>How Jint Is Used</h2>
+  <p><strong>Project:</strong> <code>BizFirst.Ai.ProcessEngine.JS.Services</code></p>
+  <p><strong>Class:</strong> <code>ExpressionEvaluator</code> (implements <code>IExpressionEvaluator</code>)</p>
+  <p>The evaluator creates a Jint <code>Engine</code> instance per evaluation call, injects the context variables as named properties, then calls <code>engine.Evaluate(expression)</code>.</p>
+  <pre><code>// Internal Jint evaluation flow (ExpressionEvaluator.cs)
+var engine = JintSecurityConfiguration.CreateEngine(isolationMode);
+
+// Inject context variables into the engine scope
+foreach (var variable in executionVariables)
+{
+    engine.SetValue(variable.Key, variable.Value);
+}
+
+// Evaluate and extract result
+var result = engine.Evaluate(expression);
+return result?.ToObject();</code></pre>
+
+  <h2>Isolation Modes</h2>
+  <p>The Jint engine runs in one of two security modes determined by the node's certification status:</p>
+  <table>
+    <thead><tr><th>Mode</th><th>When</th><th>Constraints</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>High Isolation</td>
+        <td>Uncertified nodes (user-defined or untrusted)</td>
+        <td>No file/network access, timeout enforced (default 5s), restricted APIs</td>
+      </tr>
+      <tr>
+        <td>Low Isolation</td>
+        <td>Certified nodes (platform-signed, verified safe)</td>
+        <td>Longer timeout, some additional APIs permitted</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Expression Examples (Jint)</h2>
+  <pre><code>// Simple field reference — resolved by directive system, not Jint
+@{output:http-request-1.statusCode}
+
+// JavaScript expression in @{js:...} directive — evaluated by Jint
+@{js: $output['http-request-1'].statusCode === 200 ? 'ok' : 'error'}
+
+// String concatenation
+@{js: $output['form-1'].firstName + ' ' + $output['form-1'].lastName}
+
+// Arithmetic
+@{js: Math.round($output['calc-1'].amount * 1.1)}
+
+// Conditional (ternary)
+@{js: $var.retryCount > 3 ? 'exhausted' : 'retry'}</code></pre>
+
+  <h2>Jint Limitations</h2>
+  <table>
+    <thead><tr><th>Limitation</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Timeout</td><td>Default 5 seconds per expression — complex computations may be rejected</td></tr>
+      <tr><td>No async/await</td><td>Jint evaluates synchronously — expressions cannot await promises</td></tr>
+      <tr><td>No require / import</td><td>Cannot import external modules — only built-in JS globals available</td></tr>
+      <tr><td>No file/network access</td><td>Sandboxed — XmlHttpRequest, fetch, FileSystem APIs are disabled</td></tr>
+      <tr><td>ES2020 support</td><td>Jint supports ES2020 spec — older and newer features may vary</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Use Directive Syntax for Simple References</strong>
+    For simple field references (<code>@{output:nodeId.field}</code>), the directive resolver handles resolution directly without invoking Jint. Reserve <code>@{js:...}</code> for cases where computation is needed. Directive-based resolution is faster and does not consume the Jint timeout budget.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Engines Overview</a>
+    <a href="02-expression-context.html">Next: ExpressionContext &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

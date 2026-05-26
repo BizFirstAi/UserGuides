@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Inspector Display — Pinned Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Pinned Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-returning-pinned.html">Returning Pinned Data</a>
+  <a href="02-storage-model.html">Pinned Data Storage</a>
+  <a href="03-reading-pinned.html">Reading Pinned Data</a>
+  <a href="04-inspector-display.html" class="active">Node Inspector Display</a>
+  <a href="05-clearing-pinned.html">Clearing Pinned Data</a>
+  <a href="06-use-cases.html">Use Cases</a>
+  <a href="07-security.html">Security Considerations</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Pinned Data in Node Inspector</h1>
+    <p class="lead">The Node Inspector tab shows a <strong>Pinned Data</strong> section below the Output Data section. This section only appears when <code>NodeInspectorData.pinnedData</code> is non-null. It displays the pinned data as a collapsible, syntax-highlighted JSON viewer.</p>
+  </div>
+
+  <h2>NodeInspectorData Type</h2>
+  <pre><code">// nodeInspector.ts (flow-observer-core)
+export interface NodeInspectorData {
+    nodeId      : string;
+    nodeLabel   : string;
+    status      : NodeExecutionStatus;
+    inputData   : unknown;           // Data the node received as input
+    outputData  : unknown;           // Ephemeral output from this run
+    pinnedData  : unknown | null;    // Persistent pinned data — null if not set
+    logs        : LogEntry[];
+    metrics     : NodeMetrics;
+}</code></pre>
+
+  <h2>How pinnedData Is Loaded</h2>
+  <p>When the user clicks a node in the Observer Panel, <code>handleNodeClick</code> fetches all inspector data including pinned data from the REST API:</p>
+  <pre><code">// NodeInspectorTabContent.tsx
+async function handleNodeClick(nodeId: string) {
+    const data = await executionApiClient.getNodeInspectorData(executionId, nodeId);
+    // data.pinnedData comes from the API — it reads Process_NodePinnedData for this processId+nodeId
+    useExecutionStore.getState().setNodeInspectorData(data);
+}
+
+// API endpoint (backend)
+// GET /api/executions/{executionId}/nodes/{nodeId}/inspector
+// Response includes: { inputData, outputData, pinnedData, logs, metrics, ... }</code></pre>
+
+  <h2>Pinned Data Section Rendering</h2>
+  <pre><code">// NodeInspectorTabContent.tsx (Pinned Data section)
+function PinnedDataSection({ pinnedData }: { pinnedData: unknown }) {
+    const [isExpanded, setIsExpanded] = useState(false);
+
+    // Section only rendered when pinnedData is non-null
+    if (pinnedData === null || pinnedData === undefined) {
+        return null;
+    }
+
+    return (
+        &lt;div className="inspector-section"&gt;
+            &lt;div
+                className="inspector-section-header"
+                onClick={() => setIsExpanded(prev => !prev)}
+            &gt;
+                &lt;span&gt;Pinned Data&lt;/span&gt;
+                &lt;span className="badge badge-pinned"&gt;Persistent&lt;/span&gt;
+                &lt;i className={isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} /&gt;
+            &lt;/div&gt;
+            {isExpanded &amp;&amp; (
+                &lt;JsonViewer data={pinnedData} /&gt;
+            )}
+        &lt;/div&gt;
+    );
+}</code></pre>
+
+  <h2>Pinned Data Badge</h2>
+  <p>The Pinned Data section header shows a "Persistent" badge to distinguish it visually from the ephemeral Output Data section. This helps workflow designers understand at a glance that this data survives across runs.</p>
+  <table>
+    <thead><tr><th>Section</th><th>Badge</th><th>When Visible</th></tr></thead>
+    <tbody>
+      <tr><td>Input Data</td><td>This Run</td><td>Always (when node has been executed)</td></tr>
+      <tr><td>Output Data</td><td>This Run</td><td>When output is non-null for this execution</td></tr>
+      <tr><td>Pinned Data</td><td>Persistent</td><td>Only when <code>pinnedData !== null</code></td></tr>
+      <tr><td>Node Logs</td><td>—</td><td>Always (may be empty list)</td></tr>
+      <tr><td>Node Metrics</td><td>—</td><td>Always (shows duration, retries, result)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pinned Data in Historical Executions</h2>
+  <p>When viewing a past execution, the Inspector API still fetches pinned data from <code>Process_NodePinnedData</code> — but this returns the CURRENT pinned data, not what was pinned at the time of the historical run. If the workflow has run many times since the historical execution, the pinned data shown in the inspector reflects the most recent write, not the historical run's output.</p>
+
+  <div class="callout info">
+    <strong>Pinned Data is always current-state, not point-in-time.</strong> The <code>Process_NodePinnedData</code> table stores only the latest value (one row per node). The Node Inspector always shows what is currently pinned — it has no history of previous pinned values. If point-in-time auditability of pinned data is needed, write it to a separate audit table as well.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-reading-pinned.html">&#8592; Reading Pinned Data</a>
+    <a href="05-clearing-pinned.html">Next: Clearing Pinned Data &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backup and Recovery — SQL Server Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>SQL Server Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-connection.html">Connection Configuration</a>
+  <a href="03-schema.html">SQL Schema</a>
+  <a href="04-migrations.html">Running Migrations</a>
+  <a href="05-multi-tenant.html">Multi-Tenant Configuration</a>
+  <a href="06-performance.html">Performance Considerations</a>
+  <a href="07-backup.html" class="active">Backup and Recovery</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Backup and Recovery</h1>
+    <p class="lead">All Octopus SQL data — agents, episodes, procedures, AI functions, and areas — resides in a single SQL Server database. Standard SQL Server backup covers all of it. This page provides a recommended backup schedule and a step-by-step recovery procedure.</p>
+  </div>
+
+  <h2>What Is Covered by SQL Server Backup</h2>
+  <table>
+    <thead>
+      <tr><th>Data</th><th>Table(s)</th><th>Criticality</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Agent configurations</td><td><code>Octopus_Agents</code></td><td>Critical — losing this loses all agents</td></tr>
+      <tr><td>Conversation history</td><td><code>Octopus_Episodes</code>, <code>Octopus_EpisodeMessages</code></td><td>High — long-term user context</td></tr>
+      <tr><td>Procedural memory</td><td><code>Octopus_Procedures</code></td><td>High — defines agent skill sequences</td></tr>
+      <tr><td>AI Functions</td><td><code>Octopus_AIFunctions</code></td><td>High — runtime-editable tool logic</td></tr>
+      <tr><td>Areas</td><td><code>Octopus_Areas</code></td><td>Critical — controls agent routing and access</td></tr>
+    </tbody>
+  </table>
+  <div class="callout info">
+    <strong>Vector store not included.</strong> Semantic memory (document embeddings) is stored in Qdrant or PGVector — not in SQL Server. Back up the vector store separately. See the SemanticKernelPlugin guide for vector backup procedures.
+  </div>
+
+  <h2>Recommended Backup Schedule</h2>
+  <pre><code>-- Full database backup: daily at midnight
+BACKUP DATABASE [OctopusAI]
+TO DISK = N'\\backup-server\octopus\full\OctopusAI_full.bak'
+WITH
+    COMPRESSION,
+    CHECKSUM,
+    STATS = 10;
+
+-- Differential backup: every 6 hours
+BACKUP DATABASE [OctopusAI]
+TO DISK = N'\\backup-server\octopus\diff\OctopusAI_diff.bak'
+WITH
+    DIFFERENTIAL,
+    COMPRESSION,
+    CHECKSUM;
+
+-- Transaction log backup: every 15 minutes (for point-in-time recovery)
+BACKUP LOG [OctopusAI]
+TO DISK = N'\\backup-server\octopus\log\OctopusAI_log.bak'
+WITH COMPRESSION, CHECKSUM;</code></pre>
+
+  <h2>Azure SQL Backup (Managed Service)</h2>
+  <p>If using Azure SQL Database, automated backups are configured via the Azure portal:</p>
+  <pre><code># Azure CLI — configure backup retention
+az sql db ltr-policy set \
+    --resource-group myRG \
+    --server myserver \
+    --database OctopusAI \
+    --weekly-retention P4W \
+    --monthly-retention P12M \
+    --yearly-retention P5Y \
+    --week-of-year 1</code></pre>
+
+  <h2>Recovery Procedure</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Stop the Octopus application instances</strong>
+        <span>Prevent new writes while the restore is in progress.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Restore the full backup</strong>
+        <span><code>RESTORE DATABASE [OctopusAI] FROM DISK = '...\OctopusAI_full.bak' WITH NORECOVERY</code></span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Apply differential backups (if any)</strong>
+        <span><code>RESTORE DATABASE [OctopusAI] FROM DISK = '...\OctopusAI_diff.bak' WITH NORECOVERY</code></span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Apply transaction log backups to target point-in-time</strong>
+        <span><code>RESTORE LOG [OctopusAI] FROM DISK = '...' WITH RECOVERY, STOPAT = '2024-06-15 14:30:00'</code></span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>Verify schema is consistent</strong>
+        <span>Run <code>dotnet ef migrations list</code> to confirm schema matches the application version.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">6</div>
+      <div class="step-content">
+        <strong>Restart Octopus application instances</strong>
+        <span>Application will verify connectivity on startup and resume serving requests.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Recovery Time Objectives</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>RPO (data loss)</th><th>RTO (downtime)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Full restore from daily backup</td><td>Up to 24 hours</td><td>15–60 min depending on DB size</td></tr>
+      <tr><td>Full + differential restore</td><td>Up to 6 hours</td><td>15–30 min</td></tr>
+      <tr><td>Full + differential + log restore</td><td>Up to 15 min</td><td>20–45 min</td></tr>
+      <tr><td>Azure SQL point-in-time restore</td><td>Up to 5–8 min</td><td>5–15 min</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-performance.html">&#8592; Performance Considerations</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

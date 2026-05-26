@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Lifecycle — Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Plugins Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Plugins Overview</a>
+  <a href="01-plugin-interface.html">IOctopusPlugin Interface</a>
+  <a href="02-lifecycle.html" class="active">Plugin Lifecycle</a>
+  <a href="03-built-in-plugins.html">Built-In Plugins</a>
+  <a href="04-plugin-di.html">DI and Services</a>
+  <a href="05-plugin-config.html">Plugin Configuration</a>
+  <a href="06-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="07-plugin-ordering.html">Plugin Ordering</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Plugin Lifecycle</h1>
+    <p class="lead">Plugin lifecycle methods are called in a well-defined sequence during application startup and shutdown. Understanding the lifecycle is essential for writing reliable plugins that initialise in the correct order and clean up properly.</p>
+  </div>
+
+  <h2>Startup Sequence</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>AddOctopus() called in Program.cs</strong>
+        <span>The DI container configuration begins. Octopus core services are registered.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Plugin.OnRegister() called for each plugin (in registration order)</strong>
+        <span>Each plugin registers its services. The DI container is not yet built — services cannot be resolved.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>DI container built (builder.Build())</strong>
+        <span>All registered services are compiled into the service provider.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Plugin.OnStartAsync() called for each plugin (in registration order)</strong>
+        <span>Plugins resolve services, apply migrations, register tools. Application is not yet accepting requests.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>Application starts accepting requests</strong>
+        <span>All plugins fully initialised. Agents can handle conversations.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Shutdown Sequence</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Shutdown signal received</strong>
+        <span>SIGTERM, Ctrl+C, or host shutdown. Application stops accepting new requests.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>In-flight requests drain</strong>
+        <span>Active conversations complete (up to graceful shutdown timeout, default 30s).</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Plugin.OnStopAsync() called in reverse registration order</strong>
+        <span>Plugins clean up in reverse order to dependency order. Last-registered plugin stops first.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>DI container disposed</strong>
+        <span>All IDisposable singleton services are disposed.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>OnStartAsync — Common Patterns</h2>
+  <pre><code>public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+{
+    // Pattern 1: Apply EF Core migrations
+    using var scope = sp.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService&lt;OctopusDbContext&gt;();
+    await db.Database.MigrateAsync(ct);
+
+    // Pattern 2: Register MCP tools (must happen before first request)
+    var registry = sp.GetRequiredService&lt;MCPToolRegistry&gt;();
+    registry.Register(new MCPTool { ... });
+
+    // Pattern 3: Create vector collection if it doesn't exist
+    var qdrant = sp.GetRequiredService&lt;IQdrantClient&gt;();
+    await EnsureCollectionsExistAsync(qdrant, ct);
+
+    // Pattern 4: Warm up a cache or connection
+    var cache = sp.GetRequiredService&lt;IMyCache&gt;();
+    await cache.WarmUpAsync(ct);
+}</code></pre>
+
+  <h2>OnStopAsync — Clean Shutdown</h2>
+  <pre><code>public async Task OnStopAsync(CancellationToken ct)
+{
+    // Flush any buffered writes
+    await _writer.FlushAsync(ct);
+
+    // Close external connections gracefully
+    await _externalClient.DisconnectAsync(ct);
+
+    // Signal background tasks to stop
+    _backgroundCts.Cancel();
+    await _backgroundTask;  // Wait for completion
+
+    // Dispose resources
+    _qdrantClient?.Dispose();
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="01-plugin-interface.html">&#8592; IOctopusPlugin Interface</a>
+    <a href="03-built-in-plugins.html">Next: Built-In Plugins &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

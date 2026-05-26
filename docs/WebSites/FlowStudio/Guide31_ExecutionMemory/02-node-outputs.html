@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nodeOutputs Map — Execution Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Execution Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structure.html">Memory Structure</a>
+  <a href="02-node-outputs.html" class="active">nodeOutputs Map</a>
+  <a href="03-reading-upstream.html">Reading Upstream Output</a>
+  <a href="04-global-variables.html">Global Variables</a>
+  <a href="05-lifetime.html">Memory Lifetime</a>
+  <a href="06-serialization.html">HIL Serialization</a>
+  <a href="07-security.html">Memory Isolation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>nodeOutputs Map</h1>
+    <p class="lead">The <code>nodeOutputs</code> dictionary is the primary data bus between nodes. After each node executes, <code>BaseNodeExecutor</code> writes the node's output into this map under the node's ID. Downstream nodes read from it using <code>GetNodeOutput&lt;T&gt;(nodeId)</code>.</p>
+  </div>
+
+  <h2>How Output Gets Written</h2>
+  <p>Executors never call <code>SetNodeOutput</code> directly. They return a <code>NodeExecutionResult</code>, and <code>BaseNodeExecutor</code> writes the output to memory after the executor completes.</p>
+  <pre><code">// BaseNodeExecutor.cs (simplified write path)
+var result = await ExecuteAsync(ctx, ct);
+
+if (result.IsSuccess)
+{
+    // Write output to the shared nodeOutputs map
+    ctx.ExecutionMemory.SetNodeOutput(ctx.NodeId, result.Output);
+
+    // Also persist pinnedData if non-null (separate concern — see Guide30)
+    if (result.PinnedData is not null)
+        await _pinnedDataService.SaveAsync(ctx.ProcessId, ctx.NodeId, result.PinnedData, ct);
+}</code></pre>
+
+  <h2>Key and Value Semantics</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Key</td><td>The nodeId string — e.g. <code>"node-abc"</code>. Set by the workflow designer in Flow Studio.</td></tr>
+      <tr><td>Value type</td><td><code>object?</code> — any JSON-serializable value. Typically an anonymous object, POCO, primitive, or null.</td></tr>
+      <tr><td>Overwrite</td><td>Last write wins. If a node runs twice (e.g., in a retry loop), each execution overwrites the previous output.</td></tr>
+      <tr><td>Missing key</td><td><code>GetNodeOutput</code> returns <code>null</code> if the nodeId is not in the map — safe to handle with null-check.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Type Safety</h2>
+  <pre><code">// Option 1 — untyped (use when type is unknown)
+var raw = ctx.ExecutionMemory.GetNodeOutput("data-transform-node");
+
+// Option 2 — typed cast (most common)
+var result = ctx.ExecutionMemory.GetNodeOutput&lt;TransformResult&gt;("data-transform-node");
+// Returns null if key missing OR if the stored value is not castable to TransformResult
+
+// Option 3 — primitive types use the untyped overload
+var count = (int?)ctx.ExecutionMemory.GetNodeOutput("counter-node") ?? 0;</code></pre>
+
+  <h2>What Can Be Stored</h2>
+  <table>
+    <thead><tr><th>Value Type</th><th>Supported?</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Anonymous object</td><td>Yes</td><td>Common for short-lived inter-node data</td></tr>
+      <tr><td>POCO class</td><td>Yes</td><td>Prefer for typed downstream reads</td></tr>
+      <tr><td><code>string</code>, <code>int</code>, <code>bool</code>, <code>decimal</code></td><td>Yes</td><td>Use untyped <code>GetNodeOutput</code> and cast</td></tr>
+      <tr><td><code>List&lt;T&gt;</code> or <code>T[]</code></td><td>Yes</td><td>Arrays and lists are fully supported</td></tr>
+      <tr><td><code>null</code></td><td>Yes</td><td>Written to map as null — <code>GetNodeOutput</code> will return null</td></tr>
+      <tr><td>Non-serializable (streams, sockets)</td><td>No</td><td>Will fail during HIL serialization (see Guide31/06)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Naming Convention for nodeId</h2>
+  <p>nodeIds are set by the workflow designer in Flow Studio when placing a node on the canvas. By default they are machine-generated (e.g., <code>node-1</code>, <code>node-2</code>), but designers should rename nodes to meaningful IDs when cross-node data access is needed.</p>
+  <pre><code">// Good — executor reads from a meaningfully named node
+var customerData = ctx.ExecutionMemory.GetNodeOutput&lt;Customer&gt;("fetch-customer");
+
+// Fragile — if the nodeId changes in the workflow, this breaks
+var customerData = ctx.ExecutionMemory.GetNodeOutput&lt;Customer&gt;("node-3");</code></pre>
+
+  <div class="callout info">
+    <strong>Document your nodeId dependencies.</strong> If your executor reads from a specific upstream node by ID, document this in the executor's XML summary or README so workflow designers know which node must be named that way. Breaking the nodeId contract is a silent runtime error — the executor gets null with no error.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-structure.html">&#8592; Memory Structure</a>
+    <a href="03-reading-upstream.html">Next: Reading Upstream Output &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

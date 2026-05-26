@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Azure Monitor — PaaS Options | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>PaaS Options</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">PaaS Options Overview</a>
+  <a href="01-grafana-cloud.html">Grafana Cloud</a>
+  <a href="02-azure-monitor.html" class="active">Azure Monitor</a>
+  <a href="03-aws-cloudwatch.html">AWS CloudWatch</a>
+  <a href="04-datadog.html">Datadog</a>
+  <a href="05-config-pattern.html">OTel Collector Config Pattern</a>
+  <a href="06-cost-comparison.html">Cost Comparison</a>
+  <a href="07-vendor-lock.html">Avoiding Vendor Lock-In</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Azure Monitor</h1>
+    <p class="lead">Azure Monitor provides managed log analytics (Log Analytics Workspace), metrics (Azure Monitor Managed Prometheus), and tracing (Application Insights). If BizFirstGO is deployed on Azure Kubernetes Service (AKS), Azure Monitor is the natural fit — deeply integrated with the Azure ecosystem.</p>
+  </div>
+
+  <h2>Azure Monitor Components for BizFirstGO</h2>
+  <table>
+    <thead>
+      <tr><th>Azure Monitor Service</th><th>Replaces</th><th>Query Language</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Log Analytics Workspace</td><td>Loki</td><td>KQL (Kusto Query Language) — different from LogQL</td></tr>
+      <tr><td>Azure Monitor Managed Prometheus</td><td>Prometheus</td><td>PromQL — same as self-hosted</td></tr>
+      <tr><td>Application Insights</td><td>Tempo</td><td>Application Insights (AI) query interface</td></tr>
+      <tr><td>Azure Managed Grafana</td><td>Grafana OSS</td><td>Same Grafana UI — pre-connected to Azure data sources</td></tr>
+    </tbody>
+  </table>
+
+  <h2>OTel Collector Configuration for Azure Monitor</h2>
+  <pre><code># otel-collector-config.yaml — export to Azure Monitor
+exporters:
+  # Logs → Azure Monitor Log Analytics Workspace
+  azuremonitor:
+    connection_string: "${AZURE_MONITOR_CONNECTION_STRING}"
+    # Note: azuremonitor exporter handles logs + traces in one connection
+
+  # Metrics → Azure Monitor Managed Prometheus (Remote Write)
+  prometheusremotewrite/azure:
+    endpoint: "${AZURE_PROMETHEUS_REMOTE_WRITE_ENDPOINT}"
+    headers:
+      Authorization: "Bearer ${AZURE_MANAGED_IDENTITY_TOKEN}"
+
+service:
+  pipelines:
+    logs/azure:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, redaction]
+      exporters: [azuremonitor]
+
+    traces/azure:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, redaction, tail_sampling]
+      exporters: [azuremonitor]
+
+    metrics/azure:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite/azure]</code></pre>
+
+  <h2>Log Query in KQL (Azure equivalent of LogQL)</h2>
+  <pre><code">// Log Analytics KQL — equivalent to BizFirstGO LogQL queries
+
+// Find all error logs for a specific execution (LogQL: {job="processengine"} |= "exec-id")
+ContainerLog
+| where LogEntry contains "exec-a1b2c3d4"
+| where LogEntry contains "error"
+| project TimeGenerated, LogEntry
+| order by TimeGenerated asc
+
+// Count errors by service (LogQL: count_over_time({level="error"}[5m]))
+ContainerLog
+| where LogEntry contains "\"level\":\"error\""
+| summarize ErrorCount = count() by bin(TimeGenerated, 5m), ContainerName
+| order by TimeGenerated desc</code></pre>
+
+  <div class="callout warning">
+    <strong>KQL Is Not LogQL — Dashboard Migration Required</strong>
+    <p>BizFirstGO's pre-built Loki dashboards use LogQL queries and cannot run against Log Analytics Workspace. If you migrate to Azure Monitor, you must rewrite all Loki panels using KQL equivalents. This is a significant migration effort — budget 2-4 days for the 10 pre-built dashboards. Azure Monitor dashboards cannot be migrated back to self-hosted Loki if you later switch.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-grafana-cloud.html">&#8592; Grafana Cloud</a>
+    <a href="03-aws-cloudwatch.html">Next: AWS CloudWatch &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

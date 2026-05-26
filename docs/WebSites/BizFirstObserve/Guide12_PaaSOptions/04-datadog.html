@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Datadog — PaaS Options | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>PaaS Options</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">PaaS Options Overview</a>
+  <a href="01-grafana-cloud.html">Grafana Cloud</a>
+  <a href="02-azure-monitor.html">Azure Monitor</a>
+  <a href="03-aws-cloudwatch.html">AWS CloudWatch</a>
+  <a href="04-datadog.html" class="active">Datadog</a>
+  <a href="05-config-pattern.html">OTel Collector Config Pattern</a>
+  <a href="06-cost-comparison.html">Cost Comparison</a>
+  <a href="07-vendor-lock.html">Avoiding Vendor Lock-In</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Datadog</h1>
+    <p class="lead">Datadog is a full-featured observability platform with rich APM (Application Performance Monitoring), log management, and infrastructure monitoring. It is the most feature-complete managed option but also the most expensive — and uses entirely proprietary formats requiring complete dashboard migration.</p>
+  </div>
+
+  <h2>Datadog OTel Collector Configuration</h2>
+  <pre><code># otel-collector-config.yaml — export to Datadog via OTel Collector
+# Uses the Datadog exporter (community-maintained)
+
+exporters:
+  datadog:
+    api:
+      key: "${DD_API_KEY}"
+      site: datadoghq.com     # or datadoghq.eu for EU region
+
+    # Map OTel resource attributes to Datadog tags:
+    host_metadata:
+      enabled: true
+      hostname_source: config_or_system
+
+    # Log format for Datadog:
+    logs:
+      use_compression: true
+      compression_level: 6
+
+    # Trace format for Datadog APM:
+    traces:
+      span_name_as_resource_name: true
+      peer_tags_aggregation: false
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch, redaction]
+      exporters: [datadog]
+    traces:
+      receivers: [otlp]
+      processors: [batch, tail_sampling]
+      exporters: [datadog]
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [batch]
+      exporters: [datadog]</code></pre>
+
+  <h2>Datadog Pros and Cons for BizFirstGO</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Pro</th><th>Con</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Setup speed</td><td>Fastest to get running (10 minutes)</td><td>-</td></tr>
+      <tr><td>Features</td><td>Rich APM, ML-based anomaly detection, RUM, SLO tracking</td><td>Overkill for most BizFirstGO deployments</td></tr>
+      <tr><td>Cost</td><td>-</td><td>Most expensive per-host/per-user pricing; costs can escalate quickly</td></tr>
+      <tr><td>Portability</td><td>-</td><td>Proprietary dashboard format — cannot export to Grafana JSON</td></tr>
+      <tr><td>Query language</td><td>Intuitive UI-driven queries</td><td>Not LogQL/PromQL — all dashboards must be rebuilt if leaving Datadog</td></tr>
+      <tr><td>OTel support</td><td>Native OTLP ingestion supported</td><td>Some OTel attributes require mapping to Datadog-specific fields</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Datadog Cost Warning</h2>
+  <pre><code># Datadog pricing model (as of 2025):
+# - Infrastructure: $15-23/host/month
+# - APM: $31/host/month
+# - Log Management: $0.10-0.25/GB ingested + $1.70/million log events
+# - Estimated cost for BizFirstGO (10 hosts, 5 GB/day logs):
+#   Infrastructure: 10 × $23 = $230/month
+#   APM: 10 × $31 = $310/month
+#   Logs: (5 × 30 × $0.10) + (5 × 30 × 1M events × $1.70) = $755/month (estimate)
+#   Total: ~$1,295/month for 10 hosts
+
+# Compare to self-hosted BizFirst Observe:
+# AWS EC2 (2× m6i.xlarge): $200/month
+# S3 storage: $15/month
+# Total: ~$215/month (same 10-tenant workload)
+
+# Datadog is 6× more expensive than self-hosted for this workload.
+# Justify with specific Datadog features (ML anomaly detection, SLO tracking)
+# before committing to Datadog for BizFirstGO.</code></pre>
+
+  <div class="page-nav">
+    <a href="03-aws-cloudwatch.html">&#8592; AWS CloudWatch</a>
+    <a href="05-config-pattern.html">Next: OTel Collector Config Pattern &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

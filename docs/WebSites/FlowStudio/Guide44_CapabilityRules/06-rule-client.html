@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IRuleEngineClient — Guide44 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Rules</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-rule-eval-node.html"><i class="fa-solid fa-gavel"></i> Rule Evaluation Node</a>
+  <a href="02-rule-sets.html"><i class="fa-solid fa-layer-group"></i> Rule Set Selection</a>
+  <a href="03-input-mapping.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Input Mapping</a>
+  <a href="04-rule-output.html"><i class="fa-solid fa-list-check"></i> Rule Output</a>
+  <a href="05-outcome-routing.html"><i class="fa-solid fa-code-branch"></i> Outcome Routing</a>
+  <a href="06-rule-client.html" class="active"><i class="fa-solid fa-plug"></i> IRuleEngineClient</a>
+  <a href="07-audit.html"><i class="fa-solid fa-file-shield"></i> Audit</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>IRuleEngineClient</h1>
+    <p class="lead">The backend interface between executors and the rule engine service — request/response contracts, retry behavior, and DI registration.</p>
+  </div>
+
+  <h2>Interface Definition</h2>
+  <pre><code class="language-csharp">public interface IRuleEngineClient
+{
+    Task&lt;RuleEvaluationResult&gt; EvaluateAsync(
+        RuleEvaluationRequest request,
+        CancellationToken cancellationToken = default);
+}
+
+public record RuleEvaluationRequest
+{
+    public string RuleSetId { get; init; } = default!;
+    public Dictionary&lt;string, object?&gt; Facts { get; init; } = [];
+    public string TenantId { get; init; } = default!;
+    public string? CorrelationId { get; init; }
+}
+
+public record RuleEvaluationResult
+{
+    public string Outcome { get; init; } = default!;
+    public string[] FiredRules { get; init; } = [];
+    public string? Explanation { get; init; }
+    public decimal? Score { get; init; }
+    public DateTimeOffset EvaluatedAt { get; init; }
+    public string RuleSetId { get; init; } = default!;
+    public string RuleSetVersion { get; init; } = default!;
+}</code></pre>
+
+  <h2>Implementation Notes</h2>
+  <pre><code class="language-csharp">// DI registration:
+services.AddHttpClient&lt;IRuleEngineClient, HttpRuleEngineClient&gt;(client =>
+{
+    client.BaseAddress = new Uri(configuration["RuleEngine:BaseUrl"]!);
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
+// The HttpRuleEngineClient uses Polly for retry:
+// - TransientHttpRequestException → retry up to 3 times with exponential backoff
+// - HttpStatusCode 429 (rate limited) → retry after Retry-After header delay
+// - HttpStatusCode 5xx → retry up to 2 times</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>CorrelationId:</strong> The executor automatically sets <code>CorrelationId</code> to the execution ID (<code>ctx.ExecutionId</code>). This allows the rule engine service logs to be correlated with Flow Studio execution logs for debugging.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-outcome-routing.html">&#8592; Outcome Routing</a>
+    <a href="07-audit.html">Next: Audit &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

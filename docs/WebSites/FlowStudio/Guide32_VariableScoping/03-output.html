@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>$output.{nodeId} — Variable Scoping | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Variable Scoping</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-json.html">$json — Trigger Input</a>
+  <a href="02-input.html">$input — Upstream Node</a>
+  <a href="03-output.html" class="active">$output.{nodeId} — Named Node</a>
+  <a href="04-var.html">$var.{name} — Workflow Variables</a>
+  <a href="05-global.html">$global — Tenant Globals</a>
+  <a href="06-context.html">$context — Execution Context</a>
+  <a href="07-availability.html">Availability Table</a>
+  <a href="08-mistakes.html">Common Mistakes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>$output.{nodeId} — Named Node Output</h1>
+    <p class="lead"><code>$output.{nodeId}</code> provides stable access to the output of any node in the workflow by its ID. Unlike <code>$input</code>, it is not affected by rewiring — it always reads from the named node, regardless of the current node's position in the graph.</p>
+  </div>
+
+  <h2>Syntax</h2>
+  <pre><code">// $output.{nodeId}.{field}
+$output.fetch-customer.customerId
+$output.fetch-customer.tierLevel
+$output.validate-order.isValid
+$output.validate-order.errorMessages[0]
+
+// Accessing the entire output object (when the downstream node needs the full object)
+$output.parse-json    // Returns the full output of the parse-json node</code></pre>
+
+  <h2>How nodeId Maps to Memory</h2>
+  <p>The expression engine resolves <code>$output.{nodeId}</code> by calling <code>ExecutionMemory.GetNodeOutput(nodeId)</code>. The nodeId in the expression must exactly match the nodeId set in the workflow canvas. Node IDs are case-sensitive.</p>
+  <pre><code">// ExpressionContext.cs (simplified)
+"$output" => nodeId => _executionMemory.GetNodeOutput(nodeId)
+
+// So $output.fetch-customer.tierLevel resolves as:
+var node = _executionMemory.GetNodeOutput("fetch-customer");  // dynamic lookup
+var result = node?.tierLevel;  // property navigation</code></pre>
+
+  <h2>Fan-In Pattern — Multiple Upstream Nodes</h2>
+  <p><code>$output.{nodeId}</code> is the correct choice when a node has multiple upstream connections and needs to reference specific ones by identity.</p>
+  <pre><code">// MergeNode configuration — referencing two specific upstream nodes by ID
+{
+  "leftDataset"  : "{{$output.left-transform}}",
+  "rightDataset" : "{{$output.right-transform}}",
+  "mergeKey"     : "customerId"
+}
+
+// Condition node — decision based on outputs from two non-adjacent nodes
+$output.credit-check.approved == true && $output.fraud-score.riskLevel == "low"</code></pre>
+
+  <h2>Null Semantics</h2>
+  <p><code>$output.{nodeId}</code> returns null if the named node has not yet run. This is the most common source of silent expression errors in branching workflows.</p>
+  <table>
+    <thead><tr><th>Scenario</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Named node has run and returned a non-null output</td><td>The output object</td></tr>
+      <tr><td>Named node has run and returned null output</td><td>null</td></tr>
+      <tr><td>Named node has NOT run yet (downstream or on a different branch)</td><td>null</td></tr>
+      <tr><td>nodeId does not exist in the workflow</td><td>null (no error — silent miss)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Naming Node IDs in Flow Studio</h2>
+  <p>Workflow designers set node IDs in the node configuration panel in Flow Studio. A meaningful, stable ID is critical for reliable <code>$output</code> references. Default IDs like <code>node-1</code> are fragile.</p>
+  <pre><code">// Best practice — use descriptive, hyphen-separated IDs
+$output.fetch-customer        // Good — clear and stable
+$output.validate-order        // Good
+$output.node-1                // Bad — meaningless, fragile if node is moved/replaced
+$output.FetchCustomer         // Acceptable — camelCase is also supported
+</code></pre>
+
+  <div class="callout info">
+    <strong>$output does not guarantee the node ran successfully.</strong> If a node failed and the engine skipped it (depending on error handling config), <code>$output.{nodeId}</code> returns null — the same as if the node had never run. Guard against null when referencing nodes that could be skipped or have conditional execution.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-input.html">&#8592; $input — Upstream Node</a>
+    <a href="04-var.html">Next: $var.{name} — Workflow Variables &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

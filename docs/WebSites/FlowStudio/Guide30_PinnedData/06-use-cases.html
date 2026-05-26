@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Use Cases — Pinned Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Pinned Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-returning-pinned.html">Returning Pinned Data</a>
+  <a href="02-storage-model.html">Pinned Data Storage</a>
+  <a href="03-reading-pinned.html">Reading Pinned Data</a>
+  <a href="04-inspector-display.html">Node Inspector Display</a>
+  <a href="05-clearing-pinned.html">Clearing Pinned Data</a>
+  <a href="06-use-cases.html" class="active">Use Cases</a>
+  <a href="07-security.html">Security Considerations</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Use Cases</h1>
+    <p class="lead">Pinned data is the right choice whenever a node needs to remember something across workflow invocations. The three primary patterns are: AI agent memory, running accumulation, and short-lived caching.</p>
+  </div>
+
+  <h2>Pattern 1 — AI Agent Memory</h2>
+  <p>Conversational AI nodes need to retain message history across workflow triggers. Each trigger is a new execution, so ephemeral output would lose the conversation. Pinned data provides the persistent memory layer.</p>
+  <pre><code">// ConversationNode.cs — classic AI memory pattern
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    // 1. Load history from previous run (null on first run)
+    var history = await ctx.ExecutionMemory
+        .GetPinnedDataAsync&lt;ChatHistory&gt;(ctx.NodeId, ct)
+        ?? new ChatHistory();
+
+    // 2. Append new user message
+    var userInput = ctx.ExecutionMemory.GetNodeOutput&lt;string&gt;("user-input-node");
+    history.Messages.Add(new Message { Role = "user", Content = userInput });
+
+    // 3. Get AI reply (history provides context)
+    var reply = await _llm.CompleteAsync(history.Messages, ct);
+    history.Messages.Add(new Message { Role = "assistant", Content = reply });
+
+    // 4. Save updated history — pin for next run
+    return NodeExecutionResult.Success(
+        output     : reply,
+        pinnedData : history  // Persists across runs
+    );
+}</code></pre>
+
+  <h2>Pattern 2 — Running Accumulation</h2>
+  <p>A node that aggregates data across multiple invocations — a counter, a running total, a rolling average — uses pinned data to carry the accumulated state forward.</p>
+  <pre><code">// SalesAggregatorNode.cs — running totals across workflow triggers
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    var thisSale = ctx.ExecutionMemory.GetNodeOutput&lt;decimal&gt;("sale-input-node");
+
+    var agg = await ctx.ExecutionMemory
+        .GetPinnedDataAsync&lt;SalesAggregate&gt;(ctx.NodeId, ct)
+        ?? new SalesAggregate { TotalSales = 0, Count = 0 };
+
+    agg.TotalSales += thisSale;
+    agg.Count++;
+    agg.LastUpdated = DateTime.UtcNow;
+
+    return NodeExecutionResult.Success(
+        output     : new { ThisSale = thisSale, RunningTotal = agg.TotalSales },
+        pinnedData : agg
+    );
+}</code></pre>
+
+  <h2>Pattern 3 — Short-Lived Cache</h2>
+  <p>A node that calls an external API can cache the response using pinned data with a TTL, avoiding redundant calls when the workflow triggers frequently.</p>
+  <pre><code">// ExchangeRateNode.cs — caches rate for 1 hour
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    var cached = await ctx.ExecutionMemory
+        .GetPinnedDataAsync&lt;CachedRate&gt;(ctx.NodeId, ct);
+
+    // Use cache if fresh
+    if (cached is not null &amp;&amp; cached.FetchedAt &gt; DateTime.UtcNow.AddHours(-1))
+    {
+        ctx.Observability.Logger.LogInformation("Using cached exchange rate");
+        return NodeExecutionResult.Success(cached.Rate);
+    }
+
+    // Fetch fresh
+    var rate = await _fxApi.GetUsdToEurRateAsync(ct);
+
+    return NodeExecutionResult.Success(
+        output     : rate,
+        pinnedData : new CachedRate { Rate = rate, FetchedAt = DateTime.UtcNow },
+        pinnedDataTtl: TimeSpan.FromHours(2)  // Auto-expire after 2 hours
+    );
+}</code></pre>
+
+  <h2>Decision Guide — Do I Need Pinned Data?</h2>
+  <table>
+    <thead><tr><th>Question</th><th>If Yes</th></tr></thead>
+    <tbody>
+      <tr><td>Does the node need data from a previous run?</td><td>Use pinned data</td></tr>
+      <tr><td>Is the data only needed within one execution run?</td><td>Use ephemeral output (GetNodeOutput)</td></tr>
+      <tr><td>Does the data grow or accumulate over time?</td><td>Use pinned data with read-modify-write pattern</td></tr>
+      <tr><td>Is the data needed by multiple future runs but only briefly?</td><td>Use pinned data with TTL</td></tr>
+      <tr><td>Is the data large and should be auditable per-run?</td><td>Write to a database or event log instead</td></tr>
+      <tr><td>Is it user-specific state shared across many workflows?</td><td>Use SetGlobal/GetGlobal instead</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Pinned data is node-scoped, not user-scoped.</strong> Pinned data is keyed to <code>(processId, nodeId)</code>, meaning all users running the same workflow share the same pinned data slot for a given node. If you need per-user state, include the userId in the pinned data object structure, or use a different storage mechanism (e.g., a database table with a userId column).
+  </div>
+
+  <div class="page-nav">
+    <a href="05-clearing-pinned.html">&#8592; Clearing Pinned Data</a>
+    <a href="07-security.html">Next: Security Considerations &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Native Functions — Semantic Kernel Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Kernel Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-llm-routing.html">LLM Routing via SK</a>
+  <a href="03-planner.html">SK Planner Integration</a>
+  <a href="04-sk-skills.html">Using SK Skills</a>
+  <a href="05-native-functions.html" class="active">Native Functions</a>
+  <a href="06-memory-integration.html">SK Memory Integration</a>
+  <a href="07-limitations.html">Limitations and Trade-offs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Native Functions</h1>
+    <p class="lead">SK native functions are C# methods decorated with <code>[KernelFunction]</code> and <code>[Description]</code> attributes. They are registered into the SK kernel and can be called by the planner or invoked directly alongside semantic functions.</p>
+  </div>
+
+  <h2>Defining a Native Function Class</h2>
+  <pre><code>using Microsoft.SemanticKernel;
+using System.ComponentModel;
+
+// SK plugin class containing native functions
+public class HRNativePlugin
+{
+    private readonly ILeaveService _leaveService;
+
+    public HRNativePlugin(ILeaveService leaveService)
+    {
+        _leaveService = leaveService;
+    }
+
+    [KernelFunction("get_leave_balance")]
+    [Description("Returns the remaining leave balance for an employee. " +
+                 "Use when the user asks how many leave days they have left.")]
+    public async Task&lt;string&gt; GetLeaveBalanceAsync(
+        [Description("The employee's ID number (e.g. EMP-1234)")]
+        string employeeId,
+        CancellationToken cancellationToken = default)
+    {
+        var balance = await _leaveService.GetBalanceAsync(employeeId, cancellationToken);
+        return $"Annual: {balance.AnnualRemaining} days, Sick: {balance.SickRemaining} days";
+    }
+
+    [KernelFunction("list_team_members")]
+    [Description("Lists the direct reports of a manager. Returns a JSON array of employee IDs.")]
+    public async Task&lt;string&gt; ListTeamMembersAsync(
+        [Description("The manager's employee ID")]
+        string managerId,
+        CancellationToken cancellationToken = default)
+    {
+        var team = await _leaveService.GetTeamAsync(managerId, cancellationToken);
+        return JsonSerializer.Serialize(team.Select(e => e.EmployeeId));
+    }
+}</code></pre>
+
+  <h2>Registering Native Functions in OnStartAsync</h2>
+  <pre><code>public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+{
+    var kernel = sp.GetRequiredService&lt;ISKKernelRegistry&gt;().Get("default");
+
+    // Scoped services need a scope — capture the factory, not the service
+    // The kernel will call these functions at planning time, not at startup
+    var scopeFactory = sp.GetRequiredService&lt;IServiceScopeFactory&gt;();
+
+    // Build the native plugin using the DI container
+    // Create a scope for the constructor injection
+    using var initScope = scopeFactory.CreateScope();
+    var leaveService = initScope.ServiceProvider.GetRequiredService&lt;ILeaveService&gt;();
+    var hrPlugin     = new HRNativePlugin(leaveService);
+
+    // Register the plugin into the SK kernel
+    kernel.ImportPluginFromObject(hrPlugin, "HRPlugin");
+
+    await Task.CompletedTask;
+}</code></pre>
+  <div class="callout warning">
+    <strong>Scoped services in native functions.</strong> If your native function needs scoped services (e.g., <code>ILeaveService</code>), you must create a scope per call — not at startup. Consider injecting <code>IServiceScopeFactory</code> into the native plugin class and creating a fresh scope in each method.
+  </div>
+
+  <h2>Native Functions vs MCP Tools</h2>
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>SK Native Function</th><th>Octopus MCP Tool</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Registration</td><td>Into SK kernel via <code>ImportPluginFromObject</code></td><td>Into <code>MCPToolRegistry</code></td></tr>
+      <tr><td>Callable by SK Planner</td><td>Yes — first-class SK citizen</td><td>Requires bridging (see Planner page)</td></tr>
+      <tr><td>Callable by Octopus agent</td><td>Via SK bridge only</td><td>Directly — native to Octopus</td></tr>
+      <tr><td>Parameter definition</td><td><code>[Description]</code> attributes on method params</td><td>JSON Schema in <code>ToolDefinition.InputSchema</code></td></tr>
+      <tr><td>Metadata for LLM</td><td>Attribute descriptions</td><td>Rich JSON Schema with types and examples</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Calling Native Functions Directly</h2>
+  <pre><code>// Call a native function directly (without the planner)
+var result = await kernel.InvokeAsync(
+    pluginName:   "HRPlugin",
+    functionName: "get_leave_balance",
+    arguments:    new KernelArguments { ["employeeId"] = "EMP-1234" });
+
+string balance = result.GetValue&lt;string&gt;()!;
+// → "Annual: 15 days, Sick: 8 days"</code></pre>
+
+  <div class="page-nav">
+    <a href="04-sk-skills.html">&#8592; Using SK Skills</a>
+    <a href="06-memory-integration.html">Next: SK Memory Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

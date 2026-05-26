@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reading Node Configuration — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html" class="active">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Reading Node Configuration</h1>
+    <p class="lead">Node configuration comes from the Atlas Form the user fills in the designer. It is stored as JSON in the ProcessElement record and deserialized into your strongly-typed settings class before <code>ExecuteInternalAsync</code> is called.</p>
+  </div>
+
+  <h2>Settings Pattern</h2>
+  <p>Every executor has a settings class that extends <code>BaseNodeExecutorSettings</code>. The base class provides typed reader helpers (<code>ReadConfigByKey</code>, <code>ReadConfigByKeyBool</code>, etc.) backed by the <code>ConfigDataPropertyBag</code>.</p>
+  <pre><code>// MyNodeSettings.cs
+public class MyNodeSettings : BaseNodeExecutorSettings
+{
+    // Reads string field from config JSON key "recipientEmail"
+    public string RecipientEmail =&gt; ReadConfigByKey("recipientEmail", string.Empty)!;
+
+    // Reads boolean field
+    public bool SendCopyToSender =&gt; ReadConfigByKeyBool("sendCopyToSender", false);
+
+    // Reads integer field
+    public int? MaxRetries =&gt; ReadConfigByKey_Int("maxRetries");
+
+    // Reads an enum field
+    public EmailPriority Priority =&gt; ReadConfigByEnum("priority", EmailPriority.Normal);
+
+    // Reads a credential ID (integer reference to a stored credential)
+    public int CredentialId =&gt; int.Parse(ReadConfigByKey("credentialId", "0")!);
+
+    // Validation — return an error message string, or null if valid
+    public override string? Validate()
+    {
+        if (string.IsNullOrWhiteSpace(RecipientEmail))
+            return "RecipientEmail is required.";
+        return null;
+    }
+}</code></pre>
+
+  <h2>Wiring the Settings Class</h2>
+  <p>Override <code>CreateExecutorSettings()</code> in the Config partial class to tell the base which settings type to instantiate:</p>
+  <pre><code>// MyNodeExecutor.Config.cs
+public partial class MyNodeExecutor
+{
+    // Typed accessor for convenience in ExecuteInternalAsync
+    private MyNodeSettings? mySettings =&gt; settings as MyNodeSettings;
+
+    // Tells BaseNodeExecutor to use your settings class
+    public override BaseNodeExecutorSettings CreateExecutorSettings()
+        =&gt; new MyNodeSettings();
+}</code></pre>
+
+  <h2>Using Settings in ExecuteInternalAsync</h2>
+  <pre><code>protected override async Task&lt;NodeExecutionResult&gt; ExecuteInternalAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    // settings is already populated by the time this is called
+    var s = mySettings!;
+
+    var recipient = s.RecipientEmail;       // "alice@example.com"
+    var maxRetries = s.MaxRetries ?? 3;     // 3 (default if not set)
+
+    // For credentials: resolve via ICredentialResolver (never read raw secret from config)
+    var password = await _credentialResolver.GetPasswordAsync(s.CredentialId, ct);
+
+    // ... use recipient, password, etc. ...
+}</code></pre>
+
+  <h2>Available Reader Methods on BaseNodeExecutorSettings</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Return Type</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td><code>ReadConfigByKey(key)</code></td><td><code>string?</code></td><td>String fields, defaults to empty string</td></tr>
+      <tr><td><code>ReadConfigByKey(key, default)</code></td><td><code>string?</code></td><td>String with explicit default</td></tr>
+      <tr><td><code>ReadConfigByKeyBool(key)</code></td><td><code>bool</code></td><td>Boolean, defaults to false</td></tr>
+      <tr><td><code>ReadConfigByKeyBool(key, default)</code></td><td><code>bool</code></td><td>Boolean with explicit default</td></tr>
+      <tr><td><code>ReadConfigByKey_Int(key)</code></td><td><code>int?</code></td><td>Nullable integer</td></tr>
+      <tr><td><code>ReadConfigByEnum&lt;T&gt;(key, default)</code></td><td><code>T</code></td><td>Enum value with fallback</td></tr>
+      <tr><td><code>ReadConfigNodeByKey(key)</code></td><td><code>JsonNode?</code></td><td>Nested JSON object/array</td></tr>
+      <tr><td><code>ReadConfigDictionaryByKey(key)</code></td><td><code>Dictionary&lt;string,object&gt;</code></td><td>Nested object as dictionary</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Configuration Keys Are Case-Sensitive</strong>
+    The key string you pass to <code>ReadConfigByKey("myField")</code> must exactly match the field key in the Atlas Form definition. A mismatch returns the default value silently. Validate your Atlas Form field keys against your settings class before deploying.
+  </div>
+
+  <div class="callout info">
+    <strong>Credentials Must Use ICredentialResolver</strong>
+    Never read raw passwords, API keys, or tokens from the configuration JSON. The Atlas Form stores a credential ID (integer), and your executor calls <code>ICredentialResolver.GetPasswordAsync(credentialId)</code> to retrieve the actual secret from the secure credential store at runtime.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-execution-context.html">&#8592; NodeExecutionContext</a>
+    <a href="05-reading-upstream.html">Next: Reading Upstream Output &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

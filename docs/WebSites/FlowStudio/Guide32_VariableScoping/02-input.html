@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>$input — Variable Scoping | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Variable Scoping</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-json.html">$json — Trigger Input</a>
+  <a href="02-input.html" class="active">$input — Upstream Node</a>
+  <a href="03-output.html">$output.{nodeId} — Named Node</a>
+  <a href="04-var.html">$var.{name} — Workflow Variables</a>
+  <a href="05-global.html">$global — Tenant Globals</a>
+  <a href="06-context.html">$context — Execution Context</a>
+  <a href="07-availability.html">Availability Table</a>
+  <a href="08-mistakes.html">Common Mistakes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>$input — Immediate Upstream Output</h1>
+    <p class="lead"><code>$input</code> refers to the output of the node that connects directly into the current node's primary input port. It is the most convenient way to access upstream data in linear pipelines — the caller does not need to know the upstream node's ID.</p>
+  </div>
+
+  <h2>What $input Contains</h2>
+  <p><code>$input</code> resolves to the value stored in <code>ExecutionMemory.GetPreviousNodeOutput()</code> for the current node. It is determined by the graph edge that connects to the primary input port of the current node.</p>
+  <table>
+    <thead><tr><th>Scenario</th><th>$input Value</th></tr></thead>
+    <tbody>
+      <tr><td>Linear pipeline — node B is connected to node A's output</td><td>Node A's output object</td></tr>
+      <tr><td>First node after the trigger</td><td>null — the trigger has no upstream node output</td></tr>
+      <tr><td>Node with multiple incoming edges (fan-in)</td><td>Output of the primary port connection — use <code>$output.{nodeId}</code> for the others</td></tr>
+      <tr><td>Node inside a sub-workflow</td><td>Output of the parent call node that invoked the sub-workflow</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Expression Examples</h2>
+  <pre><code">// Accessing a field from the immediately preceding node
+$input.invoiceTotal
+$input.customer.tierLevel
+$input.lineItems[0].sku
+
+// Using $input in a condition expression
+$input.isApproved == true
+$input.amount > 1000
+
+// Mapping $input into a downstream node's config
+{
+  "customerId": "{{$input.customerId}}",
+  "orderRef": "{{$input.referenceNumber}}"
+}</code></pre>
+
+  <h2>$input vs. $output.{nodeId}</h2>
+  <table>
+    <thead><tr><th>Attribute</th><th>$input</th><th>$output.{nodeId}</th></tr></thead>
+    <tbody>
+      <tr><td>Node ID required</td><td>No — always the immediately preceding node</td><td>Yes — must specify the exact nodeId</td></tr>
+      <tr><td>Resilience to reordering</td><td>Follows the edge — if you rewire the graph, $input updates automatically</td><td>Fixed to the named node — rewiring does not change it</td></tr>
+      <tr><td>Fan-in support</td><td>Limited — only reads primary port</td><td>Full — read any node by ID</td></tr>
+      <tr><td>Use in linear pipelines</td><td>Preferred — cleaner expressions</td><td>Verbose but explicit</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Null Handling</h2>
+  <p><code>$input</code> is null at the first node after a trigger. Use null-safe navigation or guard expressions when the first node can receive either trigger data or upstream node data depending on the workflow configuration.</p>
+  <pre><code">// Null guard in condition
+$input != null && $input.status == "active"
+
+// Null coalescing (where supported by expression engine)
+$input?.orderTotal ?? 0
+
+// Use $json instead of $input at the first node
+// CORRECT — at the first node, use $json for the trigger payload
+$json.body.order.total
+
+// WRONG — $input is null at the first node
+$input.order.total  // Returns null, causing downstream errors</code></pre>
+
+  <div class="callout info">
+    <strong>$input changes meaning based on where the node is in the graph.</strong> The same expression <code>$input.customerId</code> reads from a different upstream node depending on which node connects to the current node's input. This is a feature in linear pipelines but can be confusing if you move nodes. Use <code>$output.{nodeId}</code> when you need a stable reference that does not change with rewiring.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-json.html">&#8592; $json — Trigger Input</a>
+    <a href="03-output.html">Next: $output.{nodeId} — Named Node &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SK Planner Integration — Semantic Kernel Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Kernel Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-llm-routing.html">LLM Routing via SK</a>
+  <a href="03-planner.html" class="active">SK Planner Integration</a>
+  <a href="04-sk-skills.html">Using SK Skills</a>
+  <a href="05-native-functions.html">Native Functions</a>
+  <a href="06-memory-integration.html">SK Memory Integration</a>
+  <a href="07-limitations.html">Limitations and Trade-offs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>SK Planner Integration</h1>
+    <p class="lead">The SK stepwise planner decomposes a user goal into a sequence of function calls, executes them in order, and synthesises a final response. The <code>SKPlannerAdapter</code> bridges this with the Octopus conversation loop.</p>
+  </div>
+
+  <h2>How SK Planning Works in Octopus</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>User sends a complex request</strong>
+        <span>"Create a leave request for the whole team for next Monday, then notify the HR manager by email."</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>SKPlannerAdapter creates a plan</strong>
+        <span>The planner calls the LLM to generate a structured execution plan listing the SK functions to call in order.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Plan is validated against MaxSteps</strong>
+        <span>Plans exceeding <code>MaxSteps</code> are rejected to prevent runaway execution. The planner notifies the user.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Each plan step executes</strong>
+        <span>Steps may invoke SK semantic functions, SK native functions (C# methods), or Octopus MCP tools.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>Step results are chained</strong>
+        <span>Output from step N is available as input to step N+1 via SK's variable context.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">6</div>
+      <div class="step-content">
+        <strong>Final response synthesised</strong>
+        <span>After all steps complete, the LLM generates a natural language summary of what was accomplished.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>SKPlannerAdapter</h2>
+  <pre><code>public class SKPlannerAdapter
+{
+    private readonly Kernel                    _kernel;
+    private readonly SemanticKernelPluginConfig _config;
+
+    public SKPlannerAdapter(ISKKernelRegistry registry,
+                             IOptions&lt;SemanticKernelPluginConfig&gt; config)
+    {
+        _kernel = registry.Get("default");
+        _config = config.Value;
+    }
+
+    public async Task&lt;PlanExecutionResult&gt; ExecutePlanAsync(
+        string userGoal,
+        ConversationContext ctx,
+        CancellationToken ct)
+    {
+        if (!_config.Planner.Enabled)
+            throw new InvalidOperationException("SK Planner is not enabled.");
+
+        // Use SK's FunctionCallingStepwisePlanner
+        var plannerConfig = new FunctionCallingStepwisePlannerOptions
+        {
+            MaxIterations = _config.Planner.MaxSteps
+        };
+        var planner = new FunctionCallingStepwisePlanner(plannerConfig);
+
+        // Execute the plan
+        var result = await planner.ExecuteAsync(_kernel, userGoal, cancellationToken: ct);
+
+        return new PlanExecutionResult
+        {
+            FinalAnswer    = result.FinalAnswer,
+            StepCount      = result.Iterations,
+            ChatHistory    = result.ChatHistory
+        };
+    }
+}</code></pre>
+
+  <h2>Plan Execution Limits</h2>
+  <table>
+    <thead>
+      <tr><th>Setting</th><th>Default</th><th>Effect of Exceeding</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Planner.MaxSteps</code></td><td>10</td><td>Plan is abandoned; user gets "plan too complex" message</td></tr>
+      <tr><td><code>Planner.AllowLoops</code></td><td>false</td><td>Plans with loops are rejected at validation time</td></tr>
+      <tr><td><code>CommandTimeoutSeconds</code></td><td>30</td><td>Individual LLM calls within the plan time out</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Exposing MCP Tools to the Planner</h2>
+  <p>Octopus MCP tools are bridged to SK as native kernel functions, making them available to the planner:</p>
+  <pre><code>// In OnStartAsync — bridge MCP tools to SK kernel functions
+public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+{
+    var registry = sp.GetRequiredService&lt;MCPToolRegistry&gt;();
+    var kernel   = sp.GetRequiredService&lt;ISKKernelRegistry&gt;().Get("default");
+
+    // Wrap each registered MCP tool as a KernelFunction
+    foreach (var tool in registry.GetAll())
+    {
+        var skFunction = KernelFunctionFactory.CreateFromMethod(
+            async (KernelArguments args, CancellationToken token) =>
+            {
+                var input = JsonSerializer.Deserialize&lt;JsonElement&gt;(
+                    args["input"]?.ToString() ?? "{}");
+                return await tool.Handler(input, ConversationContext.Empty, token);
+            },
+            functionName:  tool.Schema.Name,
+            description:   tool.Schema.Description);
+
+        kernel.Plugins.AddFromFunctions("OctopusMCPTools", new[] { skFunction });
+    }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Planner cost.</strong> Each plan step involves one or more LLM calls in addition to the initial planning call. A 5-step plan may incur 6–10 LLM calls. Monitor token usage carefully when the planner is enabled.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-llm-routing.html">&#8592; LLM Routing via SK</a>
+    <a href="04-sk-skills.html">Next: Using SK Skills &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

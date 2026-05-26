@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Serialization — Execution Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Execution Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structure.html">Memory Structure</a>
+  <a href="02-node-outputs.html">nodeOutputs Map</a>
+  <a href="03-reading-upstream.html">Reading Upstream Output</a>
+  <a href="04-global-variables.html">Global Variables</a>
+  <a href="05-lifetime.html">Memory Lifetime</a>
+  <a href="06-serialization.html" class="active">HIL Serialization</a>
+  <a href="07-security.html">Memory Isolation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Serialization for HIL</h1>
+    <p class="lead">When an execution suspends for Human-in-the-Loop (HIL) review, the entire <code>ExecutionMemory</code> is serialized to JSON and stored in <code>Process_SuspendedExecutions.ExecutionMemoryJson</code>. On resume, the JSON is deserialized and execution continues from where it left off with the full memory state restored.</p>
+  </div>
+
+  <h2>Why Serialization Is Needed</h2>
+  <p>HIL suspension may pause execution for hours or days — far longer than any in-process object can survive. The memory must be durable so that when an approver acts, the execution engine can restore the exact state that was present before suspension.</p>
+
+  <h2>ExecutionMemorySerializer</h2>
+  <pre><code">// ExecutionMemorySerializer.cs
+public class ExecutionMemorySerializer
+{
+    private readonly JsonSerializerOptions _options = new()
+    {
+        WriteIndented             = false,
+        PropertyNamingPolicy      = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition    = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    public string Serialize(ExecutionMemory memory)
+    {
+        var dto = new ExecutionMemoryDto
+        {
+            NodeOutputs       = memory.GetAllNodeOutputs(),    // Dictionary&lt;string, object?&gt;
+            GlobalVariables   = memory.GetAllGlobalVariables(), // Dictionary&lt;string, object?&gt;
+            Metadata          = memory.Metadata
+        };
+        return JsonSerializer.Serialize(dto, _options);
+    }
+
+    public ExecutionMemory Deserialize(string json)
+    {
+        var dto = JsonSerializer.Deserialize&lt;ExecutionMemoryDto&gt;(json, _options)
+            ?? throw new InvalidOperationException("Failed to deserialize ExecutionMemory");
+
+        var memory = new ExecutionMemory(dto.Metadata);
+        foreach (var (nodeId, output) in dto.NodeOutputs)
+            memory.SetNodeOutput(nodeId, output);
+        foreach (var (key, value) in dto.GlobalVariables)
+            memory.SetGlobal(key, value);
+
+        return memory;
+    }
+}</code></pre>
+
+  <h2>Serialized JSON Structure</h2>
+  <pre><code">// Example serialized ExecutionMemory stored in Process_SuspendedExecutions
+{
+  "metadata": {
+    "executionId" : "a3f8...",
+    "processId"   : 42,
+    "tenantId"    : "tenant-001",
+    "triggeredBy" : "user-007",
+    "startedAt"   : "2026-05-21T09:00:00Z"
+  },
+  "nodeOutputs": {
+    "fetch-customer"    : { "customerId": "C-100", "name": "Acme Corp", "tierLevel": "Gold" },
+    "validate-order"    : { "isValid": true, "orderTotal": 1500.00 },
+    "approval-hil-node" : null  // Suspended here — output not yet set
+  },
+  "globalVariables": {
+    "correlationId" : "txn-99887",
+    "retryCount"    : 0
+  }
+}</code></pre>
+
+  <h2>Database Storage</h2>
+  <pre><code">-- Process_SuspendedExecutions (relevant columns)
+CREATE TABLE Process_SuspendedExecutions (
+    ExecutionId         NVARCHAR(64)    NOT NULL PRIMARY KEY,
+    ProcessId           INT             NOT NULL,
+    TenantId            NVARCHAR(64)    NOT NULL,
+    SuspendedNodeId     NVARCHAR(256)   NOT NULL,
+    ExecutionMemoryJson NVARCHAR(MAX)   NOT NULL,   -- Serialized ExecutionMemory
+    SuspendedAt         DATETIMEOFFSET  NOT NULL,
+    ExpiresAt           DATETIMEOFFSET  NULL,
+    -- ... approval-related columns
+);</code></pre>
+
+  <h2>Resume Path</h2>
+  <pre><code">// WorkflowExecutionService.ResumeAsync — called when approver submits decision
+public async Task ResumeAsync(string executionId, ResumePayload payload, CancellationToken ct)
+{
+    var suspended = await _repo.GetSuspendedExecutionAsync(executionId, ct);
+
+    // Restore ExecutionMemory from the serialized JSON
+    var memory = _serializer.Deserialize(suspended.ExecutionMemoryJson);
+
+    // Write the approver's decision into the restored memory
+    memory.SetNodeOutput(suspended.SuspendedNodeId, payload.Decision);
+
+    // Continue from the next node after the suspended node
+    await RunFromNodeAsync(suspended.SuspendedNodeId, memory, ct);
+}</code></pre>
+
+  <h2>Serializability Requirement</h2>
+  <p>All values stored in <code>nodeOutputs</code> and <code>globalVariables</code> must be JSON-serializable. If a non-serializable value is in memory at suspension time, the serialization will fail and the suspension operation will throw. This is a critical design constraint for any executor that runs before a HIL node.</p>
+  <table>
+    <thead><tr><th>Value Type</th><th>Serializable?</th></tr></thead>
+    <tbody>
+      <tr><td>Anonymous objects, POCOs, primitives</td><td>Yes</td></tr>
+      <tr><td><code>JsonElement</code></td><td>Yes</td></tr>
+      <tr><td>Streams, file handles, open connections</td><td>No — will throw</td></tr>
+      <tr><td>Delegates, lambdas</td><td>No — will throw</td></tr>
+      <tr><td>Circular object references</td><td>No — will throw</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Design for serializability if HIL nodes exist downstream.</strong> If your executor runs before a HIL node in the workflow, ensure that everything you write to ExecutionMemory (via nodeOutputs or SetGlobal) is JSON-serializable. The serialization failure will occur at suspension time — after your node has already run — which is a hard error.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-lifetime.html">&#8592; Memory Lifetime</a>
+    <a href="07-security.html">Next: Memory Isolation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

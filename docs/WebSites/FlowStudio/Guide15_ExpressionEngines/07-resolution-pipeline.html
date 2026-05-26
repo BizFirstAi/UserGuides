@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resolution Pipeline — Expression Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Expression Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-default-jint.html">Default Engine — Jint</a>
+  <a href="02-expression-context.html">ExpressionContext</a>
+  <a href="03-context-variables.html">Context Variable Reference</a>
+  <a href="04-interface.html">IExpressionEvaluator Interface</a>
+  <a href="05-custom-engine.html">Building a Custom Engine</a>
+  <a href="06-form-fields.html">Expression Fields in Forms</a>
+  <a href="07-resolution-pipeline.html" class="active">Resolution Pipeline</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Resolution Pipeline</h1>
+    <p class="lead">Expression resolution is a pipeline step that runs inside the node execution pipeline, between configuration loading and executor invocation. It transforms a raw configuration dictionary (with expression strings) into a resolved dictionary (with concrete values).</p>
+  </div>
+
+  <h2>Where Resolution Sits in the Pipeline</h2>
+  <table>
+    <thead><tr><th>Stage</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>Entry (100)</td><td>Load node definition from the process template</td></tr>
+      <tr><td>EntryValidate (200)</td><td>Parse raw config JSON → build EvaluationContext → resolve expressions → populate settings</td></tr>
+      <tr><td>PreGuardRails (250)</td><td>Run rate limit and quota guard rails</td></tr>
+      <tr><td>PreProcess (300)</td><td>HIL suspension check</td></tr>
+      <tr><td><strong>Process (400)</strong></td><td><strong>Your ExecuteInternalAsync (already has resolved values)</strong></td></tr>
+      <tr><td>PostProcess (500)</td><td>Post-execution hooks</td></tr>
+      <tr><td>Exit (600)</td><td>Persist result, emit SignalR event</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Resolution Steps in EntryValidate</h2>
+  <ol>
+    <li>Raw config JSON is read from <code>ProcessElement.Configuration</code></li>
+    <li>Config is parsed into a <code>Dictionary&lt;string, object&gt;</code> by <code>INodeConfigurationParser</code></li>
+    <li><code>ExpressionContextFactory.Create(elementContext)</code> builds the <code>EvaluationContext</code></li>
+    <li><code>IConfigExpressionResolver.ResolveAsync(config, context)</code> iterates every field:</li>
+    <li style="list-style:none;padding-left:20px">4a. If field value is a literal string without <code>@{</code> — kept as-is</li>
+    <li style="list-style:none;padding-left:20px">4b. If field value contains <code>@{directive:...}</code> — handled by the directive resolver (no Jint)</li>
+    <li style="list-style:none;padding-left:20px">4c. If field value is <code>@{js:...}</code> — passed to <code>IExpressionEvaluator.EvaluateAsync()</code></li>
+    <li>Resolved config stored in <code>elementContext.ResolvedConfig</code></li>
+    <li><code>BaseNodeExecutor.LoadConfigAsync()</code> reads from <code>ResolvedConfig.ToMergedJson()</code> and populates <code>settings</code></li>
+  </ol>
+
+  <h2>IConfigExpressionResolver Contract</h2>
+  <pre><code>// IConfigExpressionResolver.cs
+public interface IConfigExpressionResolver
+{
+    Task&lt;Dictionary&lt;string, object&gt;&gt; ResolveAsync(
+        Dictionary&lt;string, object&gt; config,
+        EvaluationContext context,
+        CancellationToken cancellationToken = default);
+}</code></pre>
+
+  <h2>Resolution Failure Handling</h2>
+  <p>If an expression fails to resolve (Jint timeout, syntax error, referenced node not found), the resolver has two strategies depending on the field configuration:</p>
+  <table>
+    <thead><tr><th>Strategy</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Fail-fast (default for required fields)</td>
+        <td>Resolution exception propagates → node is marked Failed before executor runs</td>
+      </tr>
+      <tr>
+        <td>Null-coerce (optional fields)</td>
+        <td>Failed expression resolves to null; executor receives null value and must handle it</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Partial Resolution (Mixed Fields)</h2>
+  <p>Not all fields in a config dictionary must contain expressions. The resolver skips literal fields. A single node can have a mix: some fields are literals, others are expressions, others are nested objects with expressions inside them. The resolver handles nested JSON recursively.</p>
+  <pre><code>// Input config (before resolution):
+{
+  "to":      "@{output:form-1.email}",   // expression
+  "subject": "Your order is ready",       // literal (no expression)
+  "body":    "Hello @{output:form-1.firstName}, your order @{var:orderId} is ready."
+}
+
+// Output config (after resolution):
+{
+  "to":      "alice@example.com",         // resolved
+  "subject": "Your order is ready",       // unchanged
+  "body":    "Hello Alice, your order ORD-4821 is ready."  // resolved
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="06-form-fields.html">&#8592; Expression Fields in Forms</a>
+    <a href="../Guide16_GuardRailEngines/index.html">Next Guide: Guard Rail Engines &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

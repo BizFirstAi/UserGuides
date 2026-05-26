@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Isolation — Execution Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Execution Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structure.html">Memory Structure</a>
+  <a href="02-node-outputs.html">nodeOutputs Map</a>
+  <a href="03-reading-upstream.html">Reading Upstream Output</a>
+  <a href="04-global-variables.html">Global Variables</a>
+  <a href="05-lifetime.html">Memory Lifetime</a>
+  <a href="06-serialization.html">HIL Serialization</a>
+  <a href="07-security.html" class="active">Memory Isolation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Memory Isolation</h1>
+    <p class="lead">Each execution has exactly one <code>ExecutionMemory</code> instance. Memory from one execution is never shared with another execution — not even for the same workflow. Tenant isolation is enforced through the <code>TenantId</code> in <code>ExecutionMetadata</code> and by the execution orchestration layer, which never mixes memory instances across tenants.</p>
+  </div>
+
+  <h2>Execution Isolation</h2>
+  <table>
+    <thead><tr><th>Isolation Boundary</th><th>Guarantee</th></tr></thead>
+    <tbody>
+      <tr><td>Same workflow, different executions</td><td>Completely independent ExecutionMemory instances. Concurrent runs of the same workflow cannot read each other's nodeOutputs or globalVariables.</td></tr>
+      <tr><td>Different workflows, same tenant</td><td>Completely independent. ExecutionMemory is scoped to executionId, not processId.</td></tr>
+      <tr><td>Different tenants</td><td>Completely independent. TenantId is baked into ExecutionMetadata at creation and verified on every HIL resume path.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Tenant Verification on Resume</h2>
+  <p>When a suspended execution is resumed, the system verifies that the acting user's tenant matches the tenant recorded in the serialized ExecutionMetadata. A cross-tenant resume attempt is rejected before the memory is deserialized.</p>
+  <pre><code">// WorkflowExecutionService.ResumeAsync — tenant verification
+var suspended = await _repo.GetSuspendedExecutionAsync(executionId, ct);
+
+// Check tenant before deserializing
+if (suspended.TenantId != _tenantContext.TenantId)
+{
+    _logger.LogWarning("Cross-tenant resume attempt blocked. ExecutionId={ExecutionId}", executionId);
+    throw new UnauthorizedException("Access denied");
+}
+
+// Safe to deserialize now
+var memory = _serializer.Deserialize(suspended.ExecutionMemoryJson);</code></pre>
+
+  <h2>ExecutionMemory Does Not Enforce Tenant At Read Time</h2>
+  <p>The in-memory <code>ExecutionMemory</code> object itself does not enforce tenant checks on <code>GetNodeOutput</code> calls — it is a plain in-memory dictionary. The tenant boundary is enforced at the layer that creates and dispatches the memory:</p>
+  <ul>
+    <li>The execution orchestration layer creates one memory per execution and passes it only to that execution's node runners.</li>
+    <li>Executors cannot obtain another execution's memory object — they only receive their own via <code>ctx.ExecutionMemory</code>.</li>
+    <li>HIL resume checks tenant before restoring memory.</li>
+  </ul>
+
+  <h2>PII and Sensitive Data Guidance</h2>
+  <table>
+    <thead><tr><th>Data Type</th><th>Guidance</th></tr></thead>
+    <tbody>
+      <tr><td>PII (names, emails, IDs)</td><td>ExecutionMemory is ephemeral and in-process — acceptable to store for intra-execution use. However, if the execution involves a HIL node, it will be serialized to the database. Apply PII classification rules to the serialized form.</td></tr>
+      <tr><td>Authentication tokens or API keys</td><td>Never store in ExecutionMemory. Use ICredentialResolver at execution time — do not cache credentials in nodeOutputs.</td></tr>
+      <tr><td>Financial amounts</td><td>Acceptable — they are structured data. Ensure they are passed by value, not by reference to a mutable object.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Node Inspector Exposure</h2>
+  <p>The Node Inspector tab in the Observer Panel displays the <code>inputData</code> and <code>outputData</code> for nodes in a completed or running execution. These values come from a snapshot of <code>ExecutionMemory.nodeOutputs</code> captured by the engine after each node runs. Users with <code>execution:view</code> permission on the process can see this data — design your output accordingly if it contains sensitive values.</p>
+
+  <div class="callout info">
+    <strong>ExecutionMemory is process-local.</strong> It never leaves the server process except when serialized for HIL suspension. It is not logged, not transmitted over SignalR, and not accessible via the API during a live execution. The only time its contents become external is when the Node Inspector API reads a snapshot of nodeOutputs for the inspector display.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-serialization.html">&#8592; HIL Serialization</a>
+    <a href="index.html">Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

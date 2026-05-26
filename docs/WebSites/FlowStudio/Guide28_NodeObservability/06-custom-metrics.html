@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emitting Custom Metrics — Node Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structured-logs.html">Structured Logs</a>
+  <a href="02-node-metrics.html">Node Metrics</a>
+  <a href="03-otel-traces.html">OpenTelemetry Traces</a>
+  <a href="04-correlation-ids.html">Correlation IDs</a>
+  <a href="05-custom-logs.html">Emitting Custom Logs</a>
+  <a href="06-custom-metrics.html" class="active">Emitting Custom Metrics</a>
+  <a href="07-observer-panel.html">Observer Panel Display</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Emitting Custom Metrics</h1>
+    <p class="lead">Executors emit custom business metrics via ctx.Observability.Metrics. Use IncrementCounter for event counts and RecordHistogram for measured values. All custom metrics are shipped to Prometheus with the node's standard tags pre-applied.</p>
+  </div>
+
+  <h2>INodeMetrics Interface</h2>
+  <pre><code">public interface INodeMetrics
+{
+    void IncrementCounter(string name, long value = 1,
+                          IDictionary&lt;string, string&gt;? tags = null);
+
+    void RecordHistogram(string name, double value,
+                         IDictionary&lt;string, string&gt;? tags = null);
+
+    void SetGauge(string name, double value,
+                  IDictionary&lt;string, string&gt;? tags = null);
+}</code></pre>
+
+  <h2>Counter — Counting Events</h2>
+  <pre><code">// Count business events that happen within this node execution
+var metrics = ctx.Observability.Metrics;
+
+// Payment processed
+metrics.IncrementCounter("payments.processed");
+
+// Email sent
+metrics.IncrementCounter("emails.sent", tags: new Dictionary&lt;string, string&gt;
+{
+    ["template"] = "invoice",
+    ["channel"]  = "sendgrid"
+});
+
+// Multiple items processed
+metrics.IncrementCounter("items.processed", value: itemCount);</code></pre>
+
+  <h2>Histogram — Measuring Values</h2>
+  <pre><code">// Measure a business value — payment amount, file size, response time
+metrics.RecordHistogram("payment.amount_cents", amount * 100);
+metrics.RecordHistogram("api.response_time_ms", externalCallDuration.TotalMilliseconds,
+    tags: new Dictionary&lt;string, string&gt; { ["provider"] = "stripe" });</code></pre>
+
+  <h2>Metric Naming Conventions</h2>
+  <table>
+    <thead><tr><th>Convention</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Use dot-separated lowercase</td><td><code>payments.processed</code></td></tr>
+      <tr><td>Include unit suffix for histograms</td><td><code>api.response_time_ms</code></td></tr>
+      <tr><td>Node-specific prefix not required</td><td>Standard tags already carry nodeId/nodeType</td></tr>
+      <tr><td>Avoid high cardinality tags</td><td>Do not tag with executionId (each run = new label set)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Standard Tags Pre-applied</h2>
+  <p>All custom metrics automatically include the standard node tags — no need to add them manually:</p>
+  <pre><code">// Custom metric: payments.processed
+// Prometheus labels it receives automatically:
+payments_processed{
+    nodeId   = "node-payment",
+    nodeType = "PaymentNode",
+    processId= "proc-xyz",
+    tenantId = "tenant-001"
+} += 1</code></pre>
+
+  <div class="callout warning">
+    <strong>Avoid raw IMetricsProvider.</strong> Do not inject and use <code>IMetricsProvider</code> directly in an executor. It will not have the standard node tags pre-applied. Always use <code>ctx.Observability.Metrics</code>.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-custom-logs.html">&#8592; Emitting Custom Logs</a>
+    <a href="07-observer-panel.html">Next: Observer Panel Display &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Returning Pinned Data — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html" class="active">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Returning Pinned Data</h1>
+    <p class="lead">Pinned data is a separate data payload that persists permanently across executions, unlike <code>OutputData</code> which is scoped to the current execution. It appears in the Node Inspector's "Pinned" tab and survives even after the execution is purged from <code>ExecutionMemory</code>.</p>
+  </div>
+
+  <h2>What Pinned Data Is For</h2>
+  <p>Use pinned data when you want important outputs to be visible in the observer panel long after the execution completes — for example: the last API response body from an HTTP node, the AI agent's final answer, an extracted data set, or a form submission snapshot. Pinned data is stored in a persistent store (not just in-memory execution state).</p>
+
+  <h2>Returning Pinned Data</h2>
+  <p><code>NodeExecutionResult</code> has an <code>OutputBranches</code> field that accepts an <code>INodeResultBranches</code> implementation. The built-in <code>NodeResultBranches</code> class carries both main output and pinned output:</p>
+  <pre><code>return new NodeExecutionResult
+{
+    IsSuccess     = true,
+    OutputPortKey = "main",
+    OutputData    = new Dictionary&lt;string, object&gt;
+    {
+        { "statusCode", 200    },
+        { "body",       body   }
+    },
+
+    // Pinned data — persists beyond the execution lifetime
+    OutputBranches = new NodeResultBranches
+    {
+        PinnedData = new Dictionary&lt;string, object&gt;
+        {
+            { "lastResponseBody",   body            },
+            { "lastStatusCode",     200             },
+            { "lastRequestAt",      DateTime.UtcNow }
+        }
+    }
+};</code></pre>
+
+  <h2>Pinned vs Output Data</h2>
+  <table>
+    <thead><tr><th>Property</th><th>OutputData</th><th>PinnedData</th></tr></thead>
+    <tbody>
+      <tr><td>Scope</td><td>Current execution only</td><td>Persists permanently</td></tr>
+      <tr><td>Access in designer</td><td>Node Inspector &gt; Output tab</td><td>Node Inspector &gt; Pinned tab</td></tr>
+      <tr><td>Access in expressions</td><td><code>$output.{nodeId}.field</code></td><td>Not available in expressions</td></tr>
+      <tr><td>Storage</td><td>ExecutionMemory (in-process)</td><td>Persistent store (DB or blob)</td></tr>
+      <tr><td>Purged with execution</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Typical use</td><td>Data flow between nodes</td><td>Audit record, last-known-good response</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Null Pinned Data</h2>
+  <p>If you do not set <code>OutputBranches</code> (or set <code>PinnedData</code> to null/empty), no pinned data is written. This is the default for most nodes. Only write pinned data when it adds meaningful value for operators or developers inspecting the workflow.</p>
+  <pre><code>// Most executors — no pinned data needed
+return new NodeExecutionResult
+{
+    IsSuccess     = true,
+    OutputPortKey = "main",
+    OutputData    = new Dictionary&lt;string, object&gt; { { "ok", true } }
+    // OutputBranches = null (omitted) — no pinned data
+};</code></pre>
+
+  <div class="callout warning">
+    <strong>Keep Pinned Data Small</strong>
+    Pinned data is written to persistent storage on every execution. Large payloads (raw HTTP response bodies, full binary files) will bloat the storage and slow down the inspector. Store summaries, IDs, and key fields — not raw response bodies unless absolutely necessary for debugging.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-returning-results.html">&#8592; Returning Results</a>
+    <a href="08-error-handling.html">Next: Error Handling &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Decision Framework — Guide48 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow vs. Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-workflow-nodes.html"><i class="fa-solid fa-bolt"></i> Standard Workflow Nodes</a>
+  <a href="02-server-nodes.html"><i class="fa-solid fa-server"></i> Server-Side Nodes</a>
+  <a href="03-when-to-use.html" class="active"><i class="fa-solid fa-scale-balanced"></i> Decision Framework</a>
+  <a href="04-server-node-contract.html"><i class="fa-solid fa-file-contract"></i> Server Node Contract</a>
+  <a href="05-registration.html"><i class="fa-solid fa-plug"></i> Registration</a>
+  <a href="06-calling-from-workflow.html"><i class="fa-solid fa-arrow-right-arrow-left"></i> Calling from Workflows</a>
+  <a href="07-examples.html"><i class="fa-solid fa-flask"></i> Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Decision Framework</h1>
+    <p class="lead">A structured set of questions for choosing between the standard workflow node pattern and the server-side node pattern for a new capability.</p>
+  </div>
+
+  <h2>The Decision Tree</h2>
+  <pre><code>
+Is the operation's startup cost negligible (&lt; 50ms)?
+    YES → Standard workflow node
+    NO  ↓
+
+Is startup cost a one-time cost that can be paid at process boot?
+    YES → Server node (amortise startup cost)
+    NO  → Revisit design (external service? MCP server?)
+
+Does the operation require shared in-memory state across calls?
+(e.g., open connection, in-memory cache, loaded model, streaming cursor)
+    NO  → Standard workflow node
+    YES → Server node (singleton manages shared state)
+
+Is the operation a long-running streaming task that must outlive a single node call?
+    NO  → Standard workflow node
+    YES → Server node (background task with request queue)
+  </code></pre>
+
+  <h2>Decision Matrix</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Pattern</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td>REST API call</td><td>Standard</td><td>HttpClientFactory pools connections; no startup cost</td></tr>
+      <tr><td>Database query via ADO.NET</td><td>Standard</td><td>Connection pool managed by driver; executor is stateless</td></tr>
+      <tr><td>MCP tool call</td><td>Standard</td><td>Client factory manages transports; no local model load</td></tr>
+      <tr><td>Local LLM inference (e.g., ONNX, llama.cpp)</td><td>Server node</td><td>Model load takes 10–60s; must be kept in memory</td></tr>
+      <tr><td>WebSocket message handler</td><td>Server node</td><td>Open socket must persist across multiple message exchanges</td></tr>
+      <tr><td>CDC (Change Data Capture) consumer</td><td>Server node</td><td>Cursor position and stream reader must persist</td></tr>
+      <tr><td>In-memory embedding cache</td><td>Server node</td><td>Cache must be shared across concurrent workflow calls</td></tr>
+      <tr><td>Rule evaluation (via IRuleEngineClient)</td><td>Standard</td><td>Remote rule engine; client is injected, no local state</td></tr>
+      <tr><td>SMTP email send</td><td>Standard</td><td>SMTP client created per send; connection not reused</td></tr>
+      <tr><td>GPU-accelerated image classification</td><td>Server node</td><td>GPU context and model weights must stay loaded</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Resource Considerations</h2>
+  <p>Server nodes consume resources (memory, file handles, threads) for the lifetime of the process. Before choosing the server node pattern, confirm:</p>
+  <ul>
+    <li>The resource consumption is acceptable across all deployed environments (development, staging, production)</li>
+    <li>The server node implements graceful <code>StopAsync</code> cleanup so resources are released on shutdown</li>
+    <li>The server node exposes health metrics so operations teams can monitor its state</li>
+  </ul>
+
+  <div class="callout callout-tip">
+    <strong>External service as an alternative:</strong> If a capability requires large startup resources but is shared across many BizFirstGO components (not just workflow nodes), consider hosting it as an external MCP server or microservice rather than a server node in the workflow process. This keeps the workflow host lean and allows independent scaling.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-server-nodes.html">&#8592; Server-Side Nodes</a>
+    <a href="04-server-node-contract.html">Next: Server Node Contract &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Performance Considerations — SQL Server Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>SQL Server Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-connection.html">Connection Configuration</a>
+  <a href="03-schema.html">SQL Schema</a>
+  <a href="04-migrations.html">Running Migrations</a>
+  <a href="05-multi-tenant.html">Multi-Tenant Configuration</a>
+  <a href="06-performance.html" class="active">Performance Considerations</a>
+  <a href="07-backup.html">Backup and Recovery</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Performance Considerations</h1>
+    <p class="lead">The SqlServerPlugin is designed to minimise SQL query overhead per conversation turn. This page covers the indexing strategy, the episodic message query pattern, the archival job for controlling table growth, and connection pool sizing guidelines.</p>
+  </div>
+
+  <h2>Critical Query Patterns</h2>
+  <p>Two queries run on every conversation turn and must be fast:</p>
+  <table>
+    <thead>
+      <tr><th>Query</th><th>Table</th><th>Index Used</th><th>Typical Cost</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Load recent episode messages for context</td><td><code>Octopus_EpisodeMessages</code></td><td><code>IX_EpisodeMessages_Episode</code> on (EpisodeId, CreatedAt ASC)</td><td>&lt; 2 ms</td></tr>
+      <tr><td>Resolve active agent by name</td><td><code>Octopus_Agents</code></td><td><code>UQ_Agents_Tenant_Name</code> unique index</td><td>&lt; 1 ms</td></tr>
+      <tr><td>Insert new episode message</td><td><code>Octopus_EpisodeMessages</code></td><td>Clustered (BIGINT IDENTITY)</td><td>&lt; 2 ms</td></tr>
+      <tr><td>Load active procedures for matching</td><td><code>Octopus_Procedures</code></td><td><code>IX_Procedures_TenantActive</code></td><td>&lt; 5 ms</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Index Coverage</h2>
+  <p>The plugin's migrations create the following composite indexes to ensure efficient execution of the common query patterns:</p>
+  <pre><code>-- The most-hit index: load episode history for context assembly
+CREATE INDEX IX_Octopus_EpisodeMessages_Episode
+    ON Octopus_EpisodeMessages (EpisodeId, CreatedAt ASC)
+    INCLUDE (Role, Content, TokenCount, ToolCallId, ToolName);
+
+-- Agent resolution by tenant + name
+CREATE UNIQUE INDEX UQ_Octopus_Agents_Tenant_Name
+    ON Octopus_Agents (TenantId, Name)
+    WHERE IsActive = 1;
+
+-- Episode lookup by user (for conversation history API)
+CREATE INDEX IX_Octopus_Episodes_Tenant_User
+    ON Octopus_Episodes (TenantId, UserId, LastActiveAt DESC)
+    INCLUDE (AgentId, SessionId, IsActive);
+
+-- Procedure retrieval for intent matching
+CREATE INDEX IX_Octopus_Procedures_TenantActive
+    ON Octopus_Procedures (TenantId, IsActive, Priority DESC);</code></pre>
+
+  <h2>Table Growth and Archival</h2>
+  <p>The <code>Octopus_EpisodeMessages</code> table is the highest-growth table — it grows by one row per message. For a deployment with 1,000 daily active users sending 20 messages each, this is approximately 20,000 rows per day. Without archival, this table will degrade query performance over time.</p>
+  <p>Configure the built-in archival job to move old episodes to a separate archive table:</p>
+  <pre><code>// appsettings.json — archival configuration
+{
+  "SqlServerPlugin": {
+    "Archival": {
+      "Enabled": true,
+      "RetentionDays": 90,
+      "ArchivalSchedule": "0 2 * * *",  // Run at 2 AM daily (CRON format)
+      "BatchSize": 1000
+    }
+  }
+}</code></pre>
+  <p>The archival job moves episodes older than <code>RetentionDays</code> from <code>Octopus_Episodes</code> to <code>Octopus_Episodes_Archive</code> in batches, keeping the primary table small and fast.</p>
+
+  <h2>Connection Pool Sizing</h2>
+  <table>
+    <thead>
+      <tr><th>Deployment Scale</th><th>Concurrent Users</th><th>Recommended Pool Size</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Small (&lt; 50 users)</td><td>&lt; 20 concurrent</td><td>Default (100) — no change needed</td></tr>
+      <tr><td>Medium (50–500 users)</td><td>20–100 concurrent</td><td><code>Max Pool Size=150</code></td></tr>
+      <tr><td>Large (500+ users)</td><td>100–500 concurrent</td><td><code>Max Pool Size=300</code> + read replicas</td></tr>
+      <tr><td>Azure SQL</td><td>Any</td><td>Use Elastic Pool or serverless — managed by Azure</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Read Replica for Analytics</h2>
+  <p>Conversation history reporting and analytics queries are read-heavy and can be directed to a read replica without affecting the primary database. Configure a secondary connection string credential for read-only workloads:</p>
+  <pre><code>{
+  "SqlServerPlugin": {
+    "ConnectionStringCredentialId": 1,           // Primary (read-write)
+    "ReadOnlyConnectionStringCredentialId": 2,   // Read replica (for reporting)
+    "UseReadReplicaForReporting": true
+  }
+}</code></pre>
+
+  <h2>Monitoring Key Metrics</h2>
+  <table>
+    <thead>
+      <tr><th>Metric</th><th>Alert Threshold</th><th>Action</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>EpisodeMessages row count</td><td>&gt; 10M rows</td><td>Enable or accelerate archival</td></tr>
+      <tr><td>Episode message INSERT latency</td><td>&gt; 20 ms p99</td><td>Check index fragmentation, tempdb pressure</td></tr>
+      <tr><td>Connection pool wait time</td><td>&gt; 5 ms avg</td><td>Increase pool size or add read replica</td></tr>
+      <tr><td>Migration duration on startup</td><td>&gt; 60 s</td><td>Apply migrations manually before deployment</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-multi-tenant.html">&#8592; Multi-Tenant Configuration</a>
+    <a href="07-backup.html">Next: Backup and Recovery &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

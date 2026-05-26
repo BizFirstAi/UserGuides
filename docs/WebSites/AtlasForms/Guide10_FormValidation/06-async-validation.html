@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Async Validation — Form Validation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Validation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-built-in-rules.html">Built-In Rules</a>
+  <a href="02-validation-schema.html">Validation Schema</a>
+  <a href="03-custom-validators.html">Custom Validators</a>
+  <a href="04-error-display.html">Error Display</a>
+  <a href="05-cross-field.html">Cross-Field Validation</a>
+  <a href="06-async-validation.html" class="active">Async Validation</a>
+  <a href="07-security-validation.html">Security Validation</a>
+  <a href="08-validation-guide.html">Complete Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Async Validation</h1>
+    <p class="lead">Async validators perform server-side checks that cannot be evaluated in the browser — username uniqueness, email domain verification, IBAN bank reachability, postcode existence, or coupon code validity. They return a <code>Promise&lt;ValidationResult&gt;</code> and are automatically debounced to minimise API calls.</p>
+  </div>
+
+  <h2>Writing an Async Validator</h2>
+  <pre><code>import { registerValidator } from '@atlas-forms/validation-js';
+
+// Username availability check
+registerValidator('usernameAvailable', async (value, fieldId, allValues) =&gt; {
+  // Guard: skip async check for short values (let minLength rule handle these)
+  if (!value || String(value).length &lt; 3) {
+    return { valid: true };
+  }
+
+  try {
+    const response = await fetch(
+      `/api/users/check-username?q=${encodeURIComponent(value)}`,
+      { credentials: 'same-origin' }
+    );
+
+    if (!response.ok) {
+      // Network or server error — fail open (don't block the user)
+      console.warn('Username check failed:', response.status);
+      return { valid: true };
+    }
+
+    const data = await response.json();
+    return {
+      valid: data.available,
+      message: data.available
+        ? undefined
+        : `"${value}" is already taken — please choose a different username`
+    };
+  } catch (err) {
+    // Network failure — fail open
+    console.error('Username availability check error:', err);
+    return { valid: true };
+  }
+});</code></pre>
+
+  <h2>Using in Schema</h2>
+  <pre><code>{
+  "id": "username",
+  "type": "text",
+  "label": "Username",
+  "validation": {
+    "required": true,
+    "minLength": 3,
+    "maxLength": 30,
+    "pattern": "^[a-zA-Z0-9_\\-]+$",
+    "patternMessage": "Only letters, numbers, underscores and hyphens",
+    "customRule": {
+      "name": "usernameAvailable",
+      "message": "Username is already taken",
+      "async": true
+    }
+  }
+}</code></pre>
+
+  <h2>Debounce Behaviour</h2>
+  <p>The validation engine applies a 400ms debounce to async validators when triggered on change. On blur and on submit, async validators run immediately without debounce. The timing table:</p>
+  <table>
+    <thead><tr><th>Trigger</th><th>Debounce</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>On change (autoValidate)</td><td>400ms</td><td>Avoids flooding the server on every keystroke</td></tr>
+      <tr><td>On blur</td><td>None</td><td>Runs immediately when focus leaves the field</td></tr>
+      <tr><td>On submit</td><td>None</td><td>Always runs — form submission waits for async results</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Loading State UI</h2>
+  <p>While an async validator is pending, the control shows a spinner indicator. Once the result arrives, the spinner is replaced by either the error message (if invalid) or nothing (if valid). This is built into the control renderer automatically.</p>
+
+  <h2>Coupon Code Validation Example</h2>
+  <pre><code>registerValidator('couponValid', async (value) =&gt; {
+  if (!value) return { valid: true };
+  const res = await fetch(`/api/coupons/validate?code=${encodeURIComponent(value)}`);
+  const { valid, discount, reason } = await res.json();
+  return {
+    valid,
+    message: valid ? undefined : reason ?? 'Invalid or expired coupon code'
+  };
+});
+
+// Schema
+{
+  "id": "coupon-code",
+  "type": "text",
+  "label": "Coupon Code",
+  "settings": { "placeholder": "Enter coupon code" },
+  "validation": {
+    "customRule": {
+      "name": "couponValid",
+      "message": "Invalid coupon code",
+      "async": true
+    }
+  }
+}</code></pre>
+
+  <h2>Fail-Open vs Fail-Closed</h2>
+  <table>
+    <thead><tr><th>Strategy</th><th>On Network Error</th><th>When to Use</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Fail-open</strong> (return <code>valid: true</code>)</td><td>Allow the user to proceed</td><td>Availability checks (username, email) — server validates again on save</td></tr>
+      <tr><td><strong>Fail-closed</strong> (return <code>valid: false</code>)</td><td>Block the user</td><td>Safety-critical checks (payment card, identity verification)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Always Validate Server-Side Too</strong>
+    Async client-side validation is a UX enhancement — it gives users immediate feedback. It does not replace server-side validation. Your API endpoint must always re-validate the submitted data before persisting it, since client-side checks can be bypassed by a motivated user.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-cross-field.html">&#8592; Cross-Field Validation</a>
+    <a href="07-security-validation.html">Next: Security Validation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saga / Compensation Pattern — Guide45 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Processes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-start-workflow.html"><i class="fa-solid fa-play"></i> Start Workflow</a>
+  <a href="02-cancel-workflow.html"><i class="fa-solid fa-stop"></i> Cancel Workflow</a>
+  <a href="03-pause-workflow.html"><i class="fa-solid fa-pause"></i> Pause Workflow</a>
+  <a href="04-query-status.html"><i class="fa-solid fa-magnifying-glass-chart"></i> Query Status</a>
+  <a href="05-wait-for-completion.html"><i class="fa-solid fa-hourglass-half"></i> Wait For Completion</a>
+  <a href="06-saga-pattern.html" class="active"><i class="fa-solid fa-rotate-left"></i> Saga Pattern</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Saga / Compensation Pattern</h1>
+    <p class="lead">Using process nodes to implement distributed transaction compensation — starting child workflows and cancelling/reversing them if the overall transaction fails.</p>
+  </div>
+
+  <h2>The Saga Problem</h2>
+  <p>A distributed business transaction spans multiple independent workflows (e.g., reserve inventory, charge payment, trigger shipment). If the payment fails after inventory is reserved, the reservation must be reversed. This is the saga compensation pattern.</p>
+
+  <h2>Pattern Structure</h2>
+  <pre><code>
+Orchestrator Workflow
+    │
+    ├── StartWorkflow (reserveInventory)    ──→ executionId: inv-exec-001
+    │
+    ├── StartWorkflow (chargePayment)       ──→ executionId: pay-exec-002
+    │       │
+    │       └── [error] ──→ CompensationPath:
+    │                           CancelWorkflow (inv-exec-001)         // cancel inventory reservation
+    │                           StartWorkflow (reversePaymentAttempt) // if partially charged
+    │                           SendEmail (failure notification)
+    │                           EndNode (failed)
+    │
+    └── StartWorkflow (triggerShipment)
+            │
+            └── [all succeeded] → SendEmail (success confirmation) → EndNode (completed)
+  </code></pre>
+
+  <h2>Key Design Rules</h2>
+  <table>
+    <thead><tr><th>Rule</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Record executionId of every child workflow immediately after starting</td><td>You need it to cancel/compensate later</td></tr>
+      <tr><td>Each child workflow should be idempotent</td><td>Cancellation signals may arrive after partial completion</td></tr>
+      <tr><td>Compensation workflows should not fail</td><td>A failed compensation is worse than the original failure — use retries and alerting</td></tr>
+      <tr><td>Store executionIds in an entity record</td><td>If the orchestrator itself fails, the execution IDs survive in persistent storage for manual recovery</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-warning">
+    <strong>No distributed ACID:</strong> Sagas do not provide ACID guarantees across workflows. Compensation logic must handle partial states (e.g., inventory reserved but payment partially processed). Design each step to be reversible and test compensation paths explicitly.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-wait-for-completion.html">&#8592; Wait For Completion</a>
+    <a href="07-security.html">Next: Security &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

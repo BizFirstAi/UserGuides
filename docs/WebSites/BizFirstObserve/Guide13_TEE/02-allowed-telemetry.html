@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Allowed Telemetry — TEE | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>TEE Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">TEE Observability Overview</a>
+  <a href="01-tee-constraints.html">TEE Observability Constraints</a>
+  <a href="02-allowed-telemetry.html" class="active">Allowed Telemetry</a>
+  <a href="03-attestation-logs.html">Attestation-Based Log Integrity</a>
+  <a href="04-in-tee-observability.html">In-TEE Observability</a>
+  <a href="05-boundary-crossing.html">Telemetry at the TEE Boundary</a>
+  <a href="06-audit.html">Audit Logging in TEE</a>
+  <a href="07-incident-response.html">Incident Response in TEE</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Allowed Telemetry</h1>
+    <p class="lead">Not all telemetry is forbidden from crossing the TEE boundary — only telemetry that could reveal protected computation data. Aggregated metrics, sanitized structured logs, and trace identifiers (not span content) are all permissible with proper design. This page specifies exactly what is allowed and how to emit it correctly.</p>
+  </div>
+
+  <h2>Allowed Telemetry Categories</h2>
+  <table>
+    <thead>
+      <tr><th>Category</th><th>Allowed</th><th>Conditions</th><th>Examples</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Aggregated metrics</td><td>Yes</td><td>No individual record data in labels; no payload values in counters</td><td>workflow execution count, node duration histogram, error rate</td></tr>
+      <tr><td>Sanitized structured logs</td><td>Yes</td><td>No form field values, no computation results, no user data in message or attributes</td><td>workflow started/completed/failed, node started/completed, step count</td></tr>
+      <tr><td>Trace identifiers</td><td>Yes</td><td>TraceId and SpanId only — not span names, span attributes, or span events</td><td>TraceId for correlation; SpanId for parent linkage</td></tr>
+      <tr><td>Attestation reports</td><td>Yes</td><td>Cryptographic proof only — contains measurement (code hash), not runtime data</td><td>PCR values, attestation certificate</td></tr>
+      <tr><td>Health check status</td><td>Yes</td><td>Binary healthy/unhealthy only; no detail about computation state</td><td>"processengine: healthy", "db: healthy"</td></tr>
+      <tr><td>Error codes (not messages)</td><td>Yes</td><td>Numeric codes or short enum-style codes without interpolated values</td><td>E_OVERFLOW, E_TIMEOUT, E_AUTH_FAILED</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Allowed Metrics: Correct Emission Pattern</h2>
+  <pre><code>// TEE-safe metric emission in BizFirstGO process engine
+// CORRECT: Aggregated counts and durations — no payload data
+
+// Workflow execution counter — labels: tenant (hashed), outcome, node_type
+// NOT: tenant=acme-corp (company name is sensitive in TEE context)
+// YES: tenant=t_8f3a2b1c (deterministic hash of tenant ID)
+_workflowExecutionsCounter.Add(1,
+    new KeyValuePair&lt;string, object?&gt;("tenant_hash", HashTenantId(tenantId)),
+    new KeyValuePair&lt;string, object?&gt;("outcome", "completed"),
+    new KeyValuePair&lt;string, object?&gt;("workflow_type", workflowType));  // enum, not user data
+
+// Duration histogram — no payload reference in any attribute
+_nodeDurationHistogram.Record(elapsedMs,
+    new KeyValuePair&lt;string, object?&gt;("node_type", "calculation"),
+    new KeyValuePair&lt;string, object?&gt;("outcome", "success"));
+// NOT: new KeyValuePair("input_range", "0-1000000")  — reveals computation class
+
+// HIL pending count — tenant-scoped gauge
+_hilPendingGauge.Set(pendingCount,
+    new KeyValuePair&lt;string, object?&gt;("tenant_hash", HashTenantId(tenantId)));
+
+// FORBIDDEN metric label patterns in TEE:
+// "amount_bucket" = "100k-500k"    — reveals financial data class
+// "applicant_id" = "usr-12345"     — individual identifier
+// "form_field" = "income"          — reveals what was computed
+// "result" = "approved"            — reveals computation outcome (if sensitive)</code></pre>
+
+  <h2>Allowed Logs: Correct Sanitization Pattern</h2>
+  <pre><code>// TEE-safe log emission
+// CORRECT: Operational context only — no payload data
+
+// Workflow lifecycle events
+_logger.LogInformation("Workflow started. executionId={ExecutionId} workflowType={WorkflowType} tenantHash={TenantHash}",
+    executionId,      // GUID — no payload encoded
+    workflowType,     // enum string — not user-supplied data
+    HashTenantId(tenantId));  // hashed — not the actual tenant name
+
+_logger.LogInformation("Node completed. executionId={ExecutionId} nodeType={NodeType} durationMs={DurationMs}",
+    executionId,
+    nodeType,
+    elapsedMs);   // duration — operational, not payload
+
+_logger.LogError("Node failed. executionId={ExecutionId} nodeType={NodeType} errorCode={ErrorCode}",
+    executionId,
+    nodeType,
+    "E_CALCULATION_OVERFLOW");  // error code — not the values that caused it
+
+// FORBIDDEN log patterns in TEE:
+// "Processing income={Income} for applicant={ApplicantName}"   — payload data
+// "Calculation result: {Result} for form field {FieldName}"    — computation output
+// "Exception: System.OverflowException: value 1500000 > max"  // value revealed in exception
+// "Retrying after {StatusCode} from {ExternalServiceUrl}"     // if URL reveals data class</code></pre>
+
+  <h2>Allowed Trace Context: Identifiers Only</h2>
+  <pre><code>// TEE trace context: pass TraceId across boundary, keep span content inside TEE
+
+// ALLOWED: TraceId and SpanId in log correlation fields
+_logger.LogInformation("Workflow step completed. executionId={ExecutionId} traceId={TraceId} spanId={SpanId}",
+    executionId,
+    Activity.Current?.TraceId.ToString(),
+    Activity.Current?.SpanId.ToString());
+
+// ALLOWED: TraceId in sanitized log for correlation to in-TEE span store
+// The TraceId allows: "when did this workflow run?" (correlated via in-TEE span store)
+// The TraceId does NOT reveal: what the workflow computed
+
+// FORBIDDEN: Full span data crossing the TEE boundary
+// span.SetTag("income", calculationInput.Income);          // payload in span attribute
+// span.SetTag("result", calculationOutput.Decision);       // computation result
+// span.SetTag("applicant.name", applicant.DisplayName);    // PII
+
+// TEE trace strategy:
+// 1. Emit TraceId + SpanId in sanitized logs (allowed to cross boundary)
+// 2. Store full span details in in-TEE Tempo (stays inside TEE)
+// 3. External Tempo only receives: trace context propagation (W3C TraceContext header)
+//    — not the span content itself</code></pre>
+
+  <h2>Telemetry Contract Definition Template</h2>
+  <pre><code># TEE Observability Contract — define before first deployment
+# Changes to this contract require code modification + re-attestation
+
+ALLOWED_METRICS:
+  - name: bizfirst_workflow_executions_total
+    labels: [tenant_hash, workflow_type, outcome]
+    forbidden_labels: [tenant_name, applicant_id, form_type, amount_range]
+
+  - name: bizfirst_node_execution_duration_seconds
+    labels: [tenant_hash, node_type, outcome]
+    forbidden_labels: [input_class, result_category]
+
+  - name: bizfirst_hil_pending_count
+    labels: [tenant_hash]
+    forbidden_labels: [approval_type, approver_id]
+
+ALLOWED_LOG_FIELDS:
+  - executionId        # GUID — no payload encoded
+  - workflowType       # enum — not user-supplied
+  - nodeType           # enum — not user-supplied
+  - tenantHash         # SHA256(tenantId) — not the actual tenant identifier
+  - durationMs         # operational timing — not payload
+  - errorCode          # enum error code — not interpolated values
+  - traceId            # GUID — correlation only
+  - spanId             # GUID — correlation only
+  - stepCount          # integer count — not payload values
+
+FORBIDDEN_LOG_FIELDS:
+  - Any form field name or value
+  - Any computation input or output value
+  - Any user identifier (name, email, ID)
+  - Exception messages containing data values
+  - External service responses containing data</code></pre>
+
+  <div class="callout warning">
+    <strong>The Telemetry Contract Is a Security Boundary</strong>
+    <p>Every field that crosses the TEE boundary is a potential exfiltration vector. Define the allowed telemetry contract as a formal list before deployment. When reviewing code changes to BizFirstGO running inside a TEE, check every logging statement and metric emission point against this contract — not just by convention, but as a security review gate.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-tee-constraints.html">&#8592; TEE Observability Constraints</a>
+    <a href="03-attestation-logs.html">Next: Attestation-Based Log Integrity &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

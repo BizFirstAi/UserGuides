@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IOctopusPlugin Interface — Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Plugins Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Plugins Overview</a>
+  <a href="01-plugin-interface.html" class="active">IOctopusPlugin Interface</a>
+  <a href="02-lifecycle.html">Plugin Lifecycle</a>
+  <a href="03-built-in-plugins.html">Built-In Plugins</a>
+  <a href="04-plugin-di.html">DI and Services</a>
+  <a href="05-plugin-config.html">Plugin Configuration</a>
+  <a href="06-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="07-plugin-ordering.html">Plugin Ordering</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>IOctopusPlugin Interface</h1>
+    <p class="lead">The <code>IOctopusPlugin</code> interface is the contract every Octopus plugin must implement. It defines three lifecycle hooks that allow plugins to integrate with the ASP.NET Core DI container, initialise resources, and clean up on shutdown.</p>
+  </div>
+
+  <h2>Full Interface Definition</h2>
+  <pre><code>namespace BizFirst.Octopus.Core.Plugins;
+
+/// &lt;summary&gt;
+/// Contract for all Octopus plugins. Plugins are registered during application
+/// startup and extend the Octopus agent framework with services, tools, and capabilities.
+/// &lt;/summary&gt;
+public interface IOctopusPlugin
+{
+    /// &lt;summary&gt;
+    /// Called during IServiceCollection registration (before the DI container is built).
+    /// Use to register DI services, configure options, and add middleware.
+    /// Do NOT resolve services here — the container is not built yet.
+    /// &lt;/summary&gt;
+    void OnRegister(IServiceCollection services, OctopusConfig config);
+
+    /// &lt;summary&gt;
+    /// Called after the DI container is built, during application start.
+    /// Use to resolve registered services, apply database migrations,
+    /// register MCP tools, and perform any async initialisation.
+    /// &lt;/summary&gt;
+    Task OnStartAsync(IServiceProvider serviceProvider, CancellationToken ct);
+
+    /// &lt;summary&gt;
+    /// Called during application shutdown. Use to dispose resources,
+    /// close connections, flush buffers, and perform clean shutdown.
+    /// &lt;/summary&gt;
+    Task OnStopAsync(CancellationToken ct);
+}</code></pre>
+
+  <h2>Method Responsibilities</h2>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>Phase</th><th>Can Resolve Services?</th><th>Common Actions</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>OnRegister</code></td><td>Before container build</td><td>No</td><td>AddScoped/Singleton, AddDbContext, Configure&lt;TOptions&gt;, AddHttpClient</td></tr>
+      <tr><td><code>OnStartAsync</code></td><td>After container build, before first request</td><td>Yes</td><td>MigrateAsync, Register MCP tools, Connect to external services, seed data</td></tr>
+      <tr><td><code>OnStopAsync</code></td><td>Application shutdown</td><td>Yes (root scope)</td><td>Dispose IDisposable, flush logs, close connections, release ports</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Minimal Plugin Implementation</h2>
+  <pre><code>public class MinimalPlugin : IOctopusPlugin
+{
+    public void OnRegister(IServiceCollection services, OctopusConfig config)
+    {
+        // Register your services here
+        services.AddScoped&lt;IMyService, MyService&gt;();
+    }
+
+    public Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        // Initialise after DI container is ready
+        var myService = sp.GetRequiredService&lt;IMyService&gt;();
+        // ... initialise ...
+        return Task.CompletedTask;
+    }
+
+    public Task OnStopAsync(CancellationToken ct)
+    {
+        // Clean up resources
+        return Task.CompletedTask;
+    }
+}</code></pre>
+
+  <h2>OctopusConfig</h2>
+  <p>The <code>OctopusConfig</code> object passed to <code>OnRegister</code> provides access to the application's configuration (appsettings.json), allowing plugins to read their configuration section:</p>
+  <pre><code>public class OctopusConfig
+{
+    public IConfiguration    Configuration { get; }
+    public IWebHostEnvironment Environment  { get; }
+
+    // Helper to bind a plugin-specific config section
+    public T GetSection&lt;T&gt;(string sectionKey) where T : new()
+    {
+        var obj = new T();
+        Configuration.GetSection(sectionKey).Bind(obj);
+        return obj;
+    }
+}
+
+// Usage in OnRegister:
+var myConfig = config.GetSection&lt;MyPluginConfig&gt;("MyPlugin");
+services.AddSingleton(myConfig);</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Plugins Overview</a>
+    <a href="02-lifecycle.html">Next: Plugin Lifecycle &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Global Variables — Execution Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Execution Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structure.html">Memory Structure</a>
+  <a href="02-node-outputs.html">nodeOutputs Map</a>
+  <a href="03-reading-upstream.html">Reading Upstream Output</a>
+  <a href="04-global-variables.html" class="active">Global Variables</a>
+  <a href="05-lifetime.html">Memory Lifetime</a>
+  <a href="06-serialization.html">HIL Serialization</a>
+  <a href="07-security.html">Memory Isolation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Global Variables</h1>
+    <p class="lead">Global variables are key-value pairs stored in <code>ExecutionMemory.globalVariables</code>. Any node in the execution can write a global variable and any other node can read it — regardless of graph topology. They persist for the full duration of the execution but are NOT accessible across executions.</p>
+  </div>
+
+  <h2>SetGlobal and GetGlobal</h2>
+  <pre><code">// Any node can set a global variable
+ctx.ExecutionMemory.SetGlobal("correlationId", Guid.NewGuid().ToString());
+
+// Any node can read it — no need to be downstream of the writer
+var correlationId = ctx.ExecutionMemory.GetGlobal&lt;string&gt;("correlationId");
+
+// Overwrite is supported — last write wins
+ctx.ExecutionMemory.SetGlobal("retryCount", 3);
+ctx.ExecutionMemory.SetGlobal("retryCount", 4);  // Now 4
+
+// Read as untyped
+var raw = ctx.ExecutionMemory.GetGlobal("retryCount");  // Returns object? (boxed int 4)</code></pre>
+
+  <h2>Difference from nodeOutputs</h2>
+  <table>
+    <thead><tr><th>Attribute</th><th>nodeOutputs</th><th>globalVariables</th></tr></thead>
+    <tbody>
+      <tr><td>Key</td><td>nodeId (string)</td><td>Any string (variable name)</td></tr>
+      <tr><td>Who writes</td><td>BaseNodeExecutor (after ExecuteAsync returns)</td><td>Any executor directly via SetGlobal</td></tr>
+      <tr><td>Topology constraint</td><td>Only upstream nodes' output is meaningful</td><td>None — any node can read any global at any time</td></tr>
+      <tr><td>Typical use</td><td>Pass data downstream via workflow edges</td><td>Execution-wide shared state (flags, counters, context IDs)</td></tr>
+      <tr><td>HIL serialization</td><td>Yes — included in suspended state</td><td>Yes — included in suspended state</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Common Use Cases</h2>
+  <pre><code">// Use case 1 — Set a flag early, check it in a later branch
+// (FeatureFlagNode sets the flag, downstream nodes check it)
+ctx.ExecutionMemory.SetGlobal("premiumUser", isPremium);
+// ... later, in a conditional node:
+var isPremium = ctx.ExecutionMemory.GetGlobal&lt;bool&gt;("premiumUser");
+
+// Use case 2 — Track a counter across loop iterations
+var currentCount = ctx.ExecutionMemory.GetGlobal&lt;int&gt;("itemsProcessed");
+ctx.ExecutionMemory.SetGlobal("itemsProcessed", currentCount + 1);
+
+// Use case 3 — Propagate a correlation ID through all nodes
+// (Set once at the start of the execution, used for tracing)
+var corrId = ctx.ExecutionMemory.GetGlobal&lt;string&gt;("correlationId")
+    ?? Guid.NewGuid().ToString();
+ctx.ExecutionMemory.SetGlobal("correlationId", corrId);
+ctx.Observability.Logger.LogInformation("Processing item {CorrelationId}", corrId);</code></pre>
+
+  <h2>Variable Naming Conventions</h2>
+  <table>
+    <thead><tr><th>Convention</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>camelCase names</td><td><code>premiumUser</code>, <code>itemsProcessed</code>, <code>correlationId</code></td></tr>
+      <tr><td>Prefix for namespace isolation</td><td><code>billing.invoiceId</code>, <code>auth.userId</code></td></tr>
+      <tr><td>Avoid generic names</td><td>Use <code>orderTotalUsd</code> not <code>total</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Accessing via Variable Scoping ($global prefix)</h2>
+  <p>In the expression engine and variable scoping system, global variables set via <code>SetGlobal</code> are accessible using the <code>$global.variableName</code> prefix. See Guide32_VariableScoping for the full variable system.</p>
+  <pre><code">// Expression engine references global variables with $global prefix
+// Example: a condition expression in a gateway node
+$global.premiumUser == true
+
+// Another expression: multiply a total by a globally set tax rate
+$global.taxRate * $output.invoice-node.subtotal</code></pre>
+
+  <div class="callout info">
+    <strong>Global variables are ephemeral within the execution.</strong> <code>SetGlobal("key", value)</code> is NOT the same as pinned data. When the execution ends, all global variables are gone. If you need a value in future runs, return it as <code>pinnedData</code> from <code>NodeExecutionResult.Success</code> instead.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-reading-upstream.html">&#8592; Reading Upstream Output</a>
+    <a href="05-lifetime.html">Next: Memory Lifetime &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

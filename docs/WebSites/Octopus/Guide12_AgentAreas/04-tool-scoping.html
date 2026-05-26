@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Scoping — Agent Areas | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Agent Areas</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Agent Areas Overview</a>
+  <a href="01-what-are-areas.html">What Are Agent Areas</a>
+  <a href="02-area-configuration.html">Area Configuration</a>
+  <a href="03-knowledge-scoping.html">Knowledge Scoping</a>
+  <a href="04-tool-scoping.html" class="active">Tool Scoping</a>
+  <a href="05-user-access.html">User Access</a>
+  <a href="06-area-routing.html">Area Routing</a>
+  <a href="07-multi-area.html">Multi-Area Deployments</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Tool Scoping</h1>
+    <p class="lead">Tools in Octopus are scoped at the agent level. Each agent has an explicit list of tools it can call — it does not have access to tools registered for other agents or areas. This ensures Finance tools are never available to HR agents, and vice versa.</p>
+  </div>
+
+  <h2>Tool Scope Levels</h2>
+  <table>
+    <thead>
+      <tr><th>Scope</th><th>Visibility</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Global (plugin-registered)</td><td>Available to all agents; agent admin chooses to assign or not</td><td><code>start_workflow</code> (ProcessPlugin)</td></tr>
+      <tr><td>Area tool group</td><td>Registered for a specific area; agents in the area can be assigned the group</td><td><code>get_leave_balance</code> — HR area only</td></tr>
+      <tr><td>Agent-specific</td><td>Assigned to exactly one agent</td><td><code>get_executive_salary</code> — CFO agent only</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Assigning Tools to an Area Agent</h2>
+  <pre><code>// In the agents-app: Area → Agent → Tools tab
+// Via API:
+POST /api/octopus/agents/{agentId}/tool-groups
+Authorization: Bearer {areaAdminToken}
+
+{
+  "toolGroupId": "tg_hr_leave_tools",
+  "enabled":      true
+}
+
+// Tool group "tg_hr_leave_tools" contains:
+// - get_leave_balance
+// - submit_leave_request
+// - get_leave_history
+// - cancel_leave_request</code></pre>
+
+  <h2>Area-Level Tool Groups</h2>
+  <pre><code>// Create a tool group scoped to an area
+POST /api/octopus/areas/{areaId}/tool-groups
+{
+  "name":        "HR Leave Tools",
+  "description": "Tools for managing employee leave",
+  "toolNames":   ["get_leave_balance", "submit_leave_request", "get_leave_history"]
+}
+
+// List tool groups available in an area
+GET /api/octopus/areas/{areaId}/tool-groups
+
+// Tool groups in one area are NOT visible to agents in other areas
+// (unless the group was defined at the global/plugin level)</code></pre>
+
+  <h2>Tool Isolation Enforcement</h2>
+  <p>When an agent calls <code>MCPToolRegistry.ExecuteAsync</code>, the registry only contains tools explicitly assigned to that agent. It is not possible for the agent to discover or call tools registered for a different agent:</p>
+  <pre><code>// Per-agent tool registry — built at agent load time
+public class AgentToolRegistryFactory
+{
+    public MCPToolRegistry BuildForAgent(OctopusAgent agent, IServiceProvider sp)
+    {
+        var registry = new MCPToolRegistry();
+
+        // 1. Add globally registered tools that the agent has been assigned
+        foreach (var toolGroupId in agent.AssignedToolGroupIds)
+        {
+            var group = _toolGroupStore.GetById(toolGroupId);
+            foreach (var toolName in group.ToolNames)
+            {
+                if (_globalRegistry.TryGet(toolName, out var tool))
+                    registry.Register(tool);
+            }
+        }
+
+        // 2. Add AI Functions active for this agent
+        _aiFunctionRegistrar.RegisterForAgent(agent.AgentId, agent.TenantId, registry, ...);
+
+        return registry;
+        // Only contains tools explicitly assigned — no cross-agent leakage
+    }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="03-knowledge-scoping.html">&#8592; Knowledge Scoping</a>
+    <a href="05-user-access.html">Next: User Access &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

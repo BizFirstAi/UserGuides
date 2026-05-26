@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Incident Response in TEE — TEE | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>TEE Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">TEE Observability Overview</a>
+  <a href="01-tee-constraints.html">TEE Observability Constraints</a>
+  <a href="02-allowed-telemetry.html">Allowed Telemetry</a>
+  <a href="03-attestation-logs.html">Attestation-Based Log Integrity</a>
+  <a href="04-in-tee-observability.html">In-TEE Observability</a>
+  <a href="05-boundary-crossing.html">Telemetry at the TEE Boundary</a>
+  <a href="06-audit.html">Audit Logging in TEE</a>
+  <a href="07-incident-response.html" class="active">Incident Response in TEE</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Incident Response in TEE</h1>
+    <p class="lead">Incident response in a TEE deployment is fundamentally different from standard environments. You cannot SSH in, attach a debugger, or inspect live memory. Every investigative action must use pre-defined observability channels. This page provides the procedures for the most common incident types in TEE-deployed BizFirstGO, working within the constraints of the TEE security model.</p>
+  </div>
+
+  <h2>What Is (and Is Not) Available During an Incident</h2>
+  <table>
+    <thead>
+      <tr><th>Tool</th><th>Standard BizFirstGO</th><th>TEE BizFirstGO</th><th>TEE Alternative</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SSH into process engine</td><td>Available</td><td>Not available</td><td>None — TEE blocks all external access</td></tr>
+      <tr><td>Attach debugger (gdb, dotnet-trace)</td><td>Available</td><td>Not available</td><td>Pre-defined trace spans in in-TEE Tempo</td></tr>
+      <tr><td>Live log tail (Grafana Live)</td><td>Available</td><td>Not available</td><td>Batch log queries in external Loki (30s delay)</td></tr>
+      <tr><td>Query full logs with ad-hoc LogQL</td><td>Available</td><td>External: sanitized only</td><td>In-TEE Loki via attested channel (full detail)</td></tr>
+      <tr><td>Inspect distributed traces</td><td>Full spans in Tempo</td><td>External: trace IDs only</td><td>In-TEE Tempo via attested channel (full spans)</td></tr>
+      <tr><td>Memory dump / heap inspection</td><td>Available (dotnet-dump)</td><td>Not available</td><td>None — explicitly blocked by TEE design</td></tr>
+      <tr><td>Restart/redeploy process engine</td><td>Available</td><td>Requires re-attestation</td><td>Plan restart during low-traffic window; verify attestation after restart</td></tr>
+      <tr><td>Audit log review</td><td>Standard log query</td><td>External: sanitized audit log</td><td>In-TEE Loki (full audit) + WORM S3 (compliance copy)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Incident Type 1: Workflow Error Rate Spike</h2>
+  <pre><code"># Alert fires: bizfirst_workflow_error_rate > 5% for 5 minutes
+
+# Step 1: Query external Loki for error codes (available outside TEE)
+{job="tee-processengine", level="Error"}
+  | json
+  | errorCode != ""
+  | count_over_time([5m]) by (errorCode, tenantHash)
+
+# Step 2: Identify dominant error code
+# Example result: E_CALCULATION_OVERFLOW x 47, tenantHash=t_8f3a2b1c
+
+# Step 3: Find affected executionIds from external Loki
+{job="tee-processengine", level="Error"} |= "E_CALCULATION_OVERFLOW"
+  | json | executionId != ""
+  | line_format "{{.executionId}} {{.nodeType}} {{.timestamp}}"
+
+# Step 4: Query in-TEE Loki via attested channel for full detail
+# (Use the bizfirstgo-tee-query CLI tool — attested channel only)
+bizfirstgo-tee-query logs \
+  --filter 'executionId="exec-abc-123"' \
+  --time-from "2026-05-25T10:00:00Z" \
+  --time-to "2026-05-25T10:30:00Z"
+# Returns full in-TEE log including exception details (with computation context)
+
+# Step 5: Check in-TEE Tempo for trace
+bizfirstgo-tee-query trace \
+  --trace-id "a1b2c3d4e5f6..." \
+  --show-spans
+# Returns full span waterfall inside TEE security boundary</code></pre>
+
+  <h2>Incident Type 2: Telemetry Gap (Missing Logs)</h2>
+  <pre><code"># Alert fires: no logs from tee-processengine for > 2 minutes
+# Possible causes: (a) TEE crash, (b) vsock channel failure, (c) OTel Collector failure,
+#                  (d) audit log chain gap (tampering concern)
+
+# Step 1: Check external OTel Collector health
+{job="otel-collector-external"} |= "tee-processengine"
+  | json | message =~ ".*receiver.*"
+
+# Step 2: Check vsock proxy connectivity (host-side log)
+{job="vsock-proxy"} | json | status = "error"
+
+# Step 3: Check if TEE process engine is alive (health endpoint)
+# Health endpoint is in the TEE's approved egress list:
+curl http://tee-health-proxy.internal:8080/health
+# Returns: {"processengine": "healthy"} or {"processengine": "not-responding"}
+
+# Step 4: Check audit chain continuity
+{job="tee-audit"} | json | tee_instance_id = "nitro-001-us-east"
+  | sort by (seq desc)
+  | head(10)
+# Compare seq values — a gap means the TEE may have crashed and restarted
+
+# Step 5: If TEE restarted, verify new attestation
+bizfirstgo-tee-query attestation --latest
+# Returns: new TEE measurement + timestamp; compare PCR[2] to expected code version
+
+# Step 6: If code measurement changed unexpectedly — SECURITY INCIDENT
+# Escalate to security team; do not restart or alter the TEE instance
+# Preserve all audit records and attestation reports for forensic analysis</code></pre>
+
+  <h2>Incident Type 3: Audit Chain Integrity Failure</h2>
+  <pre><code"># Alert: audit chain verification failed (sequence gap or hash mismatch)
+# This is a SECURITY INCIDENT — treat as potential log tampering
+
+# Immediate actions:
+# 1. Do NOT restart the TEE instance (preserve forensic state)
+# 2. Do NOT modify or delete any log records
+# 3. Notify security team and compliance officer
+
+# Step 1: Identify the gap in the audit chain
+{job="tee-audit"} | json | tee_instance_id = "nitro-001-us-east"
+  | sort by (seq)
+# Look for non-consecutive seq values
+
+# Step 2: Retrieve affected records from WORM S3 (tamper-proof copy)
+aws s3 cp s3://bizfirstgo-tee-audit-logs/tee-audit/2026/05/25/ \
+  /forensics/audit-records/ --recursive
+
+# Step 3: Run integrity verification tool
+bizfirstgo-audit-verify \
+  --records-dir /forensics/audit-records/ \
+  --tee-public-key tee-attestation-cert.pem \
+  --from-seq 1000 --to-seq 2000
+
+# Output example:
+# seq 1042: VALID (signature ok, hash chain ok)
+# seq 1043: MISSING (not present in WORM S3)
+# seq 1044: VALID (signature ok, but prev_hash does not match seq 1042)
+# CONCLUSION: Record 1043 was deleted after being written to S3
+
+# Step 4: Check S3 access log for unauthorized deletion attempt
+aws s3api get-bucket-logging --bucket bizfirstgo-tee-audit-logs
+# COMPLIANCE: Object Lock COMPLIANCE mode prevents deletion — if record is missing
+# from WORM S3, the deletion occurred before the record was written to S3</code></pre>
+
+  <h2>Incident Type 4: TEE Attestation Failure</h2>
+  <pre><code"># Alert: TEE attestation verification failed
+# Possible causes: (a) code was modified, (b) hardware failure,
+#                  (c) unauthorized deployment, (d) attestation service outage
+
+# Step 1: Retrieve current attestation report
+bizfirstgo-tee-query attestation --latest --output json > current-attestation.json
+
+# Step 2: Compare PCR values to expected baseline
+diff &lt;(jq '.pcrs' current-attestation.json) &lt;(jq '.pcrs' expected-attestation.json)
+# Any difference in PCR[2] = code was changed
+# Difference in PCR[0]/PCR[1] = kernel or hardware image changed
+
+# Step 3: If code change is authorized (expected after deployment):
+# - Verify the new PCR[2] matches the expected deployment hash
+# - Update the expected-attestation.json in the attestation baseline registry
+# - Verify all in-flight executions completed or were safely cancelled
+
+# Step 4: If code change is NOT authorized:
+# - SECURITY INCIDENT — escalate immediately
+# - Block all new workflow executions (update load balancer health check)
+# - Preserve the running TEE instance for forensic analysis
+# - Do not restart or terminate the TEE instance
+
+# Step 5: After security investigation, redeploy from known-good container image
+# - Rebuild from git commit with verified hash
+# - New attestation report will have expected PCR[2] value</code></pre>
+
+  <h2>Pre-Defined Investigation Procedures Checklist</h2>
+  <pre><code"># TEE Incident Response Readiness Checklist
+# Complete before first TEE production deployment
+
+Tooling:
+[ ] bizfirstgo-tee-query CLI installed and tested (attested channel access)
+[ ] bizfirstgo-audit-verify tool available with TEE public key loaded
+[ ] Expected attestation baseline (expected-attestation.json) stored in secure registry
+[ ] S3 audit bucket access credentials configured for forensic team
+
+Runbooks:
+[ ] Error rate spike runbook written and tested in TEE staging environment
+[ ] Telemetry gap runbook written and tested
+[ ] Audit chain integrity failure escalation procedure approved by security + compliance
+[ ] Attestation failure security incident procedure approved by CISO
+
+Monitoring:
+[ ] Alert: bizfirst_workflow_error_rate > 5% for 5m (fires on external Prometheus)
+[ ] Alert: no tee-processengine logs for 2m (fires on external Loki)
+[ ] Alert: audit chain sequence gap detected (fires on audit verification job)
+[ ] Alert: attestation verification failed (fires on attestation monitor)
+
+Access:
+[ ] Forensic team members have attested channel credentials
+[ ] WORM S3 read-only access for forensic team confirmed
+[ ] Escalation contacts (security, compliance, CISO) documented and tested</code></pre>
+
+  <div class="callout warning">
+    <strong>Practice Incident Response Before Production</strong>
+    <p>The constraints of TEE incident response are unlike any other environment. Teams that have never operated a TEE deployment will be unfamiliar with the absence of SSH and debugger access when an incident occurs under time pressure. Run tabletop exercises and simulated incidents in a TEE staging environment before going to production. The runbooks and tooling must be rehearsed — discovering you cannot connect to in-TEE Loki during an actual incident is too late.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-audit.html">&#8592; Audit Logging in TEE</a>
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

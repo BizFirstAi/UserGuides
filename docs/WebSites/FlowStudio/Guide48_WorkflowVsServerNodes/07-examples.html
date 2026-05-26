@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Examples — Guide48 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow vs. Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-workflow-nodes.html"><i class="fa-solid fa-bolt"></i> Standard Workflow Nodes</a>
+  <a href="02-server-nodes.html"><i class="fa-solid fa-server"></i> Server-Side Nodes</a>
+  <a href="03-when-to-use.html"><i class="fa-solid fa-scale-balanced"></i> Decision Framework</a>
+  <a href="04-server-node-contract.html"><i class="fa-solid fa-file-contract"></i> Server Node Contract</a>
+  <a href="05-registration.html"><i class="fa-solid fa-plug"></i> Registration</a>
+  <a href="06-calling-from-workflow.html"><i class="fa-solid fa-arrow-right-arrow-left"></i> Calling from Workflows</a>
+  <a href="07-examples.html" class="active"><i class="fa-solid fa-flask"></i> Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Examples</h1>
+    <p class="lead">Three real-world server node implementations — an AI inference server (ONNX embedding), a WebSocket event listener, and a CDC consumer — illustrating the pattern across different use cases.</p>
+  </div>
+
+  <h2>Example 1: Local Embedding Server (AI Inference)</h2>
+  <p>Loads a local ONNX embedding model once at startup and serves embedding requests from all workflow executions concurrently.</p>
+  <pre><code class="language-csharp">public class LocalEmbeddingServerNode : BaseServerNode
+{
+    private readonly LocalEmbeddingOptions _options;
+    private InferenceSession? _session;           // ONNX runtime session
+    private readonly SemaphoreSlim _concurrencyGate;
+
+    public override string NodeId      => "local-embedding";
+    public override string DisplayName => "Local Text Embedding Server";
+
+    public LocalEmbeddingServerNode(
+        IServerNodeRegistry registry,
+        IOptions&lt;LocalEmbeddingOptions&gt; options,
+        ILogger&lt;LocalEmbeddingServerNode&gt; logger)
+        : base(registry, logger)
+    {
+        _options         = options.Value;
+        _concurrencyGate = new SemaphoreSlim(_options.MaxConcurrency, _options.MaxConcurrency);
+    }
+
+    protected override async Task InitialiseAsync(CancellationToken ct)
+    {
+        // Model load — ~5–30s depending on model size
+        await Task.Run(() =>
+        {
+            _session = new InferenceSession(_options.ModelPath);
+        }, ct);
+
+        if (_options.WarmupOnStart)
+            await WarmupAsync(ct);
+    }
+
+    public override async Task&lt;ServerNodeResponse&gt; HandleRequestAsync(
+        ServerNodeRequest request, CancellationToken ct)
+    {
+        var text = request.Payload.RootElement.GetProperty("text").GetString()
+                   ?? throw new ArgumentException("text is required");
+
+        await _concurrencyGate.WaitAsync(ct);
+        try
+        {
+            var vector = await EmbedAsync(text, ct);
+            return new ServerNodeResponse
+            {
+                Success = true,
+                Data    = JsonSerializer.SerializeToDocument(new
+                {
+                    vector     = vector,
+                    dimensions = vector.Length,
+                    model      = Path.GetFileNameWithoutExtension(_options.ModelPath)
+                })
+            };
+        }
+        finally { _concurrencyGate.Release(); }
+    }
+
+    public override ServerNodeHealth GetHealth() => new()
+    {
+        IsReady    = _session is not null,
+        Status     = _session is not null ? "healthy" : "starting",
+        CheckedAt  = DateTimeOffset.UtcNow,
+        Diagnostics = new() { ["maxConcurrency"] = _options.MaxConcurrency }
+    };
+
+    protected override Task DisposeResourcesAsync(CancellationToken ct)
+    {
+        _session?.Dispose();
+        return Task.CompletedTask;
+    }
+}</code></pre>
+
+  <h2>Example 2: WebSocket Listener</h2>
+  <p>Maintains a persistent WebSocket connection to a trading feed. Workflow nodes can query the latest price snapshot without establishing a new connection per call.</p>
+  <pre><code class="language-csharp">public class TradingFeedServerNode : BaseServerNode
+{
+    private readonly ConcurrentDictionary&lt;string, decimal&gt; _latestPrices = new();
+    private ClientWebSocket? _ws;
+
+    public override string NodeId      => "trading-feed";
+    public override string DisplayName => "Live Trading Price Feed";
+
+    protected override async Task InitialiseAsync(CancellationToken ct)
+    {
+        _ws = new ClientWebSocket();
+        await _ws.ConnectAsync(new Uri("wss://feed.exchange.example.com/prices"), ct);
+        _ = Task.Run(() => ReceiveLoopAsync(ct), ct);   // background receive loop
+    }
+
+    public override Task&lt;ServerNodeResponse&gt; HandleRequestAsync(
+        ServerNodeRequest request, CancellationToken ct)
+    {
+        var symbol = request.Payload.RootElement.GetProperty("symbol").GetString()!;
+        if (_latestPrices.TryGetValue(symbol, out var price))
+            return Task.FromResult(new ServerNodeResponse
+            {
+                Success = true,
+                Data    = JsonSerializer.SerializeToDocument(new { symbol, price })
+            });
+
+        return Task.FromResult(new ServerNodeResponse
+        {
+            Success      = false,
+            ErrorMessage = $"No price data available for symbol '{symbol}'"
+        });
+    }
+
+    public override ServerNodeHealth GetHealth() => new()
+    {
+        IsReady = _ws?.State == WebSocketState.Open,
+        Status  = _ws?.State.ToString() ?? "not started",
+        CheckedAt = DateTimeOffset.UtcNow,
+        Diagnostics = new() { ["trackedSymbols"] = _latestPrices.Count }
+    };
+
+    protected override async Task DisposeResourcesAsync(CancellationToken ct)
+    {
+        if (_ws?.State == WebSocketState.Open)
+            await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "shutdown", ct);
+        _ws?.Dispose();
+    }
+}</code></pre>
+
+  <h2>Example 3: CDC Consumer</h2>
+  <p>A Change Data Capture consumer that maintains a cursor on a database transaction log. Workflow nodes can request the latest batch of changed records since the last call.</p>
+  <pre><code class="language-csharp">public class SqlCdcConsumerServerNode : BaseServerNode
+{
+    private long _lastLsn = 0;   // Log Sequence Number — cursor position
+
+    public override string NodeId      => "sql-cdc-consumer";
+    public override string DisplayName => "SQL Server CDC Consumer";
+
+    protected override async Task InitialiseAsync(CancellationToken ct)
+    {
+        // Load last-known LSN from persistent store
+        _lastLsn = await LoadCheckpointAsync(ct);
+    }
+
+    public override async Task&lt;ServerNodeResponse&gt; HandleRequestAsync(
+        ServerNodeRequest request, CancellationToken ct)
+    {
+        var table  = request.Payload.RootElement.GetProperty("table").GetString()!;
+        var (changes, newLsn) = await FetchChangesAsync(table, _lastLsn, ct);
+
+        // Advance cursor — atomic update to avoid re-processing
+        Interlocked.Exchange(ref _lastLsn, newLsn);
+        await SaveCheckpointAsync(newLsn, ct);
+
+        return new ServerNodeResponse
+        {
+            Success = true,
+            Data    = JsonSerializer.SerializeToDocument(new
+            {
+                changes   = changes,
+                fromLsn   = _lastLsn,
+                toLsn     = newLsn,
+                changeCount = changes.Count
+            })
+        };
+    }
+
+    public override ServerNodeHealth GetHealth() => new()
+    {
+        IsReady   = true,
+        Status    = "healthy",
+        CheckedAt = DateTimeOffset.UtcNow,
+        Diagnostics = new() { ["lastLsn"] = _lastLsn }
+    };
+
+    protected override Task DisposeResourcesAsync(CancellationToken ct) => Task.CompletedTask;
+}</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Pattern summary:</strong> All three examples share the same structure — heavy initialisation in <code>InitialiseAsync</code>, stateful shared data in instance fields, thread-safe access via <code>SemaphoreSlim</code> / <code>ConcurrentDictionary</code> / <code>Interlocked</code>, and graceful cleanup in <code>DisposeResourcesAsync</code>. The <code>HandleRequestAsync</code> method is always concise: extract parameters, access shared state, return a structured response.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-calling-from-workflow.html">&#8592; Calling from Workflows</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

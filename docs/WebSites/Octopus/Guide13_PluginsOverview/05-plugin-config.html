@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Configuration — Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Plugins Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Plugins Overview</a>
+  <a href="01-plugin-interface.html">IOctopusPlugin Interface</a>
+  <a href="02-lifecycle.html">Plugin Lifecycle</a>
+  <a href="03-built-in-plugins.html">Built-In Plugins</a>
+  <a href="04-plugin-di.html">DI and Services</a>
+  <a href="05-plugin-config.html" class="active">Plugin Configuration</a>
+  <a href="06-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="07-plugin-ordering.html">Plugin Ordering</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Plugin Configuration</h1>
+    <p class="lead">Plugins read configuration from <code>appsettings.json</code> via the <code>OctopusConfig</code> object passed to <code>OnRegister</code>. This page covers binding config sections to typed options classes, using the IOptions pattern, environment overrides, and secrets management.</p>
+  </div>
+
+  <h2>Configuration Entry Point</h2>
+  <p>The <code>OctopusConfig</code> object wraps the application's <code>IConfiguration</code> and provides a helper method for binding plugin-specific sections:</p>
+  <pre><code>public void OnRegister(IServiceCollection services, OctopusConfig config)
+{
+    // Method 1: Use the OctopusConfig helper (binds and returns a new instance)
+    var pluginConfig = config.GetSection&lt;HRPluginConfig&gt;("HRPlugin");
+
+    // Method 2: Bind directly to IConfiguration (same result)
+    var pluginConfig2 = config.Configuration
+        .GetSection("HRPlugin")
+        .Get&lt;HRPluginConfig&gt;()!;
+
+    // Method 3: Register for IOptions&lt;T&gt; injection (recommended for services)
+    services.Configure&lt;HRPluginConfig&gt;(
+        config.Configuration.GetSection("HRPlugin"));
+}</code></pre>
+
+  <h2>Defining a Plugin Options Class</h2>
+  <pre><code>namespace BizFirst.Octopus.Plugins.HR;
+
+public class HRPluginConfig
+{
+    // Non-nullable strings should have sensible defaults or be validated
+    public string  BaseUrl          { get; set; } = string.Empty;
+    public string  ApiVersion       { get; set; } = "v2";
+    public int     TimeoutSeconds   { get; set; } = 30;
+    public int     MaxRetries       { get; set; } = 3;
+    public bool    EnableCaching    { get; set; } = true;
+    public int     CacheTtlMinutes  { get; set; } = 15;
+
+    // Credential IDs — never store raw secrets in config
+    public int     ApiKeyCredentialId { get; set; }  // resolved via ICredentialResolver
+
+    // Nested objects for logical grouping
+    public HRCachingConfig    Caching    { get; set; } = new();
+    public HRFeaturesConfig   Features   { get; set; } = new();
+}
+
+public class HRCachingConfig
+{
+    public bool   Enabled        { get; set; } = true;
+    public int    TtlMinutes     { get; set; } = 15;
+    public int    MaxEntries     { get; set; } = 1000;
+    public string BackingStore   { get; set; } = "Memory";  // Memory | Redis
+}
+
+public class HRFeaturesConfig
+{
+    public bool LeaveManagement  { get; set; } = true;
+    public bool Payroll          { get; set; } = false;
+    public bool PerformanceReview { get; set; } = false;
+}</code></pre>
+
+  <h2>appsettings.json Structure</h2>
+  <pre><code>{
+  "HRPlugin": {
+    "BaseUrl": "https://hr-api.internal.company.com",
+    "ApiVersion": "v2",
+    "TimeoutSeconds": 30,
+    "MaxRetries": 3,
+    "ApiKeyCredentialId": 42,
+    "Caching": {
+      "Enabled": true,
+      "TtlMinutes": 15,
+      "MaxEntries": 1000,
+      "BackingStore": "Memory"
+    },
+    "Features": {
+      "LeaveManagement": true,
+      "Payroll": false,
+      "PerformanceReview": false
+    }
+  }
+}</code></pre>
+
+  <h2>Consuming Config in Services via IOptions</h2>
+  <pre><code>// Service that receives config via constructor injection
+public class HRSystemClient : IHRSystemClient
+{
+    private readonly HRPluginConfig   _config;
+    private readonly ICredentialResolver _creds;
+    private readonly HttpClient       _http;
+
+    public HRSystemClient(
+        IOptions&lt;HRPluginConfig&gt; options,
+        ICredentialResolver credentialResolver,
+        HttpClient http)
+    {
+        _config = options.Value;
+        _creds  = credentialResolver;
+        _http   = http;
+        _http.BaseAddress = new Uri(_config.BaseUrl);
+        _http.Timeout     = TimeSpan.FromSeconds(_config.TimeoutSeconds);
+    }
+
+    public async Task&lt;LeaveBalance&gt; GetLeaveBalanceAsync(string employeeId, CancellationToken ct)
+    {
+        // Resolve the API key from the credential store (never from config directly)
+        var apiKey = await _creds.GetPasswordAsync(_config.ApiKeyCredentialId);
+        _http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", apiKey);
+
+        var response = await _http.GetAsync($"/employees/{employeeId}/leave", ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync&lt;LeaveBalance&gt;(ct)!;
+    }
+}</code></pre>
+
+  <h2>Environment-Specific Overrides</h2>
+  <p>ASP.NET Core's standard layered configuration applies. Octopus reads from all configured sources in order:</p>
+  <table>
+    <thead>
+      <tr><th>Source</th><th>Priority</th><th>Use For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>appsettings.json</code></td><td>Base (lowest)</td><td>Default values, non-sensitive config</td></tr>
+      <tr><td><code>appsettings.{Environment}.json</code></td><td>Environment</td><td>Dev/staging/production overrides</td></tr>
+      <tr><td>Environment variables</td><td>High</td><td>Container/cloud deployments</td></tr>
+      <tr><td>Azure Key Vault / AWS Secrets</td><td>High</td><td>Production secrets (base URLs, etc.)</td></tr>
+      <tr><td>Command-line arguments</td><td>Highest</td><td>One-off overrides, testing</td></tr>
+    </tbody>
+  </table>
+  <pre><code>// Environment variable format: double underscore separates nesting levels
+// HRPlugin__BaseUrl=https://prod-hr.company.com
+// HRPlugin__Caching__TtlMinutes=30
+// HRPlugin__Features__Payroll=true
+
+// appsettings.Production.json
+{
+  "HRPlugin": {
+    "BaseUrl": "https://prod-hr.company.com",
+    "Caching": {
+      "BackingStore": "Redis"
+    }
+  }
+}</code></pre>
+
+  <h2>Config Validation at Startup</h2>
+  <p>Use data annotations or <code>IValidateOptions</code> to fail fast if required config is missing:</p>
+  <pre><code>using System.ComponentModel.DataAnnotations;
+
+public class HRPluginConfig
+{
+    [Required, Url]
+    public string BaseUrl { get; set; } = string.Empty;
+
+    [Range(1, 300)]
+    public int TimeoutSeconds { get; set; } = 30;
+
+    [Range(1, int.MaxValue, ErrorMessage = "ApiKeyCredentialId must be a valid credential ID")]
+    public int ApiKeyCredentialId { get; set; }
+}
+
+// In OnRegister — register with validation
+public void OnRegister(IServiceCollection services, OctopusConfig config)
+{
+    services.AddOptions&lt;HRPluginConfig&gt;()
+        .Bind(config.Configuration.GetSection("HRPlugin"))
+        .ValidateDataAnnotations()
+        .ValidateOnStart();  // Fails startup immediately if config is invalid
+}</code></pre>
+  <div class="callout info">
+    <strong>ValidateOnStart</strong> — This causes the application to throw on startup rather than failing at the first request that uses the bad config. Always use this for production plugins.
+  </div>
+
+  <h2>Secrets and Credentials</h2>
+  <div class="callout danger">
+    <strong>Never store raw secrets in appsettings.json.</strong> API keys, passwords, and tokens must be stored in the credential store and referenced by integer credential ID only. The credential resolver fetches secrets at runtime.
+  </div>
+  <pre><code>// WRONG — never do this
+{
+  "HRPlugin": {
+    "ApiKey": "sk-prod-abc123..."   // ❌ Exposed in config files and logs
+  }
+}
+
+// CORRECT — store the credential ID only
+{
+  "HRPlugin": {
+    "ApiKeyCredentialId": 42        // ✓ The actual key lives in the credential store
+  }
+}
+
+// At runtime:
+var apiKey = await credentialResolver.GetPasswordAsync(config.ApiKeyCredentialId);</code></pre>
+
+  <div class="page-nav">
+    <a href="04-plugin-di.html">&#8592; DI and Services</a>
+    <a href="06-custom-plugin.html">Next: Building a Custom Plugin &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

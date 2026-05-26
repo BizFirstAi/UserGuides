@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client-Side Append — Log Streaming | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Log Streaming</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-backend-emission.html">Backend Log Emission</a>
+  <a href="02-signalr-channel.html">SignalR Log Channel</a>
+  <a href="03-buffering.html">Log Buffering</a>
+  <a href="04-client-append.html" class="active">Client-Side Append</a>
+  <a href="05-virtual-scroll.html">Virtual Scrolling</a>
+  <a href="06-filtering.html">Client-Side Filtering</a>
+  <a href="07-historical-logs.html">Loading Historical Logs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Client-Side Append</h1>
+    <p class="lead">executionStore.appendLog(entry) is the single entry point for adding log entries to the client state. It is idempotent — if an entry with the same logId already exists, it is silently skipped. This prevents duplicates from SignalR retransmissions or historical API loads.</p>
+  </div>
+
+  <h2>appendLog Implementation</h2>
+  <pre><code">// executionStore.ts
+appendLog: (entry: LogEntry) => set(state => {
+    // Idempotency check — skip if logId already in array
+    if (state.logs.some(l => l.logId === entry.logId)) {
+        return state;  // Return unchanged state — no re-render triggered
+    }
+
+    return {
+        logs: [...state.logs, entry]
+    };
+}),
+
+// Batch append (called for historical loads and large SignalR batches)
+appendLogs: (entries: LogEntry[]) => set(state => {
+    const existingIds = new Set(state.logs.map(l => l.logId));
+    const newEntries  = entries.filter(e => !existingIds.has(e.logId));
+
+    if (newEntries.length === 0) return state;  // No change
+
+    return {
+        logs: [...state.logs, ...newEntries]
+    };
+})</code></pre>
+
+  <h2>SignalR Handler</h2>
+  <pre><code">// useExecutionSignalR.ts — called on every NodeLogEmitted event
+connection.on('NodeLogEmitted', (payload: { entries: LogEntry[] }) => {
+    useExecutionStore.getState().appendLogs(payload.entries);
+    // Batch append — more efficient than calling appendLog N times
+});</code></pre>
+
+  <h2>Why Idempotency Matters</h2>
+  <p>Three scenarios can cause the same log entry to arrive twice on the client:</p>
+  <table>
+    <thead><tr><th>Scenario</th><th>How Duplicate Occurs</th></tr></thead>
+    <tbody>
+      <tr><td>SignalR reconnect</td><td>Client reconnects mid-execution and replays missed events — some may already be in the array</td></tr>
+      <tr><td>Historical load after live view</td><td>Historical API returns all logs — some were already streamed live</td></tr>
+      <tr><td>Multiple observer tabs</td><td>If two tabs are open for the same execution, each receives events — mergeable if shared store</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>logId is a server-assigned GUID.</strong> It is generated in <code>SignalRLogSink</code> before the entry enters the buffer. The client never generates or modifies logIds — it only reads them for deduplication.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-buffering.html">&#8592; Log Buffering</a>
+    <a href="05-virtual-scroll.html">Next: Virtual Scrolling &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow Nodes vs. Server Nodes — Guide48 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow vs. Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-workflow-nodes.html"><i class="fa-solid fa-bolt"></i> Standard Workflow Nodes</a>
+  <a href="02-server-nodes.html"><i class="fa-solid fa-server"></i> Server-Side Nodes</a>
+  <a href="03-when-to-use.html"><i class="fa-solid fa-scale-balanced"></i> Decision Framework</a>
+  <a href="04-server-node-contract.html"><i class="fa-solid fa-file-contract"></i> Server Node Contract</a>
+  <a href="05-registration.html"><i class="fa-solid fa-plug"></i> Registration</a>
+  <a href="06-calling-from-workflow.html"><i class="fa-solid fa-arrow-right-arrow-left"></i> Calling from Workflows</a>
+  <a href="07-examples.html"><i class="fa-solid fa-flask"></i> Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Workflow Nodes vs. Server-Side Nodes</h1>
+    <p class="lead">The two fundamental node execution patterns in the Flow Studio platform — and the architectural decision framework for choosing between them.</p>
+  </div>
+
+  <h2>The Core Distinction</h2>
+  <p>Every executable node in a flow belongs to one of two patterns. The pattern determines how the node is hosted, how its state is managed, and how it participates in a workflow execution.</p>
+  <table>
+    <thead><tr><th>Dimension</th><th>Standard Workflow Node</th><th>Server-Side Node</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Lifetime</strong></td><td>Lives only for the duration of one node execution (milliseconds to seconds)</td><td>Runs as a daemon for the lifetime of the application process</td></tr>
+      <tr><td><strong>State</strong></td><td>Stateless — no memory between invocations</td><td>Stateful — maintains connections, caches, loaded models between calls</td></tr>
+      <tr><td><strong>Instantiation</strong></td><td>One instance per execution (DI scope)</td><td>One shared instance (singleton hosted service)</td></tr>
+      <tr><td><strong>Startup cost</strong></td><td>Near-zero — DI resolution only</td><td>Paid once at process startup (model loading, connection pool init)</td></tr>
+      <tr><td><strong>Interface</strong></td><td><code>IProcessElementExecution.ExecuteAsync</code></td><td><code>IServerNode.HandleRequestAsync</code> + <code>IHostedService</code></td></tr>
+      <tr><td><strong>Called by</strong></td><td>Workflow engine directly</td><td>Workflow engine via <code>ServerNodeCallExecutor</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pattern Overview</h2>
+  <pre><code>
+Standard Workflow Node (per-execution)
+────────────────────────────────────────
+WorkflowEngine
+    │ ExecuteAsync(ctx)
+    ▼
+StandardNodeExecutor  ← short-lived, scoped DI
+    │
+    ▼
+NodeExecutionResult   ← result stored in execution context
+
+
+Server-Side Node (always-on)
+────────────────────────────────────────
+ApplicationHost (IHostedService)
+    ├── ModelLoaded, ConnectionsInitialised
+    └── IServerNode registered in ServerNodeRegistry
+
+WorkflowEngine
+    │ ExecuteAsync(ctx)
+    ▼
+ServerNodeCallExecutor  ← standard node that routes to server node
+    │
+    ▼
+ServerNodeRegistry.Resolve(nodeId)
+    │
+    ▼
+IServerNode.HandleRequestAsync(request)
+    │
+    ▼
+NodeExecutionResult
+  </code></pre>
+
+  <h2>Choosing a Pattern</h2>
+  <p>The decision comes down to three questions:</p>
+  <ol>
+    <li><strong>Is startup cost significant?</strong> (model loading, connection pool warmup) → Server node</li>
+    <li><strong>Is shared state needed across concurrent calls?</strong> (in-memory cache, open socket, streaming session) → Server node</li>
+    <li><strong>Is the operation independent and stateless per call?</strong> → Standard workflow node</li>
+  </ol>
+
+  <div class="callout callout-tip">
+    <strong>When in doubt, start standard:</strong> Standard workflow nodes are simpler to implement, test, and reason about. Only adopt the server node pattern when profiling shows startup cost is a bottleneck or shared state is genuinely required.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-workflow-nodes.html">Next: Standard Workflow Nodes &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

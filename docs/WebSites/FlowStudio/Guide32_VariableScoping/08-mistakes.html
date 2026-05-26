@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Common Mistakes — Variable Scoping | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Variable Scoping</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-json.html">$json — Trigger Input</a>
+  <a href="02-input.html">$input — Upstream Node</a>
+  <a href="03-output.html">$output.{nodeId} — Named Node</a>
+  <a href="04-var.html">$var.{name} — Workflow Variables</a>
+  <a href="05-global.html">$global — Tenant Globals</a>
+  <a href="06-context.html">$context — Execution Context</a>
+  <a href="07-availability.html">Availability Table</a>
+  <a href="08-mistakes.html" class="active">Common Mistakes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Common Mistakes</h1>
+    <p class="lead">Most variable scoping errors produce silent null values rather than runtime exceptions. The expression evaluates to null, downstream nodes receive unexpected input, and the workflow may complete successfully while producing wrong results. Understanding these patterns is critical for reliable workflow design.</p>
+  </div>
+
+  <h2>Mistake 1 — Using $output Before the Node Has Run</h2>
+  <p>This is the most frequent variable scoping error. A node references <code>$output.{nodeId}</code> for a node that is downstream, on a different branch, or has been skipped due to an error.</p>
+  <table>
+    <thead><tr><th>Wrong</th><th>Right</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Referencing <code>$output.approval-node</code> in a node that runs before <code>approval-node</code> in the graph</td>
+        <td>Only reference <code>$output.{nodeId}</code> for nodes that are topologically upstream — verified in the Flow Studio canvas</td>
+      </tr>
+      <tr>
+        <td>Referencing <code>$output.branch-b-node</code> from branch A (parallel branches — branch B's output is not available to branch A)</td>
+        <td>Read cross-branch data only after a fan-in (merge) node where both branches have completed</td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code">// WRONG — approval-node is downstream of this node
+{
+  "approvalDecision": "{{$output.approval-node.decision}}"  // Always null here
+}
+
+// RIGHT — read the decision only in a node AFTER approval-node in the graph
+{
+  "approvalDecision": "{{$output.approval-node.decision}}"  // Valid — node is upstream now
+}</code></pre>
+
+  <h2>Mistake 2 — Using $input at the First Node</h2>
+  <p>The first node after the trigger has no upstream node — <code>$input</code> is always null there. Workflow designers often assume <code>$input</code> refers to the trigger payload, but that is <code>$json</code>.</p>
+  <pre><code">// WRONG — at the first node, $input is null
+$input.customerId        // null — always
+
+// RIGHT — use $json for the trigger payload at the first node
+$json.body.customerId    // Correct</code></pre>
+
+  <h2>Mistake 3 — Using $var Before the SetVariable Node Has Run</h2>
+  <p>Variables set by SetVariable nodes are only available downstream of that node in the graph. If a node references <code>$var.myVar</code> and the SetVariable that sets <code>myVar</code> is on a parallel branch or downstream, the result is null.</p>
+  <pre><code">// WRONG — SetVariable for 'selectedRegion' is AFTER this node in the graph
+"https://api.{{$var.selectedRegion}}.example.com"  // Renders as "https://api.null.example.com"
+
+// RIGHT — ensure the SetVariable node runs upstream of any node that reads the variable</code></pre>
+
+  <h2>Mistake 4 — Treating $global as Execution-Level State</h2>
+  <p>Tenant globals (<code>$global</code>) are tenant-wide constants, not execution-level variables. Attempting to use a SetVariable node to update something that should be in <code>$global</code> will not work — SetVariable writes to the execution-scoped variable store, not the tenant global store.</p>
+  <pre><code">// WRONG — trying to update a tenant global from a workflow (not supported)
+// SetVariable: variableName = "global.taxRate", value = 0.18  — this sets $var.global.taxRate, NOT $global.taxRate
+
+// RIGHT — $global is configured by a tenant administrator in the platform settings, not from within a workflow</code></pre>
+
+  <h2>Mistake 5 — Confusing nodeId vs. node label</h2>
+  <p>Node labels are what appear in the canvas UI. Node IDs are the internal identifiers used in <code>$output.{nodeId}</code> expressions. A node labelled "Fetch Customer" may have the ID <code>node-4</code> or <code>fetch-customer</code> depending on whether the designer renamed it.</p>
+  <pre><code">// The node is LABELLED "Fetch Customer" but its ID is still "node-4" (default, not renamed)
+$output.fetch-customer    // null — nodeId is actually "node-4", not "fetch-customer"
+$output.node-4            // Correct — but fragile
+
+// BEST PRACTICE — rename the node in Flow Studio to a meaningful ID, then use that ID
+// Rename to "fetch-customer" → then $output.fetch-customer works correctly</code></pre>
+
+  <h2>Mistake 6 — Using $json Inside a Sub-Workflow to Access Parent Data</h2>
+  <p>Inside a sub-workflow, <code>$json</code> is the sub-workflow's own trigger payload (the data passed by the parent Call node). The parent workflow's <code>$json</code> is not accessible. Explicitly pass parent data through the sub-workflow call node's input configuration.</p>
+  <pre><code">// WRONG — inside sub-workflow, trying to access parent's trigger payload
+$json.body.originalOrderId    // null — this is the sub-workflow's $json, not the parent's
+
+// RIGHT — the parent Call node should explicitly pass data to the sub-workflow:
+// Call Node config: inputMapping: { "originalOrderId": "$json.body.originalOrderId" }
+// Inside sub-workflow: $json.originalOrderId  ← receives the mapped value</code></pre>
+
+  <h2>Diagnostic Approach</h2>
+  <p>When an expression produces unexpected null values:</p>
+  <ol>
+    <li>Open the Node Inspector in the Observer Panel for the node that has the expression.</li>
+    <li>Check the <strong>Input Data</strong> section to confirm what the node actually received.</li>
+    <li>Navigate to the referenced upstream node's Inspector and verify its <strong>Output Data</strong> section shows the expected value.</li>
+    <li>Confirm that the referenced node's ID in <code>$output.{nodeId}</code> matches the actual nodeId visible in the node configuration panel — not its label.</li>
+  </ol>
+
+  <div class="callout info">
+    <strong>Expression errors produce null, not exceptions.</strong> The expression engine returns null for any expression that fails to resolve — including typos in nodeIds, accessing fields on null objects, and using the wrong prefix. Validate expressions by running the workflow with test data and inspecting node inputs and outputs in the Observer Panel.
+  </div>
+
+  <div class="page-nav">
+    <a href="07-availability.html">&#8592; Availability Table</a>
+    <a href="index.html">Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

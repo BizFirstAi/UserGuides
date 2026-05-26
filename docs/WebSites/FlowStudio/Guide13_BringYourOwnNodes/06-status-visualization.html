@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Showing Execution Status — Bring Your Own Nodes | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.status-badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;margin:2px 0;}
+.s-pending{background:#2d3a4a;color:#718096;}
+.s-running{background:#1e3a5f;color:#60a5fa;}
+.s-completed{background:#1a3a2a;color:#34d399;}
+.s-failed{background:#3a1e1e;color:#f87171;}
+.s-skipped{background:#2d2d3a;color:#a0aec0;}
+.s-suspended{background:#3a2e1e;color:#fbbf24;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Bring Your Own Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom Node Overview</a>
+  <a href="01-base-node.html">The BaseNode Class</a>
+  <a href="02-minimal-renderer.html">Minimal Custom Renderer</a>
+  <a href="03-custom-handles.html">Adding Handles</a>
+  <a href="04-built-in-examples.html">Built-In Node Examples</a>
+  <a href="05-registering.html">Registering in Canvas</a>
+  <a href="06-status-visualization.html" class="active">Showing Execution Status</a>
+  <a href="07-checklist.html">Full Checklist</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Showing Execution Status</h1>
+    <p class="lead">When a workflow is executing, the canvas overlays each node with a colour-coded status border. Custom node renderers must implement this overlay the same way as the built-ins — by reading <code>nodeStatuses</code> from <code>designerModeStore</code>.</p>
+  </div>
+
+  <h2>Where Status Data Lives</h2>
+  <p>The <code>designerModeStore</code> (injected by <code>withNodeHooks</code> as <code>this.designerMode</code>) holds a map of node execution statuses keyed by node ID. This is populated in real-time via SignalR events.</p>
+  <pre><code>// DesignerModeStore shape (relevant fields)
+interface DesignerModeStore {
+  isExecutionMode: boolean;
+  nodeStatuses: Record&lt;string, NodeExecutionStatus&gt;;
+  // ...
+}
+
+type NodeExecutionStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'suspended'
+  | 'cancelled';</code></pre>
+
+  <h2>Reading Status in Your Renderer</h2>
+  <pre><code>// In renderBody() of your BaseNode subclass
+renderBody() {
+  const { id } = this.props;
+  const { isExecutionMode, nodeStatuses } = this.designerMode;
+
+  // Only show status overlay when a workflow is running
+  const status = isExecutionMode ? (nodeStatuses[id] ?? 'pending') : null;
+
+  return (
+    &lt;&gt;
+      {/* ...handles... */}
+
+      &lt;div className={`node-wrapper-inner ${status ? `status-${status}` : ''}`}&gt;
+        &lt;div className="node-header"&gt;...&lt;/div&gt;
+        &lt;div className="node-body"&gt;...&lt;/div&gt;
+      &lt;/div&gt;
+
+      {/* Status border overlay */}
+      {status &amp;&amp; (
+        &lt;div className={`node-status-overlay status-border-${status}`} /&gt;
+      )}
+    &lt;/&gt;
+  );
+}</code></pre>
+
+  <h2>Status Colours</h2>
+  <table>
+    <thead><tr><th>Status</th><th>Badge</th><th>Border Color</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="status-badge s-pending">pending</span></td>
+        <td>Default</td>
+        <td>#718096 (grey)</td>
+        <td>Not yet reached in execution</td>
+      </tr>
+      <tr>
+        <td><span class="status-badge s-running">running</span></td>
+        <td>Pulsing</td>
+        <td>#60a5fa (blue, animated)</td>
+        <td>CSS keyframe pulse animation on the border</td>
+      </tr>
+      <tr>
+        <td><span class="status-badge s-completed">completed</span></td>
+        <td>Solid</td>
+        <td>#34d399 (green)</td>
+        <td>Execution succeeded</td>
+      </tr>
+      <tr>
+        <td><span class="status-badge s-failed">failed</span></td>
+        <td>Solid</td>
+        <td>#f87171 (red)</td>
+        <td>Unhandled error; execution routed to error path or stopped</td>
+      </tr>
+      <tr>
+        <td><span class="status-badge s-skipped">skipped</span></td>
+        <td>Dimmed</td>
+        <td>#718096 (grey, dashed)</td>
+        <td>Branch not taken (e.g. false arm of an if node)</td>
+      </tr>
+      <tr>
+        <td><span class="status-badge s-suspended">suspended</span></td>
+        <td>Pulsing</td>
+        <td>#fbbf24 (amber)</td>
+        <td>Waiting for human approval (HIL pattern)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Shared CSS Classes</h2>
+  <p>The shared Flow Studio CSS defines the overlay classes so you do not have to duplicate them:</p>
+  <pre><code>/* From flow-studio-designer shared CSS */
+.node-status-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.status-border-running {
+  border-color: #60a5fa;
+  animation: statusPulse 1.5s ease-in-out infinite;
+}
+.status-border-completed { border-color: #34d399; }
+.status-border-failed    { border-color: #f87171; }
+.status-border-suspended {
+  border-color: #fbbf24;
+  animation: statusPulse 2s ease-in-out infinite;
+}
+.status-border-skipped   { border-color: #718096; border-style: dashed; }
+.status-border-pending   { border-color: #718096; opacity: 0.4; }
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}</code></pre>
+
+  <h2>Execution Mode Guard</h2>
+  <p>Always check <code>isExecutionMode</code> before reading <code>nodeStatuses</code>. In design mode (no running execution), the status map may contain stale data from the previous execution. Displaying stale status in design mode is confusing — gate the entire overlay behind the mode check.</p>
+
+  <pre><code>// Correct pattern — guard with isExecutionMode
+const status = this.designerMode.isExecutionMode
+  ? (this.designerMode.nodeStatuses[this.props.id] ?? 'pending')
+  : null;
+
+// Wrong — may show stale status from previous run
+const status = this.designerMode.nodeStatuses[this.props.id];</code></pre>
+
+  <div class="callout info">
+    <strong>Copy the Pattern from CustomNode</strong>
+    <code>CustomNode.tsx</code> contains the canonical execution status overlay implementation. Copy the <code>node-status-overlay</code> div and the <code>isExecutionMode</code> guard directly — it is already tested and handles all six status values correctly.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-registering.html">&#8592; Registering in Canvas</a>
+    <a href="07-checklist.html">Next: Full Checklist &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

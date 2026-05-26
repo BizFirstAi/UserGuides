@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>As MCP Tools — AI Functions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>AI Functions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">AI Functions Overview</a>
+  <a href="01-what-are-ai-functions.html">What Are AI Functions</a>
+  <a href="02-writing-functions.html">Writing Functions</a>
+  <a href="03-sandbox.html">Sandbox and Execution</a>
+  <a href="04-inputs-outputs.html">Inputs and Outputs</a>
+  <a href="05-as-mcp-tools.html" class="active">As MCP Tools</a>
+  <a href="06-flow-studio-node.html">Flow Studio Node</a>
+  <a href="07-security.html">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>As MCP Tools</h1>
+    <p class="lead">AI Functions with an <code>InputSchema</code> defined are automatically registered as MCP tools in the <code>MCPToolRegistry</code> when the agent loads. The LLM sees them alongside C# tools and uses them in the same tool call loop — the execution difference is invisible to the LLM.</p>
+  </div>
+
+  <h2>Automatic MCP Registration</h2>
+  <p>When an agent is initialised, the <code>AIFunctionToolRegistrar</code> queries all active AI Functions for that agent and tenant, then registers each one as an <code>MCPTool</code>:</p>
+  <pre><code>public class AIFunctionToolRegistrar
+{
+    public async Task RegisterForAgentAsync(
+        Guid agentId, Guid tenantId,
+        MCPToolRegistry registry,
+        CancellationToken ct)
+    {
+        // Load all active AI Functions for this agent + shared tenant functions
+        var functions = await _store.GetActiveForAgentAsync(agentId, tenantId, ct);
+
+        foreach (var fn in functions.Where(f => f.InputSchema != null))
+        {
+            registry.Register(new MCPTool
+            {
+                Schema = new ToolDefinition
+                {
+                    Name        = fn.Name,
+                    Description = fn.Description ?? fn.Name,
+                    InputSchema = JsonDocument.Parse(fn.InputSchema!)
+                },
+                Handler = async (input, ctx, ct2) =>
+                {
+                    var result = await _runtime.ExecuteAsync(fn, input, new AIFunctionContext
+                    {
+                        AgentId  = ctx.AgentId,
+                        UserId   = ctx.UserId,
+                        TenantId = ctx.TenantId
+                    }, ct2);
+
+                    return JsonSerializer.Serialize(result);
+                }
+            });
+        }
+    }
+}</code></pre>
+
+  <h2>Creating an AI Function MCP Tool — Step by Step</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Write the Function Code</strong>
+        <span>Write a JavaScript <code>execute(input)</code> function that performs the desired logic.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Define Name and Description</strong>
+        <span>Give the function a unique name (snake_case) and a tool description that tells the LLM when to call it.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Define Input Schema</strong>
+        <span>Write the JSON Schema for the function's input parameters. This is what the LLM uses to construct tool call arguments.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Assign to Agent</strong>
+        <span>In the agents-app, assign the AI Function to the target agent (or leave AgentId null for tenant-wide availability).</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>Test via Chat</strong>
+        <span>Open a chat with the agent and trigger the function. Use the Context Inspector to verify the tool was called and the result injected.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>AI Function vs. C# Tool: When to Use Each</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Use AI Function</th><th>Use C# Tool</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Data formatting / calculation</td><td>Yes — pure logic, no I/O needed</td><td>Overkill</td></tr>
+      <tr><td>Database query</td><td>No — no DB access in sandbox</td><td>Yes</td></tr>
+      <tr><td>External API call</td><td>No — no network in sandbox</td><td>Yes</td></tr>
+      <tr><td>Logic that admins may want to change</td><td>Yes — no deployment needed</td><td>No — requires developer</td></tr>
+      <tr><td>Complex multi-service orchestration</td><td>No — too complex for sandbox</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-inputs-outputs.html">&#8592; Inputs and Outputs</a>
+    <a href="06-flow-studio-node.html">Next: Flow Studio Node &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

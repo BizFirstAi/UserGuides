@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server-Side Nodes — Guide48 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow vs. Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-workflow-nodes.html"><i class="fa-solid fa-bolt"></i> Standard Workflow Nodes</a>
+  <a href="02-server-nodes.html" class="active"><i class="fa-solid fa-server"></i> Server-Side Nodes</a>
+  <a href="03-when-to-use.html"><i class="fa-solid fa-scale-balanced"></i> Decision Framework</a>
+  <a href="04-server-node-contract.html"><i class="fa-solid fa-file-contract"></i> Server Node Contract</a>
+  <a href="05-registration.html"><i class="fa-solid fa-plug"></i> Registration</a>
+  <a href="06-calling-from-workflow.html"><i class="fa-solid fa-arrow-right-arrow-left"></i> Calling from Workflows</a>
+  <a href="07-examples.html"><i class="fa-solid fa-flask"></i> Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Server-Side Nodes</h1>
+    <p class="lead">Long-running daemon nodes — implementing <code>IServerNode</code> and <code>IHostedService</code> to maintain persistent state, loaded models, and open connections across all workflow calls.</p>
+  </div>
+
+  <h2>Execution Model</h2>
+  <p>A server-side node is a singleton <code>IHostedService</code> that registers itself with the <code>ServerNodeRegistry</code> during <code>StartAsync</code>. It remains in memory for the lifetime of the process. When a workflow reaches a <code>ServerNodeCallNode</code>, the engine resolves the target server node from the registry and dispatches a request to it — no DI scope is opened and no instance is created.</p>
+  <pre><code>
+Application Startup
+    ├── IHostedService.StartAsync()
+    │       ├── Load model / initialise connection pool
+    │       └── ServerNodeRegistry.Register(nodeId, this)
+    │
+    │  [always-on, waiting for requests]
+    │
+Workflow Execution (per call)
+    ├── ServerNodeCallExecutor.ExecuteAsync(ctx)
+    │       ├── ServerNodeRegistry.Resolve(nodeId)
+    │       └── await serverNode.HandleRequestAsync(request, ct)
+    │
+    └── Returns NodeExecutionResult to engine
+  </code></pre>
+
+  <h2>Key Characteristics</h2>
+  <table>
+    <thead><tr><th>Characteristic</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>DI lifetime</td><td>Singleton — one instance for the process lifetime</td></tr>
+      <tr><td>State</td><td>Shared across all workflow executions that call this node</td></tr>
+      <tr><td>Concurrency</td><td>Must be internally thread-safe — multiple workflow executions may call concurrently</td></tr>
+      <tr><td>Startup cost</td><td>Paid once at process start — amortised over all subsequent calls</td></tr>
+      <tr><td>Testing</td><td>Requires integration tests — startup lifecycle must be tested separately from per-call tests</td></tr>
+      <tr><td>Failure isolation</td><td>A server node crash can affect the host process; implement defensive error handling</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Why Server Nodes Exist</h2>
+  <p>Some AI and infrastructure capabilities have startup costs that make per-request instantiation impractical:</p>
+  <ul>
+    <li><strong>AI inference:</strong> Loading a local LLM or embedding model can take 5–30 seconds and consume several GB of memory. This must happen once at startup, not per workflow call.</li>
+    <li><strong>Database CDC consumers:</strong> A Change Data Capture listener maintains a persistent connection and cursor position. It cannot be created fresh per call.</li>
+    <li><strong>WebSocket servers:</strong> A WebSocket connection must remain open across multiple message exchanges. A scoped executor cannot hold an open socket.</li>
+    <li><strong>Connection pools:</strong> Some specialised drivers do not support <code>IHttpClientFactory</code>-style pooling. A server node manages the pool and hands out connections on each request.</li>
+  </ul>
+
+  <div class="callout callout-warning">
+    <strong>Concurrency is your responsibility:</strong> Because a server node is singleton and shared across concurrent workflow calls, you must use thread-safe data structures (<code>ConcurrentDictionary</code>, <code>SemaphoreSlim</code>, <code>Channel&lt;T&gt;</code>) to manage shared state. Unprotected shared mutable state will produce subtle, hard-to-reproduce bugs under load.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-workflow-nodes.html">&#8592; Standard Workflow Nodes</a>
+    <a href="03-when-to-use.html">Next: Decision Framework &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

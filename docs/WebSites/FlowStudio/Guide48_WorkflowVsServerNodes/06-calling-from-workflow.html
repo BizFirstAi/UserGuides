@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calling Server Nodes from Workflows — Guide48 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow vs. Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-workflow-nodes.html"><i class="fa-solid fa-bolt"></i> Standard Workflow Nodes</a>
+  <a href="02-server-nodes.html"><i class="fa-solid fa-server"></i> Server-Side Nodes</a>
+  <a href="03-when-to-use.html"><i class="fa-solid fa-scale-balanced"></i> Decision Framework</a>
+  <a href="04-server-node-contract.html"><i class="fa-solid fa-file-contract"></i> Server Node Contract</a>
+  <a href="05-registration.html"><i class="fa-solid fa-plug"></i> Registration</a>
+  <a href="06-calling-from-workflow.html" class="active"><i class="fa-solid fa-arrow-right-arrow-left"></i> Calling from Workflows</a>
+  <a href="07-examples.html"><i class="fa-solid fa-flask"></i> Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Calling Server Nodes from Workflows</h1>
+    <p class="lead">The <code>ServerNodeCallExecutor</code> — a standard workflow node that acts as the bridge between the workflow engine and the always-on server node registry.</p>
+  </div>
+
+  <h2>The Bridge Pattern</h2>
+  <p>From the workflow engine's perspective, a call to a server node looks like any other node execution. The difference is that the executor resolves a server node from the registry rather than performing the operation itself. This keeps the workflow engine unaware of whether a node is in-process or an external service.</p>
+
+  <h2>Workflow Node Configuration</h2>
+  <pre><code class="language-json">{
+  "nodeType": "ServerNodeCall",
+  "name": "embedDocumentText",
+  "config": {
+    "serverNodeId": "local-embedding",
+    "payload": {
+      "text":       "$output.extractText.content",
+      "dimensions": 384,
+      "normalize":  true
+    },
+    "timeoutSeconds": 30
+  }
+}</code></pre>
+
+  <h2>ServerNodeCallExecutor Implementation</h2>
+  <pre><code class="language-csharp">public class ServerNodeCallExecutor : BaseNodeExecutor&lt;ServerNodeCallSettings&gt;
+{
+    private readonly IServerNodeRegistry _registry;
+    private readonly IExpressionEvaluator _expr;
+
+    public ServerNodeCallExecutor(
+        IServerNodeRegistry registry,
+        IExpressionEvaluator expr)
+    {
+        _registry = registry;
+        _expr     = expr;
+    }
+
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext ctx,
+        ServerNodeCallSettings settings,
+        CancellationToken ct)
+    {
+        // 1. Resolve target server node
+        if (!_registry.TryGetNode(settings.ServerNodeId, out var serverNode) || serverNode is null)
+            return NodeExecutionResult.Failure(
+                $"Server node '{settings.ServerNodeId}' is not registered or not ready.");
+
+        // 2. Evaluate payload expressions
+        var evaluatedPayload = await _expr.EvaluateObjectAsync(settings.Payload, ctx, ct);
+
+        // 3. Build request envelope
+        var request = new ServerNodeRequest
+        {
+            ExecutionId = ctx.ExecutionId,
+            TenantId    = ctx.TenantId,
+            NodeId      = settings.ServerNodeId,
+            Payload     = JsonSerializer.SerializeToDocument(evaluatedPayload)
+        };
+
+        // 4. Dispatch with timeout
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(settings.TimeoutSeconds ?? 30));
+
+        var response = await serverNode.HandleRequestAsync(request, cts.Token);
+
+        // 5. Map response to node output
+        if (!response.Success)
+            return NodeExecutionResult.Failure(
+                response.ErrorMessage ?? "Server node returned an error.");
+
+        return NodeExecutionResult.Success(response.Data);
+    }
+}</code></pre>
+
+  <h2>Error Paths</h2>
+  <table>
+    <thead><tr><th>Error Condition</th><th>Node Outcome</th></tr></thead>
+    <tbody>
+      <tr><td>Server node not in registry (not started, wrong nodeId)</td><td>Node fails immediately — no retry</td></tr>
+      <tr><td>Server node returns <code>Success: false</code></td><td>Node fails with the server node's error message</td></tr>
+      <tr><td>Timeout (<code>timeoutSeconds</code> exceeded)</td><td>Node fails with timeout error; <code>ct</code> is cancelled, server node should honour cancellation</td></tr>
+      <tr><td>Unhandled exception in server node</td><td>Exception propagates through executor → node fails with exception message</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-tip">
+    <strong>Accessing server node output:</strong> The <code>response.Data</code> is stored verbatim as the node's output. Access it in downstream expressions as <code>$output.embedDocumentText.vector</code>, <code>$output.embedDocumentText.dimensions</code>, etc. — matching whatever JSON shape the server node returns in its <code>ServerNodeResponse.Data</code>.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-registration.html">&#8592; Registration</a>
+    <a href="07-examples.html">Next: Examples &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

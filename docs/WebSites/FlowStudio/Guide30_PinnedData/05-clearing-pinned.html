@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clearing Pinned Data — Pinned Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Pinned Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-returning-pinned.html">Returning Pinned Data</a>
+  <a href="02-storage-model.html">Pinned Data Storage</a>
+  <a href="03-reading-pinned.html">Reading Pinned Data</a>
+  <a href="04-inspector-display.html">Node Inspector Display</a>
+  <a href="05-clearing-pinned.html" class="active">Clearing Pinned Data</a>
+  <a href="06-use-cases.html">Use Cases</a>
+  <a href="07-security.html">Security Considerations</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Clearing Pinned Data</h1>
+    <p class="lead">Pinned data persists indefinitely unless explicitly cleared. Three mechanisms exist for clearing pinned data: explicit API clear (from executor code or admin), TTL-based expiry, and cascade delete when a node is removed from the workflow.</p>
+  </div>
+
+  <h2>Mechanism 1 — Explicit Clear from Executor</h2>
+  <p>An executor can clear its own pinned data by calling <code>ctx.ExecutionMemory.ClearPinnedDataAsync</code>. This deletes the row from <code>Process_NodePinnedData</code>.</p>
+  <pre><code">// ResetableNode.cs — clears pinned data when reset input is received
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    var shouldReset = ctx.ExecutionMemory.GetNodeOutput&lt;bool&gt;("reset-trigger-node");
+
+    if (shouldReset)
+    {
+        await ctx.ExecutionMemory.ClearPinnedDataAsync(ctx.NodeId, ct);
+        ctx.Observability.Logger.LogInformation("Pinned data cleared — starting fresh");
+        return NodeExecutionResult.Success(output: null);
+    }
+
+    var previous = await ctx.ExecutionMemory.GetPinnedDataAsync&lt;AccumulatedData&gt;(ctx.NodeId, ct);
+    // ... continue with previous data
+}</code></pre>
+
+  <h2>IExecutionMemory — Clear Methods</h2>
+  <pre><code">// IExecutionMemory.cs (clear methods)
+public interface IExecutionMemory
+{
+    // Delete pinned data for a specific node
+    Task ClearPinnedDataAsync(string nodeId, CancellationToken ct = default);
+
+    // Delete ALL pinned data for this process (use with care)
+    Task ClearAllPinnedDataAsync(CancellationToken ct = default);
+}</code></pre>
+
+  <h2>Mechanism 2 — TTL-Based Expiry</h2>
+  <p>Pinned data can be saved with a time-to-live by using the <code>SaveAsync</code> overload that accepts an <code>expiresAt</code> parameter. The background cleanup job removes expired rows.</p>
+  <pre><code">// PinnedDataService.SaveAsync with TTL (called by executor result handling in BaseNodeExecutor)
+// The TTL overload of NodeExecutionResult.Success is used to set expiry:
+
+// Executor returns pinned data with 24-hour expiry
+return NodeExecutionResult.Success(
+    output     : result,
+    pinnedData : new CachedApiResult { Data = result, CachedAt = DateTime.UtcNow },
+    pinnedDataTtl : TimeSpan.FromHours(24)  // Optional TTL argument
+);</code></pre>
+
+  <h2>TTL Expiry Behaviour</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>ExpiresAt in future</td><td>GetPinnedDataAsync returns the data normally</td></tr>
+      <tr><td>ExpiresAt in past</td><td>GetPinnedDataAsync returns null (as if no data exists)</td></tr>
+      <tr><td>Background cleanup job</td><td>Runs every 24h (configurable) — deletes rows where ExpiresAt &lt; NOW()</td></tr>
+      <tr><td>New write to expired node</td><td>Upsert updates the row and sets new ExpiresAt — row is not deleted first</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Mechanism 3 — Cascade Delete on Node Removal</h2>
+  <p>When a node is removed from the workflow definition and the workflow is saved, the <code>WorkflowDefinitionService</code> computes the diff and calls <code>PinnedDataService.ClearForRemovedNodesAsync</code>. This prevents orphaned pinned data accumulating for nodes that no longer exist in the workflow.</p>
+  <pre><code">// WorkflowDefinitionService.cs (simplified)
+public async Task SaveDefinitionAsync(int processId, SerializedWorkflow definition, CancellationToken ct)
+{
+    var previous = await _definitionRepo.GetAsync(processId, ct);
+    var removedNodeIds = GetRemovedNodeIds(previous, definition);
+
+    // Persist the new definition
+    await _definitionRepo.SaveAsync(processId, definition, ct);
+
+    // Cascade: clear pinned data for nodes no longer in the workflow
+    if (removedNodeIds.Any())
+    {
+        await _pinnedDataService.ClearForNodesAsync(processId, removedNodeIds, ct);
+    }
+}</code></pre>
+
+  <h2>Clearing via Admin API</h2>
+  <p>Tenant administrators can clear pinned data from outside the execution engine via the management API.</p>
+  <pre><code">// Management API — clear pinned data for a specific node
+DELETE /api/processes/{processId}/nodes/{nodeId}/pinned-data
+
+// Clear all pinned data for a process
+DELETE /api/processes/{processId}/pinned-data</code></pre>
+
+  <div class="callout info">
+    <strong>Clearing pinned data does NOT stop the current execution.</strong> <code>ClearPinnedDataAsync</code> only removes the database row. The current execution continues normally. If the node writes new pinned data in the same run (by returning non-null pinnedData), a new row is inserted immediately after.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-inspector-display.html">&#8592; Node Inspector Display</a>
+    <a href="06-use-cases.html">Next: Use Cases &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

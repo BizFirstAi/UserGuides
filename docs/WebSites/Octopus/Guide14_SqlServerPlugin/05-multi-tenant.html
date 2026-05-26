@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Tenant Configuration — SQL Server Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>SQL Server Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-connection.html">Connection Configuration</a>
+  <a href="03-schema.html">SQL Schema</a>
+  <a href="04-migrations.html">Running Migrations</a>
+  <a href="05-multi-tenant.html" class="active">Multi-Tenant Configuration</a>
+  <a href="06-performance.html">Performance Considerations</a>
+  <a href="07-backup.html">Backup and Recovery</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Multi-Tenant Configuration</h1>
+    <p class="lead">Every Octopus SQL table has a <code>TenantId</code> column. The <code>OctopusDbContext</code> enforces tenant isolation via EF Core global query filters, making it impossible for one tenant's queries to accidentally see another tenant's data.</p>
+  </div>
+
+  <h2>Tenant ID Source</h2>
+  <p>The tenant ID for the current request is provided by <code>ITenantContext</code>, which is resolved from the JWT claim on each HTTP request:</p>
+  <pre><code>// JwtTenantContext — registered as Scoped
+public class JwtTenantContext : ITenantContext
+{
+    public string TenantId { get; }
+
+    public JwtTenantContext(IHttpContextAccessor httpContext)
+    {
+        TenantId = httpContext.HttpContext?
+            .User.FindFirstValue("tid")   // Azure AD tenant ID claim
+            ?? httpContext.HttpContext?
+            .User.FindFirstValue("tenant_id")   // Custom claim fallback
+            ?? throw new UnauthorizedAccessException("Request has no tenant claim.");
+    }
+}</code></pre>
+
+  <h2>Global Query Filters in OctopusDbContext</h2>
+  <pre><code>public class OctopusDbContext : DbContext
+{
+    private readonly ITenantContext _tenant;
+
+    public OctopusDbContext(DbContextOptions&lt;OctopusDbContext&gt; options,
+                             ITenantContext tenant) : base(options)
+    {
+        _tenant = tenant;
+    }
+
+    public DbSet&lt;Agent&gt;           Agents           { get; set; } = null!;
+    public DbSet&lt;Episode&gt;         Episodes         { get; set; } = null!;
+    public DbSet&lt;EpisodeMessage&gt;  EpisodeMessages  { get; set; } = null!;
+    public DbSet&lt;Procedure&gt;       Procedures       { get; set; } = null!;
+    public DbSet&lt;AIFunction&gt;      AIFunctions      { get; set; } = null!;
+    public DbSet&lt;Area&gt;            Areas            { get; set; } = null!;
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Apply TenantId filter to every entity — automatically adds WHERE TenantId = @tid
+        modelBuilder.Entity&lt;Agent&gt;()
+            .HasQueryFilter(a => a.TenantId == _tenant.TenantId);
+        modelBuilder.Entity&lt;Episode&gt;()
+            .HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        modelBuilder.Entity&lt;EpisodeMessage&gt;()
+            .HasQueryFilter(m => m.TenantId == _tenant.TenantId);
+        modelBuilder.Entity&lt;Procedure&gt;()
+            .HasQueryFilter(p => p.TenantId == _tenant.TenantId);
+        modelBuilder.Entity&lt;AIFunction&gt;()
+            .HasQueryFilter(f => f.TenantId == _tenant.TenantId);
+        modelBuilder.Entity&lt;Area&gt;()
+            .HasQueryFilter(a => a.TenantId == _tenant.TenantId);
+    }
+}</code></pre>
+
+  <h2>Bypassing the Query Filter (Admin Use Only)</h2>
+  <p>In exceptional cases — such as cross-tenant data purges or system health reports — the filter can be bypassed using <code>IgnoreQueryFilters()</code>. This must never be used in tenant-facing code paths:</p>
+  <pre><code>// ADMIN ONLY — purge all data for a specific tenant
+public async Task PurgeTenantAsync(string tenantId, CancellationToken ct)
+{
+    // Must use IgnoreQueryFilters because the current context may be a different tenant
+    await _db.Episodes
+        .IgnoreQueryFilters()
+        .Where(e => e.TenantId == tenantId)
+        .ExecuteDeleteAsync(ct);
+
+    await _db.EpisodeMessages
+        .IgnoreQueryFilters()
+        .Where(m => m.TenantId == tenantId)
+        .ExecuteDeleteAsync(ct);
+}</code></pre>
+  <div class="callout danger">
+    <strong>IgnoreQueryFilters is dangerous.</strong> Any code using <code>IgnoreQueryFilters()</code> must always specify an explicit <code>.Where(x => x.TenantId == targetTenantId)</code> filter. Without it, the query reads all tenants' data.
+  </div>
+
+  <h2>Setting TenantId on Write</h2>
+  <p>The repositories always stamp the current <code>TenantId</code> on new entities before saving:</p>
+  <pre><code>public class SqlAgentStore : IAgentStore
+{
+    private readonly OctopusDbContext _db;
+    private readonly ITenantContext   _tenant;
+
+    public SqlAgentStore(OctopusDbContext db, ITenantContext tenant)
+    {
+        _db     = db;
+        _tenant = tenant;
+    }
+
+    public async Task&lt;Agent&gt; CreateAgentAsync(CreateAgentRequest request, CancellationToken ct)
+    {
+        var agent = new Agent
+        {
+            TenantId    = _tenant.TenantId,  // Always stamped from ITenantContext
+            Name        = request.Name,
+            SystemPrompt = request.SystemPrompt,
+            // ...
+        };
+
+        _db.Agents.Add(agent);
+        await _db.SaveChangesAsync(ct);
+        return agent;
+    }
+}</code></pre>
+
+  <h2>Tenant Isolation Model Summary</h2>
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Mechanism</th><th>Protects Against</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>JWT validation</td><td>Bearer token required for all API calls</td><td>Unauthenticated access</td></tr>
+      <tr><td><code>ITenantContext</code></td><td>Tenant ID extracted from verified JWT claim</td><td>Forged or missing tenant claims</td></tr>
+      <tr><td>Global query filters</td><td>EF Core appends <code>WHERE TenantId = @tid</code> automatically</td><td>Cross-tenant data reads in application code</td></tr>
+      <tr><td>Repository write stamp</td><td>All <code>Create</code> operations stamp <code>TenantId</code> from context</td><td>Cross-tenant writes</td></tr>
+      <tr><td>Database index</td><td><code>TenantId</code> is the leading column on all indexes</td><td>Cross-tenant data leaking via table scans</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-migrations.html">&#8592; Running Migrations</a>
+    <a href="06-performance.html">Next: Performance Considerations &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

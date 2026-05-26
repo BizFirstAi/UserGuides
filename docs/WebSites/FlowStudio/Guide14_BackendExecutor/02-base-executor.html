@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BaseNodeExecutor Pattern — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html" class="active">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>BaseNodeExecutor Pattern</h1>
+    <p class="lead"><code>BaseNodeExecutor</code> is an abstract partial class that implements <code>IProcessElementExecution</code> using the template method pattern. You extend it and override only <code>ExecuteInternalAsync</code> — the base class orchestrates all other pipeline stages.</p>
+  </div>
+
+  <h2>The Template Method</h2>
+  <pre><code>// BaseNodeExecutor.cs (simplified)
+public abstract partial class BaseNodeExecutor : IProcessElementExecution
+{
+    // Called by the engine — runs the full pipeline
+    public async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext nodeExecutionContext,
+        CancellationToken cancellationToken = default)
+    {
+        // Validates context, runs all pipeline stages
+        return await Execute(nodeExecutionContext, cancellationToken);
+    }
+
+    // THE METHOD YOU IMPLEMENT
+    protected abstract Task&lt;NodeExecutionResult&gt; ExecuteInternalAsync(
+        NodeExecutionContext nodeExecutionContext,
+        CancellationToken cancellationToken);
+}</code></pre>
+
+  <h2>Minimal Complete Executor</h2>
+  <pre><code>// MyCustomNodeExecutor.cs
+using BizFirst.Ai.ProcessExecutor.Service;  // BaseNodeExecutor
+using BizFirst.Ai.ProcessEngine.Domain.Execution;
+using BizFirst.Ai.ProcessEngine.Domain.Execution.Context;
+
+public partial class MyCustomNodeExecutor : BaseNodeExecutor, IActionNodeExecution
+{
+    public const string NodeTypeName = "my-custom-node";
+    public override string ProcessElementTypeCode =&gt; NodeTypeName;
+
+    private readonly IMyExternalService _myService;
+
+    public MyCustomNodeExecutor(
+        IMyExternalService myService,
+        ILogger&lt;MyCustomNodeExecutor&gt; logger,
+        INodeConfigurationParser? configParser = null)
+        : base(logger, configParser)
+    {
+        _myService = myService;
+    }
+
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteInternalAsync(
+        NodeExecutionContext ctx,
+        CancellationToken cancellationToken)
+    {
+        // 1. Get settings (populated by BaseNodeExecutor before this is called)
+        var s = (MyCustomNodeSettings)settings!;
+
+        // 2. Do the work
+        var result = await _myService.DoWorkAsync(s.InputValue, cancellationToken);
+
+        // 3. Return success result with output data
+        return new NodeExecutionResult
+        {
+            IsSuccess     = true,
+            OutputPortKey = "main",
+            OutputData    = new Dictionary&lt;string, object&gt;
+            {
+                { "result", result },
+                { "status", "ok"   }
+            }
+        };
+    }
+}
+
+// MyCustomNodeExecutor.Config.cs
+public partial class MyCustomNodeExecutor
+{
+    private MyCustomNodeSettings? mySettings =&gt; settings as MyCustomNodeSettings;
+
+    public override BaseNodeExecutorSettings CreateExecutorSettings()
+        =&gt; new MyCustomNodeSettings();
+}</code></pre>
+
+  <h2>What BaseNodeExecutor Provides</h2>
+  <table>
+    <thead><tr><th>Capability</th><th>Partial Class File</th></tr></thead>
+    <tbody>
+      <tr><td>Configuration loading and validation</td><td><code>BaseNodeExecutor.Config.cs</code></td></tr>
+      <tr><td>Pre/Post GuardRails execution</td><td><code>BaseNodeExecutor.PreGuardRails.cs / .PostGuardRails.cs</code></td></tr>
+      <tr><td>Error routing (error output port)</td><td><code>BaseNodeExecutor.ErrorHandler.cs</code></td></tr>
+      <tr><td>HIL suspension/resume</td><td><code>BaseNodeExecutor.Suspension.cs</code></td></tr>
+      <tr><td>Webhook capability</td><td><code>BaseNodeExecutor.Webhooks.cs</code></td></tr>
+      <tr><td>Form capability</td><td><code>BaseNodeExecutor.Forms.cs</code></td></tr>
+      <tr><td>SignalR event emission</td><td><code>BaseNodeExecutor.Event.cs</code></td></tr>
+      <tr><td>Performance metrics and tracing</td><td><code>BaseNodeExecutor.Activity.cs / .ProgressReport.cs</code></td></tr>
+      <tr><td>Item iteration support</td><td><code>BaseNodeExecutor.Iteration.cs</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Constructor Base Call</h2>
+  <p>The base constructor requires a logger and optionally a config parser and form resolver. Always pass through all parameters received from DI:</p>
+  <pre><code>public MyCustomNodeExecutor(
+    IMyService service,
+    ILogger&lt;MyCustomNodeExecutor&gt; logger,
+    INodeConfigurationParser? configParser = null,
+    NodeFormResolver? formResolver = null)
+    : base(logger, configParser, formResolver)
+{
+    _service = service;
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>settings Is Populated Before ExecuteInternalAsync</strong>
+    The <code>settings</code> field on <code>BaseNodeExecutor</code> is populated during the EntryValidate pipeline stage — before <code>ExecuteInternalAsync</code> is called. You can cast and use it directly in <code>ExecuteInternalAsync</code> without calling <code>LoadConfigAsync</code> yourself.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-interface.html">&#8592; IProcessElementExecution</a>
+    <a href="03-execution-context.html">Next: NodeExecutionContext &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

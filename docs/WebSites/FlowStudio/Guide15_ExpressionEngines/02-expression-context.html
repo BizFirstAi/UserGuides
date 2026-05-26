@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ExpressionContext — Expression Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Expression Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-default-jint.html">Default Engine — Jint</a>
+  <a href="02-expression-context.html" class="active">ExpressionContext</a>
+  <a href="03-context-variables.html">Context Variable Reference</a>
+  <a href="04-interface.html">IExpressionEvaluator Interface</a>
+  <a href="05-custom-engine.html">Building a Custom Engine</a>
+  <a href="06-form-fields.html">Expression Fields in Forms</a>
+  <a href="07-resolution-pipeline.html">Resolution Pipeline</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>ExpressionContext (EvaluationContext)</h1>
+    <p class="lead"><code>EvaluationContext</code> is the object built by <code>ExpressionContextFactory</code> and passed to the expression resolver. It aggregates all data sources the resolver needs: tenant identity, execution memory, node input/output data, and flow facts.</p>
+  </div>
+
+  <h2>EvaluationContext Shape</h2>
+  <pre><code>// BizFirst.Runtime.Expressions.Evaluation.Domain.Models.EvaluationContext
+public class EvaluationContext
+{
+    // Identity
+    public string  TenantId      { get; set; }
+    public string? UserId        { get; set; }
+    public string? ApplicationId { get; set; }
+    public string? CorrelationId { get; set; }
+
+    // Expression syntax configuration
+    public WildcardSyntax ActiveSyntax { get; set; }  // AtBrace = @{...}
+
+    // Data sources — each is an adapter over the ProcessEngine domain
+    public IExecutionMemory?  Memory         { get; set; }  // variables
+    public INodeDataContext?  NodeData       { get; set; }  // input/output data
+    public INodeExecutionFacts? ExecutionFacts { get; set; }  // node timing, status
+    public IWorkflowFlowFacts?  FlowFacts     { get; set; }  // thread, execution ids
+}</code></pre>
+
+  <h2>How ExpressionContextFactory Builds It</h2>
+  <pre><code>// ExpressionContextFactory.cs
+public EvaluationContext Create(ProcessElementExecutionContext elementContext)
+{
+    var thread  = elementContext.ParentThreadContext;
+    var memory  = thread?.Memory;
+
+    return new EvaluationContext
+    {
+        TenantId      = elementContext.TenantId?.ToString() ?? string.Empty,
+        UserId        = elementContext.UserId?.ToString(),
+        ActiveSyntax  = WildcardSyntax.AtBrace,   // @{...} syntax
+        CorrelationId = thread?.ParentProcessContext?.CorrelationId,
+
+        // ExecutionMemoryAdapter bridges domain ExecutionMemory → IExecutionMemory
+        Memory        = memory is not null ? new ExecutionMemoryAdapter(memory) : null,
+
+        // NodeDataContextAdapter exposes input and node outputs
+        NodeData      = new NodeDataContextAdapter(elementContext),
+
+        // NodeExecutionFactsAdapter exposes timing/status facts
+        ExecutionFacts = new NodeExecutionFactsAdapter(elementContext),
+
+        // WorkflowFlowFactsAdapter exposes execution/thread IDs
+        FlowFacts     = thread is not null ? new WorkflowFlowFactsAdapter(thread) : null,
+    };
+}</code></pre>
+
+  <h2>Adapters and What They Expose</h2>
+  <table>
+    <thead><tr><th>Adapter</th><th>Exposes</th><th>Directive Prefix</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>ExecutionMemoryAdapter</code></td>
+        <td>Workflow variables from <code>ExecutionMemory.GetVariable(key)</code></td>
+        <td><code>@{var:name}</code></td>
+      </tr>
+      <tr>
+        <td><code>NodeDataContextAdapter</code></td>
+        <td>Current node's input data + all completed node outputs via <code>NodeOutputs</code></td>
+        <td><code>@{input:field}</code>, <code>@{output:nodeId.field}</code></td>
+      </tr>
+      <tr>
+        <td><code>NodeExecutionFactsAdapter</code></td>
+        <td>Node timing, status, retry count from <code>ProcessElementExecutionContext</code></td>
+        <td><code>@{facts:...}</code></td>
+      </tr>
+      <tr>
+        <td><code>WorkflowFlowFactsAdapter</code></td>
+        <td>ExecutionId, ThreadId, ParentProcessId from the thread context</td>
+        <td><code>@{context:executionId}</code> etc.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>When Context Is Partial</h2>
+  <p>If the node has no parent thread context (e.g. in unit tests or trigger-only validation), the adapters for Memory and FlowFacts will be null. The resolver treats null adapters as empty data sources — expressions referencing variables or execution IDs resolve to null/empty rather than throwing.</p>
+
+  <div class="callout info">
+    <strong>NodeDataContextAdapter Is Branch-Aware</strong>
+    <code>GetNodeResultData(nodeId)</code> calls <code>GetNodeResultBranches(nodeId)</code> on the execution memory, which returns the correct branch output (success data, not error data) for each completed node. This ensures <code>@{output:nodeId.field}</code> always reads from the success output of that node.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-default-jint.html">&#8592; Default Engine — Jint</a>
+    <a href="03-context-variables.html">Next: Context Variable Reference &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reading Upstream Output — Execution Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Execution Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structure.html">Memory Structure</a>
+  <a href="02-node-outputs.html">nodeOutputs Map</a>
+  <a href="03-reading-upstream.html" class="active">Reading Upstream Output</a>
+  <a href="04-global-variables.html">Global Variables</a>
+  <a href="05-lifetime.html">Memory Lifetime</a>
+  <a href="06-serialization.html">HIL Serialization</a>
+  <a href="07-security.html">Memory Isolation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Reading Upstream Output</h1>
+    <p class="lead">Two methods provide access to upstream node output inside an executor: <code>GetNodeOutput&lt;T&gt;(nodeId)</code> for accessing any node by ID, and <code>GetPreviousNodeOutput&lt;T&gt;()</code> as a shortcut for the immediately preceding node in the graph.</p>
+  </div>
+
+  <h2>GetNodeOutput — Access by nodeId</h2>
+  <pre><code">// Reading typed output from a specific upstream node
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    // Read from a node named "parse-json" in the workflow
+    var parsed = ctx.ExecutionMemory.GetNodeOutput&lt;ParsedDocument&gt;("parse-json");
+
+    if (parsed is null)
+    {
+        ctx.Observability.Logger.LogWarning("parse-json node output is null — node may not have run");
+        return NodeExecutionResult.Failure("Required upstream data not available");
+    }
+
+    // Use the parsed document
+    var summary = await _summarizer.SummarizeAsync(parsed.Content, ct);
+    return NodeExecutionResult.Success(summary);
+}</code></pre>
+
+  <h2>GetPreviousNodeOutput — Immediate Upstream Shortcut</h2>
+  <p><code>GetPreviousNodeOutput&lt;T&gt;()</code> returns the output of the node that connects directly into this node's input port. It is equivalent to calling <code>GetNodeOutput&lt;T&gt;(previousNodeId)</code>, but the caller does not need to know the upstream node's ID — the engine resolves it from the graph topology.</p>
+  <pre><code">// The previous node shortcut — most useful for linear pipelines
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    // Reads output from whichever node's output port connects into this node's input port
+    var input = ctx.ExecutionMemory.GetPreviousNodeOutput&lt;string&gt;();
+
+    if (input is null)
+        return NodeExecutionResult.Failure("No input received");
+
+    return NodeExecutionResult.Success(input.ToUpperInvariant());
+}</code></pre>
+
+  <h2>GetPreviousNodeOutput — When to Use Each</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Use When</th><th>Risk</th></tr></thead>
+    <tbody>
+      <tr><td><code>GetNodeOutput&lt;T&gt;(nodeId)</code></td><td>Node reads from a non-adjacent upstream node, or when node identity matters</td><td>Breaks silently if nodeId changes in the workflow</td></tr>
+      <tr><td><code>GetPreviousNodeOutput&lt;T&gt;()</code></td><td>Node always reads from its immediate upstream predecessor (linear pipeline)</td><td>Ambiguous if node has multiple incoming edges — engine picks the primary port</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Multiple Inputs — Fan-In Pattern</h2>
+  <p>When a node has multiple incoming edges (fan-in), use named <code>GetNodeOutput</code> calls to read each upstream node independently. <code>GetPreviousNodeOutput</code> only reads one — the one connected to the primary input port.</p>
+  <pre><code">// MergeNode.cs — reads from two named upstream nodes
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    var leftResult  = ctx.ExecutionMemory.GetNodeOutput&lt;DataSet&gt;("left-branch-node");
+    var rightResult = ctx.ExecutionMemory.GetNodeOutput&lt;DataSet&gt;("right-branch-node");
+
+    var merged = Merge(leftResult, rightResult);
+    return NodeExecutionResult.Success(merged);
+}</code></pre>
+
+  <h2>Null Safety Patterns</h2>
+  <pre><code">// Pattern 1 — fail fast on missing required input
+var input = ctx.ExecutionMemory.GetNodeOutput&lt;Order&gt;("order-fetch");
+if (input is null) return NodeExecutionResult.Failure("order-fetch output missing");
+
+// Pattern 2 — fallback to default if input is optional
+var config = ctx.ExecutionMemory.GetNodeOutput&lt;ProcessConfig&gt;("config-node")
+    ?? ProcessConfig.Default;
+
+// Pattern 3 — check and log
+var data = ctx.ExecutionMemory.GetNodeOutput&lt;ApiResult&gt;("api-call-node");
+if (data is null)
+{
+    ctx.Observability.Logger.LogWarning("api-call-node output missing — using empty result");
+    data = ApiResult.Empty;
+}</code></pre>
+
+  <div class="callout info">
+    <strong>GetNodeOutput always returns null for nodes that have not yet run.</strong> The execution engine runs nodes in topological order. If you call <code>GetNodeOutput("node-b")</code> from within node-a, and node-b is downstream of node-a, the result is always null — node-b cannot have run before node-a in a standard graph without cycles.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-node-outputs.html">&#8592; nodeOutputs Map</a>
+    <a href="04-global-variables.html">Next: Global Variables &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

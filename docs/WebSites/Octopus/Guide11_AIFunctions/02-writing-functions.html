@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Writing Functions — AI Functions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>AI Functions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">AI Functions Overview</a>
+  <a href="01-what-are-ai-functions.html">What Are AI Functions</a>
+  <a href="02-writing-functions.html" class="active">Writing Functions</a>
+  <a href="03-sandbox.html">Sandbox and Execution</a>
+  <a href="04-inputs-outputs.html">Inputs and Outputs</a>
+  <a href="05-as-mcp-tools.html">As MCP Tools</a>
+  <a href="06-flow-studio-node.html">Flow Studio Node</a>
+  <a href="07-security.html">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Writing Functions</h1>
+    <p class="lead">Every AI Function must export an <code>execute(input)</code> function. The function receives a plain JavaScript object as input and must return a JSON-serialisable value. This page covers the required structure, common patterns, and error handling.</p>
+  </div>
+
+  <h2>Required Structure</h2>
+  <pre><code>// Minimum required structure
+function execute(input) {
+    // Process input
+    // Return a JSON-serialisable value
+    return { result: "ok" };
+}
+
+// Arrow function style also works
+const execute = (input) => {
+    return { result: "ok" };
+};</code></pre>
+
+  <h2>Example: Leave Day Calculator</h2>
+  <pre><code>function execute(input) {
+    const startDate  = new Date(input.startDate);
+    const endDate    = new Date(input.endDate);
+    const entitlement= parseInt(input.annualEntitlement) || 20;
+    const usedDays   = parseInt(input.usedDays) || 0;
+
+    // Calculate working days between dates (Mon-Fri only)
+    let requestedDays = 0;
+    let current = new Date(startDate);
+    while (current &lt;= endDate) {
+        const day = current.getDay();
+        if (day !== 0 && day !== 6) requestedDays++;  // Skip Sunday=0, Saturday=6
+        current.setDate(current.getDate() + 1);
+    }
+
+    const remaining = entitlement - usedDays;
+    const canApprove = requestedDays &lt;= remaining;
+
+    return {
+        requestedDays:  requestedDays,
+        remainingBefore: remaining,
+        remainingAfter:  canApprove ? remaining - requestedDays : remaining,
+        canApprove:      canApprove,
+        message: canApprove
+            ? `Leave request for ${requestedDays} days approved. ${remaining - requestedDays} days remaining.`
+            : `Insufficient leave balance. Requested ${requestedDays} days but only ${remaining} remaining.`
+    };
+}</code></pre>
+
+  <h2>Example: JSON Transformer</h2>
+  <pre><code>// Transform a raw API response into a clean summary
+function execute(input) {
+    const items = input.items || [];
+
+    // Filter, map, and sort
+    const summary = items
+        .filter(item => item.status === "active")
+        .map(item => ({
+            id:       item.id,
+            name:     item.name,
+            quantity: item.inventory?.quantity ?? 0,
+            category: item.metadata?.category ?? "Uncategorized"
+        }))
+        .sort((a, b) => b.quantity - a.quantity)
+        .slice(0, 10);  // Top 10 by quantity
+
+    return {
+        totalActive: items.filter(i => i.status === "active").length,
+        topItems:    summary,
+        generatedAt: new Date().toISOString()
+    };
+}</code></pre>
+
+  <h2>Error Handling Pattern</h2>
+  <pre><code>function execute(input) {
+    // Validate required inputs
+    if (!input.employeeId) {
+        return { error: "missing_field", message: "employeeId is required" };
+    }
+
+    try {
+        // Main logic
+        const result = processEmployee(input.employeeId);
+        return { success: true, data: result };
+    } catch (err) {
+        // Return structured error — don't throw (unhandled throws become runtime errors)
+        return {
+            error:   "execution_error",
+            message: err.message || "An unexpected error occurred"
+        };
+    }
+}
+
+// Helper function defined at module level
+function processEmployee(id) {
+    // ... logic ...
+    return { id: id, processed: true };
+}</code></pre>
+
+  <h2>Common Pitfalls</h2>
+  <table>
+    <thead>
+      <tr><th>Pitfall</th><th>Problem</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Missing return statement</td><td>Function returns <code>undefined</code> — serialised as null</td><td>Always return an explicit value</td></tr>
+      <tr><td>Circular references in return value</td><td>JSON serialisation fails</td><td>Return only plain objects with no circular refs</td></tr>
+      <tr><td>Using <code>Date.now()</code> for determinism</td><td>Non-deterministic output makes testing difficult</td><td>Accept date inputs explicitly if needed</td></tr>
+      <tr><td>Infinite loops</td><td>Function hits timeout (5s) and is killed</td><td>Always use bounded loops; test edge cases</td></tr>
+      <tr><td>Large return objects</td><td>Result injected into LLM context — large objects waste tokens</td><td>Return only what the LLM needs</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-what-are-ai-functions.html">&#8592; What Are AI Functions</a>
+    <a href="03-sandbox.html">Next: Sandbox and Execution &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

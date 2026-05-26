@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Ordering — Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Plugins Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Plugins Overview</a>
+  <a href="01-plugin-interface.html">IOctopusPlugin Interface</a>
+  <a href="02-lifecycle.html">Plugin Lifecycle</a>
+  <a href="03-built-in-plugins.html">Built-In Plugins</a>
+  <a href="04-plugin-di.html">DI and Services</a>
+  <a href="05-plugin-config.html">Plugin Configuration</a>
+  <a href="06-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="07-plugin-ordering.html" class="active">Plugin Ordering</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Plugin Ordering</h1>
+    <p class="lead">Plugins are registered in the order they are added with <code>AddPlugin&lt;T&gt;()</code>. Ordering controls DI service precedence, startup sequencing, and shutdown sequencing. Getting this wrong causes startup failures or silent misbehaviour.</p>
+  </div>
+
+  <h2>Why Ordering Matters</h2>
+  <p>Plugin ordering affects three distinct behaviours:</p>
+  <table>
+    <thead>
+      <tr><th>Behaviour</th><th>Effect of Order</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>DI registration</strong></td><td>When two plugins register the same interface, the last registration wins. This is how you override built-in services.</td></tr>
+      <tr><td><strong>OnStartAsync sequence</strong></td><td>Plugins start in registration order. A plugin that depends on another plugin's services must be registered after it.</td></tr>
+      <tr><td><strong>OnStopAsync sequence</strong></td><td>Plugins stop in reverse registration order. Last registered, first stopped — ensuring dependents clean up before dependencies.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recommended Registration Order</h2>
+  <pre><code>builder.Services.AddOctopus(config =>
+{
+    // ── Tier 1: Core storage (everything else depends on these) ──────────
+    config.AddPlugin&lt;SqlServerPlugin&gt;();         // Must be first
+                                                  // Registers: OctopusDbContext, IEpisodicMemoryStore,
+                                                  //   IProceduralMemoryStore, IAgentStore, IAIFunctionStore
+                                                  // Runs EF Core migrations in OnStartAsync
+
+    // ── Tier 2: AI / Semantic layer ──────────────────────────────────────
+    config.AddPlugin&lt;SemanticKernelPlugin&gt;();     // Requires IAgentStore from SqlServerPlugin
+                                                  // Registers: ISemanticMemoryStore, IEmbeddingProvider
+                                                  // Ensures vector collections exist in OnStartAsync
+
+    // ── Tier 3: UI and integration features ──────────────────────────────
+    config.AddPlugin&lt;ChatbotUIPlugin&gt;();          // Requires SqlServerPlugin (session storage)
+    config.AddPlugin&lt;ProcessPlugin&gt;();            // Requires SqlServerPlugin + ChatbotUIPlugin (SSE)
+    config.AddPlugin&lt;WebDriverPlugin&gt;();          // No dependency on other built-ins
+
+    // ── Tier 4: Your custom plugins (last) ───────────────────────────────
+    config.AddPlugin&lt;MyHRPlugin&gt;();               // Uses IAgentStore, MCPToolRegistry
+    config.AddPlugin&lt;MyInventoryPlugin&gt;();        // Depends on MyHRPlugin? Register after it.
+});</code></pre>
+
+  <h2>Dependency Rules</h2>
+  <table>
+    <thead>
+      <tr><th>If Your Plugin Uses...</th><th>Register After...</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>OctopusDbContext</code>, <code>IAgentStore</code>, <code>IEpisodicMemoryStore</code></td><td><code>SqlServerPlugin</code></td></tr>
+      <tr><td><code>ISemanticMemoryStore</code>, <code>IEmbeddingProvider</code></td><td><code>SemanticKernelPlugin</code></td></tr>
+      <tr><td><code>ISSEResponseWriter</code>, <code>IChatUIRenderer</code></td><td><code>ChatbotUIPlugin</code></td></tr>
+      <tr><td><code>IWorkflowTriggerService</code>, <code>IOctopusHILActor</code></td><td><code>ProcessPlugin</code></td></tr>
+      <tr><td><code>IBrowserSession</code>, <code>IPlaywrightManager</code></td><td><code>WebDriverPlugin</code></td></tr>
+      <tr><td>Another custom plugin's services</td><td>That custom plugin</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Service Override Pattern</h2>
+  <p>Because the DI container uses the last registration for an interface, you can override any built-in service by registering after the plugin that provides it:</p>
+  <pre><code>// Override IEpisodicMemoryStore with a custom Redis-backed implementation
+
+config.AddPlugin&lt;SqlServerPlugin&gt;();          // Registers default IEpisodicMemoryStore
+
+// Your plugin's OnRegister runs after SqlServerPlugin's:
+public void OnRegister(IServiceCollection services, OctopusConfig config)
+{
+    // This supersedes the SqlServerPlugin registration
+    services.AddScoped&lt;IEpisodicMemoryStore, RedisEpisodicMemoryStore&gt;();
+}
+
+// ✓ RedisEpisodicMemoryStore will be resolved for IEpisodicMemoryStore everywhere</code></pre>
+  <div class="callout warning">
+    <strong>Override responsibility.</strong> When you override a service, your implementation must satisfy the full contract of the interface. Check what methods the Octopus core calls on the interface and ensure all are implemented correctly.
+  </div>
+
+  <h2>What Happens with Wrong Order</h2>
+  <table>
+    <thead>
+      <tr><th>Mistake</th><th>Symptom</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Custom plugin registered before <code>SqlServerPlugin</code></td><td>InvalidOperationException: <code>IAgentStore</code> is not registered</td><td>Move <code>SqlServerPlugin</code> first</td></tr>
+      <tr><td><code>SemanticKernelPlugin</code> before <code>SqlServerPlugin</code></td><td><code>IAgentStore</code> not found during <code>OnStartAsync</code> vector collection setup</td><td>Always register <code>SqlServerPlugin</code> first</td></tr>
+      <tr><td>Override plugin registered before the plugin it overrides</td><td>Built-in implementation is used instead of your override (last wins)</td><td>Register your plugin after the one you override</td></tr>
+      <tr><td>Plugin A depends on Plugin B's service, registered before B</td><td><code>OnStartAsync</code> resolves null or throws because B has not run yet</td><td>Register B before A</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Startup and Shutdown Order Summary</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>OnRegister: SqlServerPlugin → SemanticKernelPlugin → ChatbotUIPlugin → ProcessPlugin → WebDriverPlugin → Custom</strong>
+        <span>DI services registered in this order. Last registration wins for duplicate interfaces.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>OnStartAsync: same order (SqlServerPlugin first)</strong>
+        <span>SqlServerPlugin runs migrations, creates Octopus tables. SemanticKernelPlugin creates vector collections. Custom plugins register MCP tools.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>OnStopAsync: reverse order (Custom first → SqlServerPlugin last)</strong>
+        <span>Custom plugins clean up first. Core storage plugins stop last to ensure any in-flight persistence completes before the database context closes.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-custom-plugin.html">&#8592; Building a Custom Plugin</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

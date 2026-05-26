@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rendering Pipeline — Form Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-props.html">FormRenderer Props</a>
+  <a href="02-operating-modes.html">Operating Modes</a>
+  <a href="03-rendering-pipeline.html" class="active">Rendering Pipeline</a>
+  <a href="04-draft-autosave.html">Draft Auto-Save</a>
+  <a href="05-theming.html">Theming</a>
+  <a href="06-viewmode-renderer.html">ViewModeRenderer</a>
+  <a href="07-page-player.html">FormPlayerPage</a>
+  <a href="08-hooks.html">Player State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Rendering Pipeline</h1>
+    <p class="lead"><code>FormRenderer</code> transforms a parsed schema into a React tree in a predictable pipeline: schema normalisation → section grouping → visibility filtering → control ordering → layout grid → action bar. Understanding this pipeline helps when debugging unexpected rendering behaviour.</p>
+  </div>
+
+  <h2>Pipeline Stages</h2>
+  <ol>
+    <li><strong>Schema parse</strong> — <code>parseSchema()</code> validates and normalises the raw JSON. Sets default values, fills in missing optional properties.</li>
+    <li><strong>FormEngine initialise</strong> — A <code>FormEngine</code> instance is created with the schema and <code>initialValues</code>. The engine manages field state, computed values, and binding resolution.</li>
+    <li><strong>Section grouping</strong> — Controls are grouped by their <code>sectionId</code>. Controls without a <code>sectionId</code> go into the root section.</li>
+    <li><strong>Mode filtering</strong> — Controls with <code>modeVisibilitySettings</code> that exclude the current mode are removed from the render list.</li>
+    <li><strong>Visibility rule evaluation</strong> — Controls with a <code>visibilityRule</code> expression are evaluated. Hidden controls are removed from the render list reactively.</li>
+    <li><strong>Order sorting</strong> — Visible controls within each section are sorted by their <code>order</code> property (ascending). Controls without an <code>order</code> are sorted by their array position.</li>
+    <li><strong>Width layout</strong> — Controls with <code>width</code> properties are grouped into rows using the 12-column grid. Controls of width <code>full</code> start a new row; <code>half</code> fills 6 columns; <code>third</code> fills 4; <code>quarter</code> fills 3.</li>
+    <li><strong>ControlRenderer dispatch</strong> — Each visible control is passed to <code>ControlRenderer</code>, which dispatches to the registered control component based on <code>type</code>.</li>
+    <li><strong>Action bar</strong> — Form-level actions (submit, cancel, custom) are rendered below the last section in a fixed action bar.</li>
+  </ol>
+
+  <h2>Section Structure in Schema</h2>
+  <pre><code>// Form schema sections define grouping containers
+{
+  "sections": [
+    {
+      "id": "applicant-section",
+      "title": "Applicant Information",
+      "order": 1,
+      "collapsible": false
+    },
+    {
+      "id": "documents-section",
+      "title": "Supporting Documents",
+      "order": 2,
+      "collapsible": true,
+      "defaultOpen": false
+    }
+  ],
+  "controls": [
+    { "id": "first-name", "type": "text",  "sectionId": "applicant-section", "order": 1 },
+    { "id": "last-name",  "type": "text",  "sectionId": "applicant-section", "order": 2 },
+    { "id": "upload-id",  "type": "file-upload", "sectionId": "documents-section", "order": 1 }
+  ]
+}</code></pre>
+
+  <h2>Width Grid Layout</h2>
+  <table>
+    <thead><tr><th>width value</th><th>Grid Columns</th><th>Fraction of Row</th></tr></thead>
+    <tbody>
+      <tr><td><code>full</code></td><td>12</td><td>100%</td></tr>
+      <tr><td><code>two-thirds</code></td><td>8</td><td>66%</td></tr>
+      <tr><td><code>half</code></td><td>6</td><td>50%</td></tr>
+      <tr><td><code>third</code></td><td>4</td><td>33%</td></tr>
+      <tr><td><code>quarter</code></td><td>3</td><td>25%</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Row Packing Rules</h2>
+  <p>The layout engine packs controls into rows greedily:</p>
+  <ul>
+    <li>A <code>full</code> width control always starts a new row.</li>
+    <li>Consecutive non-full controls are packed left-to-right until the row is full (12 columns).</li>
+    <li>If the next control doesn't fit in the remaining columns, a new row starts.</li>
+    <li>Example: <code>half</code> + <code>half</code> = one row; <code>half</code> + <code>third</code> = one row (9 cols); <code>third</code> + <code>third</code> + <code>third</code> = one row.</li>
+  </ul>
+
+  <h2>ControlRenderer Dispatch</h2>
+  <pre><code>// packages/player-components-react/src/controls/ControlRenderer.tsx
+// Simplified dispatch logic
+
+const controlRegistry = getControlRegistry();
+
+const ControlRenderer: React.FC&lt;ControlRendererProps&gt; = ({ control, ...ctx }) =&gt; {
+  const Component = controlRegistry.get(control.type);
+
+  if (!Component) {
+    console.warn(`No renderer registered for control type: ${control.type}`);
+    return &lt;UnknownControlFallback type={control.type} /&gt;;
+  }
+
+  return &lt;Component control={control} {...ctx} /&gt;;
+};</code></pre>
+
+  <h2>Action Bar</h2>
+  <p>The action bar renders below the last section. It includes:</p>
+  <ul>
+    <li>Submit button (hidden in view and design mode)</li>
+    <li>Cancel button (optional — configured via <code>actions</code> in the schema)</li>
+    <li>Custom action buttons (e.g., Save Draft, Export, Print)</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="02-operating-modes.html">&#8592; Operating Modes</a>
+    <a href="04-draft-autosave.html">Next: Draft Auto-Save &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

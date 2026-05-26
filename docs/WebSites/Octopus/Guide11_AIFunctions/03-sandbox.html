@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sandbox and Execution — AI Functions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>AI Functions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">AI Functions Overview</a>
+  <a href="01-what-are-ai-functions.html">What Are AI Functions</a>
+  <a href="02-writing-functions.html">Writing Functions</a>
+  <a href="03-sandbox.html" class="active">Sandbox and Execution</a>
+  <a href="04-inputs-outputs.html">Inputs and Outputs</a>
+  <a href="05-as-mcp-tools.html">As MCP Tools</a>
+  <a href="06-flow-studio-node.html">Flow Studio Node</a>
+  <a href="07-security.html">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Sandbox and Execution</h1>
+    <p class="lead">AI Functions execute in a sandboxed JavaScript interpreter — either Jint (embedded .NET) or V8 (via ClearScript). The sandbox restricts what the function can access, preventing code from escaping its boundaries. This page documents what is available and what is blocked.</p>
+  </div>
+
+  <h2>Sandbox Engines</h2>
+  <table>
+    <thead>
+      <tr><th>Engine</th><th>Isolation</th><th>Performance</th><th>ES Support</th><th>When to Use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Jint</td><td>Full — pure .NET, no native code</td><td>Good for simple logic</td><td>ES2020</td><td>Default; maximum security isolation</td></tr>
+      <tr><td>V8 (ClearScript)</td><td>V8 isolate — separate heap per call</td><td>Much faster for complex code</td><td>Full modern JS</td><td>Performance-sensitive functions; complex computations</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What Is Available in the Sandbox</h2>
+  <pre><code>// Available JavaScript globals:
+console.log(...)       // Outputs to application logger (does NOT reach the browser)
+JSON.parse(...)        // JSON serialisation
+JSON.stringify(...)    // JSON deserialisation
+Date                   // Date objects and arithmetic
+Math                   // Math functions
+Array, Object, String  // Standard JS built-ins
+setTimeout / clearTimeout  // Available but async execution is bounded by timeout limit
+
+// Injected by AIFunctionRuntime (available as globals):
+__tenantId             // string — the calling tenant's ID
+__agentId              // string — the calling agent's ID
+__userId               // string — the calling user's ID
+__env                  // object — read-only config values (non-secret, pre-defined)</code></pre>
+
+  <h2>What Is Blocked</h2>
+  <pre><code>// These are NOT available — any attempt throws ReferenceError:
+fetch(...)             // No network access
+XMLHttpRequest         // No network access
+require(...)           // No module loading
+import(...)            // No dynamic imports
+process                // No Node.js process access
+fs                     // No filesystem
+__dirname / __filename // No path information
+eval(...)              // Blocked (code injection risk)
+Function(...)          // Blocked (dynamic function creation)
+WebSocket              // No network access</code></pre>
+
+  <h2>AIFunctionRuntime C# Implementation</h2>
+  <pre><code>public class AIFunctionRuntime
+{
+    private readonly AIFunctionRuntimeConfig _config;
+
+    public async Task&lt;JsonElement&gt; ExecuteAsync(
+        AIFunction function,
+        JsonElement input,
+        AIFunctionContext context,
+        CancellationToken ct)
+    {
+        using var engine = CreateSandboxedEngine(context);
+
+        // Load the function code
+        engine.Execute(function.Code);
+
+        // Convert input to JS object and call execute()
+        var jsInput  = engine.FromJsonElement(input);
+        var jsResult = engine.Invoke("execute", jsInput);
+
+        // Serialise result back to JSON
+        return JsonSerializer.Deserialize&lt;JsonElement&gt;(
+            engine.ToJson(jsResult));
+    }
+
+    private JintEngine CreateSandboxedEngine(AIFunctionContext ctx)
+    {
+        var engine = new Engine(options =>
+        {
+            options.TimeoutInterval(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+            options.MaxStatements(_config.MaxStatements);
+            options.LimitMemory(_config.MaxHeapMb * 1024 * 1024);
+        });
+
+        // Inject context globals (read-only)
+        engine.SetValue("__tenantId", ctx.TenantId.ToString());
+        engine.SetValue("__agentId",  ctx.AgentId.ToString());
+        engine.SetValue("__userId",   ctx.UserId);
+
+        return engine;
+    }
+}</code></pre>
+
+  <h2>Execution Limits</h2>
+  <table>
+    <thead>
+      <tr><th>Limit</th><th>Default</th><th>Config Key</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Execution timeout</td><td>5 seconds</td><td><code>AIFunctions:TimeoutSeconds</code></td></tr>
+      <tr><td>Max heap memory</td><td>64 MB</td><td><code>AIFunctions:MaxHeapMb</code></td></tr>
+      <tr><td>Max JS statements</td><td>1,000,000</td><td><code>AIFunctions:MaxStatements</code></td></tr>
+      <tr><td>Max result JSON size</td><td>100 KB</td><td><code>AIFunctions:MaxResultKb</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-writing-functions.html">&#8592; Writing Functions</a>
+    <a href="04-inputs-outputs.html">Next: Inputs and Outputs &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

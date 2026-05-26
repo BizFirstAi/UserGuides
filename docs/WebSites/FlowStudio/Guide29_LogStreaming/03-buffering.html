@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log Buffering — Log Streaming | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Log Streaming</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-backend-emission.html">Backend Log Emission</a>
+  <a href="02-signalr-channel.html">SignalR Log Channel</a>
+  <a href="03-buffering.html" class="active">Log Buffering</a>
+  <a href="04-client-append.html">Client-Side Append</a>
+  <a href="05-virtual-scroll.html">Virtual Scrolling</a>
+  <a href="06-filtering.html">Client-Side Filtering</a>
+  <a href="07-historical-logs.html">Loading Historical Logs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Log Buffering</h1>
+    <p class="lead">The server-side log buffer accumulates log entries per execution and flushes them as batches, either when the buffer reaches its size limit or when the flush timer fires. Batching reduces SignalR message volume for nodes that emit many log entries in rapid succession.</p>
+  </div>
+
+  <h2>Buffer Configuration</h2>
+  <pre><code">// LogBufferOptions (configured in appsettings.json)
+{
+  "LogBuffer": {
+    "MaxEntriesPerFlush"  : 50,     // Flush when 50 entries accumulated per execution
+    "FlushIntervalSeconds": 1       // Also flush every 1 second regardless of count
+  }
+}</code></pre>
+
+  <h2>Buffer Implementation</h2>
+  <pre><code">// SignalRLogBuffer.cs
+public class SignalRLogBuffer : ILogBuffer, IHostedService
+{
+    private readonly ConcurrentDictionary&lt;string, List&lt;LogEntry&gt;&gt; _buffers = new();
+    private readonly LogBufferOptions _options;
+    private Timer? _flushTimer;
+
+    public void Add(string executionId, LogEntry entry)
+    {
+        var buffer = _buffers.GetOrAdd(executionId, _ => new List&lt;LogEntry&gt;());
+
+        lock (buffer)
+        {
+            buffer.Add(entry);
+
+            // Flush immediately if batch size reached
+            if (buffer.Count &gt;= _options.MaxEntriesPerFlush)
+            {
+                FlushAsync(executionId).GetAwaiter().GetResult();
+            }
+        }
+    }
+
+    private async Task FlushAllAsync(CancellationToken ct)
+    {
+        foreach (var executionId in _buffers.Keys)
+        {
+            await FlushAsync(executionId);
+        }
+    }
+
+    // Called by timer every FlushIntervalSeconds
+    public Task StartAsync(CancellationToken ct)
+    {
+        _flushTimer = new Timer(
+            _ => FlushAllAsync(CancellationToken.None).GetAwaiter().GetResult(),
+            null,
+            TimeSpan.FromSeconds(_options.FlushIntervalSeconds),
+            TimeSpan.FromSeconds(_options.FlushIntervalSeconds));
+        return Task.CompletedTask;
+    }
+}</code></pre>
+
+  <h2>Flush Triggers</h2>
+  <table>
+    <thead><tr><th>Trigger</th><th>Condition</th><th>Latency</th></tr></thead>
+    <tbody>
+      <tr><td>Size trigger</td><td>Buffer reaches MaxEntriesPerFlush (default: 50)</td><td>Immediate</td></tr>
+      <tr><td>Timer trigger</td><td>FlushIntervalSeconds elapsed (default: 1s)</td><td>Up to 1 second</td></tr>
+      <tr><td>Execution end</td><td>ExecutionCompleted event fires</td><td>Immediate (final flush)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Buffering adds latency but reduces noise.</strong> For a node that emits 1000 log entries in 0.5 seconds, without buffering the client would receive 1000 individual SignalR messages. With buffering (batch of 50), it receives 20 messages — much more efficient. The 1-second timer ensures low-throughput nodes still get their logs delivered promptly.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-signalr-channel.html">&#8592; SignalR Log Channel</a>
+    <a href="04-client-append.html">Next: Client-Side Append &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

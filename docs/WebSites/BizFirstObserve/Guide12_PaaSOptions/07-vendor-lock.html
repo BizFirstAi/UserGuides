@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Avoiding Vendor Lock-In — PaaS Options | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>PaaS Options</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">PaaS Options Overview</a>
+  <a href="01-grafana-cloud.html">Grafana Cloud</a>
+  <a href="02-azure-monitor.html">Azure Monitor</a>
+  <a href="03-aws-cloudwatch.html">AWS CloudWatch</a>
+  <a href="04-datadog.html">Datadog</a>
+  <a href="05-config-pattern.html">OTel Collector Config Pattern</a>
+  <a href="06-cost-comparison.html">Cost Comparison</a>
+  <a href="07-vendor-lock.html" class="active">Avoiding Vendor Lock-In</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Avoiding Vendor Lock-In</h1>
+    <p class="lead">BizFirstGO's observability design uses OpenTelemetry (an open standard) and the OTel Collector (a vendor-neutral pipeline) to maximize portability. Following a few additional practices ensures you can switch providers without rewriting dashboards or changing service code.</p>
+  </div>
+
+  <h2>Lock-In Risk Assessment by Component</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Lock-In Risk</th><th>Mitigation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>BizFirstGO service code</td><td>None — uses OTel SDK standard APIs</td><td>Already portable: change endpoint env var, done</td></tr>
+      <tr><td>OTel Collector config (receivers + processors)</td><td>None — standard across all providers</td><td>Already portable: only exporters section changes</td></tr>
+      <tr><td>Grafana dashboards (if using LogQL/PromQL)</td><td>Low — works on any Grafana or Grafana Cloud</td><td>Keep dashboards as JSON in git; avoid Grafana Enterprise-only features in dashboard JSON</td></tr>
+      <tr><td>Alert rules (Grafana native)</td><td>Low — Grafana alert rule format is portable</td><td>Keep alert rules in provisioning YAML in git</td></tr>
+      <tr><td>Dashboards (if using KQL, Datadog, CloudWatch Insights)</td><td>High — proprietary query language</td><td>Avoid: stick to LogQL/PromQL/TraceQL</td></tr>
+      <tr><td>Historical log data in Loki</td><td>Medium — TSDB/Loki format not portable</td><td>Export to NDJSON before migration; not practical at scale</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Anti-Patterns That Create Lock-In</h2>
+  <pre><code># AVOID these practices that create observability vendor lock-in:
+
+1. Writing LogQL queries directly in BizFirstGO service code:
+   # BAD: Hardcoded Loki query in application code
+   var lokiQuery = "{job=\"processengine\"} | json | executionId = \"" + id + "\"";
+   # GOOD: Use OpenTelemetry trace correlation IDs instead
+
+2. Using Datadog SDK directly in BizFirstGO code:
+   # BAD: import DatadogTracing; (Datadog-specific SDK)
+   # GOOD: import OpenTelemetry; (provider-neutral)
+
+3. Building dashboards with CloudWatch Insights or KQL queries:
+   # BAD: Dashboard uses AWS CloudWatch Insights query language
+   # GOOD: Use Amazon Managed Prometheus (PromQL) for metrics dashboards
+
+4. Storing observability config in provider-specific formats:
+   # BAD: Datadog dashboard JSON stored in git
+   # GOOD: Grafana dashboard JSON stored in git (portable to Grafana Cloud)</code></pre>
+
+  <h2>Portable Observability Practices</h2>
+  <pre><code"># FOLLOW these practices for maximum portability:
+
+1. Use OTel SDK (not vendor SDKs) in all BizFirstGO services
+   # Already done — ObservabilityServiceExtensions.cs uses OpenTelemetry packages
+
+2. Use OTel Collector as the single point of provider configuration
+   # Change exporters section to switch providers
+
+3. Use LogQL for all log dashboards (works on self-hosted Loki + Grafana Cloud)
+
+4. Use PromQL for all metric dashboards (works on self-hosted Prometheus + AMP + Grafana Cloud)
+
+5. Keep all dashboard JSON, alert rules, and OTel Collector config in git
+   # Full disaster recovery: git clone + docker compose up = restored in 30 minutes
+
+6. Use OTel standard attribute names (not vendor-specific):
+   # Good: service.name, span.tenant.id, http.status_code
+   # Avoid: datadog.span.type, aws.xray.segment.id</code></pre>
+
+  <div class="callout info">
+    <strong>The OTel SDK Is Your Most Important Lock-In Protection</strong>
+    <p>BizFirstGO's use of the OpenTelemetry SDK in all services is the primary source of portability. The OTel SDK emits OTLP — a format accepted by every major observability provider. As long as BizFirstGO services emit OTLP, switching providers is an infrastructure change (OTel Collector config + Grafana data sources) not a development project.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-cost-comparison.html">&#8592; Cost Comparison</a>
+    <a href="../Guide13_TEE/index.html">Next Guide: TEE Observability &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

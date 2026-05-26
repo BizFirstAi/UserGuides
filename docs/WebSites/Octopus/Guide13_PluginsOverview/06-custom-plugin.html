@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Building a Custom Plugin — Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Plugins Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Plugins Overview</a>
+  <a href="01-plugin-interface.html">IOctopusPlugin Interface</a>
+  <a href="02-lifecycle.html">Plugin Lifecycle</a>
+  <a href="03-built-in-plugins.html">Built-In Plugins</a>
+  <a href="04-plugin-di.html">DI and Services</a>
+  <a href="05-plugin-config.html">Plugin Configuration</a>
+  <a href="06-custom-plugin.html" class="active">Building a Custom Plugin</a>
+  <a href="07-plugin-ordering.html">Plugin Ordering</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Building a Custom Plugin</h1>
+    <p class="lead">A complete walkthrough for building a production-grade custom Octopus plugin from scratch. This example builds an <strong>HR Plugin</strong> that registers leave-management services, provides two MCP tools, and connects to an external HR API.</p>
+  </div>
+
+  <h2>Step 1 — Create the Project</h2>
+  <p>Custom plugins are class libraries that reference the Octopus Core package. Keep each plugin in its own project to maintain clean dependency boundaries.</p>
+  <pre><code># Create the class library
+dotnet new classlib -n BizFirst.Octopus.HRPlugin
+cd BizFirst.Octopus.HRPlugin
+
+# Reference Octopus Core
+dotnet add package BizFirst.Octopus.Core
+
+# Add other dependencies your plugin needs
+dotnet add package Microsoft.EntityFrameworkCore.SqlServer
+dotnet add package Microsoft.Extensions.Http</code></pre>
+
+  <p>Recommended project layout:</p>
+  <pre><code>BizFirst.Octopus.HRPlugin/
+├── HRPlugin.cs                    ← IOctopusPlugin implementation
+├── Config/
+│   └── HRPluginConfig.cs          ← Typed options class
+├── Services/
+│   ├── ILeaveService.cs
+│   ├── LeaveService.cs
+│   ├── IEmployeeRepository.cs
+│   └── EmployeeRepository.cs
+├── Tools/
+│   ├── LeaveToolDefinitions.cs    ← MCP tool JSON schemas
+│   └── LeaveToolHandlers.cs       ← Handler methods
+└── Http/
+    ├── IHRSystemClient.cs
+    └── HRSystemClient.cs</code></pre>
+
+  <h2>Step 2 — Define the Config</h2>
+  <pre><code>namespace BizFirst.Octopus.HRPlugin.Config;
+
+public class HRPluginConfig
+{
+    public string BaseUrl            { get; set; } = string.Empty;
+    public int    ApiKeyCredentialId { get; set; }
+    public int    TimeoutSeconds     { get; set; } = 30;
+    public int    MaxRetries         { get; set; } = 3;
+}</code></pre>
+
+  <h2>Step 3 — Define the Services</h2>
+  <pre><code>// ILeaveService.cs
+public interface ILeaveService
+{
+    Task&lt;LeaveBalance&gt;    GetBalanceAsync(string employeeId, CancellationToken ct);
+    Task&lt;LeaveRequest&gt;    SubmitRequestAsync(LeaveRequest request, CancellationToken ct);
+    Task&lt;List&lt;LeaveRequest&gt;&gt; GetPendingRequestsAsync(string managerId, CancellationToken ct);
+}
+
+// LeaveService.cs — depends on the HTTP client and ITenantContext
+public class LeaveService : ILeaveService
+{
+    private readonly IHRSystemClient  _client;
+    private readonly ITenantContext   _tenant;
+
+    public LeaveService(IHRSystemClient client, ITenantContext tenant)
+    {
+        _client = client;
+        _tenant = tenant;
+    }
+
+    public async Task&lt;LeaveBalance&gt; GetBalanceAsync(string employeeId, CancellationToken ct)
+    {
+        // Always scope calls by tenant ID for multi-tenant isolation
+        return await _client.GetLeaveBalanceAsync(_tenant.TenantId, employeeId, ct);
+    }
+
+    public async Task&lt;LeaveRequest&gt; SubmitRequestAsync(LeaveRequest request, CancellationToken ct)
+    {
+        request.TenantId = _tenant.TenantId;
+        return await _client.SubmitLeaveRequestAsync(request, ct);
+    }
+
+    public async Task&lt;List&lt;LeaveRequest&gt;&gt; GetPendingRequestsAsync(
+        string managerId, CancellationToken ct)
+    {
+        return await _client.GetPendingApprovalsAsync(_tenant.TenantId, managerId, ct);
+    }
+}</code></pre>
+
+  <h2>Step 4 — Define the MCP Tools</h2>
+  <pre><code>// LeaveToolDefinitions.cs — tool JSON schemas as static properties
+public static class LeaveToolDefinitions
+{
+    public static ToolDefinition GetBalance =&gt; new()
+    {
+        Name        = "get_leave_balance",
+        Description = "Returns the leave balance for an employee. " +
+                      "Call when the user asks how many leave days they have remaining.",
+        InputSchema = """
+        {
+          "type": "object",
+          "properties": {
+            "employee_id": {
+              "type": "string",
+              "description": "The employee's ID number (e.g. EMP-1234)"
+            }
+          },
+          "required": ["employee_id"]
+        }
+        """
+    };
+
+    public static ToolDefinition SubmitRequest =&gt; new()
+    {
+        Name        = "submit_leave_request",
+        Description = "Submits a leave request on behalf of an employee. " +
+                      "Always confirm the dates and leave type with the user before calling.",
+        InputSchema = """
+        {
+          "type": "object",
+          "properties": {
+            "employee_id":  { "type": "string" },
+            "start_date":   { "type": "string", "format": "date" },
+            "end_date":     { "type": "string", "format": "date" },
+            "leave_type":   {
+              "type": "string",
+              "enum": ["Annual", "Sick", "Unpaid", "Parental"]
+            },
+            "reason":       { "type": "string" }
+          },
+          "required": ["employee_id", "start_date", "end_date", "leave_type"]
+        }
+        """
+    };
+}
+
+// LeaveToolHandlers.cs — handler implementations
+public static class LeaveToolHandlers
+{
+    public static async Task&lt;string&gt; HandleGetBalanceAsync(
+        JsonElement input,
+        ConversationContext ctx,
+        ILeaveService leaveService,
+        CancellationToken ct)
+    {
+        var employeeId = input.GetProperty("employee_id").GetString()!;
+        try
+        {
+            var balance = await leaveService.GetBalanceAsync(employeeId, ct);
+            return JsonSerializer.Serialize(new
+            {
+                employee_id  = employeeId,
+                annual_days  = balance.AnnualRemaining,
+                sick_days    = balance.SickRemaining,
+                as_of        = balance.CalculatedAt.ToString("yyyy-MM-dd")
+            });
+        }
+        catch (EmployeeNotFoundException)
+        {
+            return $"{{\"error\": \"Employee {employeeId} not found\"}}";
+        }
+    }
+
+    public static async Task&lt;string&gt; HandleSubmitRequestAsync(
+        JsonElement input,
+        ConversationContext ctx,
+        ILeaveService leaveService,
+        CancellationToken ct)
+    {
+        var request = new LeaveRequest
+        {
+            EmployeeId = input.GetProperty("employee_id").GetString()!,
+            StartDate  = DateOnly.Parse(input.GetProperty("start_date").GetString()!),
+            EndDate    = DateOnly.Parse(input.GetProperty("end_date").GetString()!),
+            LeaveType  = Enum.Parse&lt;LeaveType&gt;(input.GetProperty("leave_type").GetString()!),
+            Reason     = input.TryGetProperty("reason", out var r) ? r.GetString() : null
+        };
+
+        var result = await leaveService.SubmitRequestAsync(request, ct);
+        return JsonSerializer.Serialize(new
+        {
+            request_id  = result.Id,
+            status      = result.Status.ToString(),
+            submitted_at = result.SubmittedAt.ToString("o")
+        });
+    }
+}</code></pre>
+
+  <h2>Step 5 — Implement the Plugin Class</h2>
+  <pre><code>namespace BizFirst.Octopus.HRPlugin;
+
+public class HRPlugin : IOctopusPlugin
+{
+    // ──────────────────────────────────────────────
+    // Phase 1: Service Registration
+    // ──────────────────────────────────────────────
+    public void OnRegister(IServiceCollection services, OctopusConfig config)
+    {
+        // Validate and register config
+        services.AddOptions&lt;HRPluginConfig&gt;()
+            .Bind(config.Configuration.GetSection("HRPlugin"))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        // Typed HttpClient — BaseUrl set from config
+        services.AddHttpClient&lt;IHRSystemClient, HRSystemClient&gt;(
+            (sp, client) =>
+            {
+                var cfg = sp.GetRequiredService&lt;IOptions&lt;HRPluginConfig&gt;&gt;().Value;
+                client.BaseAddress = new Uri(cfg.BaseUrl);
+                client.Timeout     = TimeSpan.FromSeconds(cfg.TimeoutSeconds);
+            })
+            .AddStandardResilienceHandler();  // Polly retry + circuit breaker
+
+        // Scoped services (per request — required for ITenantContext)
+        services.AddScoped&lt;ILeaveService, LeaveService&gt;();
+    }
+
+    // ──────────────────────────────────────────────
+    // Phase 2: Startup (after DI container is built)
+    // ──────────────────────────────────────────────
+    public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        var registry = sp.GetRequiredService&lt;MCPToolRegistry&gt;();
+
+        // Resolve the factory — tools need a scoped ILeaveService
+        // We capture the IServiceProvider so each tool call creates its own scope
+        registry.Register(new MCPTool
+        {
+            Schema  = LeaveToolDefinitions.GetBalance,
+            Handler = async (input, ctx, token) =>
+            {
+                using var scope       = sp.CreateScope();
+                var leaveService      = scope.ServiceProvider.GetRequiredService&lt;ILeaveService&gt;();
+                return await LeaveToolHandlers.HandleGetBalanceAsync(input, ctx, leaveService, token);
+            }
+        });
+
+        registry.Register(new MCPTool
+        {
+            Schema  = LeaveToolDefinitions.SubmitRequest,
+            Handler = async (input, ctx, token) =>
+            {
+                using var scope       = sp.CreateScope();
+                var leaveService      = scope.ServiceProvider.GetRequiredService&lt;ILeaveService&gt;();
+                return await LeaveToolHandlers.HandleSubmitRequestAsync(input, ctx, leaveService, token);
+            }
+        });
+
+        await Task.CompletedTask;
+    }
+
+    // ──────────────────────────────────────────────
+    // Phase 3: Clean Shutdown
+    // ──────────────────────────────────────────────
+    public Task OnStopAsync(CancellationToken ct)
+    {
+        // HttpClient is managed by the DI container — no explicit cleanup needed
+        // If your plugin holds background tasks, cancel and await them here
+        return Task.CompletedTask;
+    }
+}</code></pre>
+
+  <h2>Step 6 — Register in Program.cs</h2>
+  <pre><code>// Program.cs
+builder.Services.AddOctopus(config =>
+{
+    config.AddPlugin&lt;SqlServerPlugin&gt;();
+    config.AddPlugin&lt;SemanticKernelPlugin&gt;();
+    config.AddPlugin&lt;ChatbotUIPlugin&gt;();
+
+    // Register your custom plugin last (after the plugins it depends on)
+    config.AddPlugin&lt;HRPlugin&gt;();
+});</code></pre>
+
+  <h2>Plugin Completion Checklist</h2>
+  <table>
+    <thead>
+      <tr><th>Item</th><th>Done?</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Typed options class with <code>ValidateOnStart</code></td><td>Required</td><td>Fail-fast on missing config</td></tr>
+      <tr><td>No raw secrets in config</td><td>Required</td><td>Use <code>ICredentialResolver</code> credential IDs</td></tr>
+      <tr><td>Scoped services for per-request state</td><td>Required</td><td>Any service using <code>ITenantContext</code> must be Scoped</td></tr>
+      <tr><td>MCP tool schemas are descriptive</td><td>Required</td><td>LLM uses descriptions to decide when to call</td></tr>
+      <tr><td>Tool handlers return JSON strings</td><td>Required</td><td>All results are serialised JSON</td></tr>
+      <tr><td>Tool handlers have error handling</td><td>Required</td><td>Return <code>{"error": "..."}</code> on expected failures</td></tr>
+      <tr><td>Scopes created per tool call</td><td>Required</td><td>Never share Scoped services across calls</td></tr>
+      <tr><td><code>OnStopAsync</code> cleans up all resources</td><td>Required</td><td>Cancel background tasks, dispose handles</td></tr>
+      <tr><td>Plugin registered after its dependencies</td><td>Required</td><td>See Plugin Ordering page</td></tr>
+      <tr><td>Tools assigned to agents in the admin UI</td><td>Optional</td><td>Otherwise agents cannot see the tools</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-plugin-config.html">&#8592; Plugin Configuration</a>
+    <a href="07-plugin-ordering.html">Next: Plugin Ordering &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pinned Data Storage — Pinned Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Pinned Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-returning-pinned.html">Returning Pinned Data</a>
+  <a href="02-storage-model.html" class="active">Pinned Data Storage</a>
+  <a href="03-reading-pinned.html">Reading Pinned Data</a>
+  <a href="04-inspector-display.html">Node Inspector Display</a>
+  <a href="05-clearing-pinned.html">Clearing Pinned Data</a>
+  <a href="06-use-cases.html">Use Cases</a>
+  <a href="07-security.html">Security Considerations</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Pinned Data Storage</h1>
+    <p class="lead">Pinned data is stored in the <code>Process_NodePinnedData</code> table. The primary key is <code>(TenantId, ProcessId, NodeId)</code> — exactly one pinned data record exists per node per workflow. Each successful write overwrites the previous value.</p>
+  </div>
+
+  <h2>Table Schema</h2>
+  <pre><code">-- Process_NodePinnedData
+CREATE TABLE Process_NodePinnedData (
+    Id          BIGINT          IDENTITY PRIMARY KEY,
+    TenantId    NVARCHAR(64)    NOT NULL,
+    ProcessId   INT             NOT NULL,
+    NodeId      NVARCHAR(256)   NOT NULL,
+    DataJson    NVARCHAR(MAX)   NOT NULL,   -- JSON-serialized pinnedData object
+    CreatedAt   DATETIMEOFFSET  NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt   DATETIMEOFFSET  NOT NULL DEFAULT SYSUTCDATETIME(),
+    ExpiresAt   DATETIMEOFFSET  NULL,       -- NULL = never expires
+    CONSTRAINT UQ_NodePinnedData UNIQUE (TenantId, ProcessId, NodeId)
+);</code></pre>
+
+  <h2>PinnedDataService — Save and Upsert</h2>
+  <pre><code">// PinnedDataService.cs
+public async Task SaveAsync(
+    int processId,
+    string nodeId,
+    object data,
+    CancellationToken ct = default)
+{
+    var json     = JsonSerializer.Serialize(data);
+    var tenantId = _tenantContext.TenantId;
+
+    // Upsert — INSERT if first time, UPDATE if already exists
+    await _db.ExecuteAsync(@"
+        MERGE Process_NodePinnedData AS target
+        USING (SELECT @TenantId, @ProcessId, @NodeId) AS source (TenantId, ProcessId, NodeId)
+        ON target.TenantId = source.TenantId
+            AND target.ProcessId = source.ProcessId
+            AND target.NodeId    = source.NodeId
+        WHEN MATCHED THEN
+            UPDATE SET DataJson = @Json, UpdatedAt = SYSUTCDATETIME()
+        WHEN NOT MATCHED THEN
+            INSERT (TenantId, ProcessId, NodeId, DataJson, CreatedAt, UpdatedAt)
+            VALUES (@TenantId, @ProcessId, @NodeId, @Json, SYSUTCDATETIME(), SYSUTCDATETIME());",
+        new { TenantId = tenantId, ProcessId = processId, NodeId = nodeId, Json = json },
+        cancellationToken: ct);
+}</code></pre>
+
+  <h2>Key Semantics</h2>
+  <table>
+    <thead><tr><th>Behaviour</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Scope</td><td>Per <code>(TenantId, ProcessId, NodeId)</code> — shared across ALL executions of the same workflow node</td></tr>
+      <tr><td>Overwrite</td><td>Each write replaces the entire <code>DataJson</code> column — it is not a merge or append. Read-modify-write is the caller's responsibility.</td></tr>
+      <tr><td>First write</td><td>INSERTs a new row with <code>CreatedAt = UpdatedAt = now</code></td></tr>
+      <tr><td>Subsequent writes</td><td>UPDATEs only <code>DataJson</code> and <code>UpdatedAt</code></td></tr>
+      <tr><td>Null pinnedData</td><td>No database call at all — existing row is not touched</td></tr>
+      <tr><td>Expiry</td><td><code>ExpiresAt</code> is NULL by default. Set a TTL via the optional overload of <code>SaveAsync</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Read Path</h2>
+  <pre><code">// PinnedDataService.cs
+public async Task&lt;object?&gt; GetAsync(
+    int processId,
+    string nodeId,
+    CancellationToken ct = default)
+{
+    var tenantId = _tenantContext.TenantId;
+
+    var json = await _db.QuerySingleOrDefaultAsync&lt;string&gt;(@"
+        SELECT DataJson
+        FROM   Process_NodePinnedData
+        WHERE  TenantId  = @TenantId
+          AND  ProcessId = @ProcessId
+          AND  NodeId    = @NodeId
+          AND  (ExpiresAt IS NULL OR ExpiresAt &gt; SYSUTCDATETIME())",
+        new { TenantId = tenantId, ProcessId = processId, NodeId = nodeId },
+        cancellationToken: ct);
+
+    return json is null ? null : JsonSerializer.Deserialize&lt;object&gt;(json);
+}</code></pre>
+
+  <div class="callout info">
+    <strong>One row per node — overwrite is intentional.</strong> Pinned data is designed to hold the LATEST state of a node, not a history of states. If you need historical records across runs, use a separate persistence mechanism (e.g., write to a database via a DataNode, or log the data for Loki ingestion).
+  </div>
+
+  <div class="callout info">
+    <strong>ExpiresAt filtering happens in the query.</strong> Expired rows are not proactively deleted — they are silently excluded from reads. A background cleanup job (configurable interval, default 24h) removes expired rows to keep the table lean.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-returning-pinned.html">&#8592; Returning Pinned Data</a>
+    <a href="03-reading-pinned.html">Next: Reading Pinned Data &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

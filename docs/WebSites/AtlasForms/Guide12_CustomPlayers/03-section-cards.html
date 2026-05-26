@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Section Cards Layout — Custom Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Custom Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Player Architecture</a>
+  <a href="02-minimal-player.html">Minimal Custom Player</a>
+  <a href="03-section-cards.html" class="active">Section Cards Layout</a>
+  <a href="04-form-engine.html">Using FormEngine Directly</a>
+  <a href="05-registering-player.html">Registering a Player</a>
+  <a href="06-schema-override.html">Per-Form Player Override</a>
+  <a href="07-mobile-player.html">Mobile Player Example</a>
+  <a href="08-state-hooks.html">Using State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Section Cards Layout</h1>
+    <p class="lead">The CardSectionPlayer renders each form section inside its own card panel. This is one of the most common custom player patterns — it gives a visually organised, whitespace-heavy layout that is preferred in admin consoles and multi-section data entry forms.</p>
+  </div>
+
+  <h2>The Pattern</h2>
+  <p>Instead of rendering controls in a flat list, group them by <code>sectionId</code>, then wrap each group in a card:</p>
+  <pre><code>// src/players/CardSectionPlayer.tsx
+import React, { useMemo } from 'react';
+import { FormStateProvider }         from '@atlas-forms/state-react';
+import { ControlRenderer, useAtlasForm } from '@atlas-forms/player-components-react';
+import { useFormVisibility }         from '@atlas-forms/player-components-react';
+import { FormEngine }                from '@atlas-forms/form-engine-js';
+import { parseSchema }               from '@atlas-forms/schema-js';
+import type { FormSchema, FormControl, FormSection } from '@atlas-forms/types-js';
+
+// Group controls by sectionId
+function groupBySection(controls: FormControl[], sections: FormSection[]) {
+  const sectionMap = new Map&lt;string, FormControl[]&gt;();
+  // Initialise in section order
+  sections.forEach(s =&gt; sectionMap.set(s.id, []));
+  // Distribute controls
+  controls.forEach(c =&gt; {
+    const sid = c.sectionId ?? '__root__';
+    if (!sectionMap.has(sid)) sectionMap.set(sid, []);
+    sectionMap.get(sid)!.push(c);
+  });
+  return sectionMap;
+}
+
+const CardSectionPlayerInner: React.FC&lt;{ onSubmit: (v: any) =&gt; void }&gt; = ({ onSubmit }) =&gt; {
+  const { engine, values, submitForm, isSubmitting } = useAtlasForm();
+  const { isVisible } = useFormVisibility();
+  const schema = engine.getSchema();
+
+  const grouped = useMemo(() =&gt;
+    groupBySection(schema.controls ?? [], schema.sections ?? []),
+    [schema]
+  );
+
+  const handleSubmit = async (e: React.FormEvent) =&gt; {
+    e.preventDefault();
+    await submitForm();
+    onSubmit(values);
+  };
+
+  return (
+    &lt;form onSubmit={handleSubmit}&gt;
+      {(schema.sections ?? []).map(section =&gt; {
+        const controls = (grouped.get(section.id) ?? []).filter(c =&gt; isVisible(c.id));
+        if (controls.length === 0) return null;
+
+        return (
+          &lt;div key={section.id} className="card" style={{ marginBottom: 24 }}&gt;
+            {section.title &amp;&amp; (
+              &lt;div className="card-header"&gt;
+                &lt;h3&gt;{section.title}&lt;/h3&gt;
+                {section.description &amp;&amp; &lt;p&gt;{section.description}&lt;/p&gt;}
+              &lt;/div&gt;
+            )}
+            &lt;div className="card-body"&gt;
+              {controls.map(control =&gt; (
+                &lt;ControlRenderer key={control.id} control={control} /&gt;
+              ))}
+            &lt;/div&gt;
+          &lt;/div&gt;
+        );
+      })}
+
+      &lt;button type="submit" disabled={isSubmitting}&gt;
+        {isSubmitting ? 'Saving...' : 'Save'}
+      &lt;/button&gt;
+    &lt;/form&gt;
+  );
+};
+
+export const CardSectionPlayer: React.FC&lt;{
+  schema: FormSchema | object;
+  initialValues?: Record&lt;string, any&gt;;
+  onSubmit: (v: any) =&gt; void;
+}&gt; = ({ schema: raw, initialValues = {}, onSubmit }) =&gt; {
+  const schema = useMemo(() =&gt; parseSchema(raw as object), [raw]);
+  const engine = useMemo(() =&gt; new FormEngine(schema, initialValues), [schema, initialValues]);
+
+  return (
+    &lt;FormStateProvider engine={engine} mode="edit"&gt;
+      &lt;CardSectionPlayerInner onSubmit={onSubmit} /&gt;
+    &lt;/FormStateProvider&gt;
+  );
+};</code></pre>
+
+  <h2>Form Schema for This Pattern</h2>
+  <pre><code>// Each section becomes a card; controls reference section via sectionId
+{
+  "sections": [
+    { "id": "personal",  "title": "Personal Information",  "order": 1 },
+    { "id": "contact",   "title": "Contact Details",        "order": 2 },
+    { "id": "documents", "title": "Supporting Documents",   "order": 3 }
+  ],
+  "controls": [
+    { "id": "first-name", "type": "text",  "sectionId": "personal",  "order": 1 },
+    { "id": "last-name",  "type": "text",  "sectionId": "personal",  "order": 2 },
+    { "id": "email",      "type": "email", "sectionId": "contact",   "order": 1 },
+    { "id": "phone",      "type": "text",  "sectionId": "contact",   "order": 2 },
+    { "id": "id-doc",     "type": "file-upload", "sectionId": "documents", "order": 1 }
+  ]
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Performance with useFormVisibility</strong>
+    Call <code>useFormVisibility()</code> once at the top of the inner component and pass <code>isVisible</code> down, rather than calling the hook inside each card section's render. This prevents redundant context reads and keeps the visibility check fast.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-minimal-player.html">&#8592; Minimal Custom Player</a>
+    <a href="04-form-engine.html">Next: Using FormEngine Directly &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

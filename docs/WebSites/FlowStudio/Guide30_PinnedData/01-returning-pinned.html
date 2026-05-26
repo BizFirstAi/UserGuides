@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Returning Pinned Data — Pinned Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Pinned Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-returning-pinned.html" class="active">Returning Pinned Data</a>
+  <a href="02-storage-model.html">Pinned Data Storage</a>
+  <a href="03-reading-pinned.html">Reading Pinned Data</a>
+  <a href="04-inspector-display.html">Node Inspector Display</a>
+  <a href="05-clearing-pinned.html">Clearing Pinned Data</a>
+  <a href="06-use-cases.html">Use Cases</a>
+  <a href="07-security.html">Security Considerations</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Returning Pinned Data</h1>
+    <p class="lead">An executor returns pinned data by passing it as the second argument to <code>NodeExecutionResult.Success(output, pinnedData)</code>. The first argument is the ephemeral output for this run; the second argument is the object that will be persisted to the database and survive future runs.</p>
+  </div>
+
+  <h2>NodeExecutionResult.Success Overloads</h2>
+  <pre><code">// NodeExecutionResult.cs
+public class NodeExecutionResult
+{
+    // Ephemeral output only — pinned data is NOT written
+    public static NodeExecutionResult Success(object? output)
+        => new() { IsSuccess = true, Output = output, PinnedData = null };
+
+    // Ephemeral output + pinned data — BOTH are set
+    public static NodeExecutionResult Success(object? output, object? pinnedData)
+        => new() { IsSuccess = true, Output = output, PinnedData = pinnedData };
+
+    public static NodeExecutionResult Failure(string error)
+        => new() { IsSuccess = false, ErrorMessage = error };
+
+    public bool    IsSuccess    { get; init; }
+    public object? Output       { get; init; }  // Ephemeral — this run only
+    public object? PinnedData   { get; init; }  // Durable — persists across runs
+    public string? ErrorMessage { get; init; }
+}</code></pre>
+
+  <h2>Executor Example — Returning Both</h2>
+  <pre><code">// SummarizationNode.cs — accumulates and pins the latest summary
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    var text = ctx.ExecutionMemory.GetNodeOutput&lt;string&gt;("text-source-node");
+
+    var summary = await _aiClient.SummarizeAsync(text, ct);
+
+    // The summary for THIS run (ephemeral — passed downstream via $output)
+    var output = new { Summary = summary, GeneratedAt = DateTime.UtcNow };
+
+    // The pinned record — persists after this run ends
+    // Future runs can read this via ctx.ExecutionMemory.GetPinnedData("summarization-node")
+    var pinnedData = new
+    {
+        LatestSummary = summary,
+        LatestRunAt   = DateTime.UtcNow,
+        TotalRuns     = (await ctx.ExecutionMemory.GetPinnedData("summarization-node")
+                            as dynamic)?.TotalRuns + 1 ?? 1
+    };
+
+    return NodeExecutionResult.Success(output, pinnedData);
+}</code></pre>
+
+  <h2>What BaseNodeExecutor Does After Success</h2>
+  <p>The executor returns <code>NodeExecutionResult</code> — it does NOT call the persistence service directly. <code>BaseNodeExecutor</code> inspects the result and handles persistence:</p>
+  <pre><code">// BaseNodeExecutor.cs (simplified)
+protected async Task&lt;NodeExecutionResult&gt; RunAndPersistAsync(
+    NodeExecutionContext ctx,
+    CancellationToken ct)
+{
+    var result = await ExecuteAsync(ctx, ct);
+
+    if (result.IsSuccess)
+    {
+        // 1. Store ephemeral output in-memory for this execution
+        ctx.ExecutionMemory.SetNodeOutput(ctx.NodeId, result.Output);
+
+        // 2. If pinnedData is non-null, persist it to the database
+        if (result.PinnedData is not null)
+        {
+            await _pinnedDataService.SaveAsync(
+                ctx.ProcessId,
+                ctx.NodeId,
+                result.PinnedData,
+                ct);
+        }
+    }
+
+    return result;
+}</code></pre>
+
+  <h2>PinnedData Serialization</h2>
+  <p>Pinned data is serialized to JSON before storage. The object you pass as <code>pinnedData</code> must be JSON-serializable. Anonymous types, POCOs, and dictionaries all work.</p>
+  <table>
+    <thead><tr><th>Type</th><th>Supported?</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Anonymous object <code>new { Key = val }</code></td><td>Yes</td><td>Most common pattern</td></tr>
+      <tr><td>POCO class</td><td>Yes</td><td>Properties serialized by name</td></tr>
+      <tr><td><code>Dictionary&lt;string, object&gt;</code></td><td>Yes</td><td>Flexible, no schema needed</td></tr>
+      <tr><td><code>string</code> (raw text)</td><td>Yes</td><td>Stored as a JSON string literal</td></tr>
+      <tr><td>Non-serializable (e.g., streams, open connections)</td><td>No</td><td>Will throw at serialization time</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Passing <code>null</code> as pinnedData does nothing.</strong> If you call <code>NodeExecutionResult.Success(output, null)</code>, BaseNodeExecutor skips the persistence call entirely. The existing pinned data for that node is not affected — it is neither overwritten nor deleted.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-storage-model.html">Next: Pinned Data Storage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

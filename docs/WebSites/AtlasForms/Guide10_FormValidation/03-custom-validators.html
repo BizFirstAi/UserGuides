@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Validators — Form Validation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Validation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-built-in-rules.html">Built-In Rules</a>
+  <a href="02-validation-schema.html">Validation Schema</a>
+  <a href="03-custom-validators.html" class="active">Custom Validators</a>
+  <a href="04-error-display.html">Error Display</a>
+  <a href="05-cross-field.html">Cross-Field Validation</a>
+  <a href="06-async-validation.html">Async Validation</a>
+  <a href="07-security-validation.html">Security Validation</a>
+  <a href="08-validation-guide.html">Complete Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Custom Validators</h1>
+    <p class="lead">Custom validators extend the built-in rule set with your own business logic. Register a named validator once using <code>registerValidator()</code>, then reference it by name in any form schema. Custom validators can be synchronous or asynchronous and receive the current value, field ID, and all form values as arguments.</p>
+  </div>
+
+  <h2>Validator Function Signature</h2>
+  <pre><code>// packages/validation-js/src/customValidators.ts
+
+type ValidatorFn = (
+  value: any,                          // Current field value
+  fieldId: string,                     // The field's id from schema
+  allValues: Record&lt;string, any&gt;       // All current form values
+) =&gt; ValidationResult | Promise&lt;ValidationResult&gt;;
+
+interface ValidationResult {
+  valid: boolean;
+  message?: string;   // Only shown if valid === false
+}</code></pre>
+
+  <h2>Registering a Custom Validator</h2>
+  <pre><code>import { registerValidator } from '@atlas-forms/validation-js';
+
+// Synchronous validator — Luhn algorithm for credit card numbers
+registerValidator('luhnCheck', (value) =&gt; {
+  const digits = String(value).replace(/\D/g, '');
+  let sum = 0;
+  let alternate = false;
+  for (let i = digits.length - 1; i &gt;= 0; i--) {
+    let n = parseInt(digits[i], 10);
+    if (alternate) {
+      n *= 2;
+      if (n &gt; 9) n -= 9;
+    }
+    sum += n;
+    alternate = !alternate;
+  }
+  return {
+    valid: sum % 10 === 0,
+    message: 'Invalid card number'
+  };
+});
+
+// Async validator — check username availability
+registerValidator('usernameAvailable', async (value) =&gt; {
+  if (!value || value.length &lt; 3) {
+    return { valid: true }; // Let minLength handle short values
+  }
+  const res = await fetch(`/api/users/check-username?username=${encodeURIComponent(value)}`);
+  const { available } = await res.json();
+  return {
+    valid: available,
+    message: `"${value}" is already taken — please choose a different username`
+  };
+});</code></pre>
+
+  <h2>Using a Registered Validator in Schema</h2>
+  <pre><code>// Reference by name in the form schema
+{
+  "id": "card-number",
+  "type": "text",
+  "label": "Card Number",
+  "settings": { "placeholder": "XXXX XXXX XXXX XXXX" },
+  "validation": {
+    "required": true,
+    "pattern": "^[0-9 ]{13,19}$",
+    "customRule": {
+      "name": "luhnCheck",
+      "message": "Card number is invalid"
+    }
+  }
+}</code></pre>
+
+  <h2>Inline Expression Validator</h2>
+  <p>For simple inline rules that don't need a registered function, use the <code>expression</code> property in <code>customRule</code>. The expression must evaluate to <code>true</code> when the value is valid:</p>
+  <pre><code>{
+  "id": "quantity",
+  "type": "number",
+  "label": "Quantity",
+  "validation": {
+    "required": true,
+    "min": 1,
+    "customRule": {
+      "expression": "value % 1 === 0",
+      "message": "Quantity must be a whole number"
+    }
+  }
+}
+
+// Another inline example — value must be divisible by 5
+{
+  "id": "lot-size",
+  "type": "number",
+  "label": "Lot Size",
+  "validation": {
+    "customRule": {
+      "expression": "value % 5 === 0",
+      "message": "Lot size must be a multiple of 5"
+    }
+  }
+}</code></pre>
+
+  <h2>Where to Register Validators</h2>
+  <p>Register all custom validators once at application startup, before any form is rendered. In a React application this is typically in the app entry point or a dedicated validation setup module:</p>
+  <pre><code>// src/validators/index.ts — all custom validators in one file
+import { registerValidator } from '@atlas-forms/validation-js';
+import { luhnCheck }           from './luhnCheck';
+import { usernameAvailable }   from './usernameAvailable';
+import { ibanChecksum }        from './ibanChecksum';
+import { postcodeExists }      from './postcodeExists';
+
+export function registerAllValidators(): void {
+  registerValidator('luhnCheck',          luhnCheck);
+  registerValidator('usernameAvailable',  usernameAvailable);
+  registerValidator('ibanChecksum',       ibanChecksum);
+  registerValidator('postcodeExists',     postcodeExists);
+}
+
+// src/main.tsx
+import { registerAllValidators } from './validators';
+registerAllValidators();   // Before ReactDOM.render(...)</code></pre>
+
+  <h2>Validator Execution Order</h2>
+  <p>When multiple custom rules are applied to a field, they execute in sequence. If a synchronous rule fails, asynchronous rules are skipped to avoid unnecessary network calls:</p>
+  <ol>
+    <li>All built-in rules (synchronous)</li>
+    <li>Synchronous custom validators (in <code>customRules</code> array order)</li>
+    <li>Asynchronous custom validators (only if all sync rules passed)</li>
+  </ol>
+
+  <div class="callout">
+    <strong>Debouncing Async Validators</strong>
+    The validation engine automatically debounces async validators by 400ms to avoid flooding the server with requests on every keystroke. You do not need to implement debouncing inside your validator function.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-validation-schema.html">&#8592; Validation Schema</a>
+    <a href="04-error-display.html">Next: Error Display &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

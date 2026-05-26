@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NodeExecutionContext — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html" class="active">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>NodeExecutionContext</h1>
+    <p class="lead"><code>NodeExecutionContext</code> is the object passed to <code>ExecuteInternalAsync</code>. It is a thin wrapper that aggregates all the execution state the node executor needs: the element context, the orchestration processor, and runtime perf metrics.</p>
+  </div>
+
+  <h2>NodeExecutionContext Shape</h2>
+  <pre><code>// BizFirst.Ai.ProcessEngine.Domain/Execution/NodeExecutionContext.cs
+public class NodeExecutionContext
+{
+    // The per-element context — node definition, config, tenant ID
+    public ProcessElementExecutionContext? ElementExecutionContext { get; set; }
+
+    // Allows calling back into the engine (run sub-flows, signal events)
+    public IOrchestrationProcessor? Processor { get; set; }
+
+    // DataSections — shortcut to the operating context data
+    public DataSections MyDataSections { get; set; }
+
+    // Runtime metadata — timing, stage tracking, result pre-emption
+    public NodeExecutionContextRuntimeInfo RuntimeInfo { get; set; }
+}</code></pre>
+
+  <h2>ProcessElementExecutionContext — Key Fields</h2>
+  <p>Access this via <code>ctx.ElementExecutionContext</code>:</p>
+  <pre><code>// The most commonly used fields on ElementExecutionContext
+ctx.ElementExecutionContext.TenantId        // int — tenant owning this execution
+ctx.ElementExecutionContext.ExecutionId     // string — the workflow execution ID
+ctx.ElementExecutionContext.NodeId          // string — this node's ID on the canvas
+ctx.ElementExecutionContext.Definition      // ProcessElementDefinition — node definition
+ctx.ElementExecutionContext.ResolvedConfig  // merged + expression-resolved config JSON
+ctx.ElementExecutionContext.ExecutionMemory // access to upstream node outputs</code></pre>
+
+  <h2>Common Context Access Patterns</h2>
+  <pre><code>protected override async Task&lt;NodeExecutionResult&gt; ExecuteInternalAsync(
+    NodeExecutionContext ctx, CancellationToken ct)
+{
+    var elCtx    = ctx.ElementExecutionContext!;
+
+    // Tenant and execution identity
+    var tenantId    = elCtx.TenantId;
+    var executionId = elCtx.ExecutionId;
+
+    // Already-populated settings (cast to your settings type)
+    var s = (MyNodeSettings)settings!;
+
+    // Access the orchestration processor (e.g. to trigger sub-flows)
+    var processor = ctx.Processor;
+
+    // Runtime perf — start time, elapsed, etc.
+    var startedAt = ctx.RuntimeInfo.PerfMetrix.startedAt;
+
+    // Data sections — variables, global data, etc.
+    var variables = ctx.MyDataSections;
+
+    // ... your logic ...
+}</code></pre>
+
+  <h2>eNodeStage Enum</h2>
+  <p>The runtime tracks which pipeline stage is currently executing via <code>ctx.RuntimeInfo.StatusInfo.Stage</code>. This is informational — you do not need to set it:</p>
+  <table>
+    <thead><tr><th>Stage</th><th>Ordinal</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>Initiated</td><td>10</td><td>Context created</td></tr>
+      <tr><td>Entry</td><td>100</td><td>Loading node definition</td></tr>
+      <tr><td>EntryValidate</td><td>200</td><td>Config parsed and validated</td></tr>
+      <tr><td>PreGuardRails</td><td>250</td><td>Rate limit, quota checks</td></tr>
+      <tr><td>PreProcess</td><td>300</td><td>HIL check, suspension test</td></tr>
+      <tr><td>Process</td><td>400</td><td>Your <code>ExecuteInternalAsync</code></td></tr>
+      <tr><td>PostProcess</td><td>500</td><td>Post-execution hooks</td></tr>
+      <tr><td>PostGuardRails</td><td>550</td><td>Content policy</td></tr>
+      <tr><td>Exit</td><td>600</td><td>Result persistence + SignalR</td></tr>
+      <tr><td>Error</td><td>700</td><td>Error handler</td></tr>
+      <tr><td>Completed</td><td>10000</td><td>Pipeline finished</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Short-Circuiting the Pipeline</strong>
+    If a PreProcess stage (e.g. the HIL suspension check) needs to return a result without running your executor, it sets <code>ctx.RuntimeInfo.ResultInfo.Result</code> to a non-null value. The <code>Process</code> stage then skips calling <code>ExecuteInternalAsync</code> and uses this result directly. This is how HIL nodes return a "waiting" status.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-base-executor.html">&#8592; BaseNodeExecutor Pattern</a>
+    <a href="04-reading-config.html">Next: Reading Node Configuration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

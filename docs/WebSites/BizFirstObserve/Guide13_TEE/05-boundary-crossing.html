@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telemetry at the TEE Boundary — TEE | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>TEE Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">TEE Observability Overview</a>
+  <a href="01-tee-constraints.html">TEE Observability Constraints</a>
+  <a href="02-allowed-telemetry.html">Allowed Telemetry</a>
+  <a href="03-attestation-logs.html">Attestation-Based Log Integrity</a>
+  <a href="04-in-tee-observability.html">In-TEE Observability</a>
+  <a href="05-boundary-crossing.html" class="active">Telemetry at the TEE Boundary</a>
+  <a href="06-audit.html">Audit Logging in TEE</a>
+  <a href="07-incident-response.html">Incident Response in TEE</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Telemetry at the TEE Boundary</h1>
+    <p class="lead">The TEE boundary is where security policy meets observability engineering. Telemetry crossing this boundary must be explicitly approved, sanitized by the in-TEE OTel Collector, and delivered through an approved egress channel. The external OTel Collector is the single control point for all outbound telemetry — it applies final sanitization before data reaches Loki, Prometheus, and Tempo.</p>
+  </div>
+
+  <h2>TEE Boundary Telemetry Flow</h2>
+  <pre><code"># Complete telemetry flow for a TEE-deployed BizFirstGO workflow execution
+
+BizFirstGO Process Engine (inside TEE)
+  │
+  │  OTLP/gRPC (4317) — full unsanitized signals
+  ▼
+In-TEE OTel Collector
+  │  ├── Full signals → In-TEE Loki (3101) — stays inside TEE
+  │  │                  In-TEE Tempo (4318) — stays inside TEE
+  │  │
+  │  └── Sanitized signals → vsock channel → TEE boundary
+  │
+TEE BOUNDARY ─────────────────────────────────────────────────────────────
+  │
+  │  vsock proxy (AWS Nitro) or virtio-vsock (Intel TDX)
+  ▼
+External OTel Collector (outside TEE — boundary control point)
+  │  Applies final sanitization:
+  │    - Redaction processor: strip forbidden attribute patterns
+  │    - Transform processor: remove span attributes, keep TraceId only
+  │    - Filter processor: drop any records tagged as sensitive
+  │
+  ├── Sanitized logs → External Loki → Grafana (operations team)
+  ├── Aggregated metrics → External Prometheus → Grafana (operations team)
+  └── Trace IDs only → External Tempo → Grafana (trace correlation)</code></pre>
+
+  <h2>vsock Proxy Configuration (AWS Nitro)</h2>
+  <pre><code"># AWS Nitro Enclaves use vsock (virtual socket) for enclave-to-host communication
+# The vsock proxy relays OTel traffic from the in-TEE collector to the host
+
+# On the EC2 host (outside TEE):
+# vsock-proxy config: allow only OTel Collector port
+vsock-proxy \
+  --config vsock-proxy.yaml \
+  8080 \       # vsock CID:port inside enclave
+  otel-collector.internal:4317  # external OTel Collector endpoint
+
+# vsock-proxy.yaml — allowlist (deny all not listed)
+allowlist:
+  - {address: "otel-collector.internal.bizfirstai.com", port: 4317}
+  # Any other outbound connection from TEE is blocked
+
+# In-TEE OTel Collector sends to vsock:
+# otlp/external-boundary:
+#   endpoint: http://vsock://8080  (resolves through vsock-proxy)
+
+# This means the TEE cannot "accidentally" send telemetry to any other endpoint
+# — the vsock proxy enforces the single approved egress destination</code></pre>
+
+  <h2>External OTel Collector Sanitization</h2>
+  <pre><code"># otel-collector-external-config.yaml
+# This runs OUTSIDE the TEE — last sanitization layer before signals reach stores
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317   # Receives from TEE vsock proxy
+
+processors:
+  # Final redaction: strip any attribute that should not appear in external Loki/Tempo
+  redaction:
+    allow_all_keys: true
+    blocked_values_patterns:
+      - "bearer [a-zA-Z0-9._-]{20,}"   # Bearer tokens
+      - "[0-9]{16}"                       # Card numbers
+      - "[0-9]{3}-[0-9]{2}-[0-9]{4}"    # SSN pattern
+    blocked_keys:
+      - "form.*"           # Any key starting with "form"
+      - "calculation.*"    # Computation keys
+      - "applicant.*"      # Individual identifiers
+      - "result.*"         # Computation results
+
+  # Span sanitization: in TEE, spans crossing boundary lose all attributes
+  transform/tee-span-sanitize:
+    trace_statements:
+      - context: span
+        statements:
+          # Keep: span name (generic), TraceId (implicit), SpanId (implicit)
+          # Remove: all span attributes (may contain computation context)
+          - limit(attributes, 0, [])   # Remove all span attributes
+
+  # Log sanitization: verify no payload data leaked through
+  transform/tee-log-sanitize:
+    log_statements:
+      - context: log
+        statements:
+          # Keep known-safe attributes; drop anything not in allowlist
+          - keep_keys(attributes, ["executionId", "workflowType", "nodeType",
+              "tenantHash", "durationMs", "errorCode", "traceId", "spanId",
+              "stepCount", "severity"])
+
+  batch:
+    send_batch_size: 1000
+    timeout: 10s
+
+exporters:
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+  otlp/tempo:
+    endpoint: http://tempo:4317   # Receives trace IDs only (spans sanitized above)
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [redaction, transform/tee-log-sanitize, batch]
+      exporters: [loki]
+    metrics:
+      receivers: [otlp]
+      processors: [redaction, batch]
+      exporters: [prometheusremotewrite]
+    traces:
+      receivers: [otlp]
+      processors: [redaction, transform/tee-span-sanitize, batch]
+      exporters: [otlp/tempo]</code></pre>
+
+  <h2>What Crosses vs. What Is Blocked</h2>
+  <table>
+    <thead>
+      <tr><th>Telemetry Item</th><th>Crosses Boundary?</th><th>Action at Boundary</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Log record: executionId + workflowType + durationMs</td><td>Yes</td><td>Passed through after attribute allowlist check</td></tr>
+      <tr><td>Log record: "Calculation result: 1500000"</td><td>No</td><td>Blocked by redaction pattern match on numeric value in message</td></tr>
+      <tr><td>Metric: bizfirst_workflow_executions_total with tenant_hash label</td><td>Yes</td><td>Passed through; label is a hash, not plaintext tenant name</td></tr>
+      <tr><td>Metric: bizfirst_workflow_executions_total with amount_range label</td><td>No</td><td>Blocked by blocked_keys pattern "amount.*"</td></tr>
+      <tr><td>Trace: TraceId + SpanId (W3C trace context header)</td><td>Yes</td><td>TraceId in log correlation field; no span content</td></tr>
+      <tr><td>Span attribute: form.income = 95000</td><td>No</td><td>Blocked by transform/tee-span-sanitize: limit(attributes, 0, [])</td></tr>
+      <tr><td>Signed log batch (attestation-signed)</td><td>Yes</td><td>Passed through; signature stored as Loki label for audit queries</td></tr>
+      <tr><td>Exception message with stack trace + data value</td><td>No</td><td>Blocked in-TEE before reaching boundary; only error code emitted</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Defense in Depth: Sanitize at Both Layers</strong>
+    <p>Do not rely solely on the external OTel Collector for sanitization. The in-TEE code (BizFirstGO service + in-TEE OTel Collector) must also sanitize before emitting across the vsock channel. Defense in depth means the boundary is protected by two independent sanitization layers — a coding mistake in BizFirstGO logging will be caught by the in-TEE OTel Collector; a gap in the in-TEE processor will be caught by the external OTel Collector.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-in-tee-observability.html">&#8592; In-TEE Observability</a>
+    <a href="06-audit.html">Next: Audit Logging in TEE &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

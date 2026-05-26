@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Call Node — Guide47 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: MCP</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-mcp-server-registry.html"><i class="fa-solid fa-server"></i> MCP Server Registry</a>
+  <a href="02-tool-call-node.html" class="active"><i class="fa-solid fa-wrench"></i> Tool Call Node</a>
+  <a href="03-input-mapping.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Input Mapping</a>
+  <a href="04-tool-output.html"><i class="fa-solid fa-box-open"></i> Tool Output</a>
+  <a href="05-auth.html"><i class="fa-solid fa-shield-halved"></i> Authentication</a>
+  <a href="06-octopus-link.html"><i class="fa-solid fa-robot"></i> Octopus Integration</a>
+  <a href="07-custom-server.html"><i class="fa-solid fa-plug"></i> Custom MCP Server</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Tool Call Node</h1>
+    <p class="lead">The <code>MCPToolCallNode</code> — configuration, execution pattern, retry behaviour, and the <code>MCPToolCallExecutor</code> implementation that resolves servers, maps inputs, and captures tool results.</p>
+  </div>
+
+  <h2>Node Configuration</h2>
+  <pre><code class="language-json">{
+  "nodeType": "MCPToolCall",
+  "name": "analyzeDocument",
+  "config": {
+    "serverId": "bfai-document-ai",
+    "toolName": "analyze-document",
+    "inputMap": {
+      "documentUrl": "$output.fetchDocument.url",
+      "documentType": "$json.documentType",
+      "extractionSchema": {
+        "fields": ["invoiceNumber", "totalAmount", "currency", "vendorName"]
+      }
+    },
+    "timeoutSeconds": 60,
+    "retryCount": 2
+  }
+}</code></pre>
+
+  <h2>Configuration Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>serverId</code></td><td>string</td><td>Yes</td><td>Registered MCP server identifier from <code>IMCPServerRegistry</code></td></tr>
+      <tr><td><code>toolName</code></td><td>string</td><td>Yes</td><td>Tool name as declared in the server's tool catalog</td></tr>
+      <tr><td><code>inputMap</code></td><td>object</td><td>Yes</td><td>Parameter map — keys are tool parameter names, values are expressions or literals</td></tr>
+      <tr><td><code>timeoutSeconds</code></td><td>int</td><td>No</td><td>Per-call timeout in seconds (default: server-level timeout or 30s)</td></tr>
+      <tr><td><code>retryCount</code></td><td>int</td><td>No</td><td>Number of retries on transient failure (default: 1; 0 = no retry)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>MCPToolCallExecutor — Implementation Pattern</h2>
+  <pre><code class="language-csharp">public class MCPToolCallExecutor : BaseNodeExecutor&lt;MCPToolCallSettings&gt;
+{
+    private readonly IMCPServerRegistry _registry;
+    private readonly IMCPClientFactory _clientFactory;
+    private readonly IExpressionEvaluator _expr;
+
+    public MCPToolCallExecutor(
+        IMCPServerRegistry registry,
+        IMCPClientFactory clientFactory,
+        IExpressionEvaluator expr)
+    {
+        _registry = registry;
+        _clientFactory = clientFactory;
+        _expr = expr;
+    }
+
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext ctx,
+        MCPToolCallSettings settings,
+        CancellationToken ct)
+    {
+        // 1. Resolve server definition
+        if (!_registry.TryGetServer(settings.ServerId, out var serverDef))
+            return NodeExecutionResult.Failure(
+                $"MCP server '{settings.ServerId}' is not registered.");
+
+        // 2. Evaluate inputMap expressions against current context
+        var toolParameters = new Dictionary&lt;string, object?&gt;();
+        foreach (var (paramName, expression) in settings.InputMap)
+        {
+            toolParameters[paramName] = expression is string s
+                ? await _expr.EvaluateAsync(s, ctx, ct)
+                : expression;   // literal object/array
+        }
+
+        // 3. Create authenticated MCP client (credentials resolved inside factory)
+        await using var client = await _clientFactory.CreateClientAsync(serverDef, ct);
+
+        // 4. Execute tool call with timeout
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(settings.TimeoutSeconds ?? serverDef.TimeoutSeconds));
+
+        var callId = Guid.NewGuid().ToString("N");
+        var callResult = await client.CallToolAsync(
+            settings.ToolName,
+            toolParameters,
+            cts.Token);
+
+        // 5. Return structured output
+        return NodeExecutionResult.Success(new
+        {
+            result      = callResult.Content,
+            toolName    = settings.ToolName,
+            serverId    = settings.ServerId,
+            callId      = callId,
+            executedAt  = DateTimeOffset.UtcNow
+        });
+    }
+}</code></pre>
+
+  <h2>Retry Behaviour</h2>
+  <p>Retries apply only to transient failures: network errors, 429 Too Many Requests (with Retry-After respected), and 503/504 responses from the MCP server. Tool-level errors returned in the MCP response body (e.g., <code>isError: true</code>) are not retried — they surface immediately as node failure.</p>
+
+  <div class="callout callout-tip">
+    <strong>Tool name validation at design time:</strong> When a flow is saved in Flow Studio, the canvas fetches the tool catalog from <code>IMCPServerRegistry.GetToolsAsync(serverId)</code> and validates that <code>toolName</code> exists. If the server is unreachable at design time, the canvas shows a warning but still allows saving. Runtime resolution is authoritative.
+  </div>
+
+  <div class="callout callout-warning">
+    <strong>Timeout scope:</strong> <code>timeoutSeconds</code> covers the entire round-trip from client request to tool response. It does not include the time to resolve credentials or establish the transport connection. Set generous timeouts for AI inference tools that may take 10–30 seconds.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-mcp-server-registry.html">&#8592; MCP Server Registry</a>
+    <a href="03-input-mapping.html">Next: Input Mapping &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

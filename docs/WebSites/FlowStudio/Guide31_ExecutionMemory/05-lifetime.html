@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Lifetime — Execution Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Execution Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structure.html">Memory Structure</a>
+  <a href="02-node-outputs.html">nodeOutputs Map</a>
+  <a href="03-reading-upstream.html">Reading Upstream Output</a>
+  <a href="04-global-variables.html">Global Variables</a>
+  <a href="05-lifetime.html" class="active">Memory Lifetime</a>
+  <a href="06-serialization.html">HIL Serialization</a>
+  <a href="07-security.html">Memory Isolation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Memory Lifetime</h1>
+    <p class="lead">An <code>ExecutionMemory</code> instance is created at the start of every execution run and is garbage-collected when the run ends — or serialized and stored if the execution suspends for HIL. There is exactly one ExecutionMemory per execution at all times.</p>
+  </div>
+
+  <h2>Lifetime Phases</h2>
+  <div class="pipeline">
+    <div class="pipeline-step"><strong>Created</strong> — WorkflowExecutionService creates a new ExecutionMemory and populates Metadata (executionId, processId, tenantId, triggeredBy, startedAt)</div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step"><strong>Active</strong> — Execution engine runs nodes in topological order; each node reads from and writes to the shared ExecutionMemory</div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step"><strong>Terminal</strong> — Execution completes, fails, or suspends (HIL). Memory is either discarded or serialized.</div>
+  </div>
+
+  <h2>Terminal States</h2>
+  <table>
+    <thead><tr><th>Terminal State</th><th>What Happens to ExecutionMemory</th></tr></thead>
+    <tbody>
+      <tr><td>Completed (success)</td><td>Memory is discarded — garbage collected. nodeOutputs and globalVariables are gone.</td></tr>
+      <tr><td>Failed (unhandled error)</td><td>Memory is discarded. The error is recorded in the execution record but memory is not preserved.</td></tr>
+      <tr><td>Suspended (HIL)</td><td>Memory is serialized to JSON and stored in <code>Process_SuspendedExecutions.ExecutionMemoryJson</code>. It is restored when the execution resumes.</td></tr>
+      <tr><td>Cancelled (user or timeout)</td><td>Memory is discarded.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Creation — WorkflowExecutionService</h2>
+  <pre><code">// WorkflowExecutionService.cs (simplified)
+public async Task RunAsync(ExecutionRequest request, CancellationToken ct)
+{
+    var memory = new ExecutionMemory(new ExecutionMetadata
+    {
+        ExecutionId = request.ExecutionId,
+        ProcessId   = request.ProcessId,
+        TenantId    = request.TenantId,
+        TriggeredBy = request.TriggeredBy,
+        StartedAt   = DateTimeOffset.UtcNow
+    });
+
+    var ctx = new NodeExecutionContext(memory, /* other services */);
+
+    // Run all nodes in topological order — sharing the same memory instance
+    foreach (var node in _topologicalOrder)
+    {
+        await _nodeRunner.RunAsync(node, ctx, ct);
+    }
+    // After this loop, memory goes out of scope and is garbage collected
+}</code></pre>
+
+  <h2>HIL Suspension Lifecycle</h2>
+  <pre><code">// When a HIL node suspends the execution:
+// 1. ExecutionMemorySerializer serializes the full memory to JSON
+// 2. The JSON is saved to Process_SuspendedExecutions
+// 3. The in-memory ExecutionMemory object is discarded
+
+// On resume:
+// 1. WorkflowExecutionService reads ExecutionMemoryJson from Process_SuspendedExecutions
+// 2. ExecutionMemorySerializer.Deserialize() restores the ExecutionMemory
+// 3. Execution continues from the suspended node with the restored memory</code></pre>
+
+  <h2>Memory Growth</h2>
+  <p>ExecutionMemory grows as nodes run. For long workflows that produce large outputs at each step, memory consumption can become significant. Key guidelines:</p>
+  <table>
+    <thead><tr><th>Guideline</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Avoid storing large binary data in output</td><td>Store URLs or references to binary data (e.g., blob storage), not the binary itself</td></tr>
+      <tr><td>Avoid storing entire database result sets</td><td>Store IDs or aggregated summaries, not full rows</td></tr>
+      <tr><td>HIL serialization has a size limit</td><td>If ExecutionMemoryJson exceeds the configured limit (default 50MB), the serialization step will fail with a clear error</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>ExecutionMemory is not a cache.</strong> It is not designed for storage of large datasets across nodes. For large data transfers within a workflow, store the data in a temporary location (blob storage, temp database table) and pass a reference (URL, ID) through ExecutionMemory.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-global-variables.html">&#8592; Global Variables</a>
+    <a href="06-serialization.html">Next: HIL Serialization &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

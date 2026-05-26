@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security — AI Functions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>AI Functions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">AI Functions Overview</a>
+  <a href="01-what-are-ai-functions.html">What Are AI Functions</a>
+  <a href="02-writing-functions.html">Writing Functions</a>
+  <a href="03-sandbox.html">Sandbox and Execution</a>
+  <a href="04-inputs-outputs.html">Inputs and Outputs</a>
+  <a href="05-as-mcp-tools.html">As MCP Tools</a>
+  <a href="06-flow-studio-node.html">Flow Studio Node</a>
+  <a href="07-security.html" class="active">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Security</h1>
+    <p class="lead">AI Functions execute arbitrary JavaScript code stored in the database. This introduces unique security considerations — code injection into the database becomes code execution. This page covers sandbox controls, write access restrictions, code review requirements, and audit logging.</p>
+  </div>
+
+  <h2>Threat Model</h2>
+  <table>
+    <thead>
+      <tr><th>Threat</th><th>Mitigation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Malicious code injected into AI Function by an attacker with DB access</td><td>Sandbox blocks all I/O, network, and filesystem access; execution limits prevent DoS</td></tr>
+      <tr><td>Admin user creates a function that leaks data via return value</td><td>Review-required workflow for production functions; output logging and monitoring</td></tr>
+      <tr><td>Infinite loop / CPU exhaustion</td><td>Statement count limit + execution timeout kill the function</td></tr>
+      <tr><td>Memory exhaustion</td><td>Heap limit per sandbox instance; garbage collected after execution</td></tr>
+      <tr><td>Cross-tenant data access</td><td>Sandbox receives only explicitly injected context (tenantId, agentId, userId)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Write Access Controls</h2>
+  <p>Creating or modifying AI Functions requires the <code>OctopusFunctionAuthor</code> role. Activating a function for production requires an additional approval step:</p>
+  <pre><code>// Role requirements:
+// Create/update AI Function code:       OctopusFunctionAuthor
+// Approve function for production use:  OctopusFunctionApprover
+// View function list:                   OctopusAdmin (or above)
+
+// A function starts as IsActive = false (cannot be called)
+// An approver reviews the code and sets IsActive = true
+POST /api/octopus/ai-functions/{functionId}/approve
+Authorization: Bearer {approverToken}
+{
+  "approved": true,
+  "notes":    "Reviewed — pure calculation, no I/O. Safe to activate."
+}</code></pre>
+
+  <h2>Code Review Checklist</h2>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>What to Look For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>No eval() calls</td><td>Dynamic code execution could bypass sandbox restrictions</td></tr>
+      <tr><td>No attempt to access __proto__ or Object.prototype</td><td>Prototype pollution attacks</td></tr>
+      <tr><td>Return value does not contain sensitive data</td><td>Passwords, tokens, SSNs must not appear in return value</td></tr>
+      <tr><td>Input validation present</td><td>Missing validation can cause unexpected behaviour with LLM-generated inputs</td></tr>
+      <tr><td>No infinite loops</td><td>while(true), recursion without base case</td></tr>
+      <tr><td>Bounded array/string operations</td><td>Operations on unbounded input can cause timeout</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Audit Logging</h2>
+  <pre><code>// All AI Function executions are logged:
+{
+  "event":        "AIFunctionExecuted",
+  "functionId":   "fn_7f3a...",
+  "functionName": "calculate_leave_days",
+  "agentId":      "agent_hr_01",
+  "userId":       "user_mary_k",
+  "tenantId":     "tenant_acme",
+  "executedAt":   "2025-03-14T09:22:31Z",
+  "durationMs":   12,
+  "success":      true,
+  "errorMessage": null
+}
+
+// Failed executions include error details:
+{
+  "event":        "AIFunctionExecuted",
+  "functionName": "calculate_leave_days",
+  "success":      false,
+  "errorMessage": "Script execution timed out after 5000ms"
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Restrict Who Can Create AI Functions</strong>
+    <p>The <code>OctopusFunctionAuthor</code> role is effectively a code execution privilege. Grant it only to trusted developers and power users. In production environments, always require a separate approver (<code>OctopusFunctionApprover</code>) who was not involved in writing the function to review and activate it.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-flow-studio-node.html">&#8592; Flow Studio Node</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

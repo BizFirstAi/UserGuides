@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inputs and Outputs — AI Functions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>AI Functions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">AI Functions Overview</a>
+  <a href="01-what-are-ai-functions.html">What Are AI Functions</a>
+  <a href="02-writing-functions.html">Writing Functions</a>
+  <a href="03-sandbox.html">Sandbox and Execution</a>
+  <a href="04-inputs-outputs.html" class="active">Inputs and Outputs</a>
+  <a href="05-as-mcp-tools.html">As MCP Tools</a>
+  <a href="06-flow-studio-node.html">Flow Studio Node</a>
+  <a href="07-security.html">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Inputs and Outputs</h1>
+    <p class="lead">AI Functions receive a plain JavaScript object as input and return any JSON-serialisable value as output. Inputs come from the LLM tool call, the workflow node, or a direct API call. Outputs are returned as JSON and either injected into LLM context or passed to the next workflow node.</p>
+  </div>
+
+  <h2>Input Data Shape</h2>
+  <p>The input to <code>execute(input)</code> is a plain JavaScript object constructed from the caller's data:</p>
+  <table>
+    <thead>
+      <tr><th>Caller</th><th>Input Source</th><th>Example Input</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>LLM Tool Call</td><td>LLM-constructed JSON from the tool schema</td><td><code>{ employeeId: "EMP-42", year: 2025 }</code></td></tr>
+      <tr><td>Flow Studio Node</td><td>Node's input data (mapped from workflow variables)</td><td><code>{ amount: 1500, currency: "EUR" }</code></td></tr>
+      <tr><td>Direct API call</td><td>Request body JSON</td><td><code>{ text: "Hello world", targetLang: "fr" }</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Accessing Input Properties</h2>
+  <pre><code>function execute(input) {
+    // Always use optional chaining / defaults for safety
+    const employeeId  = input.employeeId  ?? null;
+    const year        = input.year        ?? new Date().getFullYear();
+    const options     = input.options     ?? {};
+    const includeHist = options.includeHistory ?? false;
+
+    if (!employeeId) {
+        return { error: "employeeId is required" };
+    }
+
+    // Nested input objects
+    const address = input.address ?? {};
+    const city    = address.city  ?? "Unknown";
+    const country = address.country ?? "Unknown";
+
+    // Arrays
+    const items   = input.items ?? [];
+    const firstItem = items[0] ?? null;
+
+    return { processed: true, employeeId, year };
+}</code></pre>
+
+  <h2>Output Types</h2>
+  <pre><code>// Object output (most common)
+return { result: 42, message: "Success", items: [] };
+
+// Array output
+return [{ id: 1, name: "Item A" }, { id: 2, name: "Item B" }];
+
+// Primitive output (string, number, boolean)
+return "formatted result";
+return 42.5;
+return true;
+
+// Null output (indicates no result / not found)
+return null;</code></pre>
+
+  <h2>Defining Input Schema for LLM Tool Registration</h2>
+  <p>When an AI Function is used as an MCP tool, its <code>InputSchema</code> JSON column provides the JSON Schema the LLM uses to construct valid tool call inputs:</p>
+  <pre><code>// InputSchema column content (stored in Octopus_AIFunctions)
+{
+  "type": "object",
+  "properties": {
+    "employeeId": {
+      "type":        "string",
+      "description": "The employee's unique identifier"
+    },
+    "year": {
+      "type":        "integer",
+      "description": "The calendar year (defaults to current year)"
+    }
+  },
+  "required": ["employeeId"]
+}
+
+// The function description serves as the tool description for the LLM.
+// Write it as: "Returns X. Call when Y. Does not Z."</code></pre>
+
+  <h2>Output to Workflow Node</h2>
+  <p>When used in a Flow Studio AI Function Node, the return value is mapped to the node's output variables, which flow into subsequent nodes:</p>
+  <pre><code>// Function returns:
+return {
+    approved:      true,
+    remainingDays: 7,
+    message:       "Leave approved. 7 days remaining."
+};
+
+// In Flow Studio, map these to workflow variables:
+// output.approved      → workflow.leaveApproved (bool)
+// output.remainingDays → workflow.daysLeft (number)
+// output.message       → workflow.approvalMessage (string)</code></pre>
+
+  <div class="page-nav">
+    <a href="03-sandbox.html">&#8592; Sandbox and Execution</a>
+    <a href="05-as-mcp-tools.html">Next: As MCP Tools &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

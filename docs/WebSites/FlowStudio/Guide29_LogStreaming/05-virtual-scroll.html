@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virtual Scrolling — Log Streaming | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Log Streaming</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-backend-emission.html">Backend Log Emission</a>
+  <a href="02-signalr-channel.html">SignalR Log Channel</a>
+  <a href="03-buffering.html">Log Buffering</a>
+  <a href="04-client-append.html">Client-Side Append</a>
+  <a href="05-virtual-scroll.html" class="active">Virtual Scrolling</a>
+  <a href="06-filtering.html">Client-Side Filtering</a>
+  <a href="07-historical-logs.html">Loading Historical Logs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Virtual Scrolling</h1>
+    <p class="lead">The Logs tab uses windowed (virtual) rendering — only the rows visible in the viewport are in the DOM. The logs array can grow to 100,000+ entries without degrading rendering performance, because React never renders more than a few hundred rows at a time.</p>
+  </div>
+
+  <h2>Why Virtual Scrolling</h2>
+  <p>Without virtual scrolling, a workflow that emits 50,000 log entries would create 50,000 DOM rows simultaneously — this would freeze the browser. With virtual scrolling, only the ~30 rows visible in the panel are rendered; the rest are calculated but not mounted.</p>
+
+  <h2>VirtualLogList Implementation</h2>
+  <pre><code">// VirtualLogList.tsx — uses @tanstack/react-virtual
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+interface VirtualLogListProps {
+    logs: LogEntry[];
+}
+
+export function VirtualLogList({ logs }: VirtualLogListProps) {
+    const containerRef = useRef&lt;HTMLDivElement&gt;(null);
+
+    const virtualizer = useVirtualizer({
+        count       : logs.length,
+        getScrollElement: () => containerRef.current,
+        estimateSize: () => 24,      // Estimated row height in px
+        overscan    : 10             // Render 10 extra rows above/below viewport
+    });
+
+    return (
+        &lt;div ref={containerRef} style={{ height: '100%', overflow: 'auto' }}&gt;
+            &lt;div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}&gt;
+                {virtualizer.getVirtualItems().map(item => (
+                    &lt;div
+                        key={logs[item.index].logId}
+                        style={{
+                            position : 'absolute',
+                            top      : `${item.start}px`,
+                            height   : `${item.size}px`,
+                            width    : '100%'
+                        }}
+                    &gt;
+                        &lt;LogRow entry={logs[item.index]} /&gt;
+                    &lt;/div&gt;
+                ))}
+            &lt;/div&gt;
+        &lt;/div&gt;
+    );
+}</code></pre>
+
+  <h2>Auto-Scroll to Bottom</h2>
+  <pre><code">// Auto-scroll to newest entries during live run
+useEffect(() => {
+    if (isLive &amp;&amp; !userHasScrolledUp) {
+        virtualizer.scrollToIndex(logs.length - 1, { behavior: 'smooth' });
+    }
+}, [logs.length]);</code></pre>
+
+  <div class="callout info">
+    <strong>Filtering happens before the virtualizer sees the data.</strong> The Logs tab filters the <code>logs</code> array in memory first (by level, nodeId, text search), then passes the filtered result to <code>VirtualLogList</code>. The virtualizer always receives a pre-filtered slice — this keeps rendering logic clean.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-client-append.html">&#8592; Client-Side Append</a>
+    <a href="06-filtering.html">Next: Client-Side Filtering &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

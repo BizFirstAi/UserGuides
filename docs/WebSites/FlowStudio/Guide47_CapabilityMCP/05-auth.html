@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Authentication — Guide47 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: MCP</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-mcp-server-registry.html"><i class="fa-solid fa-server"></i> MCP Server Registry</a>
+  <a href="02-tool-call-node.html"><i class="fa-solid fa-wrench"></i> Tool Call Node</a>
+  <a href="03-input-mapping.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Input Mapping</a>
+  <a href="04-tool-output.html"><i class="fa-solid fa-box-open"></i> Tool Output</a>
+  <a href="05-auth.html" class="active"><i class="fa-solid fa-shield-halved"></i> Authentication</a>
+  <a href="06-octopus-link.html"><i class="fa-solid fa-robot"></i> Octopus Integration</a>
+  <a href="07-custom-server.html"><i class="fa-solid fa-plug"></i> Custom MCP Server</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Authentication</h1>
+    <p class="lead">How MCP server credentials are stored, resolved, and injected at call time — using <code>ICredentialResolver</code> so no secret ever appears in workflow configuration.</p>
+  </div>
+
+  <h2>Credential Pattern</h2>
+  <p>Every MCP server definition carries a <code>credentialId</code> integer. At call time, <code>IMCPClientFactory</code> calls <code>ICredentialResolver.GetPasswordAsync(credentialId)</code> to retrieve the secret and injects it into the transport before the tool call is made. Workflow designers configure a <code>credentialId</code> — never a token or password.</p>
+
+  <h2>Supported Authentication Modes</h2>
+  <table>
+    <thead><tr><th>Mode</th><th>Transport</th><th>Credential Format</th><th>Header / Mechanism</th></tr></thead>
+    <tbody>
+      <tr><td>API Key</td><td>HTTP / SSE</td><td>Plain string</td><td><code>Authorization: Bearer &lt;key&gt;</code> or <code>X-Api-Key: &lt;key&gt;</code></td></tr>
+      <tr><td>OAuth 2.0 Client Credentials</td><td>HTTP / SSE</td><td>JSON: <code>{"clientId":"...","clientSecret":"...","tokenUrl":"..."}</code></td><td>Token fetched and cached; <code>Authorization: Bearer &lt;token&gt;</code></td></tr>
+      <tr><td>mTLS</td><td>HTTP / SSE</td><td>JSON: <code>{"cert":"---PEM---","key":"---PEM---"}</code></td><td>Client certificate presented on TLS handshake</td></tr>
+      <tr><td>None</td><td>StdIo</td><td>None (credentialId: 0)</td><td>Process-level isolation; no network auth needed</td></tr>
+    </tbody>
+  </table>
+
+  <h2>IMCPClientFactory — Credential Injection</h2>
+  <pre><code class="language-csharp">public class MCPClientFactory : IMCPClientFactory
+{
+    private readonly ICredentialResolver _credentials;
+
+    public MCPClientFactory(ICredentialResolver credentials)
+    {
+        _credentials = credentials;
+    }
+
+    public async Task&lt;IMCPClient&gt; CreateClientAsync(
+        IMCPServerDefinition server,
+        CancellationToken ct)
+    {
+        if (server.TransportType == MCPTransportType.StdIo)
+            return new StdIoMCPClient(server);
+
+        // Resolve secret — never stored in server definition
+        string secret = await _credentials.GetPasswordAsync(server.CredentialId, ct);
+
+        var authMode = DetectAuthMode(secret);
+        return authMode switch
+        {
+            AuthMode.OAuthClientCredentials => await BuildOAuthClientAsync(server, secret, ct),
+            AuthMode.mTLS                   => BuildMtlsClient(server, secret),
+            _                               => new HttpMCPClient(server, bearerToken: secret)
+        };
+    }
+
+    private static AuthMode DetectAuthMode(string secret)
+    {
+        if (!secret.TrimStart().StartsWith("{")) return AuthMode.ApiKey;
+        using var doc = JsonDocument.Parse(secret);
+        if (doc.RootElement.TryGetProperty("clientSecret", out _)) return AuthMode.OAuthClientCredentials;
+        if (doc.RootElement.TryGetProperty("cert", out _)) return AuthMode.mTLS;
+        return AuthMode.ApiKey;
+    }
+}</code></pre>
+
+  <h2>Registering Credentials</h2>
+  <pre><code class="language-http">// API Key:
+POST /api/credentials
+{
+  "name": "bfai-document-ai-key",
+  "type": "ApiKey",
+  "value": "sk-bfai-doc-xxxxxxxxxxxxxxxx"
+}
+// → returns credentialId: 201
+
+// OAuth 2.0:
+POST /api/credentials
+{
+  "name": "bfai-risk-ai-oauth",
+  "type": "ApiKey",
+  "value": "{\"clientId\":\"risk-client\",\"clientSecret\":\"...\",\"tokenUrl\":\"https://auth.bfai.internal/token\"}"
+}
+// → returns credentialId: 202</code></pre>
+
+  <h2>Credential Rotation</h2>
+  <p>To rotate a credential, update the secret value via <code>PUT /api/credentials/{id}</code>. No workflow changes are needed — all server definitions reference the credential by ID. The next tool call after rotation automatically uses the new secret.</p>
+
+  <div class="callout callout-warning">
+    <strong>OAuth token caching:</strong> OAuth access tokens are cached in-process for their declared <code>expires_in</code> duration minus a 60-second safety margin. If a token is rotated on the identity provider before it expires, use <code>POST /api/mcp/servers/{serverId}/flush-token</code> to invalidate the in-process cache immediately.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-tool-output.html">&#8592; Tool Output</a>
+    <a href="06-octopus-link.html">Next: Octopus Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

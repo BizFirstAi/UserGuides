@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registering Server Nodes — Guide48 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow vs. Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-workflow-nodes.html"><i class="fa-solid fa-bolt"></i> Standard Workflow Nodes</a>
+  <a href="02-server-nodes.html"><i class="fa-solid fa-server"></i> Server-Side Nodes</a>
+  <a href="03-when-to-use.html"><i class="fa-solid fa-scale-balanced"></i> Decision Framework</a>
+  <a href="04-server-node-contract.html"><i class="fa-solid fa-file-contract"></i> Server Node Contract</a>
+  <a href="05-registration.html" class="active"><i class="fa-solid fa-plug"></i> Registration</a>
+  <a href="06-calling-from-workflow.html"><i class="fa-solid fa-arrow-right-arrow-left"></i> Calling from Workflows</a>
+  <a href="07-examples.html"><i class="fa-solid fa-flask"></i> Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Registering Server Nodes</h1>
+    <p class="lead">How to register a server node as a hosted service in the DI container — and how the <code>ServerNodeRegistry</code> tracks availability for workflow dispatch.</p>
+  </div>
+
+  <h2>DI Registration</h2>
+  <pre><code class="language-csharp">// In Program.cs / Startup.cs:
+builder.Services.AddServerNode&lt;LocalEmbeddingServerNode&gt;(options =>
+{
+    options.NodeId      = "local-embedding";
+    options.DisplayName = "Local Text Embedding Server";
+    options.ModelPath   = builder.Configuration["AI:EmbeddingModelPath"]
+                          ?? "/opt/models/bge-small-en-v1.5.onnx";
+    options.MaxConcurrency = 4;
+});</code></pre>
+
+  <p><code>AddServerNode&lt;T&gt;</code> is an extension method that internally does:</p>
+  <pre><code class="language-csharp">public static IServiceCollection AddServerNode&lt;TServerNode&gt;(
+    this IServiceCollection services,
+    Action&lt;ServerNodeOptions&gt; configure)
+    where TServerNode : class, IServerNode
+{
+    services.Configure(configure);
+    services.AddSingleton&lt;TServerNode&gt;();
+    services.AddSingleton&lt;IServerNode&gt;(sp => sp.GetRequiredService&lt;TServerNode&gt;());
+    services.AddHostedService(sp => sp.GetRequiredService&lt;TServerNode&gt;());
+    return services;
+}</code></pre>
+
+  <h2>ServerNodeRegistry</h2>
+  <pre><code class="language-csharp">public interface IServerNodeRegistry
+{
+    void Register(string nodeId, IServerNode node);
+    void Deregister(string nodeId);
+    bool TryGetNode(string nodeId, out IServerNode? node);
+    IReadOnlyCollection&lt;string&gt; RegisteredNodeIds { get; }
+}</code></pre>
+
+  <p>The registry is a singleton <code>ConcurrentDictionary</code>-backed store. Server nodes call <code>Register</code> at the end of <code>StartAsync</code> and <code>Deregister</code> at the start of <code>StopAsync</code>. The <code>ServerNodeCallExecutor</code> uses <code>TryGetNode</code> to route workflow calls.</p>
+
+  <h2>Configuration Pattern</h2>
+  <pre><code class="language-json">// appsettings.json:
+{
+  "ServerNodes": {
+    "LocalEmbedding": {
+      "ModelPath":       "/opt/models/bge-small-en-v1.5.onnx",
+      "MaxConcurrency":  4,
+      "WarmupOnStart":   true
+    }
+  }
+}</code></pre>
+  <pre><code class="language-csharp">// Options class:
+public class LocalEmbeddingOptions
+{
+    public string ModelPath      { get; set; } = string.Empty;
+    public int    MaxConcurrency { get; set; } = 2;
+    public bool   WarmupOnStart  { get; set; } = true;
+}
+
+// Registration with configuration binding:
+builder.Services.AddServerNode&lt;LocalEmbeddingServerNode&gt;(options =>
+    builder.Configuration.GetSection("ServerNodes:LocalEmbedding")
+                         .Bind(options));</code></pre>
+
+  <h2>Health Endpoint</h2>
+  <p>Once registered, each server node is automatically surfaced in the platform health check:</p>
+  <pre><code class="language-http">GET /health/server-nodes
+{
+  "nodes": [
+    {
+      "nodeId":   "local-embedding",
+      "isReady":  true,
+      "status":   "healthy",
+      "checkedAt": "2026-05-25T10:00:00Z",
+      "diagnostics": {
+        "modelLoaded": true,
+        "activeRequests": 2,
+        "queueDepth": 0
+      }
+    }
+  ]
+}
+
+GET /health/server-nodes/local-embedding
+{ "nodeId": "local-embedding", "isReady": true, "status": "healthy", ... }</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Startup ordering:</strong> If a server node depends on another service (e.g., a configuration service that loads the model path from a database), use <code>IHostedService</code> startup ordering via <code>builder.Services.AddHostedService</code> registration order. Services registered earlier start earlier. The server node that depends on the config service should be registered after it.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-server-node-contract.html">&#8592; Server Node Contract</a>
+    <a href="06-calling-from-workflow.html">Next: Calling from Workflows &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

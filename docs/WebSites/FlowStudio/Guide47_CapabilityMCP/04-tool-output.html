@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Output — Guide47 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: MCP</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-mcp-server-registry.html"><i class="fa-solid fa-server"></i> MCP Server Registry</a>
+  <a href="02-tool-call-node.html"><i class="fa-solid fa-wrench"></i> Tool Call Node</a>
+  <a href="03-input-mapping.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Input Mapping</a>
+  <a href="04-tool-output.html" class="active"><i class="fa-solid fa-box-open"></i> Tool Output</a>
+  <a href="05-auth.html"><i class="fa-solid fa-shield-halved"></i> Authentication</a>
+  <a href="06-octopus-link.html"><i class="fa-solid fa-robot"></i> Octopus Integration</a>
+  <a href="07-custom-server.html"><i class="fa-solid fa-plug"></i> Custom MCP Server</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Tool Output</h1>
+    <p class="lead">How MCP tool results are structured as node output — the output envelope, accessing <code>result</code> fields in downstream expressions, and handling tool-level errors.</p>
+  </div>
+
+  <h2>Output Envelope</h2>
+  <p>Every successful <code>MCPToolCallNode</code> execution produces a standard output envelope stored at <code>$output.{nodeId}</code>:</p>
+  <pre><code class="language-json">{
+  "result": { ... },
+  "toolName": "analyze-document",
+  "serverId": "bfai-document-ai",
+  "callId": "a1b2c3d4e5f6",
+  "executedAt": "2026-05-25T10:05:30Z"
+}</code></pre>
+
+  <h2>Output Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>result</code></td><td>object | array | string</td><td>Tool-specific payload — structure defined by the MCP tool's output schema</td></tr>
+      <tr><td><code>toolName</code></td><td>string</td><td>Name of the tool that was called</td></tr>
+      <tr><td><code>serverId</code></td><td>string</td><td>MCP server the tool was called on</td></tr>
+      <tr><td><code>callId</code></td><td>string</td><td>Unique identifier for this tool call (for correlation/debugging)</td></tr>
+      <tr><td><code>executedAt</code></td><td>ISO 8601 string</td><td>UTC timestamp when the tool call completed</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Example: Document Analysis Result</h2>
+  <pre><code class="language-json">// $output.analyzeDocument:
+{
+  "result": {
+    "documentClass": "invoice",
+    "confidence": 0.97,
+    "entities": {
+      "invoiceNumber": "INV-2026-00445",
+      "totalAmount": 12500.00,
+      "currency": "GBP",
+      "vendorName": "Acme Supplies Ltd"
+    },
+    "pageCount": 3
+  },
+  "toolName": "analyze-document",
+  "serverId": "bfai-document-ai",
+  "callId": "a1b2c3d4e5f6",
+  "executedAt": "2026-05-25T10:05:30Z"
+}</code></pre>
+
+  <h2>Accessing Result Fields in Downstream Nodes</h2>
+  <pre><code class="language-javascript">// Access the full result object:
+$output.analyzeDocument.result
+
+// Access nested fields:
+$output.analyzeDocument.result.entities.invoiceNumber
+$output.analyzeDocument.result.confidence
+$output.analyzeDocument.result.documentClass
+
+// Use in a condition node:
+"$output.analyzeDocument.result.confidence > 0.9 && $output.analyzeDocument.result.documentClass === 'invoice'"
+
+// Store in an entity:
+"invoiceNumber": "$output.analyzeDocument.result.entities.invoiceNumber"
+"vendorName":    "$output.analyzeDocument.result.entities.vendorName"
+
+// Use in a message node:
+"Document analyzed: {{$output.analyzeDocument.result.documentClass}} with {{$output.analyzeDocument.result.confidence * 100}}% confidence"</code></pre>
+
+  <h2>Tool-Level Errors</h2>
+  <p>MCP tools can return errors in two ways. The first is a transport-level error (HTTP 4xx/5xx, network timeout), which the executor handles as a node failure with retry if configured. The second is a tool-level error — the server returns HTTP 200 but the MCP response contains <code>isError: true</code>:</p>
+  <pre><code class="language-json">// MCP error response (HTTP 200, but isError: true):
+{
+  "content": [{ "type": "text", "text": "Document format not supported: application/x-123" }],
+  "isError": true
+}</code></pre>
+  <p>Tool-level errors are not retried. The node fails immediately, and the error text is available in the standard node error output for condition routing or logging.</p>
+
+  <div class="callout callout-tip">
+    <strong>Array results:</strong> Some tools return <code>result</code> as an array (e.g., a batch entity extractor returning one result per document). Use <code>$output.analyzeDocuments.result[0].entities</code> or pipe the result through a <code>ForEachNode</code> to process each item.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-input-mapping.html">&#8592; Input Mapping</a>
+    <a href="05-auth.html">Next: Authentication &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

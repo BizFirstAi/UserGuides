@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flow Studio Node — AI Functions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>AI Functions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">AI Functions Overview</a>
+  <a href="01-what-are-ai-functions.html">What Are AI Functions</a>
+  <a href="02-writing-functions.html">Writing Functions</a>
+  <a href="03-sandbox.html">Sandbox and Execution</a>
+  <a href="04-inputs-outputs.html">Inputs and Outputs</a>
+  <a href="05-as-mcp-tools.html">As MCP Tools</a>
+  <a href="06-flow-studio-node.html" class="active">Flow Studio Node</a>
+  <a href="07-security.html">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Flow Studio Node</h1>
+    <p class="lead">The AI Function Node in Flow Studio lets workflow designers call an AI Function as a processing step within any workflow. Input data is mapped from workflow variables into the function; output data is mapped back into workflow variables for downstream nodes.</p>
+  </div>
+
+  <h2>AI Function Node in Flow Studio</h2>
+  <p>Drag the "AI Function" node from the node palette onto the workflow canvas. Configure it by selecting an AI Function from the dropdown and mapping input/output variables:</p>
+  <pre><code>// AI Function Node configuration (stored as workflow node definition)
+{
+  "nodeType":     "AIFunction",
+  "functionName": "calculate_leave_days",
+  "inputMapping": {
+    "startDate":    "workflow.leaveStartDate",
+    "endDate":      "workflow.leaveEndDate",
+    "annualEntitlement": "workflow.employee.leaveEntitlement",
+    "usedDays":     "workflow.employee.leaveUsed"
+  },
+  "outputMapping": {
+    "approved":      "workflow.leaveApproved",
+    "remainingDays": "workflow.daysAfterLeave",
+    "message":       "workflow.approvalMessage"
+  }
+}</code></pre>
+
+  <h2>AIFunctionNodeExecutor</h2>
+  <pre><code>// Flow Studio execution node for AI Functions
+public class AIFunctionNodeExecutor : BaseNodeExecutor&lt;AIFunctionNodeSettings&gt;
+{
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteInternalAsync(
+        NodeDataContext context,
+        CancellationToken ct)
+    {
+        var settings = GetSettings(context);
+
+        // Resolve the named function from the store
+        var function = await _store.GetByNameAsync(
+            settings.FunctionName,
+            context.TenantId, ct)
+            ?? throw new ConfigurationException($"AI Function '{settings.FunctionName}' not found");
+
+        // Build input object from workflow variables
+        var inputDict = new Dictionary&lt;string, object?&gt;();
+        foreach (var (funcParam, workflowVar) in settings.InputMapping)
+        {
+            inputDict[funcParam] = context.GetVariable(workflowVar);
+        }
+        var inputJson = JsonSerializer.SerializeToElement(inputDict);
+
+        // Execute the function
+        var result = await _runtime.ExecuteAsync(function, inputJson, new AIFunctionContext
+        {
+            TenantId = context.TenantId,
+            AgentId  = context.AgentId ?? Guid.Empty,
+            UserId   = context.UserId ?? string.Empty
+        }, ct);
+
+        // Map outputs back to workflow variables
+        foreach (var (funcOutput, workflowVar) in settings.OutputMapping)
+        {
+            if (result.TryGetProperty(funcOutput, out var value))
+                context.SetVariable(workflowVar, value);
+        }
+
+        return NodeExecutionResult.Success();
+    }
+}</code></pre>
+
+  <h2>Comparison: AI Function Node vs. AI Agent Node</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>AI Function Node</th><th>AI Agent Node</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>What executes</td><td>JavaScript in sandbox</td><td>Full LLM + tool call loop</td></tr>
+      <tr><td>Determinism</td><td>Fully deterministic</td><td>Non-deterministic (LLM output varies)</td></tr>
+      <tr><td>Cost</td><td>Zero LLM API cost</td><td>LLM API cost per call</td></tr>
+      <tr><td>Latency</td><td>Milliseconds</td><td>Seconds (LLM + tools)</td></tr>
+      <tr><td>Best for</td><td>Calculations, transformations, validation</td><td>Natural language processing, decision-making, multi-step tasks</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Error Handling in Workflow</h2>
+  <p>If an AI Function returns an error object or throws a runtime exception, the node sets its status to <code>Faulted</code>. Workflow designers can add error branches from the AI Function node to handle failure gracefully:</p>
+  <pre><code>// Function returns structured error:
+return { error: "invalid_input", message: "startDate must be before endDate" };
+
+// Node detects error key → sets node to Faulted state
+// Workflow designer routes the "Error" branch to a notification step</code></pre>
+
+  <div class="page-nav">
+    <a href="05-as-mcp-tools.html">&#8592; As MCP Tools</a>
+    <a href="07-security.html">Next: Security &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

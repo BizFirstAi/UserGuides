@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>In-TEE Observability — TEE | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>TEE Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">TEE Observability Overview</a>
+  <a href="01-tee-constraints.html">TEE Observability Constraints</a>
+  <a href="02-allowed-telemetry.html">Allowed Telemetry</a>
+  <a href="03-attestation-logs.html">Attestation-Based Log Integrity</a>
+  <a href="04-in-tee-observability.html" class="active">In-TEE Observability</a>
+  <a href="05-boundary-crossing.html">Telemetry at the TEE Boundary</a>
+  <a href="06-audit.html">Audit Logging in TEE</a>
+  <a href="07-incident-response.html">Incident Response in TEE</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>In-TEE Observability</h1>
+    <p class="lead">Some observability signals are too sensitive to leave the TEE at all — full distributed trace spans, detailed exception messages, internal node computation logs. These can be stored inside the TEE itself using in-TEE instances of Loki and Tempo. Access is restricted to attested parties, but the signals are available for post-incident analysis within the security boundary.</p>
+  </div>
+
+  <h2>In-TEE vs. External Observability Architecture</h2>
+  <table>
+    <thead>
+      <tr><th>Signal</th><th>External (crosses TEE boundary)</th><th>In-TEE (stays inside TEE)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Metrics</td><td>Aggregated counts, durations, error rates — label-safe only</td><td>Full per-execution metrics with computation context (no boundary crossed)</td></tr>
+      <tr><td>Logs</td><td>Sanitized operational logs (execution IDs, timing, error codes)</td><td>Full structured logs including error details, node state transitions</td></tr>
+      <tr><td>Traces</td><td>TraceId + SpanId only (for correlation)</td><td>Full span content: attributes, events, stack traces</td></tr>
+      <tr><td>Grafana access</td><td>Standard Grafana outside TEE: sanitized signals only</td><td>In-TEE Grafana (attested access only): full signals available</td></tr>
+    </tbody>
+  </table>
+
+  <h2>In-TEE Loki Configuration</h2>
+  <pre><code"># Loki running inside the TEE — receives full logs including sensitive context
+# This Loki does NOT have an OTel Collector in front of it for sanitization
+# because the data never leaves the TEE
+
+# loki-in-tee-config.yaml
+auth_enabled: false   # Single-tenant inside TEE; TEE boundary is the auth
+
+server:
+  http_listen_port: 3101    # Different port from external Loki
+  grpc_listen_port: 9096
+
+common:
+  storage:
+    filesystem:
+      chunks_directory: /tee/loki/chunks    # TEE-encrypted filesystem
+      rules_directory: /tee/loki/rules
+  replication_factor: 1   # No replication needed; TEE provides durability
+
+limits_config:
+  retention_period: 7d    # Short retention — in-TEE storage is expensive
+  ingestion_rate_mb: 20   # Lower limits; TEE has constrained memory
+
+# OTel Collector inside TEE sends full (unsanitized) logs here
+# The external OTel Collector (outside TEE) receives only sanitized logs</code></pre>
+
+  <h2>In-TEE Tempo Configuration</h2>
+  <pre><code"># Tempo running inside the TEE — receives full trace spans
+# Span attributes may contain computation details (allowed inside TEE)
+
+# tempo-in-tee-config.yaml
+server:
+  http_listen_port: 3201
+  grpc_listen_port: 9097
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4318   # Different port from external Tempo
+
+ingester:
+  max_block_duration: 1h
+
+compactor:
+  compaction:
+    block_retention: 72h   # 3-day retention; TEE storage constrained
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tee/tempo/blocks   # TEE-encrypted filesystem
+    wal:
+      path: /tee/tempo/wal
+
+# In-TEE Grafana (attested access) connects to this Tempo
+# Full span attributes available for debugging inside the TEE security boundary</code></pre>
+
+  <h2>Dual OTel Collector Pattern</h2>
+  <pre><code"># Two OTel Collectors: one inside TEE, one outside
+
+# ── INSIDE TEE: otel-collector-internal-config.yaml ──────────────────────
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317   # BizFirstGO sends to this collector first
+
+processors:
+  batch:
+    send_batch_size: 500
+    timeout: 5s
+
+exporters:
+  # 1. Full (unsanitized) signals to in-TEE stores
+  loki/internal:
+    endpoint: http://loki-internal:3101/loki/api/v1/push
+  otlp/tempo-internal:
+    endpoint: http://tempo-internal:4318
+
+  # 2. Sanitized signals to external OTel Collector (crosses TEE boundary)
+  # The sanitization happens in the processors of the EXTERNAL collector
+  otlp/external-boundary:
+    endpoint: http://vsock-proxy:4319   # TEE vsock proxy to external collector
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [loki/internal, otlp/external-boundary]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo-internal, otlp/external-boundary]
+
+# ── OUTSIDE TEE: otel-collector-external-config.yaml ─────────────────────
+# Receives from TEE boundary, applies sanitization, forwards to external Loki/Tempo
+processors:
+  redaction:
+    # Strip any attributes that should not cross the boundary
+    blocked_values_patterns:
+      - ".*income.*"
+      - ".*applicant.*"
+      - ".*result.*"
+  transform/sanitize-spans:
+    log_statements:
+      - context: span
+        statements:
+          # Remove span attributes; keep only trace/span IDs in correlation logs
+          - delete_key(attributes, "form.field.*")
+          - delete_key(attributes, "calculation.*")</code></pre>
+
+  <h2>In-TEE Observability Limitations</h2>
+  <table>
+    <thead>
+      <tr><th>Limitation</th><th>Why</th><th>Workaround</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>No live Grafana access from outside TEE</td><td>In-TEE Grafana is only accessible via attested connection; standard browser cannot connect</td><td>Use attested client (custom CLI tool with TEE attestation verification) for in-TEE Grafana access</td></tr>
+      <tr><td>Constrained memory for observability</td><td>TEE memory is encrypted and limited (typically 512MB–4GB depending on platform)</td><td>Short retention (72h), aggressive sampling for in-TEE signals</td></tr>
+      <tr><td>No persistent storage across TEE restarts</td><td>TEE memory is cleared on restart; encrypted filesystem may not persist depending on config</td><td>Flush critical audit logs to signed external batch before planned restarts</td></tr>
+      <tr><td>No ad-hoc log queries from outside</td><td>In-TEE Loki is not accessible from outside the TEE boundary</td><td>Define canned queries as part of TEE deployment; run via attested query tool</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>In-TEE Observability Is for Post-Incident Analysis, Not Real-Time Monitoring</strong>
+    <p>Use external (sanitized) observability for real-time dashboards and alerting — it crosses the boundary and reaches Grafana without delay. Use in-TEE observability for post-incident analysis when you need the full signal detail that cannot leave the TEE. Design the workflow: alert fires on external signals → team accesses in-TEE observability via attested channel → root cause identified inside the TEE boundary.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-attestation-logs.html">&#8592; Attestation-Based Log Integrity</a>
+    <a href="05-boundary-crossing.html">Next: Telemetry at the TEE Boundary &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

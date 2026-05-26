@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Node Contract — Guide48 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow vs. Server Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-workflow-nodes.html"><i class="fa-solid fa-bolt"></i> Standard Workflow Nodes</a>
+  <a href="02-server-nodes.html"><i class="fa-solid fa-server"></i> Server-Side Nodes</a>
+  <a href="03-when-to-use.html"><i class="fa-solid fa-scale-balanced"></i> Decision Framework</a>
+  <a href="04-server-node-contract.html" class="active"><i class="fa-solid fa-file-contract"></i> Server Node Contract</a>
+  <a href="05-registration.html"><i class="fa-solid fa-plug"></i> Registration</a>
+  <a href="06-calling-from-workflow.html"><i class="fa-solid fa-arrow-right-arrow-left"></i> Calling from Workflows</a>
+  <a href="07-examples.html"><i class="fa-solid fa-flask"></i> Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Server Node Contract</h1>
+    <p class="lead">The <code>IServerNode</code> interface — lifecycle methods <code>StartAsync</code>, <code>StopAsync</code>, and <code>HandleRequestAsync</code> — and the <code>ServerNodeRequest</code> / <code>ServerNodeResponse</code> envelope types.</p>
+  </div>
+
+  <h2>IServerNode Interface</h2>
+  <pre><code class="language-csharp">public interface IServerNode : IHostedService
+{
+    string NodeId { get; }
+    string DisplayName { get; }
+
+    Task&lt;ServerNodeResponse&gt; HandleRequestAsync(
+        ServerNodeRequest request,
+        CancellationToken ct);
+
+    ServerNodeHealth GetHealth();
+}
+
+public record ServerNodeRequest
+{
+    public string ExecutionId  { get; init; } = default!;
+    public string TenantId     { get; init; } = default!;
+    public string NodeId       { get; init; } = default!;
+    public JsonDocument Payload { get; init; } = default!;
+}
+
+public record ServerNodeResponse
+{
+    public bool Success        { get; init; }
+    public JsonDocument? Data  { get; init; }
+    public string? ErrorMessage { get; init; }
+}
+
+public record ServerNodeHealth
+{
+    public bool IsReady        { get; init; }
+    public string Status       { get; init; } = "unknown";
+    public DateTimeOffset CheckedAt { get; init; }
+    public Dictionary&lt;string, object&gt; Diagnostics { get; init; } = [];
+}</code></pre>
+
+  <h2>Lifecycle Methods</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Called By</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>StartAsync(ct)</code></td><td>ASP.NET Core host at startup</td><td>Load model, open connections, warm up resources, register with <code>ServerNodeRegistry</code></td></tr>
+      <tr><td><code>HandleRequestAsync(req, ct)</code></td><td><code>ServerNodeCallExecutor</code> during workflow execution</td><td>Process one workflow node call — must be thread-safe</td></tr>
+      <tr><td><code>StopAsync(ct)</code></td><td>ASP.NET Core host on shutdown</td><td>Drain in-flight requests, close connections, release resources</td></tr>
+      <tr><td><code>GetHealth()</code></td><td>Health check endpoint <code>GET /health/server-nodes/{nodeId}</code></td><td>Report readiness status and diagnostics</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Base Class Implementation</h2>
+  <pre><code class="language-csharp">public abstract class BaseServerNode : IServerNode
+{
+    private readonly IServerNodeRegistry _registry;
+    private readonly ILogger _logger;
+
+    protected BaseServerNode(IServerNodeRegistry registry, ILogger logger)
+    {
+        _registry = registry;
+        _logger   = logger;
+    }
+
+    public abstract string NodeId       { get; }
+    public abstract string DisplayName  { get; }
+
+    public virtual async Task StartAsync(CancellationToken ct)
+    {
+        _logger.LogInformation("ServerNode {NodeId} starting...", NodeId);
+        await InitialiseAsync(ct);
+        _registry.Register(NodeId, this);
+        _logger.LogInformation("ServerNode {NodeId} ready.", NodeId);
+    }
+
+    public virtual async Task StopAsync(CancellationToken ct)
+    {
+        _logger.LogInformation("ServerNode {NodeId} stopping...", NodeId);
+        _registry.Deregister(NodeId);
+        await DisposeResourcesAsync(ct);
+    }
+
+    protected abstract Task InitialiseAsync(CancellationToken ct);
+    protected abstract Task DisposeResourcesAsync(CancellationToken ct);
+
+    public abstract Task&lt;ServerNodeResponse&gt; HandleRequestAsync(
+        ServerNodeRequest request, CancellationToken ct);
+
+    public abstract ServerNodeHealth GetHealth();
+}</code></pre>
+
+  <div class="callout callout-warning">
+    <strong>Register after initialisation, not before:</strong> Always call <code>_registry.Register(NodeId, this)</code> at the end of <code>StartAsync</code>, after all resources are loaded. If the node registers before it is ready, workflow calls may arrive before the model is loaded or connections are established.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-when-to-use.html">&#8592; Decision Framework</a>
+    <a href="05-registration.html">Next: Registration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

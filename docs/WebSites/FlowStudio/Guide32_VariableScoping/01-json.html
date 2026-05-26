@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>$json — Variable Scoping | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Variable Scoping</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-json.html" class="active">$json — Trigger Input</a>
+  <a href="02-input.html">$input — Upstream Node</a>
+  <a href="03-output.html">$output.{nodeId} — Named Node</a>
+  <a href="04-var.html">$var.{name} — Workflow Variables</a>
+  <a href="05-global.html">$global — Tenant Globals</a>
+  <a href="06-context.html">$context — Execution Context</a>
+  <a href="07-availability.html">Availability Table</a>
+  <a href="08-mistakes.html">Common Mistakes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>$json — Trigger Input</h1>
+    <p class="lead"><code>$json</code> is the raw trigger payload — the data that initiated the workflow execution. It is always available at every node in the workflow, regardless of graph position. It never changes during execution.</p>
+  </div>
+
+  <h2>What $json Contains</h2>
+  <p><code>$json</code> maps to the <code>TriggerPayload</code> that was deserialized at execution start. Its contents depend on the trigger type:</p>
+  <table>
+    <thead><tr><th>Trigger Type</th><th>$json Contents</th></tr></thead>
+    <tbody>
+      <tr><td>HTTP Webhook</td><td>Parsed request body (JSON), plus <code>$json.headers</code> and <code>$json.query</code></td></tr>
+      <tr><td>Scheduled (cron)</td><td><code>{ "scheduledAt": "...", "jobName": "..." }</code></td></tr>
+      <tr><td>Event Bus trigger</td><td>The full event payload published to the bus</td></tr>
+      <tr><td>Manual trigger (UI)</td><td>Form submission data from the trigger form</td></tr>
+      <tr><td>Sub-workflow trigger</td><td>Output of the parent node that invoked the sub-workflow</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Expression Examples</h2>
+  <pre><code">// Accessing a nested field from an HTTP trigger body
+$json.body.customer.id
+$json.body.order.lineItems[0].sku
+$json.body.order.totalAmount
+
+// Accessing query parameters (HTTP trigger)
+$json.query.page
+$json.query.limit
+
+// Accessing a request header (HTTP trigger)
+$json.headers["x-api-key"]
+$json.headers["content-type"]
+
+// Accessing the full body as a string (for logging or passthrough)
+$json.rawBody</code></pre>
+
+  <h2>Usage in Node Configuration</h2>
+  <pre><code">// Example: HttpRequestNode config — use $json to pass customer ID to the URL
+{
+  "url": "https://api.example.com/customers/{{$json.body.customerId}}",
+  "method": "GET"
+}
+
+// Example: Condition node — branch based on trigger payload field
+$json.body.requestType == "urgent"
+
+// Example: SetVariable node — initialize a variable from the trigger
+{
+  "variableName": "orderId",
+  "value": "$json.body.order.id"
+}</code></pre>
+
+  <h2>$json is Read-Only and Immutable</h2>
+  <p>The trigger payload is set once at execution start and never modified. No node can overwrite <code>$json</code>. This ensures that the original trigger data is always accessible throughout the workflow, regardless of how many nodes have processed or transformed it.</p>
+
+  <h2>Null Safety</h2>
+  <p>If the trigger payload does not contain a field referenced by a <code>$json</code> expression, the expression evaluates to <code>null</code>, not an error. Always guard against null when the presence of a field is not guaranteed.</p>
+  <pre><code">// Safe null check in a condition expression
+$json.body.priority != null && $json.body.priority == "high"
+
+// Use nullish coalescing in supported expression engines
+$json.body.region ?? "us-east-1"</code></pre>
+
+  <div class="callout info">
+    <strong>$json is always the original trigger payload — it is not the output of the trigger node.</strong> Even if the first node in your workflow transforms the trigger data significantly, <code>$json</code> still refers to the original payload at every subsequent node. To reference the transformed data, use <code>$output.{nodeId}</code> for the transform node's output.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-input.html">Next: $input — Upstream Node &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

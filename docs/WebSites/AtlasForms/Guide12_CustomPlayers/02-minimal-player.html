@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minimal Custom Player — Custom Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Custom Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Player Architecture</a>
+  <a href="02-minimal-player.html" class="active">Minimal Custom Player</a>
+  <a href="03-section-cards.html">Section Cards Layout</a>
+  <a href="04-form-engine.html">Using FormEngine Directly</a>
+  <a href="05-registering-player.html">Registering a Player</a>
+  <a href="06-schema-override.html">Per-Form Player Override</a>
+  <a href="07-mobile-player.html">Mobile Player Example</a>
+  <a href="08-state-hooks.html">Using State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Minimal Custom Player</h1>
+    <p class="lead">The minimal custom player is the simplest possible implementation: a <code>FormStateProvider</code> wrapping a flat list of <code>ControlRenderer</code> calls and a submit button. This is the starting template for all custom players.</p>
+  </div>
+
+  <h2>Complete Minimal Player</h2>
+  <pre><code>// src/players/MinimalPlayer.tsx
+import React, { useMemo } from 'react';
+import { FormStateProvider }  from '@atlas-forms/state-react';
+import { ControlRenderer,
+         useAtlasForm }       from '@atlas-forms/player-components-react';
+import { FormEngine }         from '@atlas-forms/form-engine-js';
+import { parseSchema }        from '@atlas-forms/schema-js';
+import type { FormSchema,
+              FormMode }      from '@atlas-forms/types-js';
+
+interface MinimalPlayerProps {
+  schema:          FormSchema | object;
+  initialValues?:  Record&lt;string, any&gt;;
+  mode?:           FormMode;
+  onSubmit:        (values: Record&lt;string, any&gt;) =&gt; Promise&lt;void&gt;;
+}
+
+// Inner component — must be inside FormStateProvider
+const MinimalPlayerInner: React.FC&lt;{ onSubmit: (v: any) =&gt; Promise&lt;void&gt; }&gt; = ({ onSubmit }) =&gt; {
+  const { values, errors, isValid, isSubmitting, submitForm, engine } = useAtlasForm();
+  const schema  = engine.getSchema();
+  const controls = schema.controls ?? [];
+
+  const handleSubmit = async (e: React.FormEvent) =&gt; {
+    e.preventDefault();
+    await submitForm();
+    if (isValid) {
+      await onSubmit(values);
+    }
+  };
+
+  return (
+    &lt;form onSubmit={handleSubmit}&gt;
+      {controls.map(control =&gt; (
+        &lt;ControlRenderer key={control.id} control={control} /&gt;
+      ))}
+
+      {Object.keys(errors).length &gt; 0 &amp;&amp; (
+        &lt;div className="error-summary"&gt;
+          {Object.values(errors).map((msg, i) =&gt; (
+            &lt;p key={i} className="error"&gt;{msg}&lt;/p&gt;
+          ))}
+        &lt;/div&gt;
+      )}
+
+      &lt;button type="submit" disabled={isSubmitting}&gt;
+        {isSubmitting ? 'Submitting...' : 'Submit'}
+      &lt;/button&gt;
+    &lt;/form&gt;
+  );
+};
+
+// Outer component — creates FormEngine and wraps in FormStateProvider
+export const MinimalPlayer: React.FC&lt;MinimalPlayerProps&gt; = ({
+  schema: rawSchema,
+  initialValues = {},
+  mode = 'edit',
+  onSubmit
+}) =&gt; {
+  const schema = useMemo(() =&gt;
+    rawSchema instanceof Object &amp;&amp; 'controls' in rawSchema
+      ? rawSchema as FormSchema
+      : parseSchema(rawSchema as object),
+    [rawSchema]
+  );
+
+  const engine = useMemo(() =&gt;
+    new FormEngine(schema, initialValues),
+    [schema, initialValues]
+  );
+
+  return (
+    &lt;FormStateProvider engine={engine} mode={mode}&gt;
+      &lt;MinimalPlayerInner onSubmit={onSubmit} /&gt;
+    &lt;/FormStateProvider&gt;
+  );
+};</code></pre>
+
+  <h2>Usage</h2>
+  <pre><code>import { MinimalPlayer } from './players/MinimalPlayer';
+import schema from './my-form.schema.json';
+
+&lt;MinimalPlayer
+  schema={schema}
+  initialValues={{ country: 'UK' }}
+  onSubmit={async (values) =&gt; {
+    console.log('Submitted:', values);
+  }}
+/&gt;</code></pre>
+
+  <h2>What This Player Does Not Have</h2>
+  <p>The minimal player omits several features of <code>FormRenderer</code> — add them incrementally as your custom player needs grow:</p>
+  <table>
+    <thead><tr><th>Feature</th><th>How to Add</th></tr></thead>
+    <tbody>
+      <tr><td>Draft auto-save</td><td>Subscribe to engine <code>change</code> event; save via <code>StorageManager</code></td></tr>
+      <tr><td>Mode-based visibility</td><td>Use <code>useFormVisibility()</code> to filter controls before rendering</td></tr>
+      <tr><td>Section grouping</td><td>Group controls by <code>control.sectionId</code> before rendering</td></tr>
+      <tr><td>Theming</td><td>Wrap in <code>ThemeProvider</code> above <code>FormStateProvider</code></td></tr>
+      <tr><td>Action bar actions</td><td>Render form <code>schema.actions</code> below the field list</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>useMemo on FormEngine</strong>
+    Always create the <code>FormEngine</code> instance inside a <code>useMemo</code> — do not create it directly in the render function. A new engine on every render would reset all form state on each parent re-render.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-architecture.html">&#8592; Player Architecture</a>
+    <a href="03-section-cards.html">Next: Section Cards Layout &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attestation-Based Log Integrity — TEE | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>TEE Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">TEE Observability Overview</a>
+  <a href="01-tee-constraints.html">TEE Observability Constraints</a>
+  <a href="02-allowed-telemetry.html">Allowed Telemetry</a>
+  <a href="03-attestation-logs.html" class="active">Attestation-Based Log Integrity</a>
+  <a href="04-in-tee-observability.html">In-TEE Observability</a>
+  <a href="05-boundary-crossing.html">Telemetry at the TEE Boundary</a>
+  <a href="06-audit.html">Audit Logging in TEE</a>
+  <a href="07-incident-response.html">Incident Response in TEE</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Attestation-Based Log Integrity</h1>
+    <p class="lead">One of the most powerful TEE capabilities is cryptographic proof of log integrity. Logs emitted inside a TEE can be signed with a key that only the TEE hardware can access — creating tamper-evident log records that prove the log came from a specific, attested code version. This is the foundation of regulatory-grade audit trails in TEE deployments.</p>
+  </div>
+
+  <h2>How TEE Log Signing Works</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>1. TEE-Bound Signing Key</h4>
+      <p>At attestation time, the TEE platform generates a signing key pair bound to the measured code. The private key never leaves the TEE hardware — it cannot be extracted by the host OS, hypervisor, or cloud provider.</p>
+    </div>
+    <div class="card">
+      <h4>2. Log Batch Signing</h4>
+      <p>Before a batch of log records crosses the TEE boundary, the in-TEE log shipper computes a SHA-256 hash of the batch and signs it with the TEE-bound private key. The signature travels with the batch.</p>
+    </div>
+    <div class="card">
+      <h4>3. External Verification</h4>
+      <p>Any party with the TEE attestation certificate (containing the public key) can verify that the log batch was produced by the specific attested code, and that the batch has not been tampered with in transit.</p>
+    </div>
+    <div class="card">
+      <h4>4. Tamper Evidence</h4>
+      <p>If a log record is modified, inserted, or deleted after it leaves the TEE, the batch signature verification fails — proving tampering. The log chain can detect gaps in signed batch sequence numbers.</p>
+    </div>
+  </div>
+
+  <h2>Log Signing Implementation Pattern</h2>
+  <pre><code>// TEE Log Signing — in-TEE component before OTel exporter
+// This runs INSIDE the TEE; the signing key is TEE-hardware-bound
+
+public class TeeLogBatchSigner
+{
+    private readonly ECDsa _teeSigningKey;  // Loaded from TEE key sealing
+    private readonly AttestationReport _attestationReport;
+    private long _batchSequence = 0;
+
+    public SignedLogBatch SignBatch(IReadOnlyList&lt;LogRecord&gt; records)
+    {
+        var sequence = Interlocked.Increment(ref _batchSequence);
+
+        // Canonical JSON serialization of the batch
+        var batchPayload = new
+        {
+            sequence = sequence,
+            timestamp_utc = DateTimeOffset.UtcNow.ToString("O"),
+            tee_measurement = _attestationReport.CodeMeasurement,  // PCR values
+            record_count = records.Count,
+            records = records.Select(r => new {
+                timestamp = r.Timestamp,
+                level = r.LogLevel.ToString(),
+                message = r.Message,   // Already sanitized before reaching this layer
+                attributes = r.Attributes
+            })
+        };
+
+        var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(batchPayload);
+        var payloadHash = SHA256.HashData(payloadBytes);
+        var signature = _teeSigningKey.SignHash(payloadHash);
+
+        return new SignedLogBatch
+        {
+            Sequence = sequence,
+            PayloadBase64 = Convert.ToBase64String(payloadBytes),
+            SignatureBase64 = Convert.ToBase64String(signature),
+            AttestationCertThumbprint = _attestationReport.CertThumbprint
+        };
+    }
+}
+
+// The SignedLogBatch is what crosses the TEE boundary to the OTel Collector
+// The OTel Collector stores it in Loki as a structured log entry</code></pre>
+
+  <h2>Log Integrity Verification Pattern</h2>
+  <pre><code">// Verification — runs OUTSIDE the TEE (auditor, compliance system)
+// Uses the TEE attestation public key (from attestation certificate)
+
+public class TeeLogVerifier
+{
+    private readonly ECDsa _teePublicKey;  // From TEE attestation certificate
+
+    public VerificationResult Verify(SignedLogBatch batch)
+    {
+        // 1. Decode payload
+        var payloadBytes = Convert.FromBase64String(batch.PayloadBase64);
+        var signature = Convert.FromBase64String(batch.SignatureBase64);
+
+        // 2. Verify signature against payload hash
+        var payloadHash = SHA256.HashData(payloadBytes);
+        var signatureValid = _teePublicKey.VerifyHash(payloadHash, signature);
+        if (!signatureValid)
+            return VerificationResult.TamperedOrInvalidSignature(batch.Sequence);
+
+        // 3. Deserialize and check TEE measurement
+        var batchPayload = JsonSerializer.Deserialize&lt;LogBatchPayload&gt;(payloadBytes);
+        if (batchPayload.TeeMeasurement != ExpectedCodeMeasurement)
+            return VerificationResult.UnexpectedCodeVersion(batchPayload.TeeMeasurement);
+
+        // 4. Check sequence continuity (detect dropped batches)
+        if (batchPayload.Sequence != _lastVerifiedSequence + 1)
+            return VerificationResult.SequenceGap(_lastVerifiedSequence, batchPayload.Sequence);
+
+        _lastVerifiedSequence = batchPayload.Sequence;
+        return VerificationResult.Valid(batchPayload.RecordCount);
+    }
+}</code></pre>
+
+  <h2>Storing Signed Batches in Loki</h2>
+  <pre><code"># OTel Collector transforms signed batch into Loki log entries
+# The signature is stored as a structured label for later audit queries
+
+# Example Loki log entry for a signed TEE batch:
+{
+  "stream": {
+    "job": "tee-processengine",
+    "tee_batch_seq": "42",
+    "tee_cert_thumbprint": "sha256:a1b2c3...",
+    "signature_valid": "true"   # OTel Collector verifies before storing
+  },
+  "values": [
+    ["1716825600000000000", "{\"level\":\"Information\",\"executionId\":\"abc-123\",\"nodeType\":\"calculation\",\"outcome\":\"completed\"}"],
+    ["1716825601000000000", "{\"level\":\"Information\",\"executionId\":\"abc-123\",\"stepCount\":5,\"durationMs\":342}"]
+  ]
+}
+
+# LogQL query to find log batches with invalid signatures (tampering alert):
+{job="tee-processengine", signature_valid="false"}
+
+# LogQL query to audit log continuity (detect sequence gaps):
+{job="tee-processengine"} | json | tee_batch_seq > 0 | sort by (tee_batch_seq)</code></pre>
+
+  <h2>Attestation Report Structure</h2>
+  <pre><code"># AWS Nitro Enclave attestation document (simplified)
+# This is what proves the log signing key belongs to a specific code version
+
+{
+  "module_id": "nitro-enclave-prod-us-east-1-001",
+  "timestamp": 1716825600,
+  "digest": "SHA384",
+  "pcrs": {
+    "0": "sha384:a1b2c3...f9",   # PCR[0]: enclave image file measurement
+    "1": "sha384:b2c3d4...fa",   # PCR[1]: Linux kernel + bootstrap
+    "2": "sha384:c3d4e5...fb",   # PCR[2]: application code measurement
+    "4": "sha384:d4e5f6...fc"    # PCR[4]: IAM role of parent instance
+  },
+  "public_key": "base64:MFkwEwYH...",  # TEE-bound signing key public key
+  "certificate": "base64:MIICpD...",   # Certificate chain for verification
+  "user_data": "sha256:deploy-v1.2.3"  # Optional: deployment version tag
+}
+
+# Compliance use:
+# - Store attestation report alongside log batches
+# - PCR[2] value = "which version of BizFirstGO produced these logs"
+# - If PCR[2] changes, a new code version was deployed (expected after upgrade)
+# - If PCR[2] changes unexpectedly, potential unauthorized code modification</code></pre>
+
+  <div class="callout info">
+    <strong>Attestation-Signed Logs as Regulatory Evidence</strong>
+    <p>For financial institutions using BizFirstGO in a TEE for regulated computations (credit scoring, fraud detection), attestation-signed logs provide court-admissible evidence that a specific, unmodified version of the computation software produced a specific audit record at a specific time. No other observability pattern provides this level of proof. Plan for this capability from the first TEE design review.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-allowed-telemetry.html">&#8592; Allowed Telemetry</a>
+    <a href="04-in-tee-observability.html">Next: In-TEE Observability &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

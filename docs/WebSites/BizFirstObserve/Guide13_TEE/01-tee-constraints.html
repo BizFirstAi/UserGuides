@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TEE Observability Constraints — TEE | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>TEE Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">TEE Observability Overview</a>
+  <a href="01-tee-constraints.html" class="active">TEE Observability Constraints</a>
+  <a href="02-allowed-telemetry.html">Allowed Telemetry</a>
+  <a href="03-attestation-logs.html">Attestation-Based Log Integrity</a>
+  <a href="04-in-tee-observability.html">In-TEE Observability</a>
+  <a href="05-boundary-crossing.html">Telemetry at the TEE Boundary</a>
+  <a href="06-audit.html">Audit Logging in TEE</a>
+  <a href="07-incident-response.html">Incident Response in TEE</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>TEE Observability Constraints</h1>
+    <p class="lead">TEE deployments impose hard constraints on what observability data can cross the boundary. These are not policy choices — they are enforced by the security model. Understanding the constraints before designing observability prevents costly rework after the TEE is in production.</p>
+  </div>
+
+  <h2>Hard Constraints (TEE Security Model Enforces)</h2>
+  <table>
+    <thead>
+      <tr><th>Constraint</th><th>Why</th><th>Impact on Observability</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>No plaintext workflow payload data in logs</td><td>Workflow input/output is the protected computation — exfiltrating it defeats TEE purpose</td><td>Log messages must never include form field values, computation results, or user data</td></tr>
+      <tr><td>No full span attributes in traces</td><td>Span attributes may encode computation details (e.g., "amount = 1500000")</td><td>Only trace IDs (not spans) may cross boundary; span details stored in-TEE</td></tr>
+      <tr><td>No unreviewed egress channels</td><td>Every outbound connection from TEE must be explicitly approved in TEE policy</td><td>OTel Collector endpoint must be in the TEE's approved egress list</td></tr>
+      <tr><td>No ad-hoc debug access</td><td>SSH, debugger, live memory inspection are impossible by design</td><td>All debugging must use pre-defined observability channels</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What Standard BizFirst Observe Features Are Not Available in TEE</h2>
+  <pre><code># Standard BizFirst Observe features unavailable in TEE deployments:
+
+1. Grafana Explore with ad-hoc log queries
+   # Available in standard, NOT in TEE:
+   {job="processengine"} |= "formData" | json | field.income > 0
+   # This query would reveal protected computation data
+
+2. Exception message logging with data values
+   # Available in standard:
+   _logger.LogError("Calculation failed for value {Value}", input.Value);
+   # In TEE: FORBIDDEN — input.Value is protected data
+   _logger.LogError("Calculation failed: error code E_OVERFLOW");
+
+3. Full distributed trace spans crossing TEE boundary
+   # Available in standard: full span with all attributes flows to Tempo
+   # In TEE: only the TraceId crosses; span content stays inside TEE
+
+4. Live log streaming in Grafana
+   # Available in standard: live tail of log stream
+   # In TEE: approved log batches only; no real-time stream egress</code></pre>
+
+  <h2>Network Egress Restrictions</h2>
+  <pre><code># TEE network policy must explicitly allow the OTel Collector endpoint.
+# In AWS Nitro Enclaves:
+{
+  "Version": "1.0",
+  "NetworkPolicy": {
+    "AllowedEgressEndpoints": [
+      {
+        "Host": "otel-collector.internal.bizfirstai.com",
+        "Port": 4317,
+        "Protocol": "GRPC",
+        "Description": "OpenTelemetry Collector for approved telemetry"
+      }
+    ]
+  }
+}
+
+# Any other egress is blocked by the TEE platform.
+# The OTel Collector itself must be outside the TEE —
+# it is the boundary control point that decides what reaches Loki/Prometheus/Tempo.</code></pre>
+
+  <div class="callout info">
+    <strong>Design TEE Observability as an API Contract</strong>
+    <p>Treat TEE telemetry as a formal API: define exactly which log fields, metric names, and trace context (IDs only) are permitted to cross the boundary. Document this contract alongside the TEE attestation policy. Changes to the observability contract require re-attestation — treat observability changes as code changes, not operational changes.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; TEE Observability Overview</a>
+    <a href="02-allowed-telemetry.html">Next: Allowed Telemetry &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

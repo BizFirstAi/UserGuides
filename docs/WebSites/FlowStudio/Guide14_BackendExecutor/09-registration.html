@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registering the Executor — Backend Executor | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Backend Executor</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Executor Overview</a>
+  <a href="01-interface.html">IProcessElementExecution</a>
+  <a href="02-base-executor.html">BaseNodeExecutor Pattern</a>
+  <a href="03-execution-context.html">NodeExecutionContext</a>
+  <a href="04-reading-config.html">Reading Node Configuration</a>
+  <a href="05-reading-upstream.html">Reading Upstream Output</a>
+  <a href="06-returning-results.html">Returning Results</a>
+  <a href="07-pinned-data.html">Returning Pinned Data</a>
+  <a href="08-error-handling.html">Error Handling</a>
+  <a href="09-registration.html" class="active">Registering the Executor</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Registering the Executor</h1>
+    <p class="lead">Executors are discovered at application startup through the <code>INodeExecutorDependency</code> plugin pattern. Each executor assembly provides a <code>INodeExecutorDependency</code> implementation that registers its executors into both the DI container and the <code>ExecutorRegistry</code>.</p>
+  </div>
+
+  <h2>Two-Step Registration</h2>
+  <p>Every executor must be registered in two places:</p>
+  <ol>
+    <li><strong>DI Container</strong> — so it can be constructed with its dependencies injected</li>
+    <li><strong>ExecutorRegistry</strong> — so the engine can look it up by <code>NodeTypeName</code> (typeCode) at runtime</li>
+  </ol>
+
+  <h2>INodeExecutorDependency Pattern</h2>
+  <pre><code>// MyExecutorDependency.cs — in your executor project's Dependency/ folder
+using Microsoft.Extensions.DependencyInjection;
+using BizFirst.Ai.ProcessEngine.Service.NodeExecution;  // ExecutorRegistry
+
+public class MyExecutorDependency : INodeExecutorDependency
+{
+    public void RegisterDefaults(IServiceCollection services)
+    {
+        // Step 1: register in DI (Scoped — one instance per workflow node execution)
+        services.AddScoped&lt;MyCustomNodeExecutor&gt;();
+
+        // Step 2: register in ExecutorRegistry — maps typeCode → executor type
+        ExecutorRegistry.Register&lt;MyCustomNodeExecutor&gt;(MyCustomNodeExecutor.NodeTypeName);
+
+        // Add more executors in the same plugin if they belong to the same assembly
+        services.AddScoped&lt;MyOtherNodeExecutor&gt;();
+        ExecutorRegistry.Register&lt;MyOtherNodeExecutor&gt;(MyOtherNodeExecutor.NodeTypeName);
+    }
+}</code></pre>
+
+  <h2>Scope: AddScoped vs AddTransient</h2>
+  <p>Use <code>AddScoped</code> for executors. The scope corresponds to the workflow node execution scope — one executor instance is created per node invocation and disposed when execution completes. This is consistent with how Core and Standard executors are registered.</p>
+
+  <h2>Discovery at Startup</h2>
+  <p>The host application calls <code>NodeExecutorDependency.RegisterNodeExecutors(services)</code> at startup, which scans all loaded assemblies for <code>INodeExecutorDependency</code> implementations and calls <code>RegisterDefaults</code> on each. Your plugin is discovered automatically as long as your assembly is loaded (referenced by the host project or auto-loaded):</p>
+  <pre><code>// In Program.cs or DI setup
+services.RegisterNodeExecutors();  // scans assemblies, calls all INodeExecutorDependency.RegisterDefaults</code></pre>
+
+  <h2>Dependency Injection in the Executor</h2>
+  <p>External services required by the executor are injected through the constructor and registered in DI in the same <code>RegisterDefaults</code> method:</p>
+  <pre><code>public void RegisterDefaults(IServiceCollection services)
+{
+    // Register executor dependencies first
+    services.AddScoped&lt;IMyExternalService, MyExternalService&gt;();
+    services.AddHttpClient&lt;IMyExternalService, MyExternalService&gt;();
+
+    // Then register the executor
+    services.AddScoped&lt;MyCustomNodeExecutor&gt;();
+    ExecutorRegistry.Register&lt;MyCustomNodeExecutor&gt;(MyCustomNodeExecutor.NodeTypeName);
+}</code></pre>
+
+  <h2>Verifying Registration</h2>
+  <p>At application startup (debug mode), log the contents of the ExecutorRegistry to confirm your typeCode is registered:</p>
+  <pre><code>// ExecutorRegistry exposes registered type codes for diagnostics
+var registeredKeys = ExecutorRegistry.GetRegisteredTypeCodes();
+logger.LogInformation("Registered executors: {Keys}", string.Join(", ", registeredKeys));</code></pre>
+
+  <div class="callout warning">
+    <strong>TypeCode Must Match the DB NodeType Record</strong>
+    <code>MyCustomNodeExecutor.NodeTypeName</code> is the key the engine uses to resolve the executor. It must match the <code>typeCode</code> field in the NodeType database record and the key in the frontend <code>WorkflowCanvas.nodeTypes</code> map. A mismatch results in "executor not found" errors at runtime.
+  </div>
+
+  <div class="page-nav">
+    <a href="08-error-handling.html">&#8592; Error Handling</a>
+    <a href="../Guide15_ExpressionEngines/index.html">Next Guide: Expression Engines &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

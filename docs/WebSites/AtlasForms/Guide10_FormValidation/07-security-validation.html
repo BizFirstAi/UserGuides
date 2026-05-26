@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Validation — Form Validation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Validation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-built-in-rules.html">Built-In Rules</a>
+  <a href="02-validation-schema.html">Validation Schema</a>
+  <a href="03-custom-validators.html">Custom Validators</a>
+  <a href="04-error-display.html">Error Display</a>
+  <a href="05-cross-field.html">Cross-Field Validation</a>
+  <a href="06-async-validation.html">Async Validation</a>
+  <a href="07-security-validation.html" class="active">Security Validation</a>
+  <a href="08-validation-guide.html">Complete Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Security-Focused Validation</h1>
+    <p class="lead">Client-side validation is a UX feature, not a security boundary. Security must be enforced on the server. This page covers the built-in input sanitisation Atlas Forms applies automatically, how to add security-conscious validation rules, and OWASP alignment guidance.</p>
+  </div>
+
+  <h2>What Atlas Forms Does Automatically</h2>
+  <table>
+    <thead><tr><th>Layer</th><th>What It Does</th><th>Where Applied</th></tr></thead>
+    <tbody>
+      <tr><td>Type coercion</td><td>Coerces numeric fields to numbers, dates to ISO strings — prevents type confusion attacks</td><td>All input controls</td></tr>
+      <tr><td>Whitespace trimming</td><td>Trims leading/trailing whitespace from text values before validation</td><td>text, email, url</td></tr>
+      <tr><td>HTML sanitisation</td><td>DOMPurify sanitises HTML content in <code>html</code> and <code>article</code> display controls</td><td>Display controls only</td></tr>
+      <tr><td>maxLength enforcement</td><td>Enforces maxLength at the input level (HTML attribute) and in validation</td><td>text, textarea, password</td></tr>
+      <tr><td>Number bounds</td><td>Enforces min/max on number inputs — rejects out-of-range values</td><td>number control</td></tr>
+      <tr><td>File type/size check</td><td>Validates MIME type and file size before upload</td><td>file-upload control</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What You Must Do on the Server</h2>
+  <p>Client-side validation is trivially bypassable. Every submitted value must be re-validated server-side before use:</p>
+  <ul>
+    <li>Re-validate all required fields, length limits, and pattern constraints.</li>
+    <li>Parameterise all database queries (never concatenate form values into SQL).</li>
+    <li>Sanitise any user-provided content that will be rendered as HTML.</li>
+    <li>Enforce file type and size limits on the server — clients can lie about MIME types.</li>
+    <li>Verify business rules (e.g., budget limits, date ranges) — clients can manipulate DOM values.</li>
+  </ul>
+
+  <h2>OWASP Input Validation Alignment</h2>
+  <table>
+    <thead><tr><th>OWASP Threat</th><th>Client-Side Mitigation</th><th>Server-Side Requirement</th></tr></thead>
+    <tbody>
+      <tr><td>SQL Injection</td><td>Pattern validation blocks common SQL characters; advisory only</td><td>Parameterised queries (mandatory)</td></tr>
+      <tr><td>XSS via form input</td><td>DOMPurify on display controls; inputs stored as data not rendered HTML</td><td>HTML-encode on output; Content-Security-Policy header</td></tr>
+      <tr><td>Path Traversal</td><td>Pattern rule blocks <code>../</code> sequences in filenames</td><td>Server normalises and validates all file paths</td></tr>
+      <tr><td>Mass Assignment</td><td>Form schema defines exactly which fields are submitted</td><td>Allowlist permitted fields in the API layer</td></tr>
+      <tr><td>Oversized Input (DoS)</td><td>maxLength and maxFileSizeMb limits</td><td>Server enforces identical limits</td></tr>
+      <tr><td>Integer Overflow</td><td>min/max validation on number fields</td><td>Server validates numeric ranges before use</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Security-Aware Pattern Examples</h2>
+  <pre><code>// Block common SQL injection patterns
+{
+  "id": "search-term",
+  "type": "text",
+  "label": "Search",
+  "validation": {
+    "maxLength": 200,
+    "pattern": "^[^;'\"\\\\<>]*$",
+    "patternMessage": "Search term contains disallowed characters"
+  }
+}
+
+// File name — no path traversal
+{
+  "id": "filename",
+  "type": "text",
+  "label": "File Name",
+  "validation": {
+    "required": true,
+    "maxLength": 255,
+    "pattern": "^[A-Za-z0-9_\\-\\.]+$",
+    "patternMessage": "Only letters, numbers, underscores, hyphens and dots allowed in file names"
+  }
+}
+
+// Strict numeric ID — no injection possible
+{
+  "id": "record-id",
+  "type": "number",
+  "label": "Record ID",
+  "settings": { "precision": 0 },
+  "validation": {
+    "required": true,
+    "min": 1,
+    "max": 2147483647
+  }
+}</code></pre>
+
+  <h2>Registering Security Validators</h2>
+  <pre><code>import { registerValidator } from '@atlas-forms/validation-js';
+
+// Reject values that contain HTML tags
+registerValidator('noHtmlContent', (value) =&gt; {
+  const hasHtml = /&lt;[^&gt;]+&gt;/.test(String(value ?? ''));
+  return {
+    valid: !hasHtml,
+    message: 'HTML markup is not allowed in this field'
+  };
+});
+
+// Reject common SQL injection patterns
+registerValidator('noSqlInjection', (value) =&gt; {
+  const sqlPattern = /('|--|;|\/\*|\*\/|xp_|EXEC|DROP|INSERT|UPDATE|DELETE|SELECT\s+\*)/i;
+  const hasSql = sqlPattern.test(String(value ?? ''));
+  return {
+    valid: !hasSql,
+    message: 'Input contains disallowed characters or keywords'
+  };
+});</code></pre>
+
+  <div class="callout warning">
+    <strong>Never Rely on Client-Side Validation for Security</strong>
+    Any user with browser DevTools can bypass all client-side validation. Security-critical rules (ownership checks, rate limits, authorisation) must always be enforced on the server. Use client-side validation to improve user experience, not to enforce security boundaries.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-async-validation.html">&#8592; Async Validation</a>
+    <a href="08-validation-guide.html">Next: Complete Reference &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

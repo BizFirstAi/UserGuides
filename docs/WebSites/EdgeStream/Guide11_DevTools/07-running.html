@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Running Dev Tools — DevTools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>DevTools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Dev Tools Overview</a>
+  <a href="01-node-explorer.html">Node Explorer</a>
+  <a href="02-action-invoker.html">Action Invoker</a>
+  <a href="03-ancp-view.html">ANCP Protocol View</a>
+  <a href="04-hooks-panel.html">Hooks Panel</a>
+  <a href="05-subscribers-panel.html">Subscribers Panel</a>
+  <a href="06-mobile-dashboard.html">Mobile Dashboard</a>
+  <a href="07-running.html" class="active">Running Dev Tools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Running Dev Tools</h1>
+    <p class="lead">EdgeStream DevTools is a Vite + React application located in <code>apps/edge-stream-dev-tools/</code> within the EdgeStream monorepo. It runs on port 6005 by default and proxies REST API calls to the EdgeStream server at <code>https://localhost:10001</code>.</p>
+  </div>
+
+  <h2>Prerequisites</h2>
+  <ul>
+    <li>Node.js 18+ and pnpm installed</li>
+    <li>EdgeStream monorepo cloned: <code>BizFirstAiStudio/src/edge-stream/</code></li>
+    <li>An EdgeStream server running at <code>https://localhost:10001</code> (or a custom URL)</li>
+    <li>Dependencies installed: <code>pnpm install</code> from the monorepo root</li>
+  </ul>
+
+  <h2>Starting Dev Tools</h2>
+  <pre><code># From the monorepo root (BizFirstAiStudio/src/edge-stream/):
+pnpm --filter edge-stream-dev-tools dev
+
+# Or change into the app directory:
+cd apps/edge-stream-dev-tools
+pnpm dev
+
+# Dev server starts at:
+# http://localhost:6005
+
+# Default port is 6005 (set in vite.config.ts):
+server: {
+  port: parseInt(process.env.VITE_PORT ?? '6005'),
+}</code></pre>
+
+  <h2>Vite Configuration</h2>
+  <pre><code>// apps/edge-stream-dev-tools/vite.config.ts
+
+// Key settings:
+export default defineConfig({
+  plugins: [react()],
+  base: process.env.VITE_BASE_URL ?? '/',
+
+  server: {
+    port: parseInt(process.env.VITE_PORT ?? '6005'),
+
+    // API proxy — REST calls from /api/* are forwarded to the EdgeStream server:
+    proxy: {
+      '/api': {
+        target: process.env.VITE_API_BASE_URL ?? 'https://localhost:10001',
+        changeOrigin: true,
+        secure: false,  // allows self-signed localhost dev certs
+      },
+    },
+  },
+
+  build: {
+    outDir: 'dist',
+    sourcemap: true,
+  },
+});</code></pre>
+
+  <h2>Environment Variables</h2>
+  <table>
+    <thead>
+      <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>VITE_API_BASE_URL</code></td><td><code>https://localhost:10001</code></td><td>Base URL for the EdgeStream server — used for both the API proxy and the SignalR hub URL</td></tr>
+      <tr><td><code>VITE_PORT</code></td><td><code>6005</code></td><td>Port for the Vite dev server</td></tr>
+      <tr><td><code>VITE_BASE_URL</code></td><td><code>/</code></td><td>Base path for routing — set to a subdirectory if hosting under a path prefix</td></tr>
+    </tbody>
+  </table>
+  <p>Create a <code>.env.local</code> file in <code>apps/edge-stream-dev-tools/</code> to override defaults:</p>
+  <pre><code># apps/edge-stream-dev-tools/.env.local
+VITE_API_BASE_URL=https://myserver.example.com
+VITE_PORT=6005</code></pre>
+
+  <h2>How the App Derives the Hub URL</h2>
+  <pre><code>// App.tsx — QuickStartPanel default:
+const apiBaseUrl = 'https://localhost:10001'  // from VITE_API_BASE_URL
+
+// handleConnect derives SignalR hub from apiBaseUrl:
+const hubUrl = `${config.apiBaseUrl}/hubs/edge-stream`
+
+// Resulting hub URL:
+// https://localhost:10001/hubs/edge-stream
+
+// Registered as a server:
+streamInstance.registerServer({
+  id: config.serverType,           // 'bas' or 'chat'
+  type: config.serverType,
+  url: hubUrl,
+  transportConfig: {
+    type: 'signalr',
+    url: hubUrl,
+    accessToken: config.accessToken,
+  },
+});</code></pre>
+
+  <h2>Quick Start Flow (First Time)</h2>
+  <ol>
+    <li>Ensure your EdgeStream server is running at <code>https://localhost:10001</code>.</li>
+    <li>Run <code>pnpm dev</code> in <code>apps/edge-stream-dev-tools/</code>.</li>
+    <li>Open <code>http://localhost:6005</code> in your browser.</li>
+    <li>The Splash Screen displays for 2.5 seconds, then the <strong>QuickStartPanel</strong> appears.</li>
+    <li>Enter a display name (required). If Passport IAM is running, the JWT is auto-read from <code>localStorage['auth-store']</code>.</li>
+    <li>Click <strong>Go</strong> — DevTools connects to <code>https://localhost:10001/hubs/edge-stream</code> via SignalR and creates 3 demo groups (General, Announcements, Random).</li>
+    <li>After 3 seconds the Splash Screen closes and you land on the <strong>Chat</strong> page.</li>
+  </ol>
+
+  <h2>Custom Server Configuration</h2>
+  <p>If your server is not at <code>localhost:10001</code>, use the <strong>Custom Configuration</strong> link on the QuickStartPanel:</p>
+  <pre><code>// Custom Configuration opens the ConnectionPanel (from edge-stream-js-react):
+// Fields:
+// - Server URL:   https://your-server.com/hubs/edge-stream
+// - Server Type:  bas | chat
+// - Access Token: JWT (paste manually)
+// - User Name:    display name for chat
+
+// This bypasses the Passport auto-read and lets you specify any server.</code></pre>
+
+  <h2>Building for Production</h2>
+  <pre><code># Build the production bundle:
+cd apps/edge-stream-dev-tools
+pnpm build
+
+# Output: apps/edge-stream-dev-tools/dist/
+# Static assets split into:
+# dist/staticD30/images/   → image assets
+# dist/staticD365/assets/  → JS + CSS chunks
+
+# Preview the production build locally:
+pnpm preview</code></pre>
+
+  <h2>Monorepo Aliases</h2>
+  <p>The vite.config.ts resolves all workspace packages via path aliases — no published npm packages needed. All dependencies are resolved from the local monorepo source:</p>
+  <pre><code>resolve: {
+  alias: {
+    'edge-stream-js':           '../../packages/edge-stream-js/src/index.ts',
+    'edge-stream-js/react':     '../../packages/edge-stream-js/src/react/index.ts',
+    'edge-stream-js-react':     '../../packages/edge-stream-js-react/src/index.ts',
+    '@edge-stream/app-pages-react':       '../../packages/app-pages-react/src/index.ts',
+    '@edge-stream/observability-react':   '../../packages/observability-react/src/index.ts',
+    '@edge-stream/observability-ui':      '../../packages/observability-ui/src/index.ts',
+    '@edge-stream/hooks':                 '../../packages/observability-hooks-js/src/index.ts',
+    '@bizfirst/ancp-core':     '../../../ancp/ancp-core/src/index.ts',
+    '@bizfirst/ancp-react':    '../../../ancp/ancp-react/src/index.ts',
+    '@bizfirst/common-react':  '../../../bizfirst-common/bizfirst-common-react/src/index.ts',
+  },
+}</code></pre>
+
+  <div class="callout info">
+    <strong>SignalR Version</strong>
+    DevTools uses <code>@microsoft/signalr ^10.0.0</code>. Ensure your EdgeStream server's SignalR hub is compatible with this client version. The hub URL format is <code>/hubs/edge-stream</code>.
+  </div>
+
+  <div class="callout success">
+    <strong>End of Guide 11 — DevTools</strong>
+    You have covered all DevTools panels and features. To apply what you have learned, see the EdgeStream guides on transports (Guide 6), observability (Guide 7), React bindings (Guide 8), and message plugins (Guide 9).
+  </div>
+
+  <div class="page-nav">
+    <a href="06-mobile-dashboard.html">&#8592; Mobile Dashboard</a>
+    <a href="index.html">Back to DevTools Overview &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

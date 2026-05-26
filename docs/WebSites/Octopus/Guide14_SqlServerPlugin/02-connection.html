@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connection Configuration — SQL Server Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>SQL Server Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-connection.html" class="active">Connection Configuration</a>
+  <a href="03-schema.html">SQL Schema</a>
+  <a href="04-migrations.html">Running Migrations</a>
+  <a href="05-multi-tenant.html">Multi-Tenant Configuration</a>
+  <a href="06-performance.html">Performance Considerations</a>
+  <a href="07-backup.html">Backup and Recovery</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Connection Configuration</h1>
+    <p class="lead">The SqlServerPlugin retrieves the SQL Server connection string at runtime via <code>ICredentialResolver</code>. The connection string is never stored in plaintext config — only the credential ID is in appsettings.json.</p>
+  </div>
+
+  <h2>How the Credential Resolver Works</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>appsettings.json contains only the credential ID</strong>
+        <span><code>"ConnectionStringCredentialId": 1</code> — an integer reference to the credential store</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>OnStartAsync resolves the actual connection string</strong>
+        <span><code>ICredentialResolver.GetPasswordAsync(credentialId)</code> fetches the value from the encrypted credential store</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>DbContext is configured with the resolved connection string</strong>
+        <span>The EF Core <code>DbContextOptions</code> are built dynamically with the live connection string</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Connection verified before accepting requests</strong>
+        <span>A lightweight <code>CanConnectAsync()</code> call confirms the server is reachable before startup completes</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>SqlServerPlugin OnRegister / OnStartAsync Internals</h2>
+  <pre><code>public class SqlServerPlugin : IOctopusPlugin
+{
+    private SqlServerPluginConfig _config = null!;
+
+    public void OnRegister(IServiceCollection services, OctopusConfig config)
+    {
+        // Bind config — no connection string here, just the credential ID
+        _config = config.GetSection&lt;SqlServerPluginConfig&gt;("SqlServerPlugin");
+
+        services.AddOptions&lt;SqlServerPluginConfig&gt;()
+            .Bind(config.Configuration.GetSection("SqlServerPlugin"))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        // Register DbContext with a factory so the connection string is resolved lazily
+        services.AddDbContextFactory&lt;OctopusDbContext&gt;((sp, opt) =>
+        {
+            // The connection string is injected at factory invocation time, not here
+        });
+
+        // Register storage implementations
+        services.AddScoped&lt;IEpisodicMemoryStore, SqlEpisodicMemoryStore&gt;();
+        services.AddScoped&lt;IProceduralMemoryStore, SqlProceduralMemoryStore&gt;();
+        services.AddScoped&lt;IAgentStore, SqlAgentStore&gt;();
+        services.AddScoped&lt;IAIFunctionStore, SqlAIFunctionStore&gt;();
+        services.AddScoped&lt;IAreaStore, SqlAreaStore&gt;();
+    }
+
+    public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        // Resolve the connection string from the credential store
+        var credResolver = sp.GetRequiredService&lt;ICredentialResolver&gt;();
+        var connectionString = await credResolver.GetPasswordAsync(_config.ConnectionStringCredentialId);
+
+        // Configure the DbContext factory with the live connection string
+        var optionsFactory = sp.GetRequiredService&lt;IDbContextOptionsConfigurator&lt;OctopusDbContext&gt;&gt;();
+        optionsFactory.Configure(opt =>
+            opt.UseSqlServer(connectionString, sql =>
+            {
+                sql.CommandTimeout(_config.CommandTimeoutSeconds);
+                if (_config.EnableRetryOnFailure)
+                    sql.EnableRetryOnFailure(_config.MaxRetryCount,
+                        TimeSpan.FromSeconds(_config.MaxRetryDelaySeconds), null);
+            }));
+
+        // Verify connectivity
+        using var scope = sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService&lt;OctopusDbContext&gt;();
+        if (!await db.Database.CanConnectAsync(ct))
+            throw new InvalidOperationException(
+                $"Cannot connect to Octopus SQL Server (credential {_config.ConnectionStringCredentialId}).");
+
+        // Apply pending migrations
+        if (_config.RunMigrationsOnStartup)
+            await db.Database.MigrateAsync(ct);
+    }
+
+    public Task OnStopAsync(CancellationToken ct) => Task.CompletedTask;
+}</code></pre>
+
+  <h2>Supported Connection String Formats</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Connection String Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Windows Integrated Auth</td><td><code>Server=sql01;Database=OctopusAI;Integrated Security=True;TrustServerCertificate=True</code></td></tr>
+      <tr><td>SQL Server Auth</td><td><code>Server=sql01;Database=OctopusAI;User Id=octopus_app;Password=***;TrustServerCertificate=True</code></td></tr>
+      <tr><td>Azure SQL (managed identity)</td><td><code>Server=myserver.database.windows.net;Database=OctopusAI;Authentication=Active Directory Managed Identity</code></td></tr>
+      <tr><td>Azure SQL (connection string)</td><td><code>Server=tcp:myserver.database.windows.net,1433;Database=OctopusAI;User Id=octopus@myserver;Password=***;Encrypt=True</code></td></tr>
+      <tr><td>SQL Express (dev)</td><td><code>Server=(localdb)\mssqllocaldb;Database=OctopusAI;Trusted_Connection=True</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Never put the connection string in appsettings.json.</strong> Only the integer <code>ConnectionStringCredentialId</code> belongs in config. The actual connection string, including the password, must live exclusively in the encrypted credential store.
+  </div>
+
+  <h2>Connection Pooling</h2>
+  <p>EF Core uses ADO.NET connection pooling by default. The default pool size of 100 connections is appropriate for most deployments. For high-concurrency scenarios adjust the pool size in the connection string:</p>
+  <pre><code>// Added to the connection string stored in the credential:
+// Max Pool Size=200;Min Pool Size=5;Connection Timeout=30</code></pre>
+
+  <h2>Retry Policy</h2>
+  <p>When <code>EnableRetryOnFailure</code> is true, the plugin applies SQL Server transient error retry via EF Core's built-in strategy. Retried error codes include connection failures, deadlocks, and timeout errors. The retry uses exponential backoff with jitter up to <code>MaxRetryDelaySeconds</code>.</p>
+
+  <div class="page-nav">
+    <a href="01-enabling.html">&#8592; Enabling the Plugin</a>
+    <a href="03-schema.html">Next: SQL Schema &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

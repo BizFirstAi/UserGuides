@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registering in Canvas — Bring Your Own Nodes | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Bring Your Own Nodes</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom Node Overview</a>
+  <a href="01-base-node.html">The BaseNode Class</a>
+  <a href="02-minimal-renderer.html">Minimal Custom Renderer</a>
+  <a href="03-custom-handles.html">Adding Handles</a>
+  <a href="04-built-in-examples.html">Built-In Node Examples</a>
+  <a href="05-registering.html" class="active">Registering in Canvas</a>
+  <a href="06-status-visualization.html">Showing Execution Status</a>
+  <a href="07-checklist.html">Full Checklist</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Registering in Canvas</h1>
+    <p class="lead">React Flow's <code>nodeTypes</code> prop is the central registry that maps a typeCode string to a renderer component. Every custom node must be registered here — otherwise React Flow renders a default placeholder.</p>
+  </div>
+
+  <h2>Where Registration Lives</h2>
+  <p><strong>File:</strong> <code>packages/flow-studio-designer/src/components/Canvas/WorkflowCanvas.tsx</code></p>
+  <p>The <code>WorkflowCanvas</code> component owns the <code>nodeTypes</code> map. It is passed directly to the React Flow <code>&lt;ReactFlow&gt;</code> component. React Flow memoizes this object — it must be declared <em>outside</em> the component function (or wrapped in <code>useMemo</code> with no deps) to avoid re-rendering all nodes on every render cycle.</p>
+
+  <h2>The nodeTypes Map</h2>
+  <pre><code>// packages/flow-studio-designer/src/components/Canvas/WorkflowCanvas.tsx
+
+import { withNodeHooks } from '../Nodes/Base/withNodeHooks';
+import { CustomNode }    from '../Nodes/CustomNode';
+import { CircleNode }    from '../Nodes/CircleNode';
+import { DiamondNode }   from '../Nodes/DiamondNode';
+import { AIAgentNode }   from '../Nodes/AIAgentNode';
+
+// --- Built-in renderers ---
+const nodeTypes = {
+  // Shape-based built-ins
+  rectangle: withNodeHooks(CustomNode),
+  circle:    withNodeHooks(CircleNode),
+  diamond:   withNodeHooks(DiamondNode),
+  ai-agent:  withNodeHooks(AIAgentNode),
+
+  // Specific typeCode overrides (take priority over shape)
+  'my-custom-node': withNodeHooks(MyCustomNode),
+};
+
+export function WorkflowCanvas() {
+  return (
+    &lt;ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}   // &lt;-- registered here
+    /&gt;
+  );
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Declare nodeTypes Outside the Component</strong>
+    If you declare the <code>nodeTypes</code> object inside the component function body, React creates a new object reference on every render. React Flow interprets this as "all node types changed" and re-mounts every node on the canvas. Always declare it outside the function or use <code>useMemo</code> with an empty dependency array.
+  </div>
+
+  <h2>Adding Your Custom Node</h2>
+  <p>Three steps:</p>
+
+  <ol>
+    <li><strong>Create the renderer</strong> — extend <code>BaseNode</code> and wrap with <code>withNodeHooks</code></li>
+    <li><strong>Import it</strong> into <code>WorkflowCanvas.tsx</code></li>
+    <li><strong>Add an entry</strong> to the <code>nodeTypes</code> map using the exact typeCode from the NodeType DB record</li>
+  </ol>
+
+  <pre><code>// Step 1 — MyCustomNode.tsx
+import { BaseNode, BaseNodeProps } from '../Base/BaseNode';
+import { withNodeHooks } from '../Base/withNodeHooks';
+
+class MyCustomNodeClass extends BaseNode {
+  renderBody() { ... }
+}
+export const MyCustomNode = withNodeHooks(MyCustomNodeClass);
+
+// Step 2 + 3 — WorkflowCanvas.tsx
+import { MyCustomNode } from '../Nodes/MyCustomNode';
+
+const nodeTypes = {
+  // ... existing entries ...
+  'my-custom-node': MyCustomNode,   // already wrapped — do not wrap again
+};</code></pre>
+
+  <div class="callout info">
+    <strong>Double-Wrapping</strong>
+    If you call <code>withNodeHooks(MyCustomNode)</code> in the <code>nodeTypes</code> map AND also export it pre-wrapped from the renderer file, you will inject the stores twice. The convention is: always pre-wrap at the export site and import the already-wrapped component into the canvas.
+  </div>
+
+  <h2>TypeCode Resolution Order</h2>
+  <p>When the canvas renders a node, it resolves the renderer by first checking <code>nodeTypes</code> for the node's <code>type</code> value. This value comes from the WorkflowNode's <code>type</code> field, which is set to the NodeType's <code>typeCode</code> by <code>ProcessElementToNodeTranslator</code>.</p>
+  <table>
+    <thead><tr><th>Lookup</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>WorkflowNode.type</td><td>"my-custom-node" (from DB NodeType.typeCode)</td></tr>
+      <tr><td>nodeTypes["my-custom-node"]</td><td>MyCustomNode (your renderer)</td></tr>
+      <tr><td>Fallback if not found</td><td>React Flow default (grey box — not usable in prod)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Shape vs TypeCode Registration</h2>
+  <p>Built-in node shapes (rectangle, circle, diamond) are registered by shape name. If a NodeType sets <code>shape: "rectangle"</code>, the canvas uses the <code>CustomNode</code> renderer automatically — no custom registration needed. A typeCode-specific registration takes priority when you need a fully custom visual. Both can coexist.</p>
+
+  <table>
+    <thead><tr><th>Scenario</th><th>Registration Key</th><th>Renderer</th></tr></thead>
+    <tbody>
+      <tr><td>Standard node using rectangle shape</td><td>"rectangle"</td><td>CustomNode (built-in)</td></tr>
+      <tr><td>Custom node with unique visual</td><td>"my-custom-node" (typeCode)</td><td>MyCustomNode (yours)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-built-in-examples.html">&#8592; Built-In Node Examples</a>
+    <a href="06-status-visualization.html">Next: Showing Execution Status &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IExpressionEvaluator Interface — Expression Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Expression Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-default-jint.html">Default Engine — Jint</a>
+  <a href="02-expression-context.html">ExpressionContext</a>
+  <a href="03-context-variables.html">Context Variable Reference</a>
+  <a href="04-interface.html" class="active">IExpressionEvaluator Interface</a>
+  <a href="05-custom-engine.html">Building a Custom Engine</a>
+  <a href="06-form-fields.html">Expression Fields in Forms</a>
+  <a href="07-resolution-pipeline.html">Resolution Pipeline</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>IExpressionEvaluator Interface</h1>
+    <p class="lead"><code>IExpressionEvaluator</code> is the core contract for expression evaluation in Flow Studio. The default implementation is <code>ExpressionEvaluator</code> (Jint-backed). Custom implementations can be registered to support additional languages or evaluation strategies.</p>
+  </div>
+
+  <h2>The Full Interface</h2>
+  <pre><code>// BizFirst.Ai.ProcessEngine.JS.Services.ExpressionEngine.IExpressionEvaluator
+
+public interface IExpressionEvaluator
+{
+    /// Evaluates a JavaScript expression with security isolation.
+    Task&lt;object?&gt; EvaluateAsync(
+        string expression,
+        Dictionary&lt;string, object&gt; executionVariables,
+        ProcessElementDefinition? elementDefinition = null);
+
+    /// Evaluates an expression as a boolean (for condition nodes).
+    Task&lt;bool&gt; EvaluateBooleanAsync(
+        string expression,
+        Dictionary&lt;string, object&gt; executionVariables,
+        ProcessElementDefinition? elementDefinition = null);
+
+    /// Validates expression syntax without executing it.
+    Task&lt;ExpressionValidationResult&gt; ValidateExpressionAsync(string expression);
+}</code></pre>
+
+  <h2>Method Breakdown</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Used By</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>EvaluateAsync</code></td>
+        <td><code>ConfigExpressionResolver</code> for each config field</td>
+        <td>Returns <code>object?</code> — the caller serialises the result back to the config value type</td>
+      </tr>
+      <tr>
+        <td><code>EvaluateBooleanAsync</code></td>
+        <td>If-Condition and Switch executors</td>
+        <td>Equivalent to <code>EvaluateAsync</code> followed by truthiness cast</td>
+      </tr>
+      <tr>
+        <td><code>ValidateExpressionAsync</code></td>
+        <td>Designer validation (pre-save lint check)</td>
+        <td>Does not execute the expression; only parses syntax</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>ExpressionValidationResult</h2>
+  <pre><code>public class ExpressionValidationResult
+{
+    public bool    IsValid      { get; set; }
+    public string? ErrorMessage { get; set; }
+
+    public static ExpressionValidationResult Valid() =&gt;
+        new() { IsValid = true };
+
+    public static ExpressionValidationResult Invalid(string errorMessage) =&gt;
+        new() { IsValid = false, ErrorMessage = errorMessage };
+}</code></pre>
+
+  <h2>executionVariables Parameter</h2>
+  <p>The <code>executionVariables</code> dictionary is built by the <code>ConfigExpressionResolver</code> from the <code>EvaluationContext</code> before calling the evaluator. It maps well-known names to their current values:</p>
+  <pre><code>// Variables injected into the evaluator
+{
+    "$output"  : { "node-1": { "statusCode": 200, "body": "..." }, ... },
+    "$input"   : { "email": "alice@example.com", ... },
+    "$var"     : { "retryCount": 3, ... },
+    "$context" : { "tenantId": "42", "executionId": "...", "userId": "..." },
+    "$global"  : { "triggerPayload": { ... } }
+}</code></pre>
+
+  <h2>elementDefinition Parameter</h2>
+  <p>The optional <code>elementDefinition</code> is passed to <code>INodeCertificationService.GetIsolationModeAsync()</code> to determine whether the node is certified. Certified nodes run in low-isolation mode (longer timeout, relaxed constraints); uncertified nodes run in high-isolation mode. Pass <code>null</code> in tests to default to high-isolation mode.</p>
+
+  <div class="callout info">
+    <strong>The Evaluator Is Not Called Directly by Executors</strong>
+    Node executors do not call <code>IExpressionEvaluator</code> — they receive already-resolved config values. The evaluator is called internally by <code>IConfigExpressionResolver</code> during the EntryValidate pipeline stage, before your executor runs.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-context-variables.html">&#8592; Context Variable Reference</a>
+    <a href="05-custom-engine.html">Next: Building a Custom Engine &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

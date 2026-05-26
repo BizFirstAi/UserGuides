@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Running Migrations — SQL Server Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>SQL Server Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-connection.html">Connection Configuration</a>
+  <a href="03-schema.html">SQL Schema</a>
+  <a href="04-migrations.html" class="active">Running Migrations</a>
+  <a href="05-multi-tenant.html">Multi-Tenant Configuration</a>
+  <a href="06-performance.html">Performance Considerations</a>
+  <a href="07-backup.html">Backup and Recovery</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Running Migrations</h1>
+    <p class="lead">The SqlServerPlugin runs EF Core migrations automatically on startup when <code>RunMigrationsOnStartup</code> is true. For controlled production deployments, you can also apply migrations manually before each release.</p>
+  </div>
+
+  <h2>Automatic Migrations (Default)</h2>
+  <p>With <code>RunMigrationsOnStartup: true</code> (the default), the plugin calls <code>MigrateAsync()</code> during <code>OnStartAsync</code>. This is safe because:</p>
+  <ul>
+    <li>EF Core applies only pending migrations — already-applied migrations are skipped</li>
+    <li>Migrations run inside a transaction — a failed migration rolls back automatically</li>
+    <li>The application does not accept requests until migrations complete</li>
+    <li>In multi-instance deployments, EF Core uses a distributed lock to prevent concurrent migration runs</li>
+  </ul>
+  <div class="callout info">
+    <strong>Suitable for most deployments.</strong> Automatic migrations on startup are safe for all Octopus migrations because the Octopus team designs migrations to be zero-downtime and additive-only (new tables, new columns with defaults). Breaking changes are never added to Octopus migrations.
+  </div>
+
+  <h2>Manual Migration Commands</h2>
+  <pre><code># Navigate to the project that contains OctopusDbContext
+cd C:\YourSolution\BizFirst.Octopus.SqlServerPlugin
+
+# Create a new migration (development only — do not create migrations manually in production)
+dotnet ef migrations add AddMyCustomTable --context OctopusDbContext
+
+# List applied and pending migrations
+dotnet ef migrations list --context OctopusDbContext
+
+# Apply all pending migrations to the target database
+dotnet ef database update --context OctopusDbContext \
+    --connection "Server=sql01;Database=OctopusAI;..."
+
+# Roll back to a specific migration
+dotnet ef database update 20240101_InitialOctopusSchema --context OctopusDbContext
+
+# Generate a SQL script (for DBA review before applying to production)
+dotnet ef migrations script --idempotent --context OctopusDbContext \
+    --output octopus-migration.sql</code></pre>
+
+  <h2>Generating an Idempotent SQL Script</h2>
+  <p>The <code>--idempotent</code> flag generates a script that checks which migrations have been applied and only runs the pending ones. This is the recommended approach for production deployments where DBAs must review changes before they run:</p>
+  <pre><code>-- Generated idempotent migration script excerpt
+IF NOT EXISTS (
+    SELECT 1 FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20240615000000_AddAreaTables'
+)
+BEGIN
+    CREATE TABLE [Octopus_Areas] (
+        [Id]          UNIQUEIDENTIFIER NOT NULL DEFAULT NEWSEQUENTIALID(),
+        [TenantId]    NVARCHAR(100)    NOT NULL,
+        [Name]        NVARCHAR(200)    NOT NULL,
+        -- ...
+        CONSTRAINT [PK_Octopus_Areas] PRIMARY KEY ([Id])
+    );
+
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20240615000000_AddAreaTables', N'8.0.0');
+END;
+GO</code></pre>
+
+  <h2>Safe Migration Practices</h2>
+  <table>
+    <thead>
+      <tr><th>Practice</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Always take a database backup before applying migrations</td><td>Provides a rollback point if migration has unexpected side effects</td></tr>
+      <tr><td>Use <code>--idempotent</code> scripts for production</td><td>DBA can review SQL before execution</td></tr>
+      <tr><td>Test migrations on a copy of production data first</td><td>Catches performance issues from large table modifications</td></tr>
+      <tr><td>Never modify migration files that have been applied</td><td>EF Core uses the migration ID hash — modifying applied migrations corrupts the history</td></tr>
+      <tr><td>Never run <code>EnsureCreated()</code> alongside migrations</td><td><code>EnsureCreated()</code> bypasses migration history and causes conflicts</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Disabling Automatic Migrations</h2>
+  <p>For deployments where a DBA applies migrations separately from the application deployment, disable automatic migrations and apply them via the generated SQL script:</p>
+  <pre><code>// appsettings.Production.json
+{
+  "SqlServerPlugin": {
+    "RunMigrationsOnStartup": false
+  }
+}</code></pre>
+  <p>The application will still fail to start if the database schema is behind — the startup health check verifies that no pending migrations exist:</p>
+  <pre><code>[SqlServerPlugin] RunMigrationsOnStartup is disabled
+[SqlServerPlugin] Checking for pending migrations...
+[SqlServerPlugin] ERROR: 2 pending migration(s) found.
+    Run 'dotnet ef database update' or apply the idempotent script before starting.</code></pre>
+
+  <div class="page-nav">
+    <a href="03-schema.html">&#8592; SQL Schema</a>
+    <a href="05-multi-tenant.html">Next: Multi-Tenant Configuration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

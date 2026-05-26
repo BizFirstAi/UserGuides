@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Player State Hooks — Form Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-props.html">FormRenderer Props</a>
+  <a href="02-operating-modes.html">Operating Modes</a>
+  <a href="03-rendering-pipeline.html">Rendering Pipeline</a>
+  <a href="04-draft-autosave.html">Draft Auto-Save</a>
+  <a href="05-theming.html">Theming</a>
+  <a href="06-viewmode-renderer.html">ViewModeRenderer</a>
+  <a href="07-page-player.html">FormPlayerPage</a>
+  <a href="08-hooks.html" class="active">Player State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Player State Hooks</h1>
+    <p class="lead">Atlas Forms provides three React hooks for accessing form state from within custom components embedded in a form or from custom player implementations: <code>useAtlasForm</code>, <code>useFormVisibility</code>, and <code>useControlDependencies</code>. All three must be used inside a <code>FormStateProvider</code> context.</p>
+  </div>
+
+  <h2>useAtlasForm</h2>
+  <p>The primary hook. Returns the complete form state and mutation functions:</p>
+  <pre><code>// packages/player-components-react/src/hooks/useAtlasForm.ts
+
+interface AtlasFormState {
+  // State
+  values:      Record&lt;string, any&gt;;   // Current field values
+  errors:      Record&lt;string, string&gt;; // Current validation errors
+  isDirty:     boolean;                // True if any value differs from initialValues
+  isValid:     boolean;                // True if no validation errors exist
+  isSubmitting: boolean;               // True while onSubmit is awaiting
+
+  // Mutations
+  setFieldValue: (fieldId: string, value: any) =&gt; void;
+  setValues:     (values: Record&lt;string, any&gt;) =&gt; void;
+  resetForm:     () =&gt; void;           // Reset to initialValues
+  submitForm:    () =&gt; Promise&lt;void&gt;;  // Trigger validation + onSubmit
+  clearErrors:   () =&gt; void;
+
+  // Engine access
+  engine:      FormEngine;             // Direct access to FormEngine instance
+}
+
+function useAtlasForm(): AtlasFormState;</code></pre>
+
+  <h3>Usage Example</h3>
+  <pre><code>// Inside a custom button component embedded in a form
+import { useAtlasForm } from '@atlas-forms/player-components-react';
+
+const SaveDraftButton: React.FC = () =&gt; {
+  const { isDirty, values, isSubmitting } = useAtlasForm();
+
+  const handleSaveDraft = async () =&gt; {
+    await fetch('/api/drafts', {
+      method: 'POST',
+      body: JSON.stringify(values),
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  return (
+    &lt;button onClick={handleSaveDraft} disabled={!isDirty || isSubmitting}&gt;
+      Save Draft
+    &lt;/button&gt;
+  );
+};</code></pre>
+
+  <h2>useFormVisibility</h2>
+  <p>Returns visibility state for controls, accounting for both <code>modeVisibilitySettings</code> and <code>visibilityRule</code> expressions:</p>
+  <pre><code>// packages/player-components-react/src/hooks/useFormVisibility.ts
+
+interface FormVisibilityState {
+  isVisible:       (controlId: string) =&gt; boolean;
+  getVisibleControls: (sectionId?: string) =&gt; FormControl[];
+  visibleControlIds:  string[];
+}
+
+function useFormVisibility(): FormVisibilityState;</code></pre>
+
+  <h3>Usage Example</h3>
+  <pre><code>import { useFormVisibility } from '@atlas-forms/player-components-react';
+
+// In a custom player — render only visible controls
+const MyCustomSection: React.FC&lt;{ sectionId: string }&gt; = ({ sectionId }) =&gt; {
+  const { getVisibleControls } = useFormVisibility();
+  const controls = getVisibleControls(sectionId);
+
+  return (
+    &lt;div className="section"&gt;
+      {controls.map(control =&gt; (
+        &lt;ControlRenderer key={control.id} control={control} /&gt;
+      ))}
+    &lt;/div&gt;
+  );
+};</code></pre>
+
+  <h2>useControlDependencies</h2>
+  <p>Returns dependency information for a specific control — which fields trigger a re-evaluation of its visibility rule, options, or computed value:</p>
+  <pre><code>// packages/player-components-react/src/hooks/useControlDependencies.ts
+
+interface ControlDependencies {
+  dependsOn:      string[];   // Field IDs that affect this control's visibility/options
+  affectedBy:     string[];   // Same — alias for dependsOn
+  cascadesTo:     string[];   // Fields whose options/visibility depend on this control
+}
+
+function useControlDependencies(controlId: string): ControlDependencies;</code></pre>
+
+  <h3>Usage Example</h3>
+  <pre><code>// Highlight dependent fields when a select is changed
+const CountrySelect: React.FC = () =&gt; {
+  const { cascadesTo } = useControlDependencies('country');
+  const { setFieldValue } = useAtlasForm();
+
+  const handleChange = (value: string) =&gt; {
+    setFieldValue('country', value);
+    // Clear dependent fields when country changes
+    cascadesTo.forEach(depId =&gt; setFieldValue(depId, null));
+  };
+
+  return /* ... */;
+};</code></pre>
+
+  <h2>Hook Usage Rules</h2>
+  <table>
+    <thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Must be inside FormStateProvider</td><td>All three hooks throw if used outside of a FormStateProvider context</td></tr>
+      <tr><td>Use at the component level only</td><td>Standard React hooks rules apply — no conditional calls</td></tr>
+      <tr><td>setFieldValue is stable</td><td>The function reference is stable across renders — safe to use in dependency arrays</td></tr>
+      <tr><td>values is a snapshot</td><td>The returned <code>values</code> object is a new reference on every render where any value changes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="07-page-player.html">&#8592; FormPlayerPage</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

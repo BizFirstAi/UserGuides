@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Player Architecture — Custom Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Custom Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html" class="active">Player Architecture</a>
+  <a href="02-minimal-player.html">Minimal Custom Player</a>
+  <a href="03-section-cards.html">Section Cards Layout</a>
+  <a href="04-form-engine.html">Using FormEngine Directly</a>
+  <a href="05-registering-player.html">Registering a Player</a>
+  <a href="06-schema-override.html">Per-Form Player Override</a>
+  <a href="07-mobile-player.html">Mobile Player Example</a>
+  <a href="08-state-hooks.html">Using State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Player Architecture</h1>
+    <p class="lead">Understanding the relationship between <code>FormStateProvider</code>, <code>FormEngine</code>, and <code>ControlRenderer</code> is essential before building a custom player. These three components form the indivisible core that every custom player — including the default <code>FormRenderer</code> — is built from.</p>
+  </div>
+
+  <h2>Component Hierarchy</h2>
+  <pre><code>// The invariant hierarchy that every custom player must follow:
+//
+// &lt;ThemeProvider&gt;              — optional: applies theme tokens
+//   &lt;FormStateProvider&gt;        — REQUIRED: owns FormEngine, provides context to hooks
+//     &lt;YourCustomLayout&gt;       — your layout code
+//       &lt;ControlRenderer /&gt;    — renders individual controls
+//       &lt;ControlRenderer /&gt;
+//       &lt;ControlRenderer /&gt;
+//   &lt;/FormStateProvider&gt;
+// &lt;/ThemeProvider&gt;</code></pre>
+
+  <h2>FormStateProvider</h2>
+  <pre><code>// packages/state-react/src/FormStateProvider.tsx
+
+interface FormStateProviderProps {
+  engine:         FormEngine;     // A configured FormEngine instance
+  mode?:          FormMode;       // Operating mode (default: "edit")
+  children:       React.ReactNode;
+}
+
+// FormStateProvider creates the React context that all hooks read from.
+// It subscribes to FormEngine change events and re-renders when state changes.
+// It MUST be the ancestor of all ControlRenderer instances and hook calls.</code></pre>
+
+  <h2>FormEngine</h2>
+  <pre><code>// packages/form-engine-js/src/FormEngine.ts
+
+class FormEngine {
+  constructor(schema: FormSchema, initialValues?: Record&lt;string, any&gt;) {}
+
+  // Value management
+  getValue(fieldId: string): any;
+  getValues(): Record&lt;string, any&gt;;
+  setValue(fieldId: string, value: any): void;
+  setValues(values: Record&lt;string, any&gt;): void;
+
+  // Validation
+  validate(): Promise&lt;Record&lt;string, string&gt;&gt;;
+  validateField(fieldId: string): Promise&lt;string | null&gt;;
+
+  // Events
+  on(event: 'change' | 'submit' | 'error', handler: Function): void;
+  off(event: string, handler: Function): void;
+
+  // Schema access
+  getSchema(): FormSchema;
+  getControl(fieldId: string): FormControl | undefined;
+  getSection(sectionId: string): FormSection | undefined;
+}</code></pre>
+
+  <h2>ControlRenderer</h2>
+  <pre><code>// packages/player-components-react/src/controls/ControlRenderer.tsx
+
+interface ControlRendererProps {
+  control: FormControl;   // The control definition from the schema
+  // All other context (values, setFieldValue, mode) comes from FormStateProvider
+}
+
+// Usage:
+&lt;ControlRenderer control={schema.controls[0]} /&gt;</code></pre>
+
+  <h2>Data Flow</h2>
+  <ol>
+    <li>User changes a field value in a control component.</li>
+    <li>The control component calls <code>setFieldValue(fieldId, newValue)</code> from <code>useAtlasForm()</code>.</li>
+    <li><code>setFieldValue</code> calls <code>engine.setValue(fieldId, newValue)</code>.</li>
+    <li>FormEngine updates its internal value map and fires the <code>change</code> event.</li>
+    <li><code>FormStateProvider</code> receives the event, recalculates computed fields, and triggers a React re-render.</li>
+    <li>All <code>useAtlasForm()</code> subscribers receive the new <code>values</code> snapshot.</li>
+    <li>Controls that depend on the changed value re-render with updated data.</li>
+  </ol>
+
+  <h2>parseSchema</h2>
+  <p>Always normalise the raw JSON schema before passing it to <code>FormEngine</code>:</p>
+  <pre><code>import { parseSchema } from '@atlas-forms/schema-js';
+import { FormEngine } from '@atlas-forms/form-engine-js';
+
+const schema = parseSchema(rawSchemaJson);
+// parseSchema: validates structure, fills in defaults, normalises control order
+// Throws on invalid schema — catches problems before rendering
+
+const engine = new FormEngine(schema, initialValues);</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-minimal-player.html">Next: Minimal Custom Player &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

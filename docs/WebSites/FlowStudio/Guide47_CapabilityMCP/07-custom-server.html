@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom MCP Server — Guide47 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: MCP</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-mcp-server-registry.html"><i class="fa-solid fa-server"></i> MCP Server Registry</a>
+  <a href="02-tool-call-node.html"><i class="fa-solid fa-wrench"></i> Tool Call Node</a>
+  <a href="03-input-mapping.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Input Mapping</a>
+  <a href="04-tool-output.html"><i class="fa-solid fa-box-open"></i> Tool Output</a>
+  <a href="05-auth.html"><i class="fa-solid fa-shield-halved"></i> Authentication</a>
+  <a href="06-octopus-link.html"><i class="fa-solid fa-robot"></i> Octopus Integration</a>
+  <a href="07-custom-server.html" class="active"><i class="fa-solid fa-plug"></i> Custom MCP Server</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Custom MCP Server</h1>
+    <p class="lead">Registering an external or internally hosted MCP server — providing the <code>IMCPServerDefinition</code>, endpoint URL, transport type, credential reference, and DI registration.</p>
+  </div>
+
+  <h2>What Makes a Valid Custom Server</h2>
+  <p>Any HTTP, SSE, or StdIo process that implements the Model Context Protocol specification (tools/list + tools/call endpoints) can be registered as a custom MCP server. The server must expose a <code>tools/list</code> endpoint so the registry can discover its tool catalog.</p>
+
+  <h2>Registering via API</h2>
+  <pre><code class="language-http">POST /api/mcp/servers
+{
+  "serverId":      "acme-underwriting-ai",
+  "displayName":   "Acme Underwriting AI Server",
+  "transportType": "Http",
+  "endpointUrl":   "https://underwriting.acme-internal.com/mcp",
+  "credentialId":  301,
+  "timeoutSeconds": 45
+}</code></pre>
+
+  <h2>Registering in Code (DI)</h2>
+  <pre><code class="language-csharp">// In your server registration module (e.g., Startup.cs / Program.cs):
+services.AddMCPServer(options =>
+{
+    options.ServerId      = "acme-underwriting-ai";
+    options.DisplayName   = "Acme Underwriting AI Server";
+    options.TransportType = MCPTransportType.Http;
+    options.EndpointUrl   = "https://underwriting.acme-internal.com/mcp";
+    options.CredentialId  = 301;   // resolved via ICredentialResolver at call time
+    options.TimeoutSeconds = 45;
+});</code></pre>
+
+  <h2>IMCPServerDefinition — Custom Implementation</h2>
+  <p>For advanced scenarios where server metadata is sourced from a database or configuration service, implement <code>IMCPServerDefinition</code> directly:</p>
+  <pre><code class="language-csharp">public class DatabaseBackedMCPServerDefinition : IMCPServerDefinition
+{
+    public string ServerId      { get; init; } = default!;
+    public string DisplayName   { get; init; } = default!;
+    public MCPTransportType TransportType { get; init; }
+    public string EndpointUrl   { get; init; } = default!;
+    public int CredentialId     { get; init; }
+    public int TimeoutSeconds   { get; init; }
+}
+
+// Registration from database at startup:
+public class MCPServerLoader : IHostedService
+{
+    private readonly IMCPServerRegistry _registry;
+    private readonly IServerConfigRepository _config;
+
+    public async Task StartAsync(CancellationToken ct)
+    {
+        var servers = await _config.GetAllActiveServersAsync(ct);
+        foreach (var s in servers)
+            _registry.Register(new DatabaseBackedMCPServerDefinition
+            {
+                ServerId      = s.ServerId,
+                DisplayName   = s.DisplayName,
+                TransportType = Enum.Parse&lt;MCPTransportType&gt;(s.TransportType),
+                EndpointUrl   = s.EndpointUrl,
+                CredentialId  = s.CredentialId,
+                TimeoutSeconds = s.TimeoutSeconds
+            });
+    }
+
+    public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
+}</code></pre>
+
+  <h2>StdIo Server Registration</h2>
+  <pre><code class="language-json">{
+  "serverId":      "local-nlp-server",
+  "displayName":   "Local NLP Processor",
+  "transportType": "StdIo",
+  "endpointUrl":   "/opt/bfai/nlp-server/run.sh",
+  "credentialId":  0,
+  "timeoutSeconds": 30
+}</code></pre>
+  <p>For StdIo servers, <code>endpointUrl</code> is the path to the executable. The engine launches it as a child process, communicates via stdin/stdout using the MCP JSON-RPC protocol, and terminates the process when the tool call completes.</p>
+
+  <div class="callout callout-tip">
+    <strong>Health check before registration:</strong> After registering a custom server, call <code>GET /api/mcp/servers/{serverId}/health</code> to verify reachability and confirm the tool catalog loads correctly. A <code>toolCount: 0</code> response indicates the server is reachable but <code>tools/list</code> returned no tools — check the server implementation.
+  </div>
+
+  <div class="callout callout-warning">
+    <strong>Tenant scoping for custom servers:</strong> By default, a registered custom server is available to all tenants on the platform. To restrict a server to specific tenants, set <code>allowedTenantIds</code> in the registration payload. Workflow nodes in other tenants will receive a "server not found" error at runtime.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-octopus-link.html">&#8592; Octopus Integration</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

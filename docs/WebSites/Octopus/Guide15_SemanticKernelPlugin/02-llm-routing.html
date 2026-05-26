@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Routing via SK — Semantic Kernel Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Kernel Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-llm-routing.html" class="active">LLM Routing via SK</a>
+  <a href="03-planner.html">SK Planner Integration</a>
+  <a href="04-sk-skills.html">Using SK Skills</a>
+  <a href="05-native-functions.html">Native Functions</a>
+  <a href="06-memory-integration.html">SK Memory Integration</a>
+  <a href="07-limitations.html">Limitations and Trade-offs</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>LLM Routing via SK</h1>
+    <p class="lead">The SemanticKernelPlugin wraps the SK kernel as an <code>ILLMProvider</code>, enabling Octopus agents to route different reasoning steps to different LLM models. The routing is configured per agent and per SK function call.</p>
+  </div>
+
+  <h2>SKLLMProvider — The Bridge</h2>
+  <p>The <code>SKLLMProvider</code> class implements Octopus's <code>ILLMProvider</code> interface, delegating to the SK kernel for completions. This means any Octopus agent can be configured to use SK as its LLM provider:</p>
+  <pre><code>// SKLLMProvider — wraps SK kernel as an Octopus ILLMProvider
+public class SKLLMProvider : ILLMProvider
+{
+    private readonly Kernel     _kernel;
+    private readonly string     _serviceId;  // Which SK service to use (e.g., "gpt-4o")
+
+    public SKLLMProvider(ISKKernelRegistry registry, string serviceId = "default")
+    {
+        _kernel    = registry.Get(serviceId);
+        _serviceId = serviceId;
+    }
+
+    public async Task&lt;LLMResponse&gt; CompleteAsync(
+        IReadOnlyList&lt;LLMMessage&gt; messages,
+        IReadOnlyList&lt;ToolDefinition&gt;? tools,
+        LLMOptions options,
+        CancellationToken ct)
+    {
+        var chatHistory = BuildSKChatHistory(messages);
+        var settings    = new OpenAIPromptExecutionSettings
+        {
+            MaxTokens   = options.MaxTokens,
+            Temperature = options.Temperature,
+            ToolCallBehavior = tools?.Any() == true
+                ? ToolCallBehavior.AutoInvokeKernelFunctions
+                : null
+        };
+
+        var result = await _kernel.InvokePromptAsync(
+            chatHistory.ToString(),
+            new KernelArguments(settings),
+            cancellationToken: ct);
+
+        return new LLMResponse
+        {
+            Content    = result.GetValue&lt;string&gt;() ?? string.Empty,
+            ToolCalls  = ExtractToolCalls(result)
+        };
+    }
+
+    public IAsyncEnumerable&lt;string&gt; StreamAsync(
+        IReadOnlyList&lt;LLMMessage&gt; messages,
+        LLMOptions options,
+        CancellationToken ct)
+    {
+        return StreamSKTokensAsync(messages, options, ct);
+    }
+}</code></pre>
+
+  <h2>Multi-Model Routing</h2>
+  <p>The SK kernel supports registering multiple AI services with distinct service IDs, enabling per-function model selection:</p>
+  <pre><code>// OnStartAsync — register multiple models in the same kernel
+kernelBuilder
+    .AddAzureOpenAIChatCompletion(
+        deploymentName: "gpt-4o",
+        endpoint:       azureEndpoint,
+        apiKey:         apiKey,
+        serviceId:      "gpt-4o")           // Expensive, high-quality
+
+    .AddAzureOpenAIChatCompletion(
+        deploymentName: "gpt-4o-mini",
+        endpoint:       azureEndpoint,
+        apiKey:         apiKey,
+        serviceId:      "gpt-4o-mini");     // Cheaper, faster
+
+// In an agent's tool handler — choose which model to use for a specific step
+var result = await kernel.InvokePromptAsync(
+    prompt,
+    new KernelArguments(new OpenAIPromptExecutionSettings
+    {
+        ServiceId = "gpt-4o-mini"            // Override for this specific call
+    }));</code></pre>
+
+  <h2>Routing Strategy Table</h2>
+  <table>
+    <thead>
+      <tr><th>Step Type</th><th>Recommended Model</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Complex multi-step planning</td><td><code>gpt-4o</code></td><td>Requires strong reasoning and instruction following</td></tr>
+      <tr><td>Simple classification or intent detection</td><td><code>gpt-4o-mini</code></td><td>Low cost, fast response for structured tasks</td></tr>
+      <tr><td>RAG retrieval summarisation</td><td><code>gpt-4o-mini</code></td><td>Summarisation is cheaper with a smaller model</td></tr>
+      <tr><td>Code generation</td><td><code>gpt-4o</code></td><td>Code quality is significantly better with the full model</td></tr>
+      <tr><td>Embeddings</td><td><code>text-embedding-3-large</code></td><td>Separate service — routing does not apply</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Configuring an Agent to Use SKLLMProvider</h2>
+  <pre><code>// Configure an agent via API to use the SK LLM provider
+PATCH /api/agents/{agentId}
+{
+  "llmProvider": "SemanticKernel",
+  "llmModel":    "gpt-4o",
+  "llmSettings": {
+    "serviceId": "gpt-4o",
+    "plannerEnabled": true
+  }
+}</code></pre>
+  <div class="callout info">
+    <strong>Fallback to Octopus native.</strong> If the SK kernel call fails (rate limit, service unavailable), the <code>SKLLMProvider</code> does not automatically fall back to the Octopus native LLM provider. Configure retry policies at the SK kernel level for resilience.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-enabling.html">&#8592; Enabling the Plugin</a>
+    <a href="03-planner.html">Next: SK Planner Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

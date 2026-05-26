@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Building a Custom Engine — Expression Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Expression Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-default-jint.html">Default Engine — Jint</a>
+  <a href="02-expression-context.html">ExpressionContext</a>
+  <a href="03-context-variables.html">Context Variable Reference</a>
+  <a href="04-interface.html">IExpressionEvaluator Interface</a>
+  <a href="05-custom-engine.html" class="active">Building a Custom Engine</a>
+  <a href="06-form-fields.html">Expression Fields in Forms</a>
+  <a href="07-resolution-pipeline.html">Resolution Pipeline</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Building a Custom Engine</h1>
+    <p class="lead">A custom expression engine implements <code>IExpressionEvaluator</code> and is registered in DI alongside (or instead of) the default Jint engine. Custom engines are useful for supporting alternative expression languages such as CEL, FEEL, JSONPath, or XPath.</p>
+  </div>
+
+  <h2>Minimal Custom Evaluator</h2>
+  <pre><code>// CelExpressionEvaluator.cs
+using BizFirst.Ai.ProcessEngine.JS.Services.ExpressionEngine;
+using BizFirst.Ai.ProcessEngine.Domain.Definition;
+
+/// CEL (Common Expression Language) evaluator implementation.
+public class CelExpressionEvaluator : IExpressionEvaluator
+{
+    private readonly ICelEngine _celEngine;
+    private readonly ILogger&lt;CelExpressionEvaluator&gt; _logger;
+
+    public CelExpressionEvaluator(ICelEngine celEngine,
+        ILogger&lt;CelExpressionEvaluator&gt; logger)
+    {
+        _celEngine = celEngine;
+        _logger    = logger;
+    }
+
+    public async Task&lt;object?&gt; EvaluateAsync(
+        string expression,
+        Dictionary&lt;string, object&gt; executionVariables,
+        ProcessElementDefinition? elementDefinition = null)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+            throw new ArgumentException("Expression cannot be empty", nameof(expression));
+
+        try
+        {
+            // Evaluate CEL expression with the provided variables
+            return await _celEngine.EvaluateAsync(expression, executionVariables);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CEL evaluation failed for expression: {Expression}", expression);
+            throw new InvalidOperationException($"CEL evaluation error: {ex.Message}", ex);
+        }
+    }
+
+    public async Task&lt;bool&gt; EvaluateBooleanAsync(
+        string expression,
+        Dictionary&lt;string, object&gt; executionVariables,
+        ProcessElementDefinition? elementDefinition = null)
+    {
+        var result = await EvaluateAsync(expression, executionVariables, elementDefinition);
+        return result is bool b ? b : result is not null;
+    }
+
+    public Task&lt;ExpressionValidationResult&gt; ValidateExpressionAsync(string expression)
+    {
+        try
+        {
+            _celEngine.ValidateSyntax(expression);
+            return Task.FromResult(ExpressionValidationResult.Valid());
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult(
+                ExpressionValidationResult.Invalid($"CEL syntax error: {ex.Message}"));
+        }
+    }
+}</code></pre>
+
+  <h2>Registering a Custom Evaluator</h2>
+  <p>Register the custom evaluator in DI. To replace the default Jint engine, register it as the primary <code>IExpressionEvaluator</code>. To add it alongside (for specific node types), register it as a named service:</p>
+  <pre><code>// In your DI registration / INodeExecutorDependency.RegisterDefaults()
+
+// Option A: Replace the default evaluator entirely
+services.AddScoped&lt;ICelEngine, GoogleCelEngine&gt;();
+services.AddScoped&lt;IExpressionEvaluator, CelExpressionEvaluator&gt;();
+// Note: this REPLACES the Jint evaluator for all expression resolution
+
+// Option B: Named registration (for use by specific executors only)
+services.AddKeyedScoped&lt;IExpressionEvaluator, CelExpressionEvaluator&gt;("cel");
+// Resolve with: serviceProvider.GetKeyedService&lt;IExpressionEvaluator&gt;("cel")</code></pre>
+
+  <h2>Expression Prefix Routing</h2>
+  <p>If running multiple evaluators side-by-side, use a prefix convention in the expression string to route to the correct engine. The <code>ConfigExpressionResolver</code> can detect the prefix and dispatch accordingly:</p>
+  <pre><code>// Prefix-based routing in the expression field value
+@{js:   $output['node-1'].statusCode === 200}     // → Jint engine
+@{cel:  output['node-1'].statusCode == 200}        // → CEL engine
+@{feel: output.node-1.statusCode = 200}            // → FEEL engine</code></pre>
+
+  <div class="callout warning">
+    <strong>Security Responsibility</strong>
+    When implementing a custom evaluator, you are responsible for sandboxing and timeout enforcement. The Jint evaluator uses <code>JintSecurityConfiguration.CreateEngine(isolationMode)</code> to enforce resource limits. Your custom engine must apply equivalent constraints — unconstrained evaluation creates a denial-of-service risk.
+  </div>
+
+  <div class="callout info">
+    <strong>Validation Is Critical</strong>
+    Always implement <code>ValidateExpressionAsync</code> — it is called when the user saves a workflow in the designer. Without validation, syntax errors are only caught at execution time, which is a poor developer experience.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-interface.html">&#8592; IExpressionEvaluator Interface</a>
+    <a href="06-form-fields.html">Next: Expression Fields in Forms &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

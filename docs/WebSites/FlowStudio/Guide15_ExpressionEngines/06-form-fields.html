@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expression Fields in Forms — Expression Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Expression Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-default-jint.html">Default Engine — Jint</a>
+  <a href="02-expression-context.html">ExpressionContext</a>
+  <a href="03-context-variables.html">Context Variable Reference</a>
+  <a href="04-interface.html">IExpressionEvaluator Interface</a>
+  <a href="05-custom-engine.html">Building a Custom Engine</a>
+  <a href="06-form-fields.html" class="active">Expression Fields in Forms</a>
+  <a href="07-resolution-pipeline.html">Resolution Pipeline</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Expression Fields in Forms</h1>
+    <p class="lead">Atlas Form fields that support expressions show an expression toggle in the node configuration panel. Enabling the toggle switches the input from a plain text field to an expression editor. The backend stores the raw expression string and resolves it at execution time.</p>
+  </div>
+
+  <h2>Enabling Expressions on a Form Field</h2>
+  <p>In the Atlas Form field definition (JSON schema), set <code>supportsExpressions: true</code> on any field that should allow expression input:</p>
+  <pre><code>// Atlas Form field definition
+{
+  "key": "recipientEmail",
+  "label": "Recipient Email",
+  "type": "text",
+  "supportsExpressions": true,   // ← enables the expression toggle
+  "expressionLanguage": "auto",  // "auto" | "javascript" | "cel"
+  "required": true,
+  "placeholder": "e.g. alice@example.com or @{output:form-1.email}"
+}</code></pre>
+
+  <h2>Field Behaviour With Expressions</h2>
+  <table>
+    <thead><tr><th>State</th><th>Input Mode</th><th>Stored Value</th><th>Resolved As</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Expression OFF</td>
+        <td>Plain text input</td>
+        <td><code>"alice@example.com"</code></td>
+        <td>Literal string — no resolution</td>
+      </tr>
+      <tr>
+        <td>Expression ON</td>
+        <td>Expression editor with syntax highlighting</td>
+        <td><code>"@{output:form-1.email}"</code></td>
+        <td>Resolved to the actual email value at runtime</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>expressionLanguage Values</h2>
+  <table>
+    <thead><tr><th>Value</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>"auto"</code></td><td>Designer auto-detects from the expression prefix (<code>@{js:...}</code>, <code>@{output:...}</code> etc.)</td></tr>
+      <tr><td><code>"javascript"</code></td><td>Forces Jint evaluation for the whole field value</td></tr>
+      <tr><td><code>"directive"</code></td><td>Directive-only — no Jint; only <code>@{output:...}</code>, <code>@{var:...}</code> etc.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Frontend Role</h2>
+  <p>The Flow Studio designer stores expression strings exactly as the user typed them. It does not evaluate expressions — it only renders the syntax highlight and provides an autocomplete picker for known node outputs. Evaluation happens entirely on the backend during execution.</p>
+  <pre><code>// What is stored in the ProcessElement.Configuration JSON:
+{
+  "recipientEmail": "@{output:form-submission-1.email}",
+  "subject":        "New order from @{output:form-submission-1.firstName}",
+  "priority":       "high"   // ← plain literal, no expression
+}</code></pre>
+
+  <h2>Validation in the Designer</h2>
+  <p>When the user saves the workflow, the designer sends each expression field value to <code>IExpressionEvaluator.ValidateExpressionAsync()</code> (via the validation API). The designer highlights syntax errors in real time without executing the expression. Only syntactic correctness is checked at design time — semantic validity (e.g. whether a referenced node exists) is checked at execution time.</p>
+
+  <div class="callout info">
+    <strong>Static Values Are Never Evaluated</strong>
+    If <code>supportsExpressions: true</code> is set but the user types a plain value (no <code>@{...</code> sigil), the resolver treats it as a literal string and does not invoke the expression engine. The overhead of the resolver is minimal for literal fields.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-custom-engine.html">&#8592; Building a Custom Engine</a>
+    <a href="07-resolution-pipeline.html">Next: Resolution Pipeline &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

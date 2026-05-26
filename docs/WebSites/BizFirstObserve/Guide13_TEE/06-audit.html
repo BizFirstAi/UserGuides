@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audit Logging in TEE — TEE | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>TEE Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">TEE Observability Overview</a>
+  <a href="01-tee-constraints.html">TEE Observability Constraints</a>
+  <a href="02-allowed-telemetry.html">Allowed Telemetry</a>
+  <a href="03-attestation-logs.html">Attestation-Based Log Integrity</a>
+  <a href="04-in-tee-observability.html">In-TEE Observability</a>
+  <a href="05-boundary-crossing.html">Telemetry at the TEE Boundary</a>
+  <a href="06-audit.html" class="active">Audit Logging in TEE</a>
+  <a href="07-incident-response.html">Incident Response in TEE</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Audit Logging in TEE</h1>
+    <p class="lead">TEE audit logging combines two capabilities that are impossible in standard deployments: cryptographic proof that a log was produced by a specific code version (attestation signing), and an immutable append-only log chain that detects any gap or modification. Together these create audit records suitable for regulatory compliance, legal evidence, and security investigations.</p>
+  </div>
+
+  <h2>TEE Audit Log Architecture</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Append-Only Chain</h4>
+      <p>Each audit log entry includes a hash of the previous entry — forming a hash chain. Deleting or modifying any entry breaks the chain, which is detectable during audit verification. Sequence numbers detect inserted or missing entries.</p>
+    </div>
+    <div class="card">
+      <h4>Attestation Signing</h4>
+      <p>Each batch of audit records is signed by the TEE-bound private key (see Attestation-Based Log Integrity). The signature proves the record came from attested code, not from a modified or impersonating process.</p>
+    </div>
+    <div class="card">
+      <h4>Immutable Egress</h4>
+      <p>Audit records are pushed to an S3-compatible store with Object Lock (WORM) enabled. Once written, records cannot be modified or deleted — even by infrastructure administrators — until the retention period expires.</p>
+    </div>
+    <div class="card">
+      <h4>Dual-Copy Strategy</h4>
+      <p>Audit records are kept both inside the TEE (in-TEE Loki, for investigation) and outside the TEE (WORM S3, for compliance). The external copy is sanitized; the internal copy has full detail accessible via attested channel.</p>
+    </div>
+  </div>
+
+  <h2>Audit Record Schema</h2>
+  <pre><code">// TEE Audit Record — emitted for every significant workflow event
+// This record is part of the attestation-signed log chain
+
+{
+  // Chain integrity fields
+  "seq": 1042,                              // Monotonically increasing within TEE lifetime
+  "prev_hash": "sha256:a1b2c3...f9",        // SHA256 of previous record (hash chain)
+  "record_hash": "sha256:b2c3d4...fa",      // SHA256 of this record (before signing)
+
+  // TEE identity
+  "tee_measurement": "sha384:c3d4e5...fb", // PCR[2]: code version that produced this record
+  "tee_instance_id": "nitro-001-us-east",  // TEE instance identifier
+
+  // Event
+  "timestamp_utc": "2026-05-25T10:30:00.000Z",
+  "event_type": "workflow.completed",       // Enum: workflow.started, node.completed, hil.approved, etc.
+  "execution_id": "exec-abc-123",           // GUID — no payload encoded
+  "workflow_type": "credit-assessment",     // Enum — not user-supplied string
+  "tenant_hash": "sha256:tenant-hash",      // Hash of tenant ID
+
+  // Operational context (no payload data)
+  "duration_ms": 1423,
+  "node_count": 7,
+  "outcome": "completed",                   // Enum: completed, failed, timeout, cancelled
+
+  // Signature (covers all above fields)
+  "signature": "base64:MEQCIBx...",
+  "signing_cert_thumbprint": "sha256:d4e5f6..."
+}</code></pre>
+
+  <h2>Audit Event Types</h2>
+  <table>
+    <thead>
+      <tr><th>Event Type</th><th>When Emitted</th><th>Key Fields</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>workflow.started</td><td>Workflow execution begins</td><td>executionId, workflowType, tenantHash, triggeredBy (system/api/schedule)</td></tr>
+      <tr><td>workflow.completed</td><td>Workflow completes successfully</td><td>executionId, durationMs, nodeCount, outcome</td></tr>
+      <tr><td>workflow.failed</td><td>Workflow terminates with failure</td><td>executionId, errorCode, failedNodeType, durationMs</td></tr>
+      <tr><td>node.started</td><td>Individual node begins execution</td><td>executionId, nodeType, nodeIndex, tenantHash</td></tr>
+      <tr><td>node.completed</td><td>Individual node completes</td><td>executionId, nodeType, nodeIndex, durationMs, outcome</td></tr>
+      <tr><td>hil.requested</td><td>Human-in-loop approval requested</td><td>executionId, approvalType, tenantHash — NOT the approval context data</td></tr>
+      <tr><td>hil.approved</td><td>HIL decision recorded</td><td>executionId, approverRoleHash (hashed role, not name), decision (approved/rejected)</td></tr>
+      <tr><td>tee.started</td><td>TEE instance initialized and attested</td><td>teeInstanceId, teeMeasurement, attestationCertThumbprint</td></tr>
+      <tr><td>tee.policy.changed</td><td>TEE egress or attestation policy updated</td><td>policyVersion, changeType, authorizedBy (role hash)</td></tr>
+      <tr><td>audit.chain.verified</td><td>Audit chain integrity check performed</td><td>checkedFrom, checkedTo, result (intact/gap-detected)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>WORM S3 Storage Configuration</h2>
+  <pre><code"># S3 bucket for TEE audit records — WORM (Write Once, Read Many)
+# Object Lock prevents modification or deletion during retention period
+
+aws s3api create-bucket \
+  --bucket bizfirstgo-tee-audit-logs \
+  --object-lock-enabled-for-bucket
+
+aws s3api put-object-lock-configuration \
+  --bucket bizfirstgo-tee-audit-logs \
+  --object-lock-configuration '{
+    "ObjectLockEnabled": "Enabled",
+    "Rule": {
+      "DefaultRetention": {
+        "Mode": "COMPLIANCE",   # COMPLIANCE = even bucket owner cannot delete
+        "Years": 7              # 7-year retention for SOX/financial compliance
+      }
+    }
+  }'
+
+# Audit records written by the external OTel Collector → S3 exporter:
+exporters:
+  awss3:
+    s3_uploader:
+      region: us-east-1
+      s3_bucket: bizfirstgo-tee-audit-logs
+      s3_prefix: "tee-audit/"
+      s3_partition: minute   # One object per minute; efficient for range queries
+    marshaler: otlp_json
+
+# When writing audit records:
+# - Object key: tee-audit/2026/05/25/10/30/seq-1042.json
+# - Object lock: inherited from bucket default (7-year COMPLIANCE)
+# - Cannot be deleted or modified until 2033-05-25</code></pre>
+
+  <h2>Audit Chain Verification Query</h2>
+  <pre><code"># LogQL: Find audit records for a specific execution
+{job="tee-audit"} | json | execution_id = "exec-abc-123"
+  | line_format "{{.seq}} {{.event_type}} {{.timestamp_utc}} {{.outcome}}"
+
+# LogQL: Detect sequence gaps (potential log deletion)
+{job="tee-audit", tee_instance_id="nitro-001-us-east"}
+  | json
+  | seq > 1000 and seq < 2000
+  # Compare seq values in Grafana visualization — gaps indicate tampering
+
+# Programmatic audit chain verification:
+# 1. Fetch all records sorted by seq from S3
+# 2. For each record: SHA256(record_json) == record.record_hash
+# 3. For each record: SHA256(previous_record_json) == record.prev_hash
+# 4. Signature verification: tee_public_key.Verify(record_hash, record.signature)
+# 5. If any check fails: alert + retain record as evidence of tampering</code></pre>
+
+  <div class="callout info">
+    <strong>Audit Log Is Separate from Operational Log</strong>
+    <p>The TEE audit log is not the same as the operational Loki log stream. Operational logs (executionId, timing, error codes) serve the operations team for debugging and alerting. The audit log (event type, chain hash, attestation signature) serves compliance, legal, and security teams. Use separate Loki streams, separate OTel Collector pipelines, and separate storage buckets — mixing them creates retention and access control conflicts.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-boundary-crossing.html">&#8592; Telemetry at the TEE Boundary</a>
+    <a href="07-incident-response.html">Next: Incident Response in TEE &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

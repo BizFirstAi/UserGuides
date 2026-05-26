@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>$global — Variable Scoping | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Variable Scoping</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-json.html">$json — Trigger Input</a>
+  <a href="02-input.html">$input — Upstream Node</a>
+  <a href="03-output.html">$output.{nodeId} — Named Node</a>
+  <a href="04-var.html">$var.{name} — Workflow Variables</a>
+  <a href="05-global.html" class="active">$global — Tenant Globals</a>
+  <a href="06-context.html">$context — Execution Context</a>
+  <a href="07-availability.html">Availability Table</a>
+  <a href="08-mistakes.html">Common Mistakes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>$global — Tenant Globals</h1>
+    <p class="lead"><code>$global</code> provides read-only access to tenant-wide constants configured by the tenant administrator in the platform settings. These values are shared across all workflows for the tenant and are always available in every expression, regardless of execution state.</p>
+  </div>
+
+  <h2>What $global Contains</h2>
+  <p>Tenant globals are key-value pairs stored in the platform's tenant configuration store. They are typically used for constants that apply across many workflows — currency codes, API base URLs, threshold values, feature flags, and similar tenant-specific settings.</p>
+  <table>
+    <thead><tr><th>Example Global</th><th>Example Value</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td><code>$global.defaultCurrency</code></td><td>"USD"</td><td>Used in invoicing and reporting workflows</td></tr>
+      <tr><td><code>$global.maxApprovalAmountUsd</code></td><td>50000</td><td>Threshold for automatic approval in purchase workflows</td></tr>
+      <tr><td><code>$global.supportEmail</code></td><td>"support@acme.com"</td><td>Used in notification templates</td></tr>
+      <tr><td><code>$global.apiBaseUrl</code></td><td>"https://api.acme-internal.com"</td><td>Used in HTTP request node URLs</td></tr>
+      <tr><td><code>$global.features.aiSummary</code></td><td>true</td><td>Feature flag checked in conditional branches</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Expression Examples</h2>
+  <pre><code">// Using a global constant in an HTTP URL
+"{{$global.apiBaseUrl}}/customers/{{$json.body.customerId}}"
+
+// Using a threshold in a condition
+$input.orderTotal > $global.maxApprovalAmountUsd
+
+// Using a global in a template expression
+"Payment of {{$input.amount}} {{$global.defaultCurrency}} processed."
+
+// Nested global access (if admin configured nested objects)
+$global.features.aiSummary == true</code></pre>
+
+  <h2>How $global Is Populated</h2>
+  <p>The expression context is populated by <code>ExpressionContext.cs</code> at the start of expression evaluation. Tenant globals are loaded from the <code>TenantGlobalVariableService</code>, which reads from a cached configuration store keyed by <code>TenantId</code>. They are not reloaded per-node — they are loaded once per expression evaluation context.</p>
+  <pre><code">// ExpressionContext.cs (simplified)
+public class ExpressionContext
+{
+    public JsonElement Global { get; init; }  // Populated from TenantGlobalVariableService
+
+    // Usage: $global.{key} resolves as:
+    // Global.GetProperty(key)  — returns JsonElement (null-safe navigation)
+}</code></pre>
+
+  <h2>$global vs. $var vs. ctx.ExecutionMemory.SetGlobal</h2>
+  <table>
+    <thead><tr><th>Prefix</th><th>Set By</th><th>Scope</th><th>Mutable?</th></tr></thead>
+    <tbody>
+      <tr><td><code>$global</code></td><td>Tenant administrator in platform settings</td><td>Tenant-wide, all workflows, all executions</td><td>No — read-only in expressions</td></tr>
+      <tr><td><code>$var.{name}</code></td><td>SetVariable node in the workflow canvas</td><td>Single execution</td><td>Yes — updated by SetVariable nodes</td></tr>
+      <tr><td>ctx.ExecutionMemory.SetGlobal</td><td>Executor C# code</td><td>Single execution (same dictionary as $var)</td><td>Yes — updated by executor code</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Caching and Updates</h2>
+  <p>Tenant globals are cached for a configurable TTL (default 5 minutes). If an admin updates a global constant, running executions may see the old value until the cache refreshes. For values that change frequently, use a different mechanism (SetVariable node, API call node) rather than tenant globals.</p>
+
+  <div class="callout info">
+    <strong>$global is always non-null at the top level.</strong> <code>$global</code> itself is never null — it is an empty object if no globals are configured. However, <code>$global.someKey</code> returns null if <code>someKey</code> is not in the configuration. Use null-safe navigation when accessing globals that may not be configured: <code>$global.features?.aiSummary ?? false</code>.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-var.html">&#8592; $var.{name} — Workflow Variables</a>
+    <a href="06-context.html">Next: $context — Execution Context &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

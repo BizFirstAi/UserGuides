@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Considerations — Pinned Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Pinned Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-returning-pinned.html">Returning Pinned Data</a>
+  <a href="02-storage-model.html">Pinned Data Storage</a>
+  <a href="03-reading-pinned.html">Reading Pinned Data</a>
+  <a href="04-inspector-display.html">Node Inspector Display</a>
+  <a href="05-clearing-pinned.html">Clearing Pinned Data</a>
+  <a href="06-use-cases.html">Use Cases</a>
+  <a href="07-security.html" class="active">Security Considerations</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Security Considerations</h1>
+    <p class="lead">Pinned data is stored in the database as plaintext JSON. Understanding tenant isolation boundaries, what data is appropriate to pin, and how encryption at rest is applied is critical for compliant use of the pinned data system.</p>
+  </div>
+
+  <h2>Tenant Isolation</h2>
+  <p>Every read and write operation in <code>PinnedDataService</code> includes <code>TenantId</code> from the execution context. Pinned data from one tenant can never be accessed by another tenant — all queries include a <code>WHERE TenantId = @TenantId</code> clause.</p>
+  <pre><code">// PinnedDataService.cs — all methods include TenantId
+public async Task&lt;string?&gt; GetRawJsonAsync(int processId, string nodeId, CancellationToken ct)
+{
+    return await _db.QuerySingleOrDefaultAsync&lt;string&gt;(@"
+        SELECT DataJson FROM Process_NodePinnedData
+        WHERE  TenantId  = @TenantId    -- Hard isolation boundary
+          AND  ProcessId = @ProcessId
+          AND  NodeId    = @NodeId
+          AND  (ExpiresAt IS NULL OR ExpiresAt &gt; SYSUTCDATETIME())",
+        new { TenantId = _tenantContext.TenantId, ProcessId = processId, NodeId = nodeId },
+        cancellationToken: ct);
+}</code></pre>
+
+  <h2>Pinned Data is Visible in Node Inspector</h2>
+  <p>Any user with access to the Observer Panel for a given execution can see the pinned data for every node in that execution. This is an important consideration for what data you pin.</p>
+  <table>
+    <thead><tr><th>Data Type</th><th>Safe to Pin?</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Aggregate counts, totals, metadata</td><td>Yes</td><td>No personal data — safe to display in Inspector</td></tr>
+      <tr><td>Cached API responses (non-personal)</td><td>Yes</td><td>Check data classification of the API response</td></tr>
+      <tr><td>AI conversation history</td><td>With care</td><td>May contain user messages — apply PII classification; consider masking before pinning</td></tr>
+      <tr><td>Personally Identifiable Information (PII)</td><td>No</td><td>Avoid pinning names, email addresses, national IDs, etc.</td></tr>
+      <tr><td>Authentication tokens or API keys</td><td>Never</td><td>Use ICredentialResolver for all credentials — never pin secrets</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Encryption at Rest</h2>
+  <p>The <code>Process_NodePinnedData</code> table is subject to Transparent Data Encryption (TDE) at the SQL Server level — the same encryption that applies to all application tables. There is no additional column-level encryption on <code>DataJson</code>. If column-level encryption for sensitive pinned data is required, pre-encrypt the value before passing it to <code>NodeExecutionResult.Success</code>.</p>
+  <pre><code">// Column-level encryption pattern (if needed)
+var sensitiveData = new { SensitiveValue = "..." };
+var encrypted = _dataProtector.Protect(JsonSerializer.Serialize(sensitiveData));
+
+return NodeExecutionResult.Success(
+    output     : result,
+    pinnedData : new { EncryptedPayload = encrypted }
+);</code></pre>
+
+  <h2>API Access Controls</h2>
+  <p>The management API endpoints for clearing pinned data require the <code>process:manage</code> permission. Reading pinned data via the Node Inspector API requires <code>execution:view</code> on the relevant process.</p>
+  <table>
+    <thead><tr><th>API Endpoint</th><th>Required Permission</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /api/executions/{id}/nodes/{nodeId}/inspector</code></td><td><code>execution:view</code></td></tr>
+      <tr><td><code>DELETE /api/processes/{processId}/nodes/{nodeId}/pinned-data</code></td><td><code>process:manage</code></td></tr>
+      <tr><td><code>DELETE /api/processes/{processId}/pinned-data</code></td><td><code>process:manage</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Audit Log</h2>
+  <p>Writes to <code>Process_NodePinnedData</code> are logged at the <code>Information</code> level by <code>PinnedDataService</code> with structured fields including <code>tenantId</code>, <code>processId</code>, <code>nodeId</code>, and <code>action</code> (save/clear). These log entries flow through Serilog to Loki for retention.</p>
+
+  <div class="callout info">
+    <strong>Never pin credentials.</strong> Use <code>ICredentialResolver</code> for all API keys, passwords, and tokens. The credential resolver retrieves secrets at runtime from secure storage — pinning them to the database in plaintext defeats the purpose of secure credential management.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-use-cases.html">&#8592; Use Cases</a>
+    <a href="index.html">Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
