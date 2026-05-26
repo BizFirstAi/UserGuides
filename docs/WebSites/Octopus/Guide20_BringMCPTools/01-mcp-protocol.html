@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP Server Protocol — Bring MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Bring MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-mcp-protocol.html" class="active">MCP Server Protocol</a>
+  <a href="02-tool-schema.html">Defining Tool Schemas</a>
+  <a href="03-minimal-api.html">C# MinimalAPI Server</a>
+  <a href="04-agent-registration.html">Agent Registration</a>
+  <a href="05-authentication.html">Authentication</a>
+  <a href="06-testing.html">Testing MCP Tools</a>
+  <a href="07-packaging.html">Packaging and Publishing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — MCP</div>
+    <h1>MCP Server Protocol</h1>
+    <p class="lead">The MCP (Model Context Protocol) wire format used by Octopus is a simple HTTP/JSON contract. This page documents every request and response shape your server must implement.</p>
+  </div>
+
+  <h2>Protocol Overview</h2>
+  <p>Octopus communicates with an external MCP server over HTTPS using two endpoints. The server must respond with <code>Content-Type: application/json</code> on all routes. HTTP 200 indicates success; 4xx/5xx responses cause the agent to receive a structured error result.</p>
+
+  <table>
+    <thead>
+      <tr><th>Endpoint</th><th>Called When</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>GET /tools</code></td><td>Agent startup / config refresh</td><td>Discover all available tools and their schemas</td></tr>
+      <tr><td><code>POST /tool/{name}/call</code></td><td>Agent decides to use a tool</td><td>Execute the named tool with the supplied arguments</td></tr>
+      <tr><td><code>GET /health</code></td><td>Startup probe / monitoring</td><td>Confirm the server is running (recommended)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>GET /tools — Tool Discovery</h2>
+  <p>Octopus calls <code>GET /tools</code> once when the agent is initialized and again on each configuration refresh. The response is a JSON array of tool descriptor objects.</p>
+
+  <h3>Request</h3>
+  <pre><code>GET /tools HTTP/1.1
+Host: my-mcp-server.internal
+Authorization: Bearer eyJhbGci...
+Accept: application/json</code></pre>
+
+  <h3>Response — 200 OK</h3>
+  <pre><code>[
+  {
+    "name":        "zendesk_create_ticket",
+    "description": "Create a new Zendesk support ticket. Returns the ticket ID and URL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type":        "string",
+          "description": "The ticket subject line"
+        },
+        "description": {
+          "type":        "string",
+          "description": "Full description of the issue"
+        },
+        "priority": {
+          "type":        "string",
+          "enum":        ["low", "normal", "high", "urgent"],
+          "description": "Ticket priority level"
+        }
+      },
+      "required": ["subject", "description"]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "ticket_id":  { "type": "integer" },
+        "ticket_url": { "type": "string", "format": "uri" },
+        "status":     { "type": "string" }
+      }
+    }
+  },
+  {
+    "name":        "zendesk_search_tickets",
+    "description": "Search Zendesk tickets using full-text or field-based query.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query":  { "type": "string",
+                    "description": "Zendesk search query string" },
+        "status": { "type": "string",
+                    "enum": ["open","pending","solved","closed"],
+                    "description": "Optional status filter" }
+      },
+      "required": ["query"]
+    }
+  }
+]</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>string</td><td>Yes</td><td>Snake-case tool identifier, unique within the server</td></tr>
+      <tr><td><code>description</code></td><td>string</td><td>Yes</td><td>LLM-readable description of what the tool does and returns</td></tr>
+      <tr><td><code>inputSchema</code></td><td>JSON Schema object</td><td>Yes</td><td>JSON Schema (draft-07) describing the tool's input parameters</td></tr>
+      <tr><td><code>outputSchema</code></td><td>JSON Schema object</td><td>No</td><td>Optional JSON Schema describing the tool's output shape</td></tr>
+    </tbody>
+  </table>
+
+  <h2>POST /tool/{name}/call — Tool Execution</h2>
+  <p>When the LLM decides to call a tool, Octopus sends a <code>POST</code> to <code>/tool/{name}/call</code> with the argument object the LLM produced. The argument object must conform to the tool's <code>inputSchema</code>.</p>
+
+  <h3>Request</h3>
+  <pre><code>POST /tool/zendesk_create_ticket/call HTTP/1.1
+Host: my-mcp-server.internal
+Authorization: Bearer eyJhbGci...
+Content-Type: application/json
+X-Octopus-Tenant-Id: tenant-abc123
+X-Octopus-Correlation-Id: episode-xyz789
+
+{
+  "subject":     "Cannot access the billing portal",
+  "description": "Since the last update, users report a 403 error on /billing.",
+  "priority":    "high"
+}</code></pre>
+
+  <h3>Request Headers</h3>
+  <table>
+    <thead>
+      <tr><th>Header</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Authorization: Bearer {token}</code></td><td>Token resolved via ICredentialResolver at agent startup</td></tr>
+      <tr><td><code>X-Octopus-Tenant-Id</code></td><td>The calling tenant's ID — use for per-tenant scoping in your server</td></tr>
+      <tr><td><code>X-Octopus-Correlation-Id</code></td><td>Episode ID for end-to-end tracing across logs</td></tr>
+      <tr><td><code>Content-Type: application/json</code></td><td>Always JSON; your server must accept this</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Success Response — 200 OK</h3>
+  <pre><code>{
+  "ticket_id":  12345,
+  "ticket_url": "https://mycompany.zendesk.com/tickets/12345",
+  "status":     "open"
+}</code></pre>
+
+  <h3>Error Response — 4xx / 5xx</h3>
+  <p>Return a structured error body. Octopus relays the <code>message</code> field to the agent as the tool result so the LLM can explain the failure to the user.</p>
+  <pre><code>// HTTP 422
+{
+  "error":   "validation_error",
+  "message": "The 'priority' field must be one of: low, normal, high, urgent.",
+  "field":   "priority"
+}
+
+// HTTP 503
+{
+  "error":   "upstream_unavailable",
+  "message": "Zendesk API is temporarily unavailable. Retry in 30 seconds.",
+  "retry_after": 30
+}</code></pre>
+
+  <h2>GET /health — Health Check</h2>
+  <p>Implement a <code>GET /health</code> endpoint for Kubernetes liveness probes and Octopus startup health checks. Return HTTP 200 with a simple body.</p>
+  <pre><code>GET /health HTTP/1.1
+Host: my-mcp-server.internal
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{ "status": "ok", "version": "1.2.0" }</code></pre>
+
+  <h2>Protocol Constraints</h2>
+  <table>
+    <thead>
+      <tr><th>Constraint</th><th>Value</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Transport</td><td>HTTPS only (TLS 1.2+)</td><td>HTTP is rejected in production mode</td></tr>
+      <tr><td>Response Content-Type</td><td><code>application/json</code></td><td>Required on all routes</td></tr>
+      <tr><td>Tool call timeout</td><td>30 seconds (default)</td><td>Configurable per server registration</td></tr>
+      <tr><td>Max response body</td><td>4 MB</td><td>Larger responses are truncated by Octopus</td></tr>
+      <tr><td>Max tools per server</td><td>100</td><td>Register multiple servers if you need more</td></tr>
+      <tr><td>Tool name characters</td><td>Lowercase a-z, digits, underscores</td><td>No hyphens, spaces, or dots</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Idempotency.</strong> Octopus may retry a tool call if it receives a network timeout. Design write operations (create ticket, send email) to be idempotent, or document in the tool description that the LLM should confirm before calling them more than once.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-tool-schema.html">Next: Defining Tool Schemas &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
