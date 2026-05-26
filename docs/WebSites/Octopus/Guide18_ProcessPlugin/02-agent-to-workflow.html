@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Triggers Workflow — Process Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Process Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-agent-to-workflow.html" class="active">Agent Triggers Workflow</a>
+  <a href="03-workflow-result.html">Workflow Result in Conversation</a>
+  <a href="04-ai-agent-node.html">AI Agent Node in Flow Studio</a>
+  <a href="05-agent-in-loop.html">Agent as Approval Actor</a>
+  <a href="06-monitoring.html">Monitoring Process Plugin Activity</a>
+  <a href="07-security.html">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Agent Triggers Workflow</h1>
+    <p class="lead">The <code>start_workflow</code> MCP tool allows an agent to trigger a Flow Studio workflow directly from a conversation. The agent can wait for the result or fire and forget, depending on workflow complexity.</p>
+  </div>
+
+  <h2>start_workflow Tool Schema</h2>
+  <pre><code>{
+  "name": "start_workflow",
+  "description": "Start a Flow Studio workflow and optionally wait for its result. " +
+                 "Use when the user's request requires a structured business process " +
+                 "(approval, multi-step operation, ERP update, notification). " +
+                 "Always confirm the action with the user before calling.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "workflow_id": {
+        "type":        "string",
+        "description": "The workflow identifier to trigger (e.g. 'leave-approval-workflow')"
+      },
+      "inputs": {
+        "type":        "object",
+        "description": "Key-value pairs passed to the workflow as input data"
+      },
+      "mode": {
+        "type":        "string",
+        "enum":        ["sync", "async"],
+        "default":     "async",
+        "description": "sync: wait for completion (up to SyncTimeoutSeconds). async: fire and return reference."
+      },
+      "correlation_id": {
+        "type":        "string",
+        "description": "Optional caller-provided ID to track this execution externally"
+      }
+    },
+    "required": ["workflow_id", "inputs"]
+  }
+}</code></pre>
+
+  <h2>Sync vs Async Mode</h2>
+  <table>
+    <thead>
+      <tr><th>Mode</th><th>Agent waits?</th><th>Returns</th><th>Use When</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>sync</code></td><td>Yes (up to SyncTimeoutSeconds)</td><td>Workflow final output</td><td>Short workflows (&lt; 2 min) where the result matters to the user</td></tr>
+      <tr><td><code>async</code></td><td>No</td><td>Execution ID + status URL</td><td>Long-running approvals, multi-step processes, background tasks</td></tr>
+    </tbody>
+  </table>
+
+  <h2>IWorkflowTriggerService Implementation</h2>
+  <pre><code>public class WorkflowTriggerService : IWorkflowTriggerService
+{
+    private readonly IProcessServerClient _processServer;
+    private readonly ProcessPluginConfig  _config;
+    private readonly ITenantContext       _tenant;
+
+    public async Task&lt;string&gt; HandleStartWorkflowAsync(
+        JsonElement input, ConversationContext ctx, CancellationToken ct)
+    {
+        var workflowId     = input.GetProperty("workflow_id").GetString()!;
+        var inputs         = input.GetProperty("inputs");
+        var mode           = input.TryGetProperty("mode", out var m)
+            ? m.GetString()! : "async";
+        var correlationId  = input.TryGetProperty("correlation_id", out var c)
+            ? c.GetString() : null;
+
+        // Check workflow access policy
+        if (!_config.WorkflowAccessPolicy.IsAllowed(workflowId))
+            return JsonSerializer.Serialize(new
+            {
+                error  = "Workflow not permitted",
+                reason = $"Workflow '{workflowId}' is not in the allowed workflow list."
+            });
+
+        // Start the workflow on ProcessServer
+        var startRequest = new StartWorkflowRequest
+        {
+            WorkflowId     = workflowId,
+            TenantId       = _tenant.TenantId,
+            InitiatedBy    = ctx.UserId,
+            Inputs         = inputs.Deserialize&lt;Dictionary&lt;string, object&gt;&gt;()!,
+            CorrelationId  = correlationId
+        };
+
+        var execution = await _processServer.StartWorkflowAsync(startRequest, ct);
+
+        if (mode == "sync")
+        {
+            // Poll for completion
+            var result = await _processServer.WaitForCompletionAsync(
+                execution.ExecutionId,
+                TimeSpan.FromSeconds(_config.SyncTimeoutSeconds),
+                ct);
+
+            return JsonSerializer.Serialize(new
+            {
+                execution_id = execution.ExecutionId,
+                status       = result.Status,
+                outputs      = result.Outputs
+            });
+        }
+
+        // Async — return reference immediately
+        return JsonSerializer.Serialize(new
+        {
+            execution_id  = execution.ExecutionId,
+            status        = "running",
+            tracking_url  = $"/workflows/executions/{execution.ExecutionId}"
+        });
+    }
+}</code></pre>
+
+  <h2>Successful Sync Response</h2>
+  <pre><code>{
+  "execution_id": "exec-abc123",
+  "status":       "Completed",
+  "outputs": {
+    "request_id":   "LR-8821",
+    "status":       "PendingApproval",
+    "approver":     "manager@company.com",
+    "submitted_at": "2024-06-15T10:00:00Z"
+  }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="01-enabling.html">&#8592; Enabling the Plugin</a>
+    <a href="03-workflow-result.html">Next: Workflow Result in Conversation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

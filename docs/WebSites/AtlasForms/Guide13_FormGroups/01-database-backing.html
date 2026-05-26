@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Database Backing — Form Groups | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Groups</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-database-backing.html" class="active">Database Backing</a>
+  <a href="02-current-groups.html">Current Form Groups</a>
+  <a href="03-group-schema.html">Group Definition Schema</a>
+  <a href="04-app-association.html">App Association</a>
+  <a href="05-creating-a-group.html">Creating a New Group</a>
+  <a href="06-naming-conventions.html">Naming Conventions</a>
+  <a href="07-tenant-overrides.html">Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Database Backing</h1>
+    <p class="lead">Every Atlas Forms form is a row in the <code>dbo.Atlas_Forms</code> table. The group membership, type, and routing behaviour of each form are encoded in four columns: <code>FormCategoryID</code>, <code>FormTypeID</code>, <code>PrimaryUsage</code>, and <code>NodeUsage</code>.</p>
+  </div>
+
+  <h2>Atlas_Forms Table — Key Columns</h2>
+  <pre><code>-- dbo.Atlas_Forms (key columns for group behaviour)
+CREATE TABLE [dbo].[Atlas_Forms] (
+    [FormID]          INT           NOT NULL,    -- Primary key; unique across all groups
+    [FormCode]        NVARCHAR(100) NOT NULL,    -- Human-readable identifier (e.g., 'GuardRail_Edit')
+    [FormCategoryID]  INT           NOT NULL,    -- Foreign key → dbo.Atlas_FormCategories
+    [FormTypeID]      INT           NOT NULL,    -- 1=List, 2=Property, 3=Wizard, 4=Dashboard
+    [PrimaryUsage]    NVARCHAR(50)  NOT NULL,    -- Module tab routing key
+    [NodeUsage]       NVARCHAR(50)  NULL,        -- Workflow node dispatch key (optional)
+    [TenantID]        INT           NULL,        -- NULL = base form; non-NULL = tenant override row
+    [IsActive]        BIT           NOT NULL DEFAULT 1,
+    [SchemaJson]      NVARCHAR(MAX) NOT NULL,    -- Full form JSON schema
+    CONSTRAINT [PK_Atlas_Forms] PRIMARY KEY ([FormID])
+);</code></pre>
+
+  <h2>Atlas_FormCategories Table</h2>
+  <pre><code>-- dbo.Atlas_FormCategories — one row per Form Group
+CREATE TABLE [dbo].[Atlas_FormCategories] (
+    [FormCategoryID]    INT           NOT NULL,    -- Primary key; = rangeStart / 100
+    [CategoryName]      NVARCHAR(100) NOT NULL,    -- e.g., 'GuardRails', 'NodePolicies'
+    [OwnerApp]          NVARCHAR(100) NOT NULL,    -- e.g., 'BizFirst.Ai.ProcessSecurity'
+    [FormIdRangeStart]  INT           NOT NULL,    -- Inclusive range start (e.g., 13000)
+    [FormIdRangeEnd]    INT           NOT NULL,    -- Inclusive range end   (e.g., 13099)
+    [AiGenerationEnabled] BIT         NOT NULL DEFAULT 0,
+    [TenantOverrideable]  BIT         NOT NULL DEFAULT 1,
+    CONSTRAINT [PK_Atlas_FormCategories] PRIMARY KEY ([FormCategoryID])
+);</code></pre>
+
+  <h2>Column Reference</h2>
+  <table>
+    <thead><tr><th>Column</th><th>Type</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>FormCategoryID</code></td><td>INT</td><td>Links the form to its group; equals <code>rangeStart / 100</code></td></tr>
+      <tr><td><code>FormTypeID</code></td><td>INT</td><td>1 = List form (index), 2 = Property form (detail), 3 = Wizard, 4 = Dashboard</td></tr>
+      <tr><td><code>PrimaryUsage</code></td><td>NVARCHAR(50)</td><td>Module tab key — the router uses this to map a form to the right tab without explicit route config</td></tr>
+      <tr><td><code>NodeUsage</code></td><td>NVARCHAR(50)</td><td>Workflow node dispatch key — a FlowStudio node looks up the form by this key to present as an interaction</td></tr>
+      <tr><td><code>TenantID</code></td><td>INT NULL</td><td>NULL for base forms; non-NULL for tenant-specific overrides of an existing FormID</td></tr>
+      <tr><td><code>FormCode</code></td><td>NVARCHAR(100)</td><td>Stable string identifier used in matrix dispatch and AI generation pattern matching</td></tr>
+    </tbody>
+  </table>
+
+  <h2>FormTypeID Values</h2>
+  <table>
+    <thead><tr><th>FormTypeID</th><th>Name</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>List</td><td>Grid/table view of all items in the group; first form created for a new group</td></tr>
+      <tr><td>2</td><td>Property</td><td>Detail/edit form for a single item; the majority of forms are this type</td></tr>
+      <tr><td>3</td><td>Wizard</td><td>Multi-step form spanning several screens</td></tr>
+      <tr><td>4</td><td>Dashboard</td><td>Read-only metrics and chart display</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Query: All Forms in a Group</h2>
+  <pre><code>-- Retrieve all active forms in the GuardRails group (FormCategoryID = 130)
+SELECT
+    f.FormID,
+    f.FormCode,
+    f.FormTypeID,
+    f.PrimaryUsage,
+    f.NodeUsage,
+    f.TenantID
+FROM dbo.Atlas_Forms f
+WHERE
+    f.FormCategoryID = 130
+    AND f.IsActive    = 1
+ORDER BY f.FormID;</code></pre>
+
+  <div class="callout">
+    <strong>TenantID = NULL Means Base Form</strong>
+    A row with <code>TenantID IS NULL</code> is the base form that all tenants share. A row with a specific <code>TenantID</code> is a tenant override that the form-loading query merges on top of the base schema for that tenant. The application queries for both and the tenant row wins on any overlapping fields.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-current-groups.html">Next: Current Form Groups &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

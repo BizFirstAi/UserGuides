@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mobile Player Example — Custom Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Custom Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Player Architecture</a>
+  <a href="02-minimal-player.html">Minimal Custom Player</a>
+  <a href="03-section-cards.html">Section Cards Layout</a>
+  <a href="04-form-engine.html">Using FormEngine Directly</a>
+  <a href="05-registering-player.html">Registering a Player</a>
+  <a href="06-schema-override.html">Per-Form Player Override</a>
+  <a href="07-mobile-player.html" class="active">Mobile Player Example</a>
+  <a href="08-state-hooks.html">Using State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Mobile Player Example</h1>
+    <p class="lead">The mobile player renders every control in a single full-width column, enlarges touch targets, and adds a sticky bottom action bar. It is a practical template for field workers, inspection apps, and any scenario where users fill in forms on a phone.</p>
+  </div>
+
+  <h2>Design Decisions</h2>
+  <table>
+    <thead><tr><th>Decision</th><th>Rationale</th></tr></thead>
+    <tbody>
+      <tr><td>Single-column layout (100% width)</td><td>No horizontal scrolling; thumb-reachable on all phones</td></tr>
+      <tr><td>Minimum touch target 48 px</td><td>WCAG 2.5.5 Target Size; reduces mis-taps on small screens</td></tr>
+      <tr><td>Sticky bottom action bar</td><td>Submit always reachable without scrolling to the bottom</td></tr>
+      <tr><td>Large font size (16 px minimum)</td><td>Prevents iOS Safari from auto-zooming on input focus</td></tr>
+      <tr><td>Section title as collapsible accordion</td><td>Reduces vertical length; user reveals only the current section</td></tr>
+      <tr><td>Progress indicator at top</td><td>Shows % of visible controls that have non-empty values</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Complete Mobile Player</h2>
+  <pre><code>// src/players/MobilePlayer.tsx
+import React, { useMemo, useState, useCallback } from 'react';
+import { FormStateProvider }              from '@atlas-forms/state-react';
+import { ControlRenderer, useAtlasForm } from '@atlas-forms/player-components-react';
+import { useFormVisibility }              from '@atlas-forms/player-components-react';
+import { FormEngine }                     from '@atlas-forms/form-engine-js';
+import { parseSchema }                    from '@atlas-forms/schema-js';
+import type { FormSchema, FormControl, FormSection } from '@atlas-forms/types-js';
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function groupBySection(
+  controls: FormControl[],
+  sections: FormSection[]
+): Map&lt;string, FormControl[]&gt; {
+  const map = new Map&lt;string, FormControl[]&gt;();
+  sections.forEach(s =&gt; map.set(s.id, []));
+  controls.forEach(c =&gt; {
+    const sid = c.sectionId ?? '__root__';
+    if (!map.has(sid)) map.set(sid, []);
+    map.get(sid)!.push(c);
+  });
+  return map;
+}
+
+function computeProgress(
+  controls: FormControl[],
+  values: Record&lt;string, any&gt;
+): number {
+  if (controls.length === 0) return 100;
+  const filled = controls.filter(c =&gt; {
+    const v = values[c.id];
+    return v !== undefined &amp;&amp; v !== null &amp;&amp; v !== '';
+  }).length;
+  return Math.round((filled / controls.length) * 100);
+}
+
+// ── Inner component ──────────────────────────────────────────────────────────
+
+const MobilePlayerInner: React.FC&lt;{
+  onSubmit: (v: any) =&gt; Promise&lt;void&gt;;
+  onCancel?: () =&gt; void;
+}&gt; = ({ onSubmit, onCancel }) =&gt; {
+  const { engine, values, errors, isSubmitting, submitForm } = useAtlasForm();
+  const { isVisible, getVisibleControls } = useFormVisibility();
+  const schema = engine.getSchema();
+
+  const grouped   = useMemo(() =&gt; groupBySection(schema.controls ?? [], schema.sections ?? []), [schema]);
+  const allVisible = useMemo(() =&gt; getVisibleControls(), [values]);
+  const progress   = useMemo(() =&gt; computeProgress(allVisible, values), [allVisible, values]);
+
+  // Track which sections are expanded (all open by default)
+  const [expanded, setExpanded] = useState&lt;Record&lt;string, boolean&gt;&gt;(() =&gt; {
+    const init: Record&lt;string, boolean&gt; = {};
+    (schema.sections ?? []).forEach(s =&gt; { init[s.id] = true; });
+    return init;
+  });
+
+  const toggleSection = useCallback((id: string) =&gt; {
+    setExpanded(prev =&gt; ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const handleSubmit = async () =&gt; {
+    await submitForm();
+    const hasErrors = Object.keys(errors).length &gt; 0;
+    if (!hasErrors) await onSubmit(values);
+  };
+
+  return (
+    &lt;div style={{ paddingBottom: 80 /* space for sticky bar */ }}&gt;
+
+      {/* Progress bar */}
+      &lt;div style={{ padding: '12px 16px', background: '#f8f9fa', borderBottom: '1px solid #e5e7eb' }}&gt;
+        &lt;div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}&gt;
+          &lt;span style={{ fontSize: 13, color: '#6b7280' }}&gt;Progress&lt;/span&gt;
+          &lt;span style={{ fontSize: 13, fontWeight: 600 }}&gt;{progress}%&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div style={{ height: 6, background: '#e5e7eb', borderRadius: 3 }}&gt;
+          &lt;div style={{
+            height: '100%',
+            width: `${progress}%`,
+            background: '#3b82f6',
+            borderRadius: 3,
+            transition: 'width 0.3s ease',
+          }} /&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      {/* Sections */}
+      {(schema.sections ?? []).map(section =&gt; {
+        const controls = (grouped.get(section.id) ?? []).filter(c =&gt; isVisible(c.id));
+        if (controls.length === 0) return null;
+        const isOpen = expanded[section.id] ?? true;
+
+        return (
+          &lt;div key={section.id} style={{ marginBottom: 1 }}&gt;
+            {/* Section header — touch target */}
+            &lt;button
+              type="button"
+              onClick={() =&gt; toggleSection(section.id)}
+              style={{
+                width: '100%', minHeight: 48, padding: '12px 16px',
+                background: '#fff', border: 'none', borderBottom: '1px solid #e5e7eb',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                fontSize: 15, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+              }}
+            &gt;
+              {section.title ?? section.id}
+              &lt;span style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: '0.2s' }}&gt;&#9660;&lt;/span&gt;
+            &lt;/button&gt;
+
+            {/* Controls */}
+            {isOpen &amp;&amp; (
+              &lt;div style={{ padding: '12px 16px', background: '#fff' }}&gt;
+                {controls.map(control =&gt; (
+                  &lt;div key={control.id} style={{ marginBottom: 20 }}&gt;
+                    &lt;ControlRenderer control={control} /&gt;
+                  &lt;/div&gt;
+                ))}
+              &lt;/div&gt;
+            )}
+          &lt;/div&gt;
+        );
+      })}
+
+      {/* Error summary */}
+      {Object.keys(errors).length &gt; 0 &amp;&amp; (
+        &lt;div style={{ margin: '12px 16px', padding: 12, background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8 }}&gt;
+          {Object.values(errors).map((msg, i) =&gt; (
+            &lt;p key={i} style={{ margin: '4px 0', fontSize: 14, color: '#dc2626' }}&gt;{msg}&lt;/p&gt;
+          ))}
+        &lt;/div&gt;
+      )}
+
+      {/* Sticky action bar */}
+      &lt;div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        padding: '12px 16px', background: '#fff',
+        borderTop: '1px solid #e5e7eb',
+        display: 'flex', gap: 10,
+        boxShadow: '0 -2px 8px rgba(0,0,0,0.08)',
+      }}&gt;
+        {onCancel &amp;&amp; (
+          &lt;button
+            type="button"
+            onClick={onCancel}
+            style={{
+              flex: 1, minHeight: 48, border: '1px solid #d1d5db',
+              background: '#fff', borderRadius: 8, fontSize: 16, cursor: 'pointer',
+            }}
+          &gt;
+            Cancel
+          &lt;/button&gt;
+        )}
+        &lt;button
+          type="button"
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+          style={{
+            flex: 2, minHeight: 48, background: '#3b82f6',
+            color: '#fff', border: 'none', borderRadius: 8,
+            fontSize: 16, fontWeight: 600, cursor: 'pointer',
+            opacity: isSubmitting ? 0.7 : 1,
+          }}
+        &gt;
+          {isSubmitting ? 'Saving...' : 'Submit'}
+        &lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+};
+
+// ── Outer component ──────────────────────────────────────────────────────────
+
+export const MobilePlayer: React.FC&lt;{
+  schema:         FormSchema | object;
+  initialValues?: Record&lt;string, any&gt;;
+  onSubmit:       (v: any) =&gt; Promise&lt;void&gt;;
+  onCancel?:      () =&gt; void;
+}&gt; = ({ schema: raw, initialValues = {}, onSubmit, onCancel }) =&gt; {
+  const schema = useMemo(() =&gt; parseSchema(raw as object), [raw]);
+  const engine = useMemo(() =&gt; new FormEngine(schema, initialValues), [schema, initialValues]);
+
+  return (
+    &lt;FormStateProvider engine={engine} mode="edit"&gt;
+      &lt;MobilePlayerInner onSubmit={onSubmit} onCancel={onCancel} /&gt;
+    &lt;/FormStateProvider&gt;
+  );
+};</code></pre>
+
+  <h2>Registering the Mobile Player</h2>
+  <pre><code>import { registerFormPlayer } from '@atlas-forms/player-registry';
+import { MobilePlayer } from './MobilePlayer';
+
+registerFormPlayer({
+  id:          'mobile',
+  label:       'Mobile',
+  description: 'Single-column layout with sticky action bar and collapsible sections. Optimised for small screens.',
+  component:   MobilePlayer,
+});</code></pre>
+
+  <div class="callout success">
+    <strong>16 px Minimum Font Size</strong>
+    Keep all input labels and control text at 16 px or larger on mobile. iOS Safari automatically zooms into inputs when the font size is smaller than 16 px — this disrupts the layout and is frustrating for users. Set <code>font-size: 16px</code> globally in your mobile player's stylesheet or inline styles.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-schema-override.html">&#8592; Per-Form Player Override</a>
+    <a href="08-state-hooks.html">Next: Using State Hooks &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

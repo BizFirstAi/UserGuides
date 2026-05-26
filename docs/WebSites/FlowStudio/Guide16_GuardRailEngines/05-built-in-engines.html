@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Built-In Guard Engines — GuardRail Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>GuardRail Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-guard-pipeline.html">The Guard Pipeline</a>
+  <a href="02-interface.html">IGuardRail Interface</a>
+  <a href="03-guard-result.html">GuardRailCheckResult</a>
+  <a href="04-guard-context.html">GuardRailExecutionContext</a>
+  <a href="05-built-in-engines.html" class="active">Built-In Guard Engines</a>
+  <a href="06-custom-engine.html">Building a Custom Guard</a>
+  <a href="07-form-integration.html">GuardRail Atlas Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Built-In Guard Engines</h1>
+    <p class="lead">Five guard rail implementations ship in <code>BizFirst.Ai.GuardRails.Provider.Core</code>. Each implements <code>IGuardRail</code> and covers a common enterprise enforcement pattern. They are configured via Atlas Forms 13000–13007.</p>
+  </div>
+
+  <h2>RateLimitingGuard</h2>
+  <p><strong>Phase:</strong> Pre | <strong>Class:</strong> <code>RateLimitingGuard</code></p>
+  <p>Limits how frequently this node can execute per scope. In production, delegates to <code>IRateLimitingOrchestrator</code> (Redis-backed). In development, uses an in-memory counter.</p>
+  <pre><code>// Configuration fields (Atlas Form 13000)
+{
+  "rps":   10,        // requests per second allowed
+  "window": 60,       // time window in seconds
+  "scope": "tenant"   // "global" | "tenant" | "user"
+}</code></pre>
+  <p><strong>Returns:</strong> <code>Blocked</code> with <code>RetryAfterSeconds</code> when rate is exceeded; <code>Success</code> otherwise.</p>
+
+  <h2>InputValidationGuard</h2>
+  <p><strong>Phase:</strong> Pre | <strong>Class:</strong> <code>InputValidationGuard</code></p>
+  <p>Validates that required input fields are present and non-empty before the executor runs. Configured with a list of required field names.</p>
+  <pre><code>// Configuration fields (Atlas Form 13001)
+{
+  "requiredFields": ["email", "orderId"],
+  "strictMode": true   // if true: any unknown fields cause Blocked
+}</code></pre>
+  <p><strong>Returns:</strong> <code>Blocked</code> with the list of missing fields; <code>Success</code> if all required fields are present.</p>
+
+  <h2>TimeoutGuard</h2>
+  <p><strong>Phase:</strong> Pre + Post | <strong>Class:</strong> <code>TimeoutGuard</code></p>
+  <p>Tracks the execution duration of the node. Configured with a maximum execution time in milliseconds. Pre phase records the start time; Post phase checks elapsed time and returns <code>Blocked</code> if exceeded.</p>
+  <pre><code>// Configuration fields (Atlas Form 13002)
+{
+  "maxExecutionMs": 30000   // 30 second timeout
+}</code></pre>
+
+  <h2>PiiDetectionGuard</h2>
+  <p><strong>Phase:</strong> Post | <strong>Class:</strong> <code>PiiDetectionGuard</code></p>
+  <p>Scans the executor's output data for PII patterns (email addresses, credit card numbers, phone numbers, SSN patterns). Can operate in detect-and-warn or detect-and-redact mode.</p>
+  <pre><code>// Configuration fields (Atlas Form 13003)
+{
+  "mode":            "redact",           // "warn" | "block" | "redact"
+  "piiPatterns":     ["email", "ccn"],   // patterns to scan for
+  "redactionValue":  "[REDACTED]"
+}</code></pre>
+
+  <h2>CircuitBreakerGuard</h2>
+  <p><strong>Phase:</strong> Pre | <strong>Class:</strong> <code>CircuitBreakerGuard</code></p>
+  <p>Tracks consecutive failures for this node type/tenant combination. After the failure threshold is reached, the circuit opens and blocks execution for a cooldown period. Prevents hammering a failing external service.</p>
+  <pre><code>// Configuration fields (Atlas Form 13004)
+{
+  "failureThreshold":   5,     // failures before circuit opens
+  "cooldownSeconds":   60,     // how long circuit stays open
+  "scope":             "tenant"
+}</code></pre>
+
+  <h2>Summary Table</h2>
+  <table>
+    <thead><tr><th>Guard</th><th>Phase</th><th>Atlas Form</th><th>Security Critical</th></tr></thead>
+    <tbody>
+      <tr><td>RateLimitingGuard</td><td>Pre</td><td>13000</td><td>Yes</td></tr>
+      <tr><td>InputValidationGuard</td><td>Pre</td><td>13001</td><td>No</td></tr>
+      <tr><td>TimeoutGuard</td><td>Pre + Post</td><td>13002</td><td>No</td></tr>
+      <tr><td>PiiDetectionGuard</td><td>Post</td><td>13003</td><td>Yes</td></tr>
+      <tr><td>CircuitBreakerGuard</td><td>Pre</td><td>13004</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-guard-context.html">&#8592; GuardRailExecutionContext</a>
+    <a href="06-custom-engine.html">Next: Building a Custom Guard &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

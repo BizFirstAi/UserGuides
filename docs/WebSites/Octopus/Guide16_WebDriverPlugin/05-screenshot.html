@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Screenshot Tool — Web Driver Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Web Driver Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-navigate.html">Navigate Tool</a>
+  <a href="03-extract.html">Extract Data Tool</a>
+  <a href="04-fill-form.html">Fill Form Tool</a>
+  <a href="05-screenshot.html" class="active">Screenshot Tool</a>
+  <a href="06-session-management.html">Session Management</a>
+  <a href="07-security.html">Security and Sandboxing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Screenshot Tool</h1>
+    <p class="lead">The <code>browser_screenshot</code> tool captures a PNG screenshot of the current page or a specific element and returns it as a base64-encoded string — suitable for sending to a vision LLM or embedding in logs.</p>
+  </div>
+
+  <h2>Tool Schema</h2>
+  <pre><code>{
+  "name": "browser_screenshot",
+  "description": "Take a screenshot of the current page or a specific element. " +
+                 "Returns the image as a base64-encoded PNG string. " +
+                 "Use for visual verification, debugging, or sending to a vision-capable LLM.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "selector": {
+        "type": "string",
+        "description": "CSS selector to screenshot a specific element. Omit for a full-page screenshot."
+      },
+      "full_page": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, captures the entire page including content below the fold."
+      },
+      "quality": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 80,
+        "description": "JPEG quality for compressed screenshots (PNG is always lossless)."
+      },
+      "format": {
+        "type": "string",
+        "enum": ["png", "jpeg"],
+        "default": "png",
+        "description": "Image format. PNG is lossless; JPEG is smaller."
+      }
+    }
+  }
+}</code></pre>
+
+  <h2>Response Format</h2>
+  <pre><code>{
+  "format":      "png",
+  "width_px":    1280,
+  "height_px":   720,
+  "size_bytes":  142580,
+  "base64":      "iVBORw0KGgoAAAANSUhEUgAABQAAAA...(truncated)..."
+}</code></pre>
+
+  <h2>Handler Implementation</h2>
+  <pre><code>public async Task&lt;string&gt; HandleScreenshotAsync(
+    JsonElement input, IBrowserSession session, CancellationToken ct)
+{
+    var selector = input.TryGetProperty("selector", out var s) ? s.GetString() : null;
+    var fullPage = input.TryGetProperty("full_page", out var fp) && fp.GetBoolean();
+    var format   = input.TryGetProperty("format", out var f) ? f.GetString()! : "png";
+
+    var page = await session.GetPageAsync(ct);
+    byte[] imageBytes;
+
+    if (selector is not null)
+    {
+        var element = await page.QuerySelectorAsync(selector)
+            ?? throw new InvalidOperationException($"Selector '{selector}' not found.");
+        imageBytes = await element.ScreenshotAsync(new()
+        {
+            Type = format == "jpeg" ? ScreenshotType.Jpeg : ScreenshotType.Png
+        });
+    }
+    else
+    {
+        imageBytes = await page.ScreenshotAsync(new()
+        {
+            FullPage = fullPage,
+            Type     = format == "jpeg" ? ScreenshotType.Jpeg : ScreenshotType.Png
+        });
+    }
+
+    var size      = imageBytes.Length;
+    var base64    = Convert.ToBase64String(imageBytes);
+
+    return JsonSerializer.Serialize(new
+    {
+        format,
+        size_bytes = size,
+        base64
+    });
+}</code></pre>
+
+  <h2>Using Screenshots with Vision LLMs</h2>
+  <p>Pass the base64 screenshot to a vision-capable LLM (GPT-4o, Claude 3) for visual analysis:</p>
+  <pre><code>// In an MCP tool handler — take a screenshot and pass it to the vision LLM
+var screenshotResult = await HandleScreenshotAsync(input, session, ct);
+var screenshot = JsonSerializer.Deserialize&lt;JsonElement&gt;(screenshotResult);
+var base64     = screenshot.GetProperty("base64").GetString()!;
+
+// Build an LLM message with the image
+var messages = new List&lt;LLMMessage&gt;
+{
+    new() { Role = "user", Content = new List&lt;LLMContentPart&gt;
+    {
+        new() { Type = "text",       Text  = "What errors do you see in this screenshot?" },
+        new() { Type = "image_url",  ImageUrl = new() { Url = $"data:image/png;base64,{base64}" } }
+    }}
+};
+
+var analysis = await llmProvider.CompleteAsync(messages, null, options, ct);</code></pre>
+
+  <div class="callout info">
+    <strong>Screenshot size and cost.</strong> Full-page screenshots of content-heavy pages can be several MB. When passing to a vision LLM, use <code>format: "jpeg"</code> with a quality of 60–70 to reduce the base64 size significantly. Vision LLM APIs charge per image tile — smaller images cost less.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-fill-form.html">&#8592; Fill Form Tool</a>
+    <a href="06-session-management.html">Next: Session Management &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

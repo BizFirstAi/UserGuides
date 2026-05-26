@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GuardRailExecutionContext — GuardRail Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>GuardRail Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-guard-pipeline.html">The Guard Pipeline</a>
+  <a href="02-interface.html">IGuardRail Interface</a>
+  <a href="03-guard-result.html">GuardRailCheckResult</a>
+  <a href="04-guard-context.html" class="active">GuardRailExecutionContext</a>
+  <a href="05-built-in-engines.html">Built-In Guard Engines</a>
+  <a href="06-custom-engine.html">Building a Custom Guard</a>
+  <a href="07-form-integration.html">GuardRail Atlas Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>GuardRailExecutionContext</h1>
+    <p class="lead"><code>GuardRailExecutionContext</code> is the object passed to <code>IGuardRailExecutor.ExecuteAsync</code>. It contains tenant and user identity, the operation identifier, input/output data, trace correlation ID, and arbitrary metadata.</p>
+  </div>
+
+  <h2>GuardRailExecutionContext Shape</h2>
+  <pre><code>// BizFirst.Ai.GuardRails.Domain.Models.GuardRailExecutionContext
+public class GuardRailExecutionContext
+{
+    // Multi-tenancy isolation — use for scoped rate limits, quotas
+    public long TenantId    { get; set; }
+
+    // The user who triggered the execution (0 if system/scheduled)
+    public long UserId      { get; set; }
+
+    // The node's ProcessElementKey — unique identifier for this node in the workflow
+    public string OperationId { get; set; }
+
+    // Pre-phase: the input data arriving at this node
+    // Post-phase: the output data produced by the executor
+    public object? Input    { get; set; }
+    public object? Output   { get; set; }
+
+    // Additional metadata set by BaseNodeExecutor:
+    //   "element_key"    → ProcessElementKey
+    //   "executor_type"  → executor class name
+    public IDictionary&lt;string, object?&gt; Metadata { get; set; }
+
+    // Distributed trace ID for correlation (OpenTelemetry)
+    public string TraceId   { get; set; }
+
+    // "Pre" or "Post" (set by the pipeline stage)
+    public string PhaseId   { get; set; }
+
+    // When the context was created
+    public DateTime CreatedAt { get; set; }
+}</code></pre>
+
+  <h2>How the Context Is Built</h2>
+  <p>The context is built in <code>BaseNodeExecutor.OnPreGuardRails</code> from the <code>ProcessElementExecutionContext</code>:</p>
+  <pre><code>var guardContext = new GuardRailExecutionContext
+{
+    TenantId    = (long)executionContext.TenantId,
+    UserId      = (long)executionContext.UserId,
+    OperationId = executionContext.ProcessElementKey ?? "unknown",
+    Input       = executionContext.InputData,
+    TraceId     = "from-open-telemetry-activity",
+    PhaseId     = "Pre",
+    Metadata    = new Dictionary&lt;string, object?&gt;
+    {
+        { "element_key",   executionContext.ProcessElementKey },
+        { "executor_type", this.GetType().Name                }
+    }
+};</code></pre>
+
+  <h2>Accessing Context in Your Guard</h2>
+  <pre><code>public async Task&lt;GuardRailCheckResult&gt; ExecuteAsync(
+    GuardRailExecutionContext context,
+    GuardRailPhase phase,
+    CancellationToken ct)
+{
+    if (phase != GuardRailPhase.Pre)
+        return GuardRailCheckResult.Success();
+
+    // Scope rate limit per tenant
+    var tenantId = context.TenantId;
+    var nodeKey  = context.OperationId;
+
+    // Access the input payload
+    var inputDict = context.Input as Dictionary&lt;string, object&gt;;
+
+    // Access custom metadata
+    var executorType = context.Metadata.TryGetValue("executor_type", out var et)
+        ? et?.ToString() ?? "unknown"
+        : "unknown";
+
+    // Your check logic
+    var allowed = await CheckRateLimitAsync(tenantId, nodeKey, ct);
+    return allowed
+        ? GuardRailCheckResult.Success()
+        : GuardRailCheckResult.Blocked("Rate limit exceeded", retryAfterSeconds: 30);
+}</code></pre>
+
+  <h2>Post-Phase Output Access</h2>
+  <p>In the Post phase, <code>context.Output</code> is populated with the executor's <code>NodeExecutionResult.OutputData</code>. Guards can inspect or even sanitize the output:</p>
+  <pre><code>// Post-phase PII detection example
+if (phase == GuardRailPhase.Post)
+{
+    var output = context.Output as Dictionary&lt;string, object&gt;;
+    if (output != null &amp;&amp; ContainsPii(output))
+    {
+        RedactPii(output);  // mutate the dictionary in-place
+        return GuardRailCheckResult.Success(outputModified: true);
+    }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="03-guard-result.html">&#8592; GuardRailCheckResult</a>
+    <a href="05-built-in-engines.html">Next: Built-In Guard Engines &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

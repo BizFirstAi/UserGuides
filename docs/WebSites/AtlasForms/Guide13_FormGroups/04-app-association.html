@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>App Association — Form Groups | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Groups</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-database-backing.html">Database Backing</a>
+  <a href="02-current-groups.html">Current Form Groups</a>
+  <a href="03-group-schema.html">Group Definition Schema</a>
+  <a href="04-app-association.html" class="active">App Association</a>
+  <a href="05-creating-a-group.html">Creating a New Group</a>
+  <a href="06-naming-conventions.html">Naming Conventions</a>
+  <a href="07-tenant-overrides.html">Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>App Association</h1>
+    <p class="lead"><code>registerFormGroup()</code> is the call that associates a Form Group definition with the running application. It writes the group into the global Form Group Registry, validates ID range integrity, and makes the group's forms discoverable by Studio and the AI generation pipeline.</p>
+  </div>
+
+  <h2>registerFormGroup()</h2>
+  <pre><code>import { registerFormGroup } from '@atlas-forms/form-group-registry';
+import { guardRailsGroup }   from './formGroups/guardRailsGroup';
+
+// Call once at application bootstrap — before any form loading
+registerFormGroup(guardRailsGroup);</code></pre>
+
+  <h2>FormGroupRegistryEntry Type</h2>
+  <pre><code>// The registry stores the definition plus a list of known forms in the group
+interface FormGroupRegistryEntry {
+  definition: FormGroupDefinition;
+
+  /** Declared forms — populated by registerFormGroup() calls and by Studio discovery */
+  forms: FormEntryDescriptor[];
+}
+
+interface FormEntryDescriptor {
+  formId:       number;
+  formCode:     string;
+  formTypeId:   number;    // 1=List, 2=Property, 3=Wizard, 4=Dashboard
+  primaryUsage: string;
+  nodeUsage?:   string;
+  role:         'list' | 'property' | 'wizard' | 'dashboard';
+}</code></pre>
+
+  <h2>Declaring Forms Within the Group</h2>
+  <p>You can pre-declare the forms that belong to a group at registration time. This gives Studio accurate auto-complete and lets the AI pipeline know which FormIDs are already taken:</p>
+  <pre><code>import { registerFormGroup } from '@atlas-forms/form-group-registry';
+
+registerFormGroup({
+  ...guardRailsGroup,
+  forms: [
+    { formId: 13000, formCode: 'GuardRail_List',             formTypeId: 1, primaryUsage: 'guardrails', role: 'list' },
+    { formId: 13001, formCode: 'GuardRail_Edit',             formTypeId: 2, primaryUsage: 'guardrails', nodeUsage: 'guardrail-edit',           role: 'property' },
+    { formId: 13002, formCode: 'GuardRail_View',             formTypeId: 2, primaryUsage: 'guardrails', nodeUsage: 'guardrail-view',           role: 'property' },
+    { formId: 13003, formCode: 'GuardRail_RateLimit_Edit',   formTypeId: 2, primaryUsage: 'guardrails', nodeUsage: 'guardrail-rate-limit',     role: 'property' },
+    { formId: 13004, formCode: 'GuardRail_ContentFilter_Edit', formTypeId: 2, primaryUsage: 'guardrails', nodeUsage: 'guardrail-content-filter', role: 'property' },
+    { formId: 13005, formCode: 'GuardRail_TopicBlock_Edit',  formTypeId: 2, primaryUsage: 'guardrails', nodeUsage: 'guardrail-topic-block',    role: 'property' },
+    { formId: 13006, formCode: 'GuardRail_AccessControl_Edit', formTypeId: 2, primaryUsage: 'guardrails', nodeUsage: 'guardrail-access-control', role: 'property' },
+    { formId: 13007, formCode: 'GuardRail_Audit',            formTypeId: 4, primaryUsage: 'guardrails', role: 'dashboard' },
+  ],
+});</code></pre>
+
+  <h2>PrimaryUsage — Tab Routing</h2>
+  <p>The <code>PrimaryUsage</code> value on each form drives tab routing in the host application. The router reads this value and maps the form to the correct navigation tab without any per-form route declaration:</p>
+  <pre><code>// Router setup — one line per product area tab
+const tabMap: Record&lt;string, React.ComponentType&gt; = {
+  'guardrails':   GuardRailsTab,
+  'node-policies': NodePoliciesTab,
+  'workdesk':     WorkDeskTab,
+};
+
+// In the form loader, the tab is resolved automatically:
+const tab = tabMap[form.primaryUsage];
+// → GuardRailsTab for any form with primaryUsage = 'guardrails'</code></pre>
+
+  <h2>NodeUsage — Workflow Dispatch</h2>
+  <p>The <code>nodeUsage</code> field lets FlowStudio workflow nodes look up a form by a stable string key rather than a numeric FormID. This decouples workflow definitions from form IDs:</p>
+  <pre><code>// FlowStudio node configuration (in the workflow schema JSON)
+{
+  "type": "atlas-form",
+  "config": {
+    "formLookup": "guardrail-edit"   // resolves to FormID 13001
+  }
+}
+
+// Form loader in the node executor
+async function loadFormByNodeUsage(nodeUsage: string): Promise&lt;FormSchema&gt; {
+  const form = await db.query(
+    'SELECT SchemaJson FROM Atlas_Forms WHERE NodeUsage = @nodeUsage AND IsActive = 1',
+    { nodeUsage }
+  );
+  return parseSchema(JSON.parse(form.SchemaJson));
+}</code></pre>
+
+  <div class="callout">
+    <strong>forms[] Is Informational at Runtime</strong>
+    The <code>forms[]</code> list you pass to <code>registerFormGroup()</code> is used by Studio and the AI pipeline at design time. At runtime, the application always loads form schemas from the database — the registry list is not the authoritative source of schemas.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-group-schema.html">&#8592; Group Definition Schema</a>
+    <a href="05-creating-a-group.html">Next: Creating a New Group &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

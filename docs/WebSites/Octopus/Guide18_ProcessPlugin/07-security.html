@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security — Process Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Process Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-agent-to-workflow.html">Agent Triggers Workflow</a>
+  <a href="03-workflow-result.html">Workflow Result in Conversation</a>
+  <a href="04-ai-agent-node.html">AI Agent Node in Flow Studio</a>
+  <a href="05-agent-in-loop.html">Agent as Approval Actor</a>
+  <a href="06-monitoring.html">Monitoring Process Plugin Activity</a>
+  <a href="07-security.html" class="active">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Security</h1>
+    <p class="lead">An agent triggering a workflow has real-world consequences — approvals, data writes, notifications. The ProcessPlugin enforces a workflow allowlist, tenant isolation, and audit logging at every integration point.</p>
+  </div>
+
+  <h2>Workflow Access Policy</h2>
+  <p>The <code>WorkflowAccessPolicy</code> controls which workflows any Octopus agent is permitted to trigger. Two modes are supported:</p>
+  <table>
+    <thead>
+      <tr><th>Mode</th><th>Behaviour</th><th>Recommended For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Allowlist</code></td><td>Only workflows listed in <code>AllowedWorkflows</code> can be triggered</td><td>Production — always use allowlist mode</td></tr>
+      <tr><td><code>Open</code></td><td>Any workflow can be triggered — no restriction</td><td>Development/testing only — never in production</td></tr>
+    </tbody>
+  </table>
+  <pre><code>// WorkflowAccessPolicy implementation
+public class WorkflowAccessPolicy
+{
+    private readonly ProcessPluginConfig _config;
+
+    public bool IsAllowed(string workflowId)
+    {
+        if (_config.WorkflowAccessPolicy.Mode == "Open")
+            return true;
+
+        return _config.WorkflowAccessPolicy.AllowedWorkflows
+            .Contains(workflowId, StringComparer.OrdinalIgnoreCase);
+    }
+}</code></pre>
+  <div class="callout danger">
+    <strong>Never use Open mode in production.</strong> Open mode allows any agent to trigger any workflow in your ProcessServer — including destructive or sensitive processes. Always configure an explicit <code>AllowedWorkflows</code> allowlist.
+  </div>
+
+  <h2>Tenant Isolation</h2>
+  <p>All workflow trigger requests include the <code>TenantId</code> from the Octopus <code>ITenantContext</code>. The ProcessServer enforces that the calling tenant has permission to trigger the target workflow:</p>
+  <pre><code>// WorkflowTriggerService always stamps the tenant ID
+var startRequest = new StartWorkflowRequest
+{
+    WorkflowId  = workflowId,
+    TenantId    = _tenant.TenantId,   // Always from ITenantContext — never from user input
+    InitiatedBy = ctx.UserId,
+    Inputs      = inputs
+};
+
+// ProcessServer validates: does tenant TenantId own workflow WorkflowId?
+// If not, returns 403 Forbidden</code></pre>
+
+  <h2>Audit Trail</h2>
+  <p>Every agent-workflow interaction is recorded in a dedicated audit log:</p>
+  <pre><code>// Audit log entry stored in Octopus_ProcessAuditLog table
+{
+  "id":              "audit-xyz",
+  "timestamp":       "2024-06-15T10:00:00Z",
+  "tenant_id":       "tenant-abc",
+  "agent_id":        "hr-assistant",
+  "session_id":      "sess-123",
+  "user_id":         "user-456",
+  "workflow_id":     "leave-approval-workflow",
+  "execution_id":    "exec-789",
+  "action":          "WorkflowTriggered",
+  "inputs_summary":  "{ employee_id: EMP-1234, days: 5 }",
+  "outcome":         "Completed",
+  "elapsed_ms":      4250
+}</code></pre>
+
+  <h2>Security Checklist</h2>
+  <table>
+    <thead>
+      <tr><th>Control</th><th>Required</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>WorkflowAccessPolicy.Mode = "Allowlist" in production</td><td>Required</td></tr>
+      <tr><td>AllowedWorkflows list reviewed by workflow owner</td><td>Required</td></tr>
+      <tr><td>ProcessServer API key stored in credential store (not appsettings)</td><td>Required</td></tr>
+      <tr><td>Audit log retained for compliance period</td><td>Required for regulated industries</td></tr>
+      <tr><td>HIL actor agent reviewed for correct decision criteria</td><td>Required before enabling HIL</td></tr>
+      <tr><td>Agent system prompt warns not to trigger workflows on insufficient user confirmation</td><td>Recommended</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-monitoring.html">&#8592; Monitoring Process Plugin Activity</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

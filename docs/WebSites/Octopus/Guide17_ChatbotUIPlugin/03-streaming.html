@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Streaming Responses — ChatbotUI Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>ChatbotUI Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-embedding.html">Embedding the Widget</a>
+  <a href="02-configuration.html">Widget Configuration</a>
+  <a href="03-streaming.html" class="active">Streaming Responses</a>
+  <a href="04-chat-history.html">Chat History Display</a>
+  <a href="05-theming.html">Theming and Branding</a>
+  <a href="06-actions.html">Chat Actions</a>
+  <a href="07-chat-app.html">The chat-app Micro-Frontend</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Streaming Responses</h1>
+    <p class="lead">Octopus uses Server-Sent Events (SSE) to stream LLM responses token by token. The chat widget updates the message in real time as tokens arrive, showing a typing indicator during tool calls.</p>
+  </div>
+
+  <h2>SSE Event Stream Format</h2>
+  <p>The backend streams a series of <code>text/event-stream</code> events for each conversation turn:</p>
+  <pre><code>// SSE stream from POST /api/chat/{sessionId}/send
+
+// Event: conversation turn started
+event: turn_start
+data: {"turn_id":"tn-abc123","agent_id":"hr-assistant"}
+
+// Event: tool call initiated (agent is running a tool)
+event: tool_call
+data: {"tool_name":"get_leave_balance","tool_call_id":"tc-xyz789"}
+
+// Event: tool call completed
+event: tool_result
+data: {"tool_call_id":"tc-xyz789","elapsed_ms":245}
+
+// Events: token-by-token LLM response
+event: token
+data: {"text":"You"}
+
+event: token
+data: {"text":" have"}
+
+event: token
+data: {"text":" 15"}
+
+event: token
+data: {"text":" annual"}
+
+event: token
+data: {"text":" leave"}
+
+event: token
+data: {"text":" days"}
+
+// Event: conversation turn complete
+event: turn_end
+data: {"turn_id":"tn-abc123","total_tokens":42,"elapsed_ms":1850}
+
+// Stream closed by server</code></pre>
+
+  <h2>Backend ISSEResponseWriter</h2>
+  <pre><code>// ISSEResponseWriter — abstracts SSE writing
+public interface ISSEResponseWriter
+{
+    Task WriteEventAsync(string eventName, object data, CancellationToken ct);
+    Task FlushAsync(CancellationToken ct);
+    Task CloseAsync();
+}
+
+// Usage in the chat controller
+public class ChatController : ControllerBase
+{
+    [HttpPost("{sessionId}/send")]
+    public async Task SendMessageAsync(string sessionId,
+        [FromBody] SendMessageRequest request, CancellationToken ct)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";  // Disable nginx buffering
+
+        var writer = _sseWriterFactory.Create(Response);
+
+        await writer.WriteEventAsync("turn_start", new { turn_id = Guid.NewGuid() }, ct);
+
+        await foreach (var token in _agentEngine.StreamAsync(sessionId, request.Message, ct))
+        {
+            await writer.WriteEventAsync("token", new { text = token }, ct);
+        }
+
+        await writer.WriteEventAsync("turn_end", new { }, ct);
+        await writer.CloseAsync();
+    }
+}</code></pre>
+
+  <h2>Frontend SSE Client</h2>
+  <pre><code>// TypeScript — widget SSE client
+class OctopusSSEClient {
+  private eventSource: EventSource | null = null;
+
+  async sendMessage(sessionId: string, message: string, token: string) {
+    const response = await fetch(`/api/chat/${sessionId}/send`, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ message })
+    });
+
+    const reader  = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() ?? '';
+
+      for (const rawEvent of events) {
+        const parsed = this.parseSSEEvent(rawEvent);
+        if (parsed) this.handleEvent(parsed);
+      }
+    }
+  }
+
+  private handleEvent(event: { type: string; data: unknown }) {
+    switch (event.type) {
+      case 'token':
+        this.onToken((event.data as any).text);
+        break;
+      case 'tool_call':
+        this.onToolCall((event.data as any).tool_name);
+        break;
+      case 'turn_end':
+        this.onComplete();
+        break;
+    }
+  }
+}</code></pre>
+
+  <h2>Typing Indicator States</h2>
+  <table>
+    <thead>
+      <tr><th>SSE Event</th><th>Widget Display</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>turn_start</code></td><td>Animated three-dot typing indicator appears</td></tr>
+      <tr><td><code>tool_call</code></td><td>Indicator changes to "<code>get_leave_balance</code>..." with tool icon</td></tr>
+      <tr><td><code>tool_result</code></td><td>Indicator returns to typing dots</td></tr>
+      <tr><td>First <code>token</code></td><td>Typing indicator replaced by the accumulating response text</td></tr>
+      <tr><td><code>turn_end</code></td><td>Response complete; copy and feedback buttons appear</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-configuration.html">&#8592; Widget Configuration</a>
+    <a href="04-chat-history.html">Next: Chat History Display &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

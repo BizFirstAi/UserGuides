@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registering a Player — Custom Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Custom Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Player Architecture</a>
+  <a href="02-minimal-player.html">Minimal Custom Player</a>
+  <a href="03-section-cards.html">Section Cards Layout</a>
+  <a href="04-form-engine.html">Using FormEngine Directly</a>
+  <a href="05-registering-player.html" class="active">Registering a Player</a>
+  <a href="06-schema-override.html">Per-Form Player Override</a>
+  <a href="07-mobile-player.html">Mobile Player Example</a>
+  <a href="08-state-hooks.html">Using State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Registering a Custom Player</h1>
+    <p class="lead">Once you have built a custom player component, you register it with the global <code>PlayerRegistry</code> using <code>registerFormPlayer()</code>. Registration makes the player discoverable in Atlas Forms Studio's player selection dropdown and allows it to be referenced by ID in form schemas.</p>
+  </div>
+
+  <h2>PlayerRegistryEntry Type</h2>
+  <pre><code>// packages/player-registry/src/types.ts
+
+interface PlayerRegistryEntry {
+  /** Unique identifier — used in schema metadata.playerOverride */
+  id:          string;
+
+  /** Human-readable name shown in Atlas Forms Studio */
+  label:       string;
+
+  /** Optional description shown in the Studio player picker tooltip */
+  description?: string;
+
+  /** The React component that renders the form */
+  component:   React.ComponentType&lt;FormPlayerProps&gt;;
+
+  /** Optional thumbnail URL shown in Studio's visual player picker */
+  thumbnail?:  string;
+}
+
+interface FormPlayerProps {
+  schema:         FormSchema;
+  initialValues?: Record&lt;string, any&gt;;
+  mode?:          FormMode;
+  onSubmit?:      (values: Record&lt;string, any&gt;) =&gt; Promise&lt;void&gt;;
+  onCancel?:      () =&gt; void;
+}</code></pre>
+
+  <h2>registerFormPlayer()</h2>
+  <pre><code>import { registerFormPlayer } from '@atlas-forms/player-registry';
+import { CardSectionPlayer } from './players/CardSectionPlayer';
+
+registerFormPlayer({
+  id:          'card-section',
+  label:       'Card Section Player',
+  description: 'Renders each form section inside its own card panel. Best for admin consoles and multi-section data entry.',
+  component:   CardSectionPlayer,
+  thumbnail:   '/assets/players/card-section-thumb.png',
+});</code></pre>
+
+  <h2>Registration Timing</h2>
+  <p>Call <code>registerFormPlayer()</code> once, early in your application bootstrap — before any form renders. The registry is a singleton; subsequent calls with the same <code>id</code> overwrite the previous entry and log a warning.</p>
+  <pre><code>// src/index.tsx  — application entry point
+
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+// Register all custom players before mounting
+import './players/registerPlayers';   // side-effect import
+
+const root = createRoot(document.getElementById('root')!);
+root.render(&lt;App /&gt;);
+
+// ─── src/players/registerPlayers.ts ─────────────────────────────────────────
+import { registerFormPlayer } from '@atlas-forms/player-registry';
+import { CardSectionPlayer }  from './CardSectionPlayer';
+import { MobilePlayer }       from './MobilePlayer';
+import { WizardPlayer }       from './WizardPlayer';
+
+registerFormPlayer({
+  id:        'card-section',
+  label:     'Card Section',
+  component: CardSectionPlayer,
+});
+
+registerFormPlayer({
+  id:        'mobile',
+  label:     'Mobile',
+  component: MobilePlayer,
+});
+
+registerFormPlayer({
+  id:        'wizard',
+  label:     'Step Wizard',
+  component: WizardPlayer,
+});</code></pre>
+
+  <h2>Reading the Registry</h2>
+  <pre><code>import { getFormPlayer, listFormPlayers } from '@atlas-forms/player-registry';
+
+// Retrieve a single entry by ID
+const entry = getFormPlayer('card-section');
+// Returns: PlayerRegistryEntry | undefined
+
+// List all registered players (e.g. to populate a UI dropdown)
+const allPlayers = listFormPlayers();
+// Returns: PlayerRegistryEntry[]
+
+// Example: build a select element from all registered players
+const options = listFormPlayers().map(p =&gt; ({
+  value: p.id,
+  label: p.label,
+}));</code></pre>
+
+  <h2>How FormRenderer Resolves the Player</h2>
+  <p>When <code>FormRenderer</code> receives a <code>schema</code> that contains <code>metadata.playerOverride</code>, it looks up that ID in the registry and mounts the registered component instead of the default layout:</p>
+  <pre><code>// Simplified FormRenderer resolution logic
+import { getFormPlayer } from '@atlas-forms/player-registry';
+
+function resolvePlayer(schema: FormSchema): React.ComponentType&lt;FormPlayerProps&gt; {
+  const overrideId = schema.metadata?.playerOverride;
+  if (overrideId) {
+    const entry = getFormPlayer(overrideId);
+    if (entry) return entry.component;
+    console.warn(`[AtlasForms] Player "${overrideId}" is not registered. Falling back to default.`);
+  }
+  return DefaultFormLayout;  // built-in player
+}</code></pre>
+
+  <div class="callout">
+    <strong>Registration Is Required Before Schema Loading</strong>
+    If a form schema references a <code>playerOverride</code> ID that has not been registered yet, <code>FormRenderer</code> will fall back to the default player and log a warning. Ensure all custom player registrations run before any form schema is loaded or rendered.
+  </div>
+
+  <h2>Player IDs — Naming Convention</h2>
+  <table>
+    <thead><tr><th>Scope</th><th>Convention</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Built-in players</td><td>Single word, lowercase</td><td><code>default</code>, <code>mobile</code>, <code>wizard</code></td></tr>
+      <tr><td>Product-specific</td><td><code>product-name</code></td><td><code>crm-detail</code>, <code>hr-onboarding</code></td></tr>
+      <tr><td>Tenant-specific</td><td><code>tenant-name</code></td><td><code>acme-branded</code>, <code>gov-accessible</code></td></tr>
+      <tr><td>Experimental</td><td><code>exp-name</code> prefix</td><td><code>exp-canvas</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Unregistering a Player</h2>
+  <pre><code>import { unregisterFormPlayer } from '@atlas-forms/player-registry';
+
+// Remove a player — useful in test teardown or hot-reload scenarios
+unregisterFormPlayer('card-section');</code></pre>
+
+  <div class="callout success">
+    <strong>Studio Integration</strong>
+    Registered players appear in the <strong>Player</strong> dropdown in Atlas Forms Studio's Form Settings panel. The <code>label</code> string is what users see; the <code>id</code> is written into <code>metadata.playerOverride</code> when the user selects it. If you provide a <code>thumbnail</code>, Studio will show it in the visual card picker.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-form-engine.html">&#8592; Using FormEngine Directly</a>
+    <a href="06-schema-override.html">Next: Per-Form Player Override &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

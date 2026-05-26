@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Group Definition Schema — Form Groups | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Groups</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-database-backing.html">Database Backing</a>
+  <a href="02-current-groups.html">Current Form Groups</a>
+  <a href="03-group-schema.html" class="active">Group Definition Schema</a>
+  <a href="04-app-association.html">App Association</a>
+  <a href="05-creating-a-group.html">Creating a New Group</a>
+  <a href="06-naming-conventions.html">Naming Conventions</a>
+  <a href="07-tenant-overrides.html">Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Group Definition Schema</h1>
+    <p class="lead">Each Form Group is described by a typed JSON contract — the <code>FormGroupDefinition</code> — that lives alongside the application code. This contract is the single source of truth for the group's ID range, ownership, and generation policy. It also acts as the input to <code>registerFormGroup()</code>.</p>
+  </div>
+
+  <h2>FormGroupDefinition Type</h2>
+  <pre><code>// packages/types-js/src/FormGroupDefinition.ts
+
+interface FormGroupDefinition {
+  /** Stable kebab-case identifier — matches CategoryName in the database */
+  formGroupId:  string;
+
+  /** Human-readable label shown in Studio */
+  label:        string;
+
+  /** The owning application's package or project name */
+  ownerApp:     string;
+
+  /** Database FormCategoryID — must equal formIdRange.start / 100 */
+  categoryId:   number;
+
+  /** Inclusive FormID range owned by this group */
+  formIdRange: {
+    start: number;   // Inclusive
+    end:   number;   // Inclusive
+  };
+
+  /** Allow the AI generation pipeline to create forms in this group */
+  aiGenerationEnabled: boolean;
+
+  /** Allow tenant-level overrides on forms in this group */
+  tenantOverrideable:  boolean;
+
+  /** Optional: default PrimaryUsage written to all new forms in this group */
+  defaultPrimaryUsage?: string;
+}</code></pre>
+
+  <h2>GuardRails — Complete Example</h2>
+  <pre><code>// src/formGroups/guardRailsGroup.ts
+import type { FormGroupDefinition } from '@atlas-forms/types-js';
+
+export const guardRailsGroup: FormGroupDefinition = {
+  formGroupId:          'guard-rails',
+  label:                'GuardRails',
+  ownerApp:             'BizFirst.Ai.ProcessSecurity',
+  categoryId:           130,
+  formIdRange: {
+    start: 13000,
+    end:   13099,
+  },
+  aiGenerationEnabled:  true,
+  tenantOverrideable:   true,
+  defaultPrimaryUsage:  'guardrails',
+};</code></pre>
+
+  <h2>Field Reference</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Required</th><th>Constraint</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>formGroupId</code></td><td>Yes</td><td>Unique, kebab-case</td><td>Stable — never rename after first form is created</td></tr>
+      <tr><td><code>label</code></td><td>Yes</td><td>—</td><td>Shown in Studio UI dropdowns</td></tr>
+      <tr><td><code>ownerApp</code></td><td>Yes</td><td>—</td><td>Identifies the responsible team for support routing</td></tr>
+      <tr><td><code>categoryId</code></td><td>Yes</td><td>Must equal <code>formIdRange.start / 100</code></td><td>Validated at registration time</td></tr>
+      <tr><td><code>formIdRange.start</code></td><td>Yes</td><td>Multiple of 100; non-overlapping</td><td>Checked against registry at startup</td></tr>
+      <tr><td><code>formIdRange.end</code></td><td>Yes</td><td>= start + 99</td><td>Each group always gets exactly 100 IDs</td></tr>
+      <tr><td><code>aiGenerationEnabled</code></td><td>Yes</td><td>Boolean</td><td>When false the AI pipeline refuses to generate in this group</td></tr>
+      <tr><td><code>tenantOverrideable</code></td><td>Yes</td><td>Boolean</td><td>When false, tenant override rows are rejected</td></tr>
+      <tr><td><code>defaultPrimaryUsage</code></td><td>No</td><td>—</td><td>Pre-fills PrimaryUsage in Atlas Forms Studio when creating a new form in this group</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Validation at Registration</h2>
+  <p><code>registerFormGroup()</code> validates the definition before writing it to the registry. Violations throw immediately at application startup so they cannot go unnoticed:</p>
+  <pre><code>// Validations performed by registerFormGroup()
+// 1. formGroupId is unique in the registry
+// 2. categoryId === Math.floor(formIdRange.start / 100)
+// 3. formIdRange.end === formIdRange.start + 99
+// 4. formIdRange does not overlap any already-registered group
+// 5. formGroupId matches /^[a-z][a-z0-9-]*$/ (kebab-case)
+
+// If any check fails:
+// throw new Error(`[AtlasForms] registerFormGroup: ${reason}`);</code></pre>
+
+  <div class="callout success">
+    <strong>Keep the Definition File Small</strong>
+    The <code>FormGroupDefinition</code> JSON contract should contain only group-level metadata. Individual form schemas belong in separate SQL data files, not in this definition. The definition is loaded at startup; form schemas are loaded on demand.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-current-groups.html">&#8592; Current Form Groups</a>
+    <a href="04-app-association.html">Next: App Association &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

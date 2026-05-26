@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploying Tenant Overrides — Tenant Overrides | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Tenant Overrides</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-override-schema.html">Override Schema</a>
+  <a href="02-control-overrides.html">Control-Level Overrides</a>
+  <a href="03-tenant-additions.html">Tenant-Specific Forms</a>
+  <a href="04-disabling-forms.html">Disabling Forms</a>
+  <a href="05-formid-ranges.html">Tenant FormID Ranges</a>
+  <a href="06-deployment.html" class="active">Deploying Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Deploying Tenant Overrides</h1>
+    <p class="lead">Tenant overrides are deployed as separate SQL data files in a tenant-specific subfolder, with their own deploy script. They run after the base group scripts, ensuring the base forms exist before any override rows are inserted.</p>
+  </div>
+
+  <h2>Folder Structure</h2>
+  <pre><code>BizFirstFiV3DB/dbo/Data/AtlasForms/
+  GuardRails/                          ← base group scripts
+    GuardRails_Category.data.sql
+    Atlas_Forms_13000_GuardRail_List.data.sql
+    ...
+    Deploy_GuardRails_Forms.sql        ← base deploy script
+
+  Tenants/
+    Tenant_9_Acme/
+      GuardRails/                      ← Tenant 9 overrides for GuardRails
+        Tenant_9_GuardRail_Override_13001.data.sql   ← control label override
+        Tenant_9_GuardRail_Disable_13007.data.sql    ← disable audit form
+        Tenant_9_Atlas_Forms_913001_GdprConsent.data.sql  ← private form
+        Deploy_Tenant_9_GuardRails.sql               ← tenant deploy script</code></pre>
+
+  <h2>Tenant Deploy Script</h2>
+  <pre><code>-- Deploy_Tenant_9_GuardRails.sql
+-- IMPORTANT: Run AFTER Deploy_GuardRails_Forms.sql
+-- Base forms must exist before override rows can be inserted.
+
+:r .\Tenant_9_GuardRail_Override_13001.data.sql
+:r .\Tenant_9_GuardRail_Disable_13007.data.sql
+:r .\Tenant_9_Atlas_Forms_913001_GdprConsent.data.sql</code></pre>
+
+  <h2>Override Row SQL File</h2>
+  <pre><code>-- Tenant_9_GuardRail_Override_13001.data.sql
+-- Control label override: 'Policy Name' → 'Rule Name' for Tenant 9
+
+SET IDENTITY_INSERT [dbo].[Atlas_Forms] ON;
+
+IF NOT EXISTS (
+    SELECT 1 FROM [dbo].[Atlas_Forms]
+    WHERE [FormID] = 13001 AND [TenantID] = 9
+)
+BEGIN
+    -- Read the base schema, apply overrides, insert the merged result
+    DECLARE @baseSchema NVARCHAR(MAX);
+    SELECT @baseSchema = [SchemaJson]
+    FROM   [dbo].[Atlas_Forms]
+    WHERE  [FormID] = 13001 AND [TenantID] IS NULL;
+
+    -- In practice the merged schema is pre-computed by the deployer tool
+    -- and inserted as a static JSON string:
+    INSERT INTO [dbo].[Atlas_Forms]
+        ([FormID], [FormCode], [FormCategoryID], [FormTypeID],
+         [PrimaryUsage], [NodeUsage], [TenantID], [IsActive], [SchemaJson])
+    VALUES
+        (13001, 'GuardRail_Edit', 130, 2,
+         'guardrails', 'guardrail-edit', 9, 1,
+         N'{ "metadata": { "formId": 13001, "title": "Edit GuardRail" },
+             "controls": [
+               { "id": "policy-name", "label": "Rule Name", "placeholder": "Enter rule name" }
+             ] }');
+END
+
+SET IDENTITY_INSERT [dbo].[Atlas_Forms] OFF;</code></pre>
+
+  <h2>Deployment Order</h2>
+  <table>
+    <thead><tr><th>Step</th><th>Script</th><th>Must Run After</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Category script (<code>GuardRails_Category.data.sql</code>)</td><td>—</td></tr>
+      <tr><td>2</td><td>Base form scripts (<code>Atlas_Forms_13000_*.data.sql</code> etc.)</td><td>Step 1</td></tr>
+      <tr><td>3</td><td>Tenant override scripts (<code>Tenant_9_*.data.sql</code>)</td><td>Step 2</td></tr>
+      <tr><td>4</td><td>Tenant addition scripts (<code>Tenant_9_Atlas_Forms_913001_*.data.sql</code>)</td><td>Step 1 (category must exist)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>CI Pipeline Integration</h2>
+  <pre><code># In your CI deploy pipeline (pseudocode)
+# 1. Run base group deploy scripts
+sqlcmd -S $DB_SERVER -d $DB_NAME -i "GuardRails/Deploy_GuardRails_Forms.sql"
+
+# 2. Run each tenant's override deploy scripts
+for tenant_dir in Tenants/*/GuardRails/; do
+  if [ -f "$tenant_dir/Deploy_*.sql" ]; then
+    sqlcmd -S $DB_SERVER -d $DB_NAME -i "$tenant_dir/Deploy_*.sql"
+  fi
+done</code></pre>
+
+  <div class="callout">
+    <strong>All Scripts Must Be Idempotent</strong>
+    Every INSERT in every tenant override script must use an <code>IF NOT EXISTS</code> guard. The CI pipeline runs these scripts on every deployment — a missing guard will cause a primary key violation on the second run and fail the deployment.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-formid-ranges.html">&#8592; Tenant FormID Ranges</a>
+    <a href="index.html">&#8592; Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

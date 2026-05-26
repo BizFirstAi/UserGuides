@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitoring — Process Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Process Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-agent-to-workflow.html">Agent Triggers Workflow</a>
+  <a href="03-workflow-result.html">Workflow Result in Conversation</a>
+  <a href="04-ai-agent-node.html">AI Agent Node in Flow Studio</a>
+  <a href="05-agent-in-loop.html">Agent as Approval Actor</a>
+  <a href="06-monitoring.html" class="active">Monitoring Process Plugin Activity</a>
+  <a href="07-security.html">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Monitoring Process Plugin Activity</h1>
+    <p class="lead">Agent-triggered workflow executions are visible in the Flow Studio Observer Panel alongside manually triggered executions. The ProcessPlugin also emits structured logs and Prometheus metrics for integration with your observability stack.</p>
+  </div>
+
+  <h2>Flow Studio Observer Panel</h2>
+  <p>All workflow executions triggered by agents appear in the Flow Studio Observer Panel with <code>initiatedBy: "OctopusAgent:{agentId}"</code>. The Observer Panel shows:</p>
+  <ul>
+    <li>The workflow execution timeline with all node states</li>
+    <li>Input data passed from the agent to the workflow</li>
+    <li>AI Agent Node turns — the prompt sent and agent response received</li>
+    <li>HIL task decisions made by the agent actor, with the reason</li>
+    <li>Final workflow output returned to the agent</li>
+  </ul>
+
+  <h2>Structured Log Events</h2>
+  <pre><code>// ProcessPlugin emits structured log events at key integration points:
+
+// Agent triggers a workflow
+{
+  "timestamp":    "2024-06-15T10:00:00Z",
+  "level":        "Information",
+  "event":        "WorkflowTriggered",
+  "agent_id":     "hr-assistant",
+  "session_id":   "sess-abc123",
+  "tenant_id":    "tenant-xyz",
+  "workflow_id":  "leave-approval-workflow",
+  "execution_id": "exec-abc456",
+  "mode":         "sync"
+}
+
+// Sync workflow completed
+{
+  "timestamp":    "2024-06-15T10:00:04Z",
+  "level":        "Information",
+  "event":        "WorkflowCompleted",
+  "execution_id": "exec-abc456",
+  "elapsed_ms":   4250,
+  "status":       "Completed"
+}
+
+// HIL task received
+{
+  "timestamp":    "2024-06-15T10:05:00Z",
+  "level":        "Information",
+  "event":        "HILTaskReceived",
+  "task_id":      "hil-xyz789",
+  "task_type":    "ApprovalRequest",
+  "agent_id":     "approval-agent"
+}
+
+// HIL decision submitted
+{
+  "timestamp":    "2024-06-15T10:05:03Z",
+  "level":        "Information",
+  "event":        "HILDecisionSubmitted",
+  "task_id":      "hil-xyz789",
+  "decision":     "Approve",
+  "elapsed_ms":   2870
+}</code></pre>
+
+  <h2>Prometheus Metrics</h2>
+  <pre><code># Metrics emitted by ProcessPlugin (scrape at /metrics)
+
+# Counter — total workflow triggers by agent
+octopus_workflow_triggers_total{agent_id="hr-assistant", workflow_id="leave-approval-workflow"} 42
+
+# Histogram — sync workflow wait time distribution
+octopus_workflow_sync_duration_seconds_bucket{le="1"} 5
+octopus_workflow_sync_duration_seconds_bucket{le="5"} 38
+octopus_workflow_sync_duration_seconds_bucket{le="30"} 42
+
+# Counter — HIL tasks processed
+octopus_hil_tasks_total{agent_id="approval-agent", decision="Approve"} 17
+octopus_hil_tasks_total{agent_id="approval-agent", decision="Reject"} 3
+
+# Gauge — HIL tasks currently pending
+octopus_hil_tasks_pending{agent_id="approval-agent"} 2</code></pre>
+
+  <h2>Alert Recommendations</h2>
+  <table>
+    <thead>
+      <tr><th>Alert Condition</th><th>Threshold</th><th>Action</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Sync workflow timeout rate</td><td>&gt; 5% of sync triggers</td><td>Increase <code>SyncTimeoutSeconds</code> or switch to async</td></tr>
+      <tr><td>HIL tasks pending</td><td>&gt; 50 tasks</td><td>Check HIL actor health; may need to scale polling</td></tr>
+      <tr><td>ProcessServer call failures</td><td>&gt; 1% error rate</td><td>Check ProcessServer availability; review network config</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-agent-in-loop.html">&#8592; Agent as Approval Actor</a>
+    <a href="07-security.html">Next: Security &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

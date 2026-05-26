@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FormID Assignment — AI Form Generation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>AI Form Generation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-generation-workflow.html">6-Step Workflow</a>
+  <a href="02-prompt-context.html">AI Prompt Context</a>
+  <a href="03-pattern-learning.html">What the AI Learns</a>
+  <a href="04-generated-artefacts.html">Generated Artefacts</a>
+  <a href="05-form-id-assignment.html" class="active">FormID Assignment</a>
+  <a href="06-sql-pattern.html">SQL File Pattern</a>
+  <a href="07-validation.html">Validating Generated Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>FormID Assignment</h1>
+    <p class="lead">The AI generator picks the next available FormID in the group's range by scanning the SQL files in the group folder. It never queries the database — the SQL files are the ground truth for which IDs have been allocated.</p>
+  </div>
+
+  <h2>Why SQL Files, Not the Database?</h2>
+  <p>The generator is a design-time tool — it runs during development, not against a live database. The SQL files in the group folder represent the canonical list of forms that <em>will</em> be deployed. Using the files prevents ID conflicts even when the database has not yet been refreshed from the latest scripts.</p>
+
+  <h2>ID Selection Algorithm</h2>
+  <pre><code>// Simplified FormID selection algorithm
+
+function findNextFormId(
+  groupFolder:  string,
+  rangeStart:   number,
+  rangeEnd:     number
+): number {
+  // 1. Scan all .data.sql files in the folder
+  const files = listFiles(groupFolder, '*.data.sql');
+
+  // 2. Extract FormIDs from file names (pattern: Atlas_Forms_{id}_*.data.sql)
+  const usedIds = new Set&lt;number&gt;();
+  for (const file of files) {
+    const match = file.match(/Atlas_Forms_(\d+)_/);
+    if (match) usedIds.add(parseInt(match[1], 10));
+  }
+
+  // 3. Find the lowest unused ID in the group's range
+  for (let id = rangeStart; id &lt;= rangeEnd; id++) {
+    if (!usedIds.has(id)) return id;
+  }
+
+  // 4. Range exhausted — abort
+  throw new Error(`[AtlasForms] FormID range ${rangeStart}–${rangeEnd} is exhausted. No IDs available.`);
+}</code></pre>
+
+  <h2>Example — GuardRails Group</h2>
+  <pre><code>// SQL files currently in the GuardRails folder:
+// Atlas_Forms_13000_GuardRail_List.data.sql          → FormID 13000
+// Atlas_Forms_13001_GuardRail_Edit.data.sql           → FormID 13001
+// Atlas_Forms_13002_GuardRail_View.data.sql           → FormID 13002
+// Atlas_Forms_13003_GuardRail_RateLimit_Edit.data.sql → FormID 13003
+// Atlas_Forms_13004_GuardRail_ContentFilter_Edit.data.sql → FormID 13004
+// Atlas_Forms_13005_GuardRail_TopicBlock_Edit.data.sql    → FormID 13005
+// Atlas_Forms_13006_GuardRail_AccessControl_Edit.data.sql → FormID 13006
+// Atlas_Forms_13007_GuardRail_Audit.data.sql          → FormID 13007
+
+// Used IDs: { 13000, 13001, 13002, 13003, 13004, 13005, 13006, 13007 }
+// Range: 13000–13099
+// Next available: 13008</code></pre>
+
+  <h2>Range Exhaustion Warning</h2>
+  <table>
+    <thead><tr><th>IDs Used</th><th>IDs Remaining</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>0–79</td><td>80–100</td><td>Normal — generate freely</td></tr>
+      <tr><td>80–89</td><td>10–20</td><td>Warning logged — plan range expansion</td></tr>
+      <tr><td>90+</td><td>Less than 10</td><td>Alert — request a new group or range extension before generating more</td></tr>
+      <tr><td>100</td><td>0</td><td>Error — generation aborted</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Do Not Skip IDs</strong>
+    If you delete a form (remove its SQL file), the AI will reuse that ID for the next generated form — the gap is filled. Never reserve IDs manually by creating empty placeholder files; this wastes range. If you need to reserve a range of IDs for future manual work, document this in the group's readme rather than creating files.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-generated-artefacts.html">&#8592; Generated Artefacts</a>
+    <a href="06-sql-pattern.html">Next: SQL File Pattern &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

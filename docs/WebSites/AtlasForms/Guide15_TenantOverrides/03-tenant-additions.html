@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenant-Specific Forms — Tenant Overrides | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Tenant Overrides</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-override-schema.html">Override Schema</a>
+  <a href="02-control-overrides.html">Control-Level Overrides</a>
+  <a href="03-tenant-additions.html" class="active">Tenant-Specific Forms</a>
+  <a href="04-disabling-forms.html">Disabling Forms</a>
+  <a href="05-formid-ranges.html">Tenant FormID Ranges</a>
+  <a href="06-deployment.html">Deploying Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Tenant-Specific Forms</h1>
+    <p class="lead">When a tenant needs an entirely new form that has no equivalent in the base group, it is declared as an <em>addition</em>. Additions live in the tenant's private FormID range and are invisible to all other tenants.</p>
+  </div>
+
+  <h2>When to Use Additions</h2>
+  <p>Use an addition (not a control-level override) when:</p>
+  <ul>
+    <li>The tenant requires a completely different form structure that cannot be derived from the base form</li>
+    <li>The tenant has a regulatory requirement for a unique form that does not apply globally (e.g., GDPR consent form only required in the EU)</li>
+    <li>The tenant has a product module that other tenants do not have access to</li>
+  </ul>
+
+  <h2>Addition FormIDs</h2>
+  <p>Tenant-specific forms use FormIDs from the tenant's private range. See <a href="05-formid-ranges.html">Tenant FormID Ranges</a> for the formula. For Tenant 9 overriding the GuardRails group (range start 13000):</p>
+  <pre><code>// Tenant 9 private FormID range for GuardRails:
+// tenantId × 100000 + groupStart = 9 × 100000 + 13000 = 913000
+
+// FormIDs 913000–913099 are Tenant 9's private GuardRails range</code></pre>
+
+  <h2>Declaring an Addition</h2>
+  <pre><code>const acmeAdditions: FormGroupOverride = {
+  baseCategoryId: 130,
+  tenantId:       9,
+
+  overrides:  [],   // No modifications to base forms
+
+  additions: [
+    {
+      formId:       913001,
+      formCode:     'Acme_GuardRail_GdprConsent_Edit',
+      formTypeId:   2,
+      primaryUsage: 'guardrails',
+      nodeUsage:    'acme-guardrail-gdpr-consent',
+      schema: {
+        "metadata": {
+          "formId": 913001,
+          "title":  "GDPR Consent Configuration"
+        },
+        "sections": [
+          { "id": "consent-text", "title": "Consent Text", "order": 1 },
+          { "id": "settings",     "title": "Settings",     "order": 2 }
+        ],
+        "controls": [
+          {
+            "id": "consentLanguage", "type": "select", "sectionId": "consent-text", "order": 1,
+            "label": "Language",
+            "options": [
+              { "value": "en", "label": "English" },
+              { "value": "de", "label": "German" },
+              { "value": "fr", "label": "French" }
+            ],
+            "binding": { "source": "$json", "path": "consentLanguage" }
+          },
+          {
+            "id": "consentText", "type": "textarea", "sectionId": "consent-text", "order": 2,
+            "label": "Consent Statement",
+            "binding": { "source": "$json", "path": "consentText" },
+            "validation": { "required": true, "minLength": 50 }
+          }
+        ],
+        "actions": [
+          { "id": "save",   "label": "Save",   "type": "submit",   "config": { "endpoint": "/api/acme/guardrails/gdpr-consent/save" } },
+          { "id": "cancel", "label": "Cancel", "type": "navigate", "config": { "target": "GuardRail_List" } }
+        ]
+      }
+    }
+  ]
+};</code></pre>
+
+  <h2>Addition vs Override</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td>Change an existing field's label for this tenant</td><td>Override (<code>overrideSchema</code>)</td></tr>
+      <tr><td>Add a new field to an existing form</td><td>Override (<code>overrideSchema</code> with an additions key)</td></tr>
+      <tr><td>Completely different form structure</td><td>Addition (new FormID in tenant range)</td></tr>
+      <tr><td>Regulatory-mandated form only for this tenant</td><td>Addition (new FormID in tenant range)</td></tr>
+      <tr><td>Tenant-specific workflow node form</td><td>Addition with <code>nodeUsage</code> set</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Additions Are Not Visible to Other Tenants</strong>
+    A form with <code>FormID = 913001</code> and <code>TenantID = 9</code> is only returned when the form loader queries with <code>TenantID = 9</code>. Other tenants querying the same group will never see this form in their list or in routing.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-control-overrides.html">&#8592; Control-Level Overrides</a>
+    <a href="04-disabling-forms.html">Next: Disabling Forms &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

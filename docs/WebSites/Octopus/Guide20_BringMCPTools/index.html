@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bring Your Own MCP Tools — Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Bring MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-mcp-protocol.html">MCP Server Protocol</a>
+  <a href="02-tool-schema.html">Defining Tool Schemas</a>
+  <a href="03-minimal-api.html">C# MinimalAPI Server</a>
+  <a href="04-agent-registration.html">Agent Registration</a>
+  <a href="05-authentication.html">Authentication</a>
+  <a href="06-testing.html">Testing MCP Tools</a>
+  <a href="07-packaging.html">Packaging and Publishing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Bring Your Own MCP Tools</h1>
+    <p class="lead">Octopus agents can call any HTTP server that implements the MCP (Model Context Protocol) tool contract — not just built-in plugins. This guide explains how to build, register, secure, and test your own external MCP tool server.</p>
+  </div>
+
+  <h2>What Is an External MCP Server?</h2>
+  <p>An external MCP server is any HTTP service that exposes two endpoints:</p>
+  <ul>
+    <li><code>GET /tools</code> — returns the list of available tools with their JSON Schema definitions</li>
+    <li><code>POST /tool/{name}/call</code> — executes a specific tool and returns the result as JSON</li>
+  </ul>
+  <p>Octopus discovers the tools at agent startup, presents them to the LLM as part of its capability set, and calls <code>POST /tool/{name}/call</code> whenever the agent decides to use one. From the agent's perspective, an external MCP tool is indistinguishable from a built-in plugin tool.</p>
+
+  <h2>When to Use External MCP Servers</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Legacy System Integration</h4>
+      <p>Wrap an existing REST or SOAP service behind the MCP contract without modifying the Octopus host or writing an <code>IOctopusPlugin</code>.</p>
+    </div>
+    <div class="card">
+      <h4>Polyglot Tool Servers</h4>
+      <p>Write the tool server in Python, Go, or Node.js if that language has better library support for the integration target (e.g. a Python ML model).</p>
+    </div>
+    <div class="card">
+      <h4>Independently Deployed Services</h4>
+      <p>Deploy and scale your tool server independently from the Octopus host — update tools without restarting the agent runtime.</p>
+    </div>
+    <div class="card">
+      <h4>Shared Tool Infrastructure</h4>
+      <p>Multiple Octopus deployments (dev, staging, prod) can share a single external MCP server for common enterprise tools.</p>
+    </div>
+  </div>
+
+  <h2>Architecture Overview</h2>
+  <pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                        Octopus Host                             │
+│                                                                 │
+│   Agent Engine ──(tool call)──► MCPToolProxy                   │
+│                                      │                          │
+│                              (HTTP POST /tool/{name}/call)      │
+└──────────────────────────────────────┼──────────────────────────┘
+                                       │
+                          Authorization: Bearer {token}
+                                       │
+                         ┌─────────────▼──────────────┐
+                         │   External MCP Tool Server  │
+                         │                             │
+                         │   GET /tools                │
+                         │   POST /tool/{name}/call    │
+                         │                             │
+                         │   Your business logic here  │
+                         └─────────────────────────────┘</code></pre>
+
+  <h2>MCP Contract at a Glance</h2>
+  <table>
+    <thead>
+      <tr><th>Endpoint</th><th>Method</th><th>Request</th><th>Response</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>/tools</code></td><td>GET</td><td>—</td><td>JSON array of tool descriptors</td></tr>
+      <tr><td><code>/tool/{name}/call</code></td><td>POST</td><td>JSON object matching <code>inputSchema</code></td><td>JSON result object</td></tr>
+      <tr><td><code>/health</code></td><td>GET</td><td>—</td><td><code>{"status":"ok"}</code> (recommended)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What This Guide Covers</h2>
+  <table>
+    <thead>
+      <tr><th>Page</th><th>Topic</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><a href="01-mcp-protocol.html">MCP Server Protocol</a></td><td>Full wire format: <code>GET /tools</code> and <code>POST /tool/.../call</code> JSON shapes</td></tr>
+      <tr><td><a href="02-tool-schema.html">Defining Tool Schemas</a></td><td>JSON Schema best practices for <code>inputSchema</code> and <code>outputSchema</code></td></tr>
+      <tr><td><a href="03-minimal-api.html">C# MinimalAPI Server</a></td><td>Complete C# MinimalAPI implementation with DI, tool registry, and handler routing</td></tr>
+      <tr><td><a href="04-agent-registration.html">Agent Registration</a></td><td>How to register an external MCP server in an agent's configuration</td></tr>
+      <tr><td><a href="05-authentication.html">Authentication</a></td><td>Bearer token flow via <code>ICredentialResolver</code>, mTLS option</td></tr>
+      <tr><td><a href="06-testing.html">Testing MCP Tools</a></td><td>Unit testing handlers, integration testing the wire contract, curl examples</td></tr>
+      <tr><td><a href="07-packaging.html">Packaging and Publishing</a></td><td>Docker packaging, health probes, versioning, and community registry submission</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-mcp-protocol.html">Next: MCP Server Protocol &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

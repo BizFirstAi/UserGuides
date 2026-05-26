@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Using State Hooks — Custom Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Custom Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Player Architecture</a>
+  <a href="02-minimal-player.html">Minimal Custom Player</a>
+  <a href="03-section-cards.html">Section Cards Layout</a>
+  <a href="04-form-engine.html">Using FormEngine Directly</a>
+  <a href="05-registering-player.html">Registering a Player</a>
+  <a href="06-schema-override.html">Per-Form Player Override</a>
+  <a href="07-mobile-player.html">Mobile Player Example</a>
+  <a href="08-state-hooks.html" class="active">Using State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Using State Hooks</h1>
+    <p class="lead">Atlas Forms exposes three hooks that give custom player components access to form state, visibility logic, and dependency information. All three hooks must be called inside a component that is a descendant of <code>FormStateProvider</code>.</p>
+  </div>
+
+  <h2>useAtlasForm</h2>
+  <p>The primary hook. Returns the full form state and the actions used to change it.</p>
+  <pre><code>import { useAtlasForm } from '@atlas-forms/player-components-react';
+
+interface AtlasFormState {
+  // Current field values — snapshot, updated on every change
+  values:       Record&lt;string, any&gt;;
+
+  // Validation error messages, keyed by fieldId
+  errors:       Record&lt;string, string&gt;;
+
+  // True when any value differs from initialValues
+  isDirty:      boolean;
+
+  // True when errors is empty after the last validation run
+  isValid:      boolean;
+
+  // True while submitForm() is resolving
+  isSubmitting: boolean;
+
+  // Write a single field value and trigger change events
+  setFieldValue: (fieldId: string, value: any) =&gt; void;
+
+  // Run validation then call the onSubmit prop; sets isSubmitting during execution
+  submitForm:    () =&gt; Promise&lt;void&gt;;
+
+  // Direct access to the underlying FormEngine
+  engine:        FormEngine;
+}
+
+// Usage
+const MyPlayerInner: React.FC = () =&gt; {
+  const {
+    values,
+    errors,
+    isDirty,
+    isValid,
+    isSubmitting,
+    setFieldValue,
+    submitForm,
+    engine,
+  } = useAtlasForm();
+
+  // Programmatic field write
+  const applyDefaults = () =&gt; {
+    setFieldValue('currency', 'GBP');
+    setFieldValue('vatRate',  0.20);
+  };
+
+  // Custom pre-submit action
+  const handleAction = async () =&gt; {
+    const errs = await engine.validate();
+    if (Object.keys(errs).length === 0) {
+      await submitForm();
+    } else {
+      console.warn('Validation failed:', errs);
+    }
+  };
+
+  return (
+    &lt;div&gt;
+      {isDirty &amp;&amp; &lt;p className="unsaved-badge"&gt;Unsaved changes&lt;/p&gt;}
+      {/* ... */}
+    &lt;/div&gt;
+  );
+};</code></pre>
+
+  <h2>useFormVisibility</h2>
+  <p>Returns helpers for evaluating per-control visibility rules and mode visibility settings.</p>
+  <pre><code>import { useFormVisibility } from '@atlas-forms/player-components-react';
+
+interface FormVisibilityState {
+  // Returns true if the control should be rendered in the current mode and value state
+  isVisible: (controlId: string) =&gt; boolean;
+
+  // Returns all controls whose isVisible() is true — re-evaluated when values change
+  getVisibleControls: () =&gt; FormControl[];
+}
+
+// Usage
+const SectionRenderer: React.FC&lt;{ section: FormSection; controls: FormControl[] }&gt; = ({
+  section,
+  controls,
+}) =&gt; {
+  const { isVisible } = useFormVisibility();
+
+  // Filter once at the section level — do not call isVisible inside each ControlRenderer
+  const visibleControls = controls.filter(c =&gt; isVisible(c.id));
+
+  if (visibleControls.length === 0) return null;
+
+  return (
+    &lt;div className="section"&gt;
+      &lt;h3&gt;{section.title}&lt;/h3&gt;
+      {visibleControls.map(c =&gt; (
+        &lt;ControlRenderer key={c.id} control={c} /&gt;
+      ))}
+    &lt;/div&gt;
+  );
+};</code></pre>
+
+  <div class="callout">
+    <strong>Call useFormVisibility Once Per Component</strong>
+    Call <code>useFormVisibility()</code> once at the top of a component and pass <code>isVisible</code> down. Do not call the hook inside a loop or a child component that is rendered many times — each call subscribes to the form context and would generate redundant re-render subscriptions.
+  </div>
+
+  <h2>useControlDependencies</h2>
+  <p>Returns the dependency graph for a specific control — which controls it reads from, and which controls cascade from it.</p>
+  <pre><code>import { useControlDependencies } from '@atlas-forms/player-components-react';
+
+interface ControlDependencies {
+  // IDs of controls whose values this control reads (via visibilityRule or computed expressions)
+  dependsOn:   string[];
+
+  // IDs of controls that re-evaluate when this control's value changes
+  cascadesTo:  string[];
+}
+
+// Usage — highlight dependent controls in a Studio-style dependency viewer
+const DependencyHighlighter: React.FC&lt;{ controlId: string }&gt; = ({ controlId }) =&gt; {
+  const { dependsOn, cascadesTo } = useControlDependencies(controlId);
+
+  return (
+    &lt;div&gt;
+      {dependsOn.length &gt; 0 &amp;&amp; (
+        &lt;p&gt;Reads values from: {dependsOn.join(', ')}&lt;/p&gt;
+      )}
+      {cascadesTo.length &gt; 0 &amp;&amp; (
+        &lt;p&gt;Triggers re-evaluation of: {cascadesTo.join(', ')}&lt;/p&gt;
+      )}
+    &lt;/div&gt;
+  );
+};</code></pre>
+
+  <h2>Hook Rules Summary</h2>
+  <table>
+    <thead><tr><th>Hook</th><th>Must be inside FormStateProvider?</th><th>Re-renders when</th><th>Typical use</th></tr></thead>
+    <tbody>
+      <tr><td><code>useAtlasForm</code></td><td>Yes</td><td>Any field value, error, or submit state changes</td><td>Submit logic, programmatic field writes, isDirty indicator</td></tr>
+      <tr><td><code>useFormVisibility</code></td><td>Yes</td><td>Any value change that affects a visibility rule</td><td>Filter control lists before rendering</td></tr>
+      <tr><td><code>useControlDependencies</code></td><td>Yes</td><td>Schema changes (rare)</td><td>Design-mode dependency visualisation</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Combining All Three Hooks</h2>
+  <pre><code>// A complete custom player inner component using all three hooks
+const FullFeaturedInner: React.FC&lt;{ onSubmit: (v: any) =&gt; Promise&lt;void&gt; }&gt; = ({ onSubmit }) =&gt; {
+  const {
+    values, errors, isDirty, isSubmitting, submitForm, engine,
+  } = useAtlasForm();
+
+  const { isVisible, getVisibleControls } = useFormVisibility();
+
+  const schema   = engine.getSchema();
+  const sections = schema.sections ?? [];
+
+  const handleSubmit = async (e: React.FormEvent) =&gt; {
+    e.preventDefault();
+    await submitForm();
+    if (Object.keys(errors).length === 0) {
+      await onSubmit(values);
+    }
+  };
+
+  return (
+    &lt;form onSubmit={handleSubmit}&gt;
+      {isDirty &amp;&amp; &lt;div className="unsaved-banner"&gt;You have unsaved changes&lt;/div&gt;}
+
+      {sections.map(section =&gt; {
+        const controls = (schema.controls ?? [])
+          .filter(c =&gt; c.sectionId === section.id &amp;&amp; isVisible(c.id));
+        if (controls.length === 0) return null;
+
+        return (
+          &lt;div key={section.id} className="section-block"&gt;
+            &lt;h3&gt;{section.title}&lt;/h3&gt;
+            {controls.map(c =&gt; &lt;ControlRenderer key={c.id} control={c} /&gt;)}
+          &lt;/div&gt;
+        );
+      })}
+
+      &lt;button type="submit" disabled={isSubmitting}&gt;
+        {isSubmitting ? 'Submitting...' : 'Submit'}
+      &lt;/button&gt;
+    &lt;/form&gt;
+  );
+};</code></pre>
+
+  <div class="callout success">
+    <strong>getVisibleControls for Progress Tracking</strong>
+    Use <code>getVisibleControls()</code> to compute a progress percentage — the ratio of visible controls with non-empty values to the total number of visible controls. Invisible controls (hidden by mode or expression) are excluded automatically so your progress bar never counts fields the user cannot see.
+  </div>
+
+  <div class="page-nav">
+    <a href="07-mobile-player.html">&#8592; Mobile Player Example</a>
+    <a href="index.html">&#8592; Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

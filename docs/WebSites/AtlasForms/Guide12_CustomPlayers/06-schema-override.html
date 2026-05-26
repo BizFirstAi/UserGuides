@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Per-Form Player Override — Custom Players | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Custom Players</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Player Architecture</a>
+  <a href="02-minimal-player.html">Minimal Custom Player</a>
+  <a href="03-section-cards.html">Section Cards Layout</a>
+  <a href="04-form-engine.html">Using FormEngine Directly</a>
+  <a href="05-registering-player.html">Registering a Player</a>
+  <a href="06-schema-override.html" class="active">Per-Form Player Override</a>
+  <a href="07-mobile-player.html">Mobile Player Example</a>
+  <a href="08-state-hooks.html">Using State Hooks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Per-Form Player Override</h1>
+    <p class="lead">Each form schema can nominate a specific player by writing a registered player ID into <code>metadata.playerOverride</code>. When <code>FormRenderer</code> loads that schema it mounts the custom player instead of the default layout — no application-level code change required.</p>
+  </div>
+
+  <h2>Schema Field</h2>
+  <pre><code>// Form schema JSON — the only change needed to switch players
+{
+  "metadata": {
+    "formId":        42001,
+    "title":         "New Employee Onboarding",
+    "playerOverride": "card-section"   // &lt;-- registered player ID
+  },
+  "sections": [ ... ],
+  "controls": [ ... ]
+}</code></pre>
+
+  <h2>FormMetadata Type</h2>
+  <pre><code>// packages/types-js/src/FormMetadata.ts
+
+interface FormMetadata {
+  formId:          number;
+  title:           string;
+  description?:    string;
+  version?:        string;
+
+  /** ID of a registered player to use instead of the default layout */
+  playerOverride?: string;
+
+  /** Additional arbitrary metadata passed through to the player */
+  [key: string]: any;
+}</code></pre>
+
+  <h2>Resolution Priority</h2>
+  <p>When a form is rendered, the player is resolved in the following order:</p>
+  <table>
+    <thead><tr><th>Priority</th><th>Source</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>1 (highest)</td><td>Explicit prop</td><td><code>&lt;FormRenderer player="wizard" /&gt;</code></td></tr>
+      <tr><td>2</td><td>Schema override</td><td><code>metadata.playerOverride: "card-section"</code></td></tr>
+      <tr><td>3 (lowest)</td><td>Default</td><td>Built-in <code>DefaultFormLayout</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>Passing an explicit <code>player</code> prop to <code>FormRenderer</code> always wins, regardless of what the schema specifies. This lets host applications force a particular player for all forms without modifying schemas.</p>
+
+  <h2>Setting the Override in Atlas Forms Studio</h2>
+  <p>In Studio, open <strong>Form Settings &rarr; Player</strong>. The dropdown lists all registered players by their <code>label</code>. Selecting one writes <code>metadata.playerOverride</code> into the saved schema automatically.</p>
+
+  <h2>Passing Player-Specific Config</h2>
+  <p>Custom players can read extra metadata fields to configure themselves. The entire <code>metadata</code> object is passed through <code>schema.metadata</code>, which the player component receives via its <code>schema</code> prop:</p>
+  <pre><code>// Schema JSON — extra config fields under metadata
+{
+  "metadata": {
+    "formId":        42001,
+    "playerOverride": "wizard",
+    "wizard": {
+      "showProgressBar": true,
+      "allowBackNavigation": false,
+      "completionRedirectUrl": "/dashboard"
+    }
+  }
+}
+
+// WizardPlayer.tsx — reading the config
+export const WizardPlayer: React.FC&lt;FormPlayerProps&gt; = ({ schema, initialValues = {}, onSubmit }) =&gt; {
+  const config = (schema.metadata as any).wizard ?? {};
+  const showProgress       = config.showProgressBar       ?? true;
+  const allowBack          = config.allowBackNavigation   ?? true;
+  const completionRedirect = config.completionRedirectUrl ?? '/';
+
+  // ... rest of the player implementation
+};</code></pre>
+
+  <h2>Tenant-Level Override</h2>
+  <p>Tenant overrides (see Guide 15) can set <code>playerOverride</code> at the tenant level, replacing the base schema's player choice for a specific tenant without touching the base schema:</p>
+  <pre><code>// Tenant override document
+{
+  "formGroupOverride": {
+    "baseCategoryId": 420,
+    "tenantId": 9001,
+    "overrides": [
+      {
+        "formId": 42001,
+        "path":   "metadata.playerOverride",
+        "value":  "gov-accessible"
+      }
+    ]
+  }
+}</code></pre>
+
+  <div class="callout">
+    <strong>Unregistered Override Gracefully Falls Back</strong>
+    If <code>metadata.playerOverride</code> references an ID that is not in the registry, <code>FormRenderer</code> logs a <code>console.warn</code> and renders the default player. It does not throw. This means a missing registration causes a silent visual regression rather than a crash — always verify registrations in your QA environment.
+  </div>
+
+  <h2>Schema Override vs Prop Override — Choosing the Right Approach</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Recommended Approach</th></tr></thead>
+    <tbody>
+      <tr><td>One specific form always uses a custom layout</td><td>Schema <code>metadata.playerOverride</code></td></tr>
+      <tr><td>All forms in a page/route use the same player</td><td><code>player</code> prop on <code>FormRenderer</code></td></tr>
+      <tr><td>Tenant A needs a different layout for a shared form</td><td>Tenant override setting <code>metadata.playerOverride</code></td></tr>
+      <tr><td>A/B testing two layouts</td><td><code>player</code> prop driven by feature flag</td></tr>
+      <tr><td>Runtime user preference</td><td><code>player</code> prop driven by state</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-registering-player.html">&#8592; Registering a Player</a>
+    <a href="07-mobile-player.html">Next: Mobile Player Example &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

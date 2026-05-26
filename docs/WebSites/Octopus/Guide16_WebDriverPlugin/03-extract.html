@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Extract Data Tool — Web Driver Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Web Driver Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-navigate.html">Navigate Tool</a>
+  <a href="03-extract.html" class="active">Extract Data Tool</a>
+  <a href="04-fill-form.html">Fill Form Tool</a>
+  <a href="05-screenshot.html">Screenshot Tool</a>
+  <a href="06-session-management.html">Session Management</a>
+  <a href="07-security.html">Security and Sandboxing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Extract Data Tool</h1>
+    <p class="lead">The <code>browser_extract</code> tool selects elements from the current page using a CSS selector and returns their content as text, HTML, or a structured JSON array — ready for the agent to reason over.</p>
+  </div>
+
+  <h2>Tool Schema</h2>
+  <pre><code>{
+  "name": "browser_extract",
+  "description": "Extract content from the current page using a CSS selector. " +
+                 "Returns matched elements as text, HTML, or structured JSON. " +
+                 "Always call browser_navigate first to load the target page.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "selector": {
+        "type": "string",
+        "description": "CSS selector to match elements (e.g. 'h1', '.price', '[data-testid=value]')"
+      },
+      "format": {
+        "type": "string",
+        "enum": ["text", "html", "json"],
+        "default": "text",
+        "description": "Output format. 'text': inner text only. 'html': full element HTML. 'json': array of {text, html, attributes} objects."
+      },
+      "limit": {
+        "type": "integer",
+        "default": 10,
+        "description": "Maximum number of matching elements to return."
+      },
+      "wait_for_selector": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, waits up to TimeoutMs for the selector to appear before extracting."
+      }
+    },
+    "required": ["selector"]
+  }
+}</code></pre>
+
+  <h2>Output Formats</h2>
+  <pre><code>// format: "text" — simplest, cheapest for the LLM to process
+{
+  "count":    3,
+  "selector": ".product-price",
+  "results":  ["$29.99", "$49.99", "$19.99"]
+}
+
+// format: "json" — full element details
+{
+  "count":    2,
+  "selector": "table.data-table tr",
+  "results":  [
+    {
+      "text":       "AAPL  $189.30  +2.34",
+      "html":       "&lt;tr&gt;&lt;td&gt;AAPL&lt;/td&gt;&lt;td&gt;$189.30&lt;/td&gt;&lt;td&gt;+2.34&lt;/td&gt;&lt;/tr&gt;",
+      "attributes": {}
+    },
+    {
+      "text":       "MSFT  $415.22  -1.05",
+      "html":       "&lt;tr&gt;&lt;td&gt;MSFT&lt;/td&gt;&lt;td&gt;$415.22&lt;/td&gt;&lt;td&gt;-1.05&lt;/td&gt;&lt;/tr&gt;",
+      "attributes": {}
+    }
+  ]
+}</code></pre>
+
+  <h2>Handler Implementation</h2>
+  <pre><code>public async Task&lt;string&gt; HandleExtractAsync(
+    JsonElement input, IBrowserSession session, CancellationToken ct)
+{
+    var selector        = input.GetProperty("selector").GetString()!;
+    var format          = input.TryGetProperty("format", out var f) ? f.GetString()! : "text";
+    var limit           = input.TryGetProperty("limit", out var l) ? l.GetInt32() : 10;
+    var waitForSelector = input.TryGetProperty("wait_for_selector", out var w) && w.GetBoolean();
+
+    var page = await session.GetPageAsync(ct);
+
+    if (waitForSelector)
+        await page.WaitForSelectorAsync(selector, new PageWaitForSelectorOptions
+        {
+            State   = WaitForSelectorState.Visible,
+            Timeout = _config.TimeoutMs
+        });
+
+    var elements = await page.QuerySelectorAllAsync(selector);
+    var results  = new List&lt;object&gt;();
+
+    foreach (var el in elements.Take(limit))
+    {
+        if (format == "html")
+            results.Add(await el.InnerHTMLAsync());
+        else if (format == "json")
+            results.Add(new
+            {
+                text       = await el.InnerTextAsync(),
+                html       = await el.InnerHTMLAsync(),
+                attributes = await GetAttributesAsync(el)
+            });
+        else
+            results.Add(await el.InnerTextAsync());
+    }
+
+    return JsonSerializer.Serialize(new
+    {
+        count    = results.Count,
+        selector,
+        results
+    });
+}</code></pre>
+
+  <h2>Selector Tips</h2>
+  <table>
+    <thead>
+      <tr><th>Pattern</th><th>Example</th><th>Use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Tag name</td><td><code>h1</code>, <code>table</code></td><td>Extract all elements of a type</td></tr>
+      <tr><td>CSS class</td><td><code>.product-price</code></td><td>Elements with a specific class</td></tr>
+      <tr><td>Data attribute</td><td><code>[data-field="regularMarketPrice"]</code></td><td>Data-annotated elements (most reliable)</td></tr>
+      <tr><td>ID</td><td><code>#main-content</code></td><td>Single unique element</td></tr>
+      <tr><td>Nested</td><td><code>table.results tbody tr td:nth-child(2)</code></td><td>Specific cells in a table</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-navigate.html">&#8592; Navigate Tool</a>
+    <a href="04-fill-form.html">Next: Fill Form Tool &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

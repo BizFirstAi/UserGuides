@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IGuardRail Interface — GuardRail Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>GuardRail Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-guard-pipeline.html">The Guard Pipeline</a>
+  <a href="02-interface.html" class="active">IGuardRail Interface</a>
+  <a href="03-guard-result.html">GuardRailCheckResult</a>
+  <a href="04-guard-context.html">GuardRailExecutionContext</a>
+  <a href="05-built-in-engines.html">Built-In Guard Engines</a>
+  <a href="06-custom-engine.html">Building a Custom Guard</a>
+  <a href="07-form-integration.html">GuardRail Atlas Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>IGuardRail Interface</h1>
+    <p class="lead"><code>IGuardRail</code> is the composite interface for a complete guard rail implementation. It combines executor, validator, and descriptor sub-interfaces into a single contract. All built-in and custom guards implement this composite interface.</p>
+  </div>
+
+  <h2>Interface Hierarchy</h2>
+  <pre><code>// BizFirst.Ai.GuardRails.Domain.Contracts
+
+// Composite interface — implement this for a complete guard
+public interface IGuardRail : IGuardRailExecutor, IGuardRailConfigValidator, IGuardRailDescriptor
+{ }
+
+// --- IGuardRailExecutor ---
+public interface IGuardRailExecutor
+{
+    string Name    { get; }  // unique identifier (e.g. "RateLimitingGuard")
+    string Version { get; }  // semantic version (e.g. "1.0.0")
+
+    // Which phases this guard participates in
+    IReadOnlyList&lt;GuardRailPhase&gt; SupportedPhases { get; }
+
+    // The evaluation method — called once per phase
+    Task&lt;GuardRailCheckResult&gt; ExecuteAsync(
+        GuardRailExecutionContext context,
+        GuardRailPhase phase,
+        CancellationToken cancellationToken = default);
+}
+
+// --- IGuardRailConfigValidator ---
+public interface IGuardRailConfigValidator
+{
+    // Quick boolean validation
+    bool Validate(IDictionary&lt;string, object?&gt; configuration);
+
+    // Detailed validation with errors and warnings
+    GuardRailConfigValidationResult ValidateWithDetails(IDictionary&lt;string, object?&gt; configuration);
+}
+
+// --- IGuardRailDescriptor ---
+public interface IGuardRailDescriptor
+{
+    string GuardName          { get; }  // display name
+    string Description        { get; }  // what the guard does
+    string ConfigurationSchema { get; }  // JSON Schema for its config
+    IReadOnlyList&lt;GuardRailDependency&gt; Dependencies { get; }
+    bool IsSecurityCritical   { get; }  // if true: fail-closed on exception
+}</code></pre>
+
+  <h2>GuardRailPhase Enum</h2>
+  <pre><code>public enum GuardRailPhase
+{
+    Pre   = 0,   // Before executor — can block execution
+    Post  = 1,   // After executor — can override output
+    Error = 2    // On error — informational/logging only
+}</code></pre>
+
+  <h2>Key Properties to Implement</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Required</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>Name</code></td><td>Yes</td><td>Unique identifier — used as the registry key</td></tr>
+      <tr><td><code>SupportedPhases</code></td><td>Yes</td><td>Only return phases you implement — reduces unnecessary calls</td></tr>
+      <tr><td><code>ExecuteAsync</code></td><td>Yes</td><td>Check <code>phase</code> parameter and return <code>Success()</code> for phases you don't handle</td></tr>
+      <tr><td><code>ValidateWithDetails</code></td><td>Yes</td><td>Called at design time when the Atlas Form saves guard configuration</td></tr>
+      <tr><td><code>ConfigurationSchema</code></td><td>Yes</td><td>JSON Schema for the guard's config — drives the Atlas Form field generation</td></tr>
+      <tr><td><code>IsSecurityCritical</code></td><td>Recommended</td><td>Set to <code>true</code> if a guard exception should block rather than fail-open</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Guard Phase Check in ExecuteAsync</strong>
+    Always check <code>if (phase != GuardRailPhase.Pre) return GuardRailCheckResult.Success();</code> at the top of <code>ExecuteAsync</code> for guards that only run in one phase. The engine passes all phases to all guards — it is the guard's responsibility to return <code>Success</code> for phases it does not handle.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-guard-pipeline.html">&#8592; The Guard Pipeline</a>
+    <a href="03-guard-result.html">Next: GuardRailCheckResult &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

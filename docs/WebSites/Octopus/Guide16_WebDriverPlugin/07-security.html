@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security and Sandboxing — Web Driver Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Web Driver Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-navigate.html">Navigate Tool</a>
+  <a href="03-extract.html">Extract Data Tool</a>
+  <a href="04-fill-form.html">Fill Form Tool</a>
+  <a href="05-screenshot.html">Screenshot Tool</a>
+  <a href="06-session-management.html">Session Management</a>
+  <a href="07-security.html" class="active">Security and Sandboxing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Security and Sandboxing</h1>
+    <p class="lead">Browser automation is a high-risk capability. The WebDriverPlugin enforces a network domain allowlist, headless-only mode in production, and content extraction limits to prevent abuse and SSRF-style attacks.</p>
+  </div>
+
+  <h2>Threat Model</h2>
+  <table>
+    <thead>
+      <tr><th>Threat</th><th>Risk</th><th>Control</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SSRF via browser navigation</td><td>Agent directed to <code>http://169.254.169.254</code> (cloud metadata) or internal services</td><td>Domain allowlist blocks non-approved domains</td></tr>
+      <tr><td>Prompt injection via page content</td><td>Malicious page injects instructions into extracted text that hijack agent behaviour</td><td>Extraction size limits; prefer structured selectors over full-page text</td></tr>
+      <tr><td>Data exfiltration via screenshot</td><td>Screenshot captures sensitive data displayed in the browser</td><td>Operator must review which agents have WebDriver tools assigned</td></tr>
+      <tr><td>Long-running browser resource drain</td><td>Agent opens many sessions, exhausting server memory</td><td>Session limits: MaxIdleSeconds, MaxSessionDurationSeconds, per-tenant session cap</td></tr>
+      <tr><td>Non-headless browser on server</td><td>GUI process fails to start or exposes display server</td><td><code>Headless: true</code> is enforced; startup fails if set to false in non-dev environments</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Domain Allowlist Implementation</h2>
+  <pre><code>public class DomainPolicy
+{
+    private readonly IReadOnlyList&lt;string&gt; _allowedPatterns;
+
+    public DomainPolicy(WebDriverPluginConfig config)
+    {
+        _allowedPatterns = config.AllowedDomains;
+    }
+
+    public bool IsAllowed(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return false;
+
+        // Always block localhost and RFC-1918 private ranges
+        if (IsPrivateOrLoopback(uri.Host))
+            return false;
+
+        // Check against wildcard patterns
+        return _allowedPatterns.Any(pattern => MatchesPattern(uri.Host, pattern));
+    }
+
+    private static bool MatchesPattern(string host, string pattern)
+    {
+        if (pattern.StartsWith("*."))
+        {
+            var suffix = pattern[1..];  // e.g., ".company.com"
+            return host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+                || host.Equals(suffix[1..], StringComparison.OrdinalIgnoreCase);
+        }
+        return host.Equals(pattern, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPrivateOrLoopback(string host)
+    {
+        if (host == "localhost" || host == "127.0.0.1" || host == "::1") return true;
+        if (IPAddress.TryParse(host, out var ip))
+        {
+            // Block 10.x.x.x, 172.16.x.x - 172.31.x.x, 192.168.x.x, 169.254.x.x
+            var bytes = ip.GetAddressBytes();
+            if (bytes[0] == 10) return true;
+            if (bytes[0] == 172 &amp;&amp; bytes[1] >= 16 &amp;&amp; bytes[1] &lt;= 31) return true;
+            if (bytes[0] == 192 &amp;&amp; bytes[1] == 168) return true;
+            if (bytes[0] == 169 &amp;&amp; bytes[1] == 254) return true;
+        }
+        return false;
+    }
+}</code></pre>
+
+  <h2>Headless Enforcement</h2>
+  <pre><code>// In OnStartAsync — fail fast if headless is false in non-dev environment
+public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+{
+    var env    = sp.GetRequiredService&lt;IWebHostEnvironment&gt;();
+    var config = sp.GetRequiredService&lt;IOptions&lt;WebDriverPluginConfig&gt;&gt;().Value;
+
+    if (!config.Headless &amp;&amp; !env.IsDevelopment())
+    {
+        throw new InvalidOperationException(
+            "WebDriverPlugin: Headless must be true outside Development environment. " +
+            "Set WebDriverPlugin:Headless to true in appsettings.Production.json.");
+    }
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>AllowedDomains must be configured before production deployment.</strong> An empty allowlist blocks all navigation. A poorly specified allowlist allows SSRF. Review the allowlist with your security team before deploying agents that use browser tools.
+  </div>
+
+  <h2>Per-Tenant Session Limits</h2>
+  <pre><code>{
+  "WebDriverPlugin": {
+    "MaxSessionsPerTenant": 5,
+    "MaxGlobalSessions":    50
+  }
+}</code></pre>
+  <p>When a tenant's session count reaches <code>MaxSessionsPerTenant</code>, the oldest idle session for that tenant is closed before opening a new one. If the global session cap is reached, new browser_navigate calls return an error until a session expires.</p>
+
+  <div class="page-nav">
+    <a href="06-session-management.html">&#8592; Session Management</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

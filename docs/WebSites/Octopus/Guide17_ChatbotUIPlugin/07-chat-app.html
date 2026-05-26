@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The chat-app Micro-Frontend — ChatbotUI Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>ChatbotUI Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-embedding.html">Embedding the Widget</a>
+  <a href="02-configuration.html">Widget Configuration</a>
+  <a href="03-streaming.html">Streaming Responses</a>
+  <a href="04-chat-history.html">Chat History Display</a>
+  <a href="05-theming.html">Theming and Branding</a>
+  <a href="06-actions.html">Chat Actions</a>
+  <a href="07-chat-app.html" class="active">The chat-app Micro-Frontend</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>The chat-app Micro-Frontend</h1>
+    <p class="lead">The full-page chat application provides a complete conversational interface at <code>/chat</code> — with a conversation history sidebar, multi-agent switching, and a settings panel. It is served directly by the Octopus server as a static bundle.</p>
+  </div>
+
+  <h2>URL Routing</h2>
+  <table>
+    <thead>
+      <tr><th>URL</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>/chat</code></td><td>Default agent (configured as <code>DefaultAgentId</code> in appsettings)</td></tr>
+      <tr><td><code>/chat?agent=hr-assistant</code></td><td>Opens with a specific agent by name</td></tr>
+      <tr><td><code>/chat?agent=hr-assistant&amp;session=sess-abc</code></td><td>Opens a specific existing conversation</td></tr>
+      <tr><td><code>/chat?area=finance</code></td><td>Opens the chat within a specific agent area</td></tr>
+    </tbody>
+  </table>
+
+  <h2>App Layout</h2>
+  <pre><code>chat-app/
+├── src/
+│   ├── pages/
+│   │   └── ChatPage.tsx          ← Full-page layout
+│   ├── components/
+│   │   ├── ChatWidget/           ← Embeddable widget (shared with inline mode)
+│   │   ├── ConversationSidebar/  ← Conversation history list
+│   │   ├── AgentSwitcher/        ← Dropdown to switch between agents
+│   │   └── SettingsPanel/        ← User preferences, theme toggle
+│   ├── stores/
+│   │   ├── chatStore.ts          ← Zustand store for active conversation
+│   │   └── conversationsStore.ts ← Zustand store for history list
+│   └── api/
+│       └── chatApi.ts            ← Typed API client for all chat endpoints</code></pre>
+
+  <h2>Deploying the chat-app</h2>
+  <p>The ChatbotUIPlugin serves the chat-app bundle as static files from the Octopus server. No separate web server is required:</p>
+  <pre><code>// In ChatbotUIPlugin.OnStartAsync — registers the static file middleware
+public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+{
+    var app  = sp.GetRequiredService&lt;IApplicationBuilder&gt;();
+    var env  = sp.GetRequiredService&lt;IWebHostEnvironment&gt;();
+    var bundlePath = Path.Combine(env.ContentRootPath, "chat-app-dist");
+
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(bundlePath),
+        RequestPath  = "/chat-static"
+    });
+}</code></pre>
+
+  <h2>Multi-Agent Conversation Switching</h2>
+  <p>The <code>AgentSwitcher</code> component fetches the list of agents visible to the current user and allows switching agents mid-conversation. Switching agents starts a new conversation session while preserving the old one in the sidebar:</p>
+  <pre><code>// GET /api/agents/available — returns agents the user can access
+{
+  "agents": [
+    { "id": "hr-assistant",   "displayName": "HR Assistant",   "area": "hr" },
+    { "id": "it-helpdesk",    "displayName": "IT Help Desk",   "area": "it" },
+    { "id": "finance-bot",    "displayName": "Finance Bot",    "area": "finance" }
+  ]
+}</code></pre>
+
+  <h2>Server-Side Configuration</h2>
+  <pre><code>{
+  "ChatbotUIPlugin": {
+    "DefaultAgentId":     "customer-support",
+    "MaxHistoryDays":     30,
+    "MaxConversations":   50,
+    "AllowAnonymous":     false,
+    "RequireAuth":        true,
+    "CorsAllowedOrigins": [
+      "https://app.company.com",
+      "https://portal.company.com"
+    ]
+  }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="06-actions.html">&#8592; Chat Actions</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

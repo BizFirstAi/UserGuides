@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Override Schema — Tenant Overrides | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Tenant Overrides</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-override-schema.html" class="active">Override Schema</a>
+  <a href="02-control-overrides.html">Control-Level Overrides</a>
+  <a href="03-tenant-additions.html">Tenant-Specific Forms</a>
+  <a href="04-disabling-forms.html">Disabling Forms</a>
+  <a href="05-formid-ranges.html">Tenant FormID Ranges</a>
+  <a href="06-deployment.html">Deploying Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Override Schema</h1>
+    <p class="lead">A tenant override is described by a <code>formGroupOverride</code> document that specifies which tenant, which base group, which forms to modify (<code>overrides</code>), and which new forms to add (<code>additions</code>). This document is translated into SQL rows in <code>dbo.Atlas_Forms</code> during deployment.</p>
+  </div>
+
+  <h2>FormGroupOverride Type</h2>
+  <pre><code>// packages/types-js/src/TenantOverride.ts
+
+interface FormGroupOverride {
+  /** The FormCategoryID of the group being overridden */
+  baseCategoryId: number;
+
+  /** The tenant receiving these customisations */
+  tenantId: number;
+
+  /** Modifications to existing base forms */
+  overrides: FormOverrideEntry[];
+
+  /** Net-new forms visible only to this tenant */
+  additions: FormAdditionEntry[];
+}
+
+interface FormOverrideEntry {
+  /** FormID of the base form being modified */
+  formId: number;
+
+  /** Disable the form for this tenant (IsActive = 0 in the tenant row) */
+  disable?: boolean;
+
+  /** JSONPath-style key/value patches applied to the base schema */
+  overrideSchema?: Record&lt;string, any&gt;;
+}
+
+interface FormAdditionEntry {
+  /** FormID from the tenant's private range (tenantId × 100000 + groupStart) */
+  formId:         number;
+  formCode:       string;
+  formTypeId:     number;
+  primaryUsage:   string;
+  nodeUsage?:     string;
+  schema:         object;   // Full form schema JSON
+}</code></pre>
+
+  <h2>Complete Example</h2>
+  <pre><code>// Tenant 9 (Acme Corp) customisations to the GuardRails group
+
+const acmeGuardRailsOverride: FormGroupOverride = {
+  baseCategoryId: 130,      // GuardRails
+  tenantId:       9,
+
+  overrides: [
+    // Modify GuardRail_Edit (13001): rename 'Policy Name' to 'Rule Name', change player
+    {
+      formId: 13001,
+      overrideSchema: {
+        "metadata.playerOverride":               "gov-accessible",
+        "controls[id=policy-name].label":        "Rule Name",
+        "controls[id=policy-name].placeholder":  "Enter rule name",
+      }
+    },
+    // Disable GuardRail_Audit dashboard for this tenant (they have their own)
+    {
+      formId:  13007,
+      disable: true,
+    }
+  ],
+
+  additions: [
+    // Add a tenant-specific IP allowlist form (see Guide on Tenant FormID Ranges)
+    {
+      formId:       913008,
+      formCode:     'Acme_GuardRail_IpAllowlist_Edit',
+      formTypeId:   2,
+      primaryUsage: 'guardrails',
+      nodeUsage:    'acme-guardrail-ip-allowlist',
+      schema: {
+        "metadata": { "formId": 913008, "title": "Edit IP Allowlist (Acme)" },
+        "controls": [ /* ... */ ],
+        "actions":  [ /* ... */ ]
+      }
+    }
+  ]
+};</code></pre>
+
+  <h2>overrideSchema — JSONPath Targeting</h2>
+  <p>Keys in <code>overrideSchema</code> are JSONPath-style expressions that target a specific location in the base schema JSON. The value replaces the current value at that path:</p>
+  <table>
+    <thead><tr><th>Key Pattern</th><th>Targets</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td><code>metadata.{field}</code></td><td>Top-level metadata field</td><td><code>metadata.playerOverride</code></td></tr>
+      <tr><td><code>controls[id={controlId}].{field}</code></td><td>Named control's field</td><td><code>controls[id=policy-name].label</code></td></tr>
+      <tr><td><code>sections[id={sectionId}].{field}</code></td><td>Named section's field</td><td><code>sections[id=details].title</code></td></tr>
+      <tr><td><code>controls[id={controlId}].validation.{rule}</code></td><td>Specific validation rule</td><td><code>controls[id=email].validation.required</code></td></tr>
+      <tr><td><code>controls[id={controlId}].options</code></td><td>Full options array (replaced)</td><td><code>controls[id=currency].options</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>overrideSchema Is Applied After parseSchema</strong>
+    The base schema is first normalised by <code>parseSchema()</code>, then the <code>overrideSchema</code> patches are applied. This means you can use the stable, normalised field names rather than worrying about raw JSON quirks in the base schema.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-control-overrides.html">Next: Control-Level Overrides &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

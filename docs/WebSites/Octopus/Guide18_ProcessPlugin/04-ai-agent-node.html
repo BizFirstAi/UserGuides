@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Agent Node in Flow Studio — Process Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Process Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-agent-to-workflow.html">Agent Triggers Workflow</a>
+  <a href="03-workflow-result.html">Workflow Result in Conversation</a>
+  <a href="04-ai-agent-node.html" class="active">AI Agent Node in Flow Studio</a>
+  <a href="05-agent-in-loop.html">Agent as Approval Actor</a>
+  <a href="06-monitoring.html">Monitoring Process Plugin Activity</a>
+  <a href="07-security.html">Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>AI Agent Node in Flow Studio</h1>
+    <p class="lead">The AI Agent Node is a Flow Studio workflow node that invokes an Octopus agent turn as part of workflow execution. The agent's response becomes the node's output, enabling AI reasoning within structured business processes.</p>
+  </div>
+
+  <h2>What the AI Agent Node Does</h2>
+  <p>When a workflow reaches an AI Agent Node, the ProcessServer calls the Octopus API with a prompt built from workflow data. The Octopus agent runs a full reasoning turn — including tool calls — and returns its response as the node output:</p>
+  <pre><code>// Flow Studio workflow definition snippet
+{
+  "nodes": [
+    {
+      "id":   "extract-invoice-data",
+      "type": "AIAgentNode",
+      "config": {
+        "agentId":  "document-extractor",
+        "promptTemplate": "Extract the following fields from this invoice:\n- Vendor name\n- Total amount\n- Due date\n- Invoice number\n\nInvoice content:\n{{invoiceText}}",
+        "inputs": {
+          "invoiceText": "{{nodes.load-document.outputs.text}}"
+        },
+        "outputMapping": {
+          "extractedData": "$.response"
+        }
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>AIAgentNodeExecutor (C#)</h2>
+  <pre><code>public class AIAgentNodeExecutor : BaseNodeExecutor&lt;AIAgentNodeSettings&gt;
+{
+    private readonly IOctopusAgentClient _octopusClient;
+
+    protected override async Task&lt;NodeOutput&gt; ExecuteAsync(
+        AIAgentNodeSettings settings,
+        NodeDataContext ctx,
+        CancellationToken ct)
+    {
+        // Build the prompt from the template + workflow data
+        var prompt = TemplateEngine.Render(settings.PromptTemplate, ctx.GetAllData());
+
+        // Call Octopus agent
+        var response = await _octopusClient.ChatAsync(new AgentChatRequest
+        {
+            AgentId   = settings.AgentId,
+            Message   = prompt,
+            SessionId = $"workflow-{ctx.ExecutionId}-{settings.NodeId}",
+            TenantId  = ctx.TenantId
+        }, ct);
+
+        // Map agent response to node outputs
+        var outputs = new Dictionary&lt;string, object&gt;
+        {
+            [settings.OutputMapping.GetValueOrDefault("response", "response")]
+                = response.Content
+        };
+
+        return NodeOutput.Success(outputs);
+    }
+}</code></pre>
+
+  <h2>Node Configuration Properties</h2>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>agentId</code></td><td>string</td><td>The Octopus agent to invoke. Must be accessible to the workflow's tenant.</td></tr>
+      <tr><td><code>promptTemplate</code></td><td>string</td><td>Handlebars template for the message sent to the agent. References workflow data via <code>{{variable}}</code>.</td></tr>
+      <tr><td><code>inputs</code></td><td>object</td><td>Workflow data bindings to inject into the prompt template</td></tr>
+      <tr><td><code>outputMapping</code></td><td>object</td><td>Maps agent response fields to node output keys</td></tr>
+      <tr><td><code>sessionId</code></td><td>string</td><td>Optional. Reuses an existing session for conversation continuity within a workflow.</td></tr>
+      <tr><td><code>timeoutSeconds</code></td><td>int</td><td>Max seconds to wait for the agent response. Default 60.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>When to Use the AI Agent Node</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Use AI Agent Node?</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Extract structured data from unstructured text in a workflow</td><td>Yes — ideal use case</td></tr>
+      <tr><td>Classify or categorise an item mid-workflow</td><td>Yes</td></tr>
+      <tr><td>Generate a draft email or document during a workflow</td><td>Yes</td></tr>
+      <tr><td>Make a business decision that requires external tool calls</td><td>Yes — agent can call MCP tools</td></tr>
+      <tr><td>Replace the entire workflow with a single agent</td><td>No — use the agent's start_workflow tool instead</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-workflow-result.html">&#8592; Workflow Result in Conversation</a>
+    <a href="05-agent-in-loop.html">Next: Agent as Approval Actor &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

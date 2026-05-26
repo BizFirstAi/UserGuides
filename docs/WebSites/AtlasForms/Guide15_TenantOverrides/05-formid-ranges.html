@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenant FormID Ranges — Tenant Overrides | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Tenant Overrides</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-override-schema.html">Override Schema</a>
+  <a href="02-control-overrides.html">Control-Level Overrides</a>
+  <a href="03-tenant-additions.html">Tenant-Specific Forms</a>
+  <a href="04-disabling-forms.html">Disabling Forms</a>
+  <a href="05-formid-ranges.html" class="active">Tenant FormID Ranges</a>
+  <a href="06-deployment.html">Deploying Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Tenant FormID Ranges</h1>
+    <p class="lead">Tenant-specific forms (additions) need FormIDs that do not collide with the global group range or with any other tenant. The convention is <code>tenantId &times; 100000 + groupRangeStart</code>. This formula produces a unique, predictable 100-ID range for each tenant per group.</p>
+  </div>
+
+  <h2>The Formula</h2>
+  <pre><code>// Tenant private FormID range for a specific group:
+// rangeStart = tenantId × 100000 + groupRangeStart
+// rangeEnd   = rangeStart + 99
+
+// Example: Tenant 9, GuardRails group (groupRangeStart = 13000)
+rangeStart = 9 × 100000 + 13000 = 913000
+rangeEnd   = 913000 + 99        = 913099
+
+// FormIDs 913000–913099 are private to Tenant 9 in the GuardRails group</code></pre>
+
+  <h2>Examples</h2>
+  <table>
+    <thead><tr><th>TenantID</th><th>Group</th><th>Group Start</th><th>Tenant Range Start</th><th>Tenant Range End</th></tr></thead>
+    <tbody>
+      <tr><td>9</td><td>GuardRails</td><td>13000</td><td>913000</td><td>913099</td></tr>
+      <tr><td>9</td><td>NodePolicies</td><td>14000</td><td>914000</td><td>914099</td></tr>
+      <tr><td>12</td><td>GuardRails</td><td>13000</td><td>1213000</td><td>1213099</td></tr>
+      <tr><td>42</td><td>WorkDesk</td><td>15000</td><td>4215000</td><td>4215099</td></tr>
+      <tr><td>100</td><td>GuardRails</td><td>13000</td><td>10013000</td><td>10013099</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Why This Formula?</h2>
+  <p>The formula creates a namespace that is:</p>
+  <ul>
+    <li><strong>Deterministic</strong> — given a tenantId and groupStart, the range is always the same; no coordination needed</li>
+    <li><strong>Collision-free</strong> — global group ranges are below 100000; tenant ranges start at tenantId &times; 100000 which is always &ge; 100000</li>
+    <li><strong>Human-readable</strong> — a FormID of 913008 is obviously "Tenant 9's GuardRails form #8" at a glance</li>
+    <li><strong>Cross-group isolated</strong> — Tenant 9's GuardRails range (913000) and Tenant 9's NodePolicies range (914000) never overlap</li>
+  </ul>
+
+  <h2>Computing the Range in Code</h2>
+  <pre><code>function tenantGroupRange(tenantId: number, groupRangeStart: number): { start: number; end: number } {
+  const start = tenantId * 100000 + groupRangeStart;
+  return { start, end: start + 99 };
+}
+
+// Examples
+tenantGroupRange(9,  13000)  // → { start: 913000,   end: 913099 }
+tenantGroupRange(12, 13000)  // → { start: 1213000,  end: 1213099 }
+tenantGroupRange(9,  14000)  // → { start: 914000,   end: 914099 }</code></pre>
+
+  <h2>Tenant FormID in the Atlas_Forms Row</h2>
+  <pre><code>-- Tenant addition row: FormID is in the tenant range, TenantID is set
+INSERT INTO [dbo].[Atlas_Forms]
+    ([FormID], [FormCode], [FormCategoryID], [FormTypeID],
+     [PrimaryUsage], [NodeUsage], [TenantID], [IsActive], [SchemaJson])
+VALUES
+    (913001, 'Acme_GuardRail_GdprConsent_Edit', 130, 2,
+     'guardrails', 'acme-guardrail-gdpr-consent', 9, 1, N'{...}');
+
+-- The FormCategoryID (130) remains the same — this form belongs to the GuardRails group
+-- The TenantID (9) marks it as a private tenant form</code></pre>
+
+  <div class="callout success">
+    <strong>Tenant FormIDs Are Never Global</strong>
+    A FormID of 913001 with <code>TenantID = 9</code> is only accessible when a request is made in the context of Tenant 9. The form loader always filters by TenantID, so there is no risk of Tenant 9's private forms appearing in Tenant 12's session.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-disabling-forms.html">&#8592; Disabling Forms</a>
+    <a href="06-deployment.html">Next: Deploying Tenant Overrides &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

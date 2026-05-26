@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Creating a New Group — Form Groups | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Groups</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-database-backing.html">Database Backing</a>
+  <a href="02-current-groups.html">Current Form Groups</a>
+  <a href="03-group-schema.html">Group Definition Schema</a>
+  <a href="04-app-association.html">App Association</a>
+  <a href="05-creating-a-group.html" class="active">Creating a New Group</a>
+  <a href="06-naming-conventions.html">Naming Conventions</a>
+  <a href="07-tenant-overrides.html">Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Creating a New Group</h1>
+    <p class="lead">Adding a new Form Group is a five-step process: register the group in the database, create the TypeScript definition, write the list form, write the property forms, then create the deploy script. Follow each step in order.</p>
+  </div>
+
+  <h2>Step 1 — SQL INSERT Into Atlas_FormCategories</h2>
+  <p>Choose the next available <code>FormCategoryID</code> (consult the reserved ranges table on the Current Form Groups page) and add the category row:</p>
+  <pre><code>-- File: BizFirstFiV3DB/dbo/Data/AtlasForms/WorkDesk/WorkDesk_Category.data.sql
+
+IF NOT EXISTS (
+    SELECT 1 FROM [dbo].[Atlas_FormCategories]
+    WHERE [FormCategoryID] = 150
+)
+BEGIN
+    INSERT INTO [dbo].[Atlas_FormCategories]
+        ([FormCategoryID], [CategoryName], [OwnerApp],
+         [FormIdRangeStart], [FormIdRangeEnd],
+         [AiGenerationEnabled], [TenantOverrideable])
+    VALUES
+        (150, 'WorkDesk', 'BizFirst.Ai.WorkDesk',
+         15000, 15099,
+         1, 1);
+END</code></pre>
+
+  <h2>Step 2 — TypeScript Group Definition</h2>
+  <pre><code>// src/formGroups/workDeskGroup.ts
+import type { FormGroupDefinition } from '@atlas-forms/types-js';
+
+export const workDeskGroup: FormGroupDefinition = {
+  formGroupId:         'work-desk',
+  label:               'WorkDesk',
+  ownerApp:            'BizFirst.Ai.WorkDesk',
+  categoryId:          150,
+  formIdRange: {
+    start: 15000,
+    end:   15099,
+  },
+  aiGenerationEnabled: true,
+  tenantOverrideable:  true,
+  defaultPrimaryUsage: 'workdesk',
+};</code></pre>
+
+  <p>Register it at application startup:</p>
+  <pre><code>// src/index.tsx or src/bootstrap.ts
+import { registerFormGroup } from '@atlas-forms/form-group-registry';
+import { workDeskGroup }     from './formGroups/workDeskGroup';
+
+registerFormGroup(workDeskGroup);</code></pre>
+
+  <h2>Step 3 — Create the List Form</h2>
+  <p>Every group must have a list form as its first form. The list form's FormID is always <code>rangeStart + 0</code>:</p>
+  <pre><code>-- File: BizFirstFiV3DB/dbo/Data/AtlasForms/WorkDesk/Atlas_Forms_15000_WorkDesk_List.data.sql
+
+IF NOT EXISTS (SELECT 1 FROM [dbo].[Atlas_Forms] WHERE [FormID] = 15000)
+BEGIN
+    INSERT INTO [dbo].[Atlas_Forms]
+        ([FormID], [FormCode], [FormCategoryID], [FormTypeID],
+         [PrimaryUsage], [NodeUsage], [TenantID], [IsActive], [SchemaJson])
+    VALUES
+        (15000, 'WorkDesk_List', 150, 1,
+         'workdesk', NULL, NULL, 1,
+         N'{ "metadata": { "formId": 15000, "title": "WorkDesk Tasks" },
+             "controls": [ { "id": "task-grid", "type": "data-grid", "order": 1 } ] }');
+END</code></pre>
+
+  <h2>Step 4 — Create Property Forms</h2>
+  <p>Add detail forms for individual items. FormIDs continue sequentially from <code>rangeStart + 1</code>:</p>
+  <pre><code>-- File: BizFirstFiV3DB/dbo/Data/AtlasForms/WorkDesk/Atlas_Forms_15001_WorkDesk_Task_Edit.data.sql
+
+IF NOT EXISTS (SELECT 1 FROM [dbo].[Atlas_Forms] WHERE [FormID] = 15001)
+BEGIN
+    INSERT INTO [dbo].[Atlas_Forms]
+        ([FormID], [FormCode], [FormCategoryID], [FormTypeID],
+         [PrimaryUsage], [NodeUsage], [TenantID], [IsActive], [SchemaJson])
+    VALUES
+        (15001, 'WorkDesk_Task_Edit', 150, 2,
+         'workdesk', 'workdesk-task-edit', NULL, 1,
+         N'{ "metadata": { "formId": 15001, "title": "Edit Task" }, "controls": [ ... ] }');
+END</code></pre>
+
+  <h2>Step 5 — Create the Deploy Script</h2>
+  <p>Create a master deploy script that runs all the individual data files in order. This script is used by the migration pipeline:</p>
+  <pre><code>-- File: BizFirstFiV3DB/dbo/Data/AtlasForms/WorkDesk/Deploy_WorkDesk_Forms.sql
+-- Run all WorkDesk form data scripts in FormID order
+
+:r .\WorkDesk_Category.data.sql
+:r .\Atlas_Forms_15000_WorkDesk_List.data.sql
+:r .\Atlas_Forms_15001_WorkDesk_Task_Edit.data.sql
+:r .\Atlas_Forms_15002_WorkDesk_Task_View.data.sql</code></pre>
+
+  <h2>Checklist</h2>
+  <table>
+    <thead><tr><th>Step</th><th>File or Action</th><th>Done?</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>INSERT into <code>Atlas_FormCategories</code> with IF NOT EXISTS guard</td><td></td></tr>
+      <tr><td>2</td><td>TypeScript <code>FormGroupDefinition</code> created and registered at startup</td><td></td></tr>
+      <tr><td>3</td><td>List form (<code>rangeStart + 0</code>) created with <code>FormTypeID = 1</code></td><td></td></tr>
+      <tr><td>4</td><td>Property forms created for each distinct item type</td><td></td></tr>
+      <tr><td>5</td><td>Deploy script created running all files in order</td><td></td></tr>
+      <tr><td>—</td><td>Naming conventions verified (see next page)</td><td></td></tr>
+      <tr><td>—</td><td>Reserved range updated in Current Form Groups documentation</td><td></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Always Use IF NOT EXISTS Guards</strong>
+    Every INSERT into <code>Atlas_Forms</code> and <code>Atlas_FormCategories</code> must be wrapped in an <code>IF NOT EXISTS</code> guard keyed on the primary key. The deploy scripts are run idempotently on every environment refresh — an unguarded INSERT would fail on the second run.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-app-association.html">&#8592; App Association</a>
+    <a href="06-naming-conventions.html">Next: Naming Conventions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

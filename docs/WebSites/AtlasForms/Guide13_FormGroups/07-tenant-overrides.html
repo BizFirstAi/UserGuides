@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenant Overrides — Form Groups | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Groups</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-database-backing.html">Database Backing</a>
+  <a href="02-current-groups.html">Current Form Groups</a>
+  <a href="03-group-schema.html">Group Definition Schema</a>
+  <a href="04-app-association.html">App Association</a>
+  <a href="05-creating-a-group.html">Creating a New Group</a>
+  <a href="06-naming-conventions.html">Naming Conventions</a>
+  <a href="07-tenant-overrides.html" class="active">Tenant Overrides</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Tenant Overrides</h1>
+    <p class="lead">When <code>TenantOverrideable</code> is true on a Form Group, tenants can customise any form in that group without modifying the base schema. Overrides are stored as additional rows in <code>dbo.Atlas_Forms</code> with a <code>TenantID</code> value, and are merged on top of the base row at load time.</p>
+  </div>
+
+  <h2>tenantOverrideable Flag</h2>
+  <p>The flag is set at the group level in <code>Atlas_FormCategories</code>. Setting it to <code>0</code> blocks all tenant customisation for the entire group:</p>
+  <pre><code>-- Allow tenants to customise forms in this group
+UPDATE [dbo].[Atlas_FormCategories]
+SET [TenantOverrideable] = 1
+WHERE [FormCategoryID] = 130;   -- GuardRails
+
+-- Lock down a sensitive group — no tenant overrides permitted
+UPDATE [dbo].[Atlas_FormCategories]
+SET [TenantOverrideable] = 0
+WHERE [FormCategoryID] = 140;   -- NodePolicies (example)</code></pre>
+
+  <h2>What Can Be Overridden</h2>
+  <table>
+    <thead><tr><th>Override Type</th><th>Mechanism</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Control label / placeholder</td><td>Tenant SchemaJson overrides the control's label field</td><td>Rename "VAT Number" to "Tax ID" for US tenants</td></tr>
+      <tr><td>Visibility rules</td><td>Tenant SchemaJson adds or modifies <code>visibilityRule</code></td><td>Hide the "Company Registration" field for sole traders</td></tr>
+      <tr><td>Validation rules</td><td>Tenant SchemaJson tightens or relaxes validation</td><td>Make phone number required for UK tenants</td></tr>
+      <tr><td>Player override</td><td>Set <code>metadata.playerOverride</code> to a different registered player</td><td>Use a gov-accessible player for public-sector tenants</td></tr>
+      <tr><td>Section additions</td><td>Add new sections/controls not in the base form</td><td>Add a "GST Details" section for Australian tenants</td></tr>
+      <tr><td>Default values</td><td>Set <code>defaultValue</code> on controls via the tenant row</td><td>Default currency to "AUD" for Australian tenants</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Override Row in Atlas_Forms</h2>
+  <pre><code>-- Tenant 9001 customises GuardRail_Edit (FormID 13001)
+-- TenantID is non-NULL; FormID matches the base form
+IF NOT EXISTS (
+    SELECT 1 FROM [dbo].[Atlas_Forms]
+    WHERE [FormID] = 13001 AND [TenantID] = 9001
+)
+BEGIN
+    INSERT INTO [dbo].[Atlas_Forms]
+        ([FormID], [FormCode], [FormCategoryID], [FormTypeID],
+         [PrimaryUsage], [NodeUsage], [TenantID], [IsActive], [SchemaJson])
+    VALUES
+        (13001, 'GuardRail_Edit', 130, 2,
+         'guardrails', 'guardrail-edit', 9001, 1,
+         N'{ "metadata": { "formId": 13001, "title": "Edit Policy (Acme)" },
+             "controls": [
+               { "id": "policy-name", "type": "text", "label": "Policy Name (Acme)" }
+             ] }');
+END</code></pre>
+
+  <h2>Load-Time Merge</h2>
+  <p>The form loader always queries both the base row and any tenant row, then deep-merges them. The tenant row wins on any field it declares:</p>
+  <pre><code>// Simplified form loading logic
+async function loadForm(formId: number, tenantId: number | null): Promise&lt;FormSchema&gt; {
+  const base = await db.query(
+    'SELECT SchemaJson FROM Atlas_Forms WHERE FormID = @formId AND TenantID IS NULL',
+    { formId }
+  );
+
+  if (!tenantId) return parseSchema(JSON.parse(base.SchemaJson));
+
+  const override = await db.query(
+    'SELECT SchemaJson FROM Atlas_Forms WHERE FormID = @formId AND TenantID = @tenantId',
+    { formId, tenantId }
+  );
+
+  if (!override) return parseSchema(JSON.parse(base.SchemaJson));
+
+  // Deep merge: tenant wins on conflicting keys
+  const merged = deepMerge(
+    JSON.parse(base.SchemaJson),
+    JSON.parse(override.SchemaJson)
+  );
+  return parseSchema(merged);
+}</code></pre>
+
+  <h2>What Cannot Be Overridden</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td><code>FormID</code></td><td>Primary key — immutable</td></tr>
+      <tr><td><code>FormCategoryID</code></td><td>Group membership is fixed; a tenant cannot move a form to another group</td></tr>
+      <tr><td><code>FormTypeID</code></td><td>Type cannot change — a list form cannot become a property form per tenant</td></tr>
+      <tr><td><code>FormCode</code></td><td>Stable identifier used by the routing and dispatch systems</td></tr>
+      <tr><td><code>PrimaryUsage</code></td><td>Tab routing is group-wide — tenant cannot redirect to a different tab</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Full Tenant Override Detail in Guide 15</strong>
+    This page covers tenant overrides from the Form Group perspective. For the complete guide to the override schema, JSONPath targeting, additions, and deployment workflow, see <a href="../Guide15_TenantOverrides/index.html">Guide 15: Tenant Overrides</a>.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-naming-conventions.html">&#8592; Naming Conventions</a>
+    <a href="index.html">&#8592; Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

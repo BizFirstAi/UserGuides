@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Validating Generated Forms — AI Form Generation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>AI Form Generation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-generation-workflow.html">6-Step Workflow</a>
+  <a href="02-prompt-context.html">AI Prompt Context</a>
+  <a href="03-pattern-learning.html">What the AI Learns</a>
+  <a href="04-generated-artefacts.html">Generated Artefacts</a>
+  <a href="05-form-id-assignment.html">FormID Assignment</a>
+  <a href="06-sql-pattern.html">SQL File Pattern</a>
+  <a href="07-validation.html" class="active">Validating Generated Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Validating Generated Forms</h1>
+    <p class="lead">AI-generated forms must be reviewed before deployment. The review covers four areas: schema validity, ID uniqueness, binding path correctness, and action configuration. Use the checklist below before adding the SQL file to the deploy script.</p>
+  </div>
+
+  <h2>Step 1 — Schema Validation</h2>
+  <p>Extract the JSON schema from the SQL file and run it through <code>parseSchema()</code>. This catches structural errors before the form reaches the database:</p>
+  <pre><code>// Quick validation script — run in a Node.js REPL or test file
+import { parseSchema } from '@atlas-forms/schema-js';
+import { readFileSync } from 'fs';
+
+const sql = readFileSync('Atlas_Forms_13008_GuardRail_IpAllowlist_Edit.data.sql', 'utf-8');
+
+// Extract the JSON string between the N' and ' markers
+const match = sql.match(/N'(\{[\s\S]+\})'\s*\)/);
+if (!match) throw new Error('Could not extract SchemaJson from SQL file');
+
+const rawJson = JSON.parse(match[1].replace(/''/g, "'"));
+
+// parseSchema throws if the schema is invalid
+const schema = parseSchema(rawJson);
+console.log('Schema is valid. Controls:', schema.controls.length);</code></pre>
+
+  <h2>Step 2 — ID Uniqueness Check</h2>
+  <pre><code>// Verify the FormID is not already used
+// Run against a refreshed dev database before committing
+
+SELECT COUNT(*) AS [Count]
+FROM   [dbo].[Atlas_Forms]
+WHERE  [FormID] = 13008;
+-- Expected: 0 (the ID must not exist yet)</code></pre>
+
+  <h2>Step 3 — Binding Path Verification</h2>
+  <p>For each <code>{ source: "$json" }</code> binding, verify the path exists in the API response schema for this entity. For <code>{ source: "$context" }</code> bindings, verify the path is available in the workflow context at the time this form is presented:</p>
+  <pre><code>// Check each binding in the generated schema
+schema.controls
+  .filter(c =&gt; c.binding)
+  .forEach(c =&gt; {
+    console.log(`${c.id}: ${c.binding.source}.${c.binding.path}`);
+  });
+
+// Output:
+// ruleName:   $json.ruleName
+// ipRange:    $json.ipRange
+// action:     $json.action
+// expiryDate: $json.expiryDate
+// notes:      $json.notes
+
+// Verify against the API response DTO:
+interface IpAllowlistRuleDto {
+  ruleName:   string;    // ✓
+  ipRange:    string;    // ✓
+  action:     string;    // ✓
+  expiryDate: string;    // ✓ (ISO 8601)
+  notes?:     string;    // ✓
+}</code></pre>
+
+  <h2>Step 4 — Action Configuration Check</h2>
+  <pre><code>// Verify action endpoints exist in the backend
+// The AI derives endpoint paths from the group pattern — confirm they are correct
+
+schema.actions.forEach(action =&gt; {
+  if (action.type === 'submit') {
+    console.log(`Submit endpoint: ${action.config.endpoint}`);
+  }
+  if (action.type === 'navigate') {
+    console.log(`Navigate to: ${action.config.target}`);
+  }
+});
+
+// Output:
+// Submit endpoint: /api/guardrails/ip-allowlist/save
+// Navigate to: GuardRail_List
+
+// Manual check:
+// - GET/POST /api/guardrails/ip-allowlist/save exists in the backend
+// - GuardRail_List resolves to FormID 13000 in the router</code></pre>
+
+  <h2>Full Pre-Deploy Checklist</h2>
+  <table>
+    <thead><tr><th>Check</th><th>Method</th></tr></thead>
+    <tbody>
+      <tr><td>Schema parses without errors</td><td>Run <code>parseSchema()</code> on extracted JSON</td></tr>
+      <tr><td>FormID is unique in the database</td><td>SQL SELECT COUNT(*) = 0</td></tr>
+      <tr><td>FormID is within the group's range</td><td>Verify 13000 &le; 13008 &le; 13099</td></tr>
+      <tr><td>FormCode follows the group naming pattern</td><td>Compare to peer FormCodes</td></tr>
+      <tr><td>All <code>$json</code> binding paths match the API DTO</td><td>Cross-reference with backend DTO/schema</td></tr>
+      <tr><td>All <code>$context</code> binding paths are available at runtime</td><td>Check workflow context documentation</td></tr>
+      <tr><td>Action endpoint URLs are implemented in the backend</td><td>Check with backend team</td></tr>
+      <tr><td>Navigation targets resolve to existing FormIDs</td><td>Verify FormCode in Atlas_Forms</td></tr>
+      <tr><td>IDENTITY_INSERT ON/OFF present in SQL file</td><td>Open file, verify visually</td></tr>
+      <tr><td>IF NOT EXISTS guard present and keyed on correct FormID</td><td>Open file, verify visually</td></tr>
+      <tr><td>File added to the group's deploy script</td><td>Open Deploy script, verify :r line</td></tr>
+      <tr><td>Screenshots placed (if any listed in readme.txt)</td><td>Check readme.txt</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Visual Review in Atlas Forms Studio</strong>
+    After deploying to a dev database, open the form in Atlas Forms Studio using <strong>Form ID lookup</strong>. Studio renders the form in design mode, letting you verify layout, label text, control types, and section structure visually before promoting to staging.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-sql-pattern.html">&#8592; SQL File Pattern</a>
+    <a href="index.html">&#8592; Back to Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fill Form Tool — Web Driver Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Web Driver Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-navigate.html">Navigate Tool</a>
+  <a href="03-extract.html">Extract Data Tool</a>
+  <a href="04-fill-form.html" class="active">Fill Form Tool</a>
+  <a href="05-screenshot.html">Screenshot Tool</a>
+  <a href="06-session-management.html">Session Management</a>
+  <a href="07-security.html">Security and Sandboxing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Fill Form Tool</h1>
+    <p class="lead">The <code>browser_fill</code> and <code>browser_click</code> tools allow agents to interact with web forms — typing into inputs, selecting dropdowns, and clicking buttons to submit.</p>
+  </div>
+
+  <h2>browser_fill Schema</h2>
+  <pre><code>{
+  "name": "browser_fill",
+  "description": "Fill an input field, textarea, or select element with a value. " +
+                 "Clears existing content before typing.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "selector": {
+        "type": "string",
+        "description": "CSS selector for the input element"
+      },
+      "value": {
+        "type": "string",
+        "description": "The value to type into the field"
+      },
+      "clear_first": {
+        "type": "boolean",
+        "default": true,
+        "description": "Clear existing content before filling"
+      },
+      "delay_ms": {
+        "type": "integer",
+        "default": 0,
+        "description": "Delay in ms between keystrokes (0 = instant, use 50-100 to simulate human typing)"
+      }
+    },
+    "required": ["selector", "value"]
+  }
+}</code></pre>
+
+  <h2>browser_click Schema</h2>
+  <pre><code>{
+  "name": "browser_click",
+  "description": "Click an element on the page. Use for buttons, links, checkboxes, and radio buttons.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "selector": {
+        "type": "string",
+        "description": "CSS selector of the element to click"
+      },
+      "button": {
+        "type": "string",
+        "enum": ["left", "right", "middle"],
+        "default": "left",
+        "description": "Mouse button to click with"
+      },
+      "wait_for_navigation": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, waits for navigation to complete after clicking (for submit buttons)"
+      }
+    },
+    "required": ["selector"]
+  }
+}</code></pre>
+
+  <h2>Complete Form Interaction Example</h2>
+  <pre><code>// Agent tool call sequence for submitting a search form:
+
+// 1. Navigate to the search page
+browser_navigate: { "url": "https://portal.company.com/search" }
+
+// 2. Fill the search input
+browser_fill: { "selector": "#search-input", "value": "quarterly report 2024" }
+
+// 3. Click the search button (wait for results to load)
+browser_click: {
+  "selector": "button[type='submit']",
+  "wait_for_navigation": true
+}
+
+// 4. Extract the search results
+browser_extract: { "selector": ".search-result-title", "format": "json", "limit": 5 }</code></pre>
+
+  <h2>Handler Implementation</h2>
+  <pre><code>public async Task&lt;string&gt; HandleFillAsync(
+    JsonElement input, IBrowserSession session, CancellationToken ct)
+{
+    var selector   = input.GetProperty("selector").GetString()!;
+    var value      = input.GetProperty("value").GetString()!;
+    var clearFirst = !input.TryGetProperty("clear_first", out var c) || c.GetBoolean();
+    var delayMs    = input.TryGetProperty("delay_ms", out var d) ? d.GetInt32() : 0;
+
+    var page    = await session.GetPageAsync(ct);
+    var element = await page.WaitForSelectorAsync(selector, new() { Timeout = _config.TimeoutMs });
+
+    if (element is null)
+        return JsonSerializer.Serialize(new { error = $"Selector '{selector}' not found." });
+
+    if (clearFirst)
+        await element.FillAsync(value);  // Playwright's Fill clears first automatically
+    else
+        await element.TypeAsync(value, new() { Delay = delayMs });
+
+    return JsonSerializer.Serialize(new
+    {
+        filled   = true,
+        selector,
+        value    = value.Length > 50 ? value[..50] + "..." : value
+    });
+}
+
+public async Task&lt;string&gt; HandleClickAsync(
+    JsonElement input, IBrowserSession session, CancellationToken ct)
+{
+    var selector          = input.GetProperty("selector").GetString()!;
+    var button            = input.TryGetProperty("button", out var b) ? b.GetString()! : "left";
+    var waitForNavigation = input.TryGetProperty("wait_for_navigation", out var w) && w.GetBoolean();
+
+    var page = await session.GetPageAsync(ct);
+
+    if (waitForNavigation)
+    {
+        await Task.WhenAll(
+            page.WaitForNavigationAsync(new() { Timeout = _config.NavigationTimeoutMs }),
+            page.ClickAsync(selector, new() { Button = ParseButton(button) })
+        );
+    }
+    else
+    {
+        await page.ClickAsync(selector, new() { Button = ParseButton(button) });
+    }
+
+    return JsonSerializer.Serialize(new { clicked = true, selector, current_url = page.Url });
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Confirm before submitting forms.</strong> Agents should always confirm form values with the user before calling <code>browser_click</code> on submit buttons. Form submissions are often irreversible (order placement, data deletion, etc.).
+  </div>
+
+  <div class="page-nav">
+    <a href="03-extract.html">&#8592; Extract Data Tool</a>
+    <a href="05-screenshot.html">Next: Screenshot Tool &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

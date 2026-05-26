@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Management — Web Driver Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Web Driver Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-navigate.html">Navigate Tool</a>
+  <a href="03-extract.html">Extract Data Tool</a>
+  <a href="04-fill-form.html">Fill Form Tool</a>
+  <a href="05-screenshot.html">Screenshot Tool</a>
+  <a href="06-session-management.html" class="active">Session Management</a>
+  <a href="07-security.html">Security and Sandboxing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Browser Session Management</h1>
+    <p class="lead">Each conversation session can have its own browser context — persisting cookies, localStorage, and authentication state across tool calls within the same conversation. Sessions are automatically cleaned up on expiry.</p>
+  </div>
+
+  <h2>Session Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>First browser_navigate in a session</strong>
+        <span>A new Playwright browser context is created and associated with the conversation session ID.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Subsequent tool calls reuse the context</strong>
+        <span>Navigation history, cookies, and local storage persist. Authentication state from a login form is remembered.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Session idle timeout</strong>
+        <span>If no browser tool is called for <code>MaxIdleSeconds</code>, the browser context is closed and its resources are freed.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Session max duration</strong>
+        <span>Sessions cannot exceed <code>MaxSessionDurationSeconds</code>. Long-running sessions are closed and a new one is created on next call.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>Conversation ends</strong>
+        <span>When the conversation episode closes, the browser session is explicitly disposed along with all its pages.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>BrowserSession Interface</h2>
+  <pre><code>// IBrowserSession — the abstraction injected into all tool handlers
+public interface IBrowserSession
+{
+    string     SessionId     { get; }
+    string     TenantId      { get; }
+    DateTime   CreatedAt     { get; }
+    DateTime   LastActiveAt  { get; }
+
+    // Get or create the active page for this session
+    Task&lt;IPage&gt; GetPageAsync(CancellationToken ct);
+
+    // Close all browser resources
+    Task DisposeAsync();
+}
+
+// BrowserSession — Playwright implementation
+public class BrowserSession : IBrowserSession
+{
+    private readonly IBrowserContext _context;
+    private IPage?   _activePage;
+
+    public async Task&lt;IPage&gt; GetPageAsync(CancellationToken ct)
+    {
+        if (_activePage is null || _activePage.IsClosed)
+        {
+            _activePage = await _context.NewPageAsync();
+            _activePage.SetDefaultTimeout(_config.TimeoutMs);
+        }
+        LastActiveAt = DateTime.UtcNow;
+        return _activePage;
+    }
+
+    public async Task DisposeAsync()
+    {
+        if (_activePage is not null)
+            await _activePage.CloseAsync();
+        await _context.CloseAsync();
+    }
+}</code></pre>
+
+  <h2>Session Storage in the Session Registry</h2>
+  <pre><code>// PlaywrightManager — manages session lifecycle
+public class PlaywrightManager : IPlaywrightManager
+{
+    private readonly ConcurrentDictionary&lt;string, BrowserSession&gt; _sessions = new();
+    private readonly WebDriverPluginConfig _config;
+
+    public async Task&lt;IBrowserSession&gt; GetOrCreateSessionAsync(
+        string sessionId, string tenantId, CancellationToken ct)
+    {
+        if (_sessions.TryGetValue(sessionId, out var existing))
+        {
+            // Renew idle timeout
+            existing.Touch();
+
+            // Check max duration
+            if (DateTime.UtcNow - existing.CreatedAt >
+                TimeSpan.FromSeconds(_config.Session.MaxSessionDurationSeconds))
+            {
+                await existing.DisposeAsync();
+                _sessions.TryRemove(sessionId, out _);
+            }
+            else return existing;
+        }
+
+        // Create new Playwright browser context
+        var browser  = await _playwright.Chromium.LaunchAsync(new()
+        {
+            Headless = _config.Headless
+        });
+
+        var context = await browser.NewContextAsync(new()
+        {
+            ViewportSize = new() { Width = 1280, Height = 720 }
+        });
+
+        var session = new BrowserSession(sessionId, tenantId, context, _config);
+        _sessions[sessionId] = session;
+        return session;
+    }
+}</code></pre>
+
+  <h2>Session Configuration</h2>
+  <table>
+    <thead>
+      <tr><th>Setting</th><th>Default</th><th>Effect</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ReuseWithinConversation</code></td><td>true</td><td>Session persists across tool calls in the same conversation</td></tr>
+      <tr><td><code>MaxIdleSeconds</code></td><td>120</td><td>Session closed after 2 minutes of no browser activity</td></tr>
+      <tr><td><code>MaxSessionDurationSeconds</code></td><td>600</td><td>Sessions cannot exceed 10 minutes regardless of activity</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-screenshot.html">&#8592; Screenshot Tool</a>
+    <a href="07-security.html">Next: Security and Sandboxing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

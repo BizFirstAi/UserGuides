@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Design Principles — Future Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Future Plugins</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-email-plugin.html">Email Plugin (Planned)</a>
+  <a href="02-calendar-plugin.html">Calendar Plugin (Planned)</a>
+  <a href="03-crm-plugin.html">CRM Plugin (Planned)</a>
+  <a href="04-erp-plugin.html">ERP Plugin (Planned)</a>
+  <a href="05-design-principles.html" class="active">Plugin Design Principles</a>
+  <a href="06-requesting-plugins.html">Requesting or Contributing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus — Architecture</div>
+    <h1>Plugin Design Principles</h1>
+    <p class="lead">Every Octopus plugin — first-party or community — must follow these design principles. They ensure security, multi-tenancy, observability, and a consistent agent experience across the entire plugin ecosystem.</p>
+  </div>
+
+  <h2>The Five Core Principles</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>1. Credential Safety</h4>
+      <p>All secrets (API keys, tokens, passwords) must flow through <code>ICredentialResolver</code>. Store only a credential ID in configuration — never the secret itself.</p>
+    </div>
+    <div class="card">
+      <h4>2. Tenant Isolation</h4>
+      <p>Every data access and every external API call must be scoped to the current tenant. Use <code>ITenantContext</code> to read the tenant ID from the JWT on every request.</p>
+    </div>
+    <div class="card">
+      <h4>3. MCP Tool Schema Standards</h4>
+      <p>Every MCP tool must expose a valid JSON Schema as its <code>inputSchema</code>. Required fields must be listed in the <code>required</code> array. No schema-free tools.</p>
+    </div>
+    <div class="card">
+      <h4>4. IOctopusPlugin Contract</h4>
+      <p>Implement all three lifecycle methods: <code>OnRegister</code>, <code>OnStartAsync</code>, <code>OnStopAsync</code>. Register DI services in <code>OnRegister</code>, start background work in <code>OnStartAsync</code>.</p>
+    </div>
+    <div class="card">
+      <h4>5. Graceful Degradation</h4>
+      <p>A plugin failure must never crash the Octopus host. Wrap external calls in try/catch, return structured error JSON from tool handlers, and log with structured context.</p>
+    </div>
+  </div>
+
+  <h2>Principle 1: Credential Safety</h2>
+  <p>The credential pattern is mandatory for every plugin that connects to an external service. Raw secrets in <code>appsettings.json</code> — even in environment variables — are a security violation.</p>
+
+  <pre><code>// CORRECT — store only the credential ID
+{
+  "EmailPlugin": {
+    "CredentialId": 30      // integer — resolved at runtime
+  }
+}
+
+// WRONG — never store raw secrets
+{
+  "EmailPlugin": {
+    "SmtpPassword": "hunter2"   // ❌ violates credential pattern
+  }
+}</code></pre>
+
+  <pre><code>// In OnStartAsync — resolve the secret at runtime
+public async Task OnStartAsync(IOctopusPluginContext context)
+{
+    var config  = context.Config.GetSection&lt;EmailPluginConfig&gt;("EmailPlugin");
+    var secret  = await context.CredentialResolver
+                               .GetPasswordAsync(config.CredentialId);
+
+    _smtpClient = new SmtpClient(config.SmtpHost)
+    {
+        Credentials = new NetworkCredential(config.SmtpUser, secret)
+    };
+}</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Secret Type</th><th>Storage</th><th>Resolution</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SMTP / IMAP password</td><td>Credential store (ID in config)</td><td><code>GetPasswordAsync(credentialId)</code></td></tr>
+      <tr><td>OAuth access token</td><td>Credential store (ID in config)</td><td><code>GetPasswordAsync(credentialId)</code></td></tr>
+      <tr><td>API key (SendGrid, HubSpot)</td><td>Credential store (ID in config)</td><td><code>GetPasswordAsync(credentialId)</code></td></tr>
+      <tr><td>Database connection string</td><td>Credential store (ID in config)</td><td><code>GetPasswordAsync(credentialId)</code></td></tr>
+      <tr><td>Host / port / endpoint URL</td><td>appsettings.json (safe)</td><td>Direct config bind</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Principle 2: Tenant Isolation</h2>
+  <p>Multi-tenancy is not optional. Every external API call, every database query, and every cache entry must be keyed or filtered by tenant ID.</p>
+
+  <pre><code>// Inject ITenantContext into your tool handler
+public class CrmToolHandler
+{
+    private readonly ITenantContext _tenant;
+    private readonly ICrmClient     _crm;
+
+    public CrmToolHandler(ITenantContext tenant, ICrmClient crm)
+    {
+        _tenant = tenant;
+        _crm    = crm;
+    }
+
+    public async Task&lt;JsonElement&gt; HandleGetContactAsync(JsonElement input)
+    {
+        var tenantId = _tenant.TenantId;   // read from JWT "tid" claim
+
+        // Scope the query to this tenant's CRM instance
+        var contact = await _crm.GetContactAsync(
+            tenantId: tenantId,
+            email:    input.GetProperty("email").GetString());
+
+        return JsonSerializer.SerializeToElement(contact);
+    }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Cross-tenant data leakage.</strong> If a tool handler reads data without checking <code>ITenantContext.TenantId</code>, any authenticated agent can access another tenant's contacts, emails, or purchase orders. This is a critical security violation.
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Isolation Layer</th><th>Mechanism</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>EF Core entities</td><td>Global query filter on TenantId</td><td><code>HasQueryFilter(e =&gt; e.TenantId == _tenant.TenantId)</code></td></tr>
+      <tr><td>External API calls</td><td>Tenant-scoped client or header</td><td>X-Tenant-Id header, or per-tenant OAuth token</td></tr>
+      <tr><td>In-memory cache</td><td>Key prefix with tenant ID</td><td><code>$"{tenantId}:crm:contact:{email}"</code></td></tr>
+      <tr><td>File / blob storage</td><td>Tenant-scoped path or container</td><td><code>tenants/{tenantId}/attachments/</code></td></tr>
+      <tr><td>Background workers</td><td>Capture tenant at start, propagate</td><td><code>OctopusHILActor</code> pattern — TenantId in task payload</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Principle 3: MCP Tool Schema Standards</h2>
+  <p>Octopus agents use the JSON Schema defined in <code>inputSchema</code> to decide how to call your tool. A poorly defined schema produces hallucinated or missing arguments at runtime.</p>
+
+  <pre><code>// Well-formed MCP tool definition
+new MCPTool
+{
+    Name        = "crm_get_contact",
+    Description = "Look up a CRM contact by email address. " +
+                  "Returns contact name, account, phone, and open opportunities.",
+    InputSchema = JsonDocument.Parse("""
+    {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type":        "string",
+          "format":      "email",
+          "description": "The contact's email address (required)"
+        },
+        "include_opportunities": {
+          "type":        "boolean",
+          "description": "Include open opportunities in the response",
+          "default":     false
+        }
+      },
+      "required": ["email"]
+    }
+    """)
+}</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Schema Rule</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>All required params listed in <code>required</code> array</td><td>Agent knows which fields it must supply</td></tr>
+      <tr><td>Every property has a <code>description</code></td><td>LLM uses descriptions to map user intent to schema</td></tr>
+      <tr><td>Use <code>enum</code> for fixed-value fields</td><td>Prevents invalid values reaching your handler</td></tr>
+      <tr><td>Use <code>format</code> hints (email, date, uri)</td><td>Agent validates before calling; better error messages</td></tr>
+      <tr><td>No <code>additionalProperties: true</code> without reason</td><td>Avoid accepting unknown fields that bypass validation</td></tr>
+      <tr><td>Tool name uses snake_case with plugin prefix</td><td>Avoids collisions: <code>crm_</code>, <code>email_</code>, <code>erp_</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Principle 4: IOctopusPlugin Contract</h2>
+  <p>The plugin lifecycle contract is strict. Violating it causes startup failures, resource leaks, or incorrect DI resolution.</p>
+
+  <pre><code>public interface IOctopusPlugin
+{
+    // Called during DI container setup — register services here only.
+    // Do NOT start connections, open sockets, or call external APIs.
+    void OnRegister(IServiceCollection services, IOctopusConfig config);
+
+    // Called after DI container is built and host is starting.
+    // Resolve connections, start background workers, register MCP tools.
+    Task OnStartAsync(IOctopusPluginContext context,
+                      CancellationToken cancellationToken);
+
+    // Called during graceful shutdown — release all resources.
+    // Must complete within the host's shutdown timeout (default 30 s).
+    Task OnStopAsync(CancellationToken cancellationToken);
+}</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Action</th><th>OnRegister</th><th>OnStartAsync</th><th>OnStopAsync</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Register services in DI</td><td>Yes</td><td>No</td><td>No</td></tr>
+      <tr><td>Read configuration</td><td>Yes (for DI)</td><td>Yes (for runtime)</td><td>No</td></tr>
+      <tr><td>Open TCP connections</td><td>No</td><td>Yes</td><td>Close them here</td></tr>
+      <tr><td>Register MCP tools</td><td>No</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Start background tasks</td><td>No</td><td>Yes</td><td>Cancel them here</td></tr>
+      <tr><td>Resolve credentials</td><td>No</td><td>Yes</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Principle 5: Graceful Degradation</h2>
+  <p>External services fail. Network partitions happen. Rate limits are hit. A plugin that throws an unhandled exception in a tool handler will kill the agent's turn. Return structured errors instead.</p>
+
+  <pre><code>public async Task&lt;JsonElement&gt; HandleGetContactAsync(JsonElement input)
+{
+    try
+    {
+        var contact = await _crm.GetContactAsync(
+            email: input.GetProperty("email").GetString());
+
+        return JsonSerializer.SerializeToElement(new
+        {
+            success = true,
+            contact
+        });
+    }
+    catch (CrmRateLimitException ex)
+    {
+        _logger.LogWarning(ex, "CRM rate limit hit for tenant {TenantId}",
+                           _tenant.TenantId);
+        return JsonSerializer.SerializeToElement(new
+        {
+            success      = false,
+            error        = "rate_limit",
+            message      = "CRM rate limit reached. Please retry in 60 seconds.",
+            retry_after  = 60
+        });
+    }
+    catch (CrmNotFoundException)
+    {
+        return JsonSerializer.SerializeToElement(new
+        {
+            success = false,
+            error   = "not_found",
+            message = $"No contact found for email: {input.GetProperty("email")}"
+        });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Unexpected error in crm_get_contact");
+        return JsonSerializer.SerializeToElement(new
+        {
+            success = false,
+            error   = "internal_error",
+            message = "An unexpected error occurred. Please try again."
+        });
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Agent response quality.</strong> When your tool returns a structured error object, the LLM can read the <code>message</code> field and relay a meaningful explanation to the user — instead of a raw exception stack trace or a silent failure.
+  </div>
+
+  <h2>Plugin Compliance Checklist</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Requirement</th><th>Verification</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>All secrets via <code>ICredentialResolver</code></td><td>Grep for raw passwords / API keys in config</td></tr>
+      <tr><td>2</td><td>All data reads scoped to <code>ITenantContext.TenantId</code></td><td>Code review: every query/call checks tenant</td></tr>
+      <tr><td>3</td><td>Every MCP tool has a valid JSON Schema with <code>required</code></td><td>Call <code>GET /mcp/tools</code> and validate schemas</td></tr>
+      <tr><td>4</td><td>Every tool property has a <code>description</code></td><td>Review <code>InputSchema</code> definitions</td></tr>
+      <tr><td>5</td><td><code>OnRegister</code> only registers DI — no I/O</td><td>Step through startup; confirm no network calls</td></tr>
+      <tr><td>6</td><td><code>OnStopAsync</code> disposes all connections and cancels tasks</td><td>Trigger graceful shutdown; confirm clean exit</td></tr>
+      <tr><td>7</td><td>All tool handlers catch exceptions and return error JSON</td><td>Unit test with simulated network failures</td></tr>
+      <tr><td>8</td><td>Structured logging with tenant and correlation IDs</td><td>Review log output under load</td></tr>
+      <tr><td>9</td><td>Tool names prefixed with plugin namespace (<code>crm_</code>, <code>email_</code>)</td><td>Check tool registry for naming collisions</td></tr>
+      <tr><td>10</td><td>Rate-limit and retry logic for external APIs</td><td>Integration test against throttled mock</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-erp-plugin.html">&#8592; ERP Plugin</a>
+    <a href="06-requesting-plugins.html">Next: Requesting or Contributing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

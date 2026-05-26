@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GuardRailCheckResult — GuardRail Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>GuardRail Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-guard-pipeline.html">The Guard Pipeline</a>
+  <a href="02-interface.html">IGuardRail Interface</a>
+  <a href="03-guard-result.html" class="active">GuardRailCheckResult</a>
+  <a href="04-guard-context.html">GuardRailExecutionContext</a>
+  <a href="05-built-in-engines.html">Built-In Guard Engines</a>
+  <a href="06-custom-engine.html">Building a Custom Guard</a>
+  <a href="07-form-integration.html">GuardRail Atlas Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>GuardRailCheckResult</h1>
+    <p class="lead"><code>GuardRailCheckResult</code> is what a guard returns from <code>ExecuteAsync</code>. It has three factory methods: <code>Success()</code> (allow), <code>Blocked()</code> (deny), and <code>Warning()</code> (allow with a warning message).</p>
+  </div>
+
+  <h2>GuardRailCheckResult Shape</h2>
+  <pre><code>// BizFirst.Ai.GuardRails.Domain.Models.GuardRailCheckResult
+public class GuardRailCheckResult
+{
+    // True = execution proceeds; False = execution is blocked
+    public bool   IsAllowed          { get; }
+
+    // Error or warning message (set on Blocked or Warning results)
+    public string? ErrorMessage       { get; }
+
+    // Retry-after hint in seconds (for rate limit Blocked results)
+    public int?   RetryAfterSeconds   { get; }
+
+    // Additional metadata (e.g. scope, counts, limits)
+    public IDictionary&lt;string, object?&gt; Metadata { get; }
+
+    // Whether the guard modified the output (for Post-phase sanitizers)
+    public bool   OutputModified      { get; }
+
+    // Timestamp of result creation
+    public DateTime CreatedAt         { get; }
+}</code></pre>
+
+  <h2>Factory Methods</h2>
+  <pre><code>// Allow — execution continues normally
+return GuardRailCheckResult.Success();
+
+// Allow with output modified (e.g. PII was redacted)
+return GuardRailCheckResult.Success(
+    outputModified: true,
+    metadata: new Dictionary&lt;string, object?&gt; { { "redacted_fields", "email,phone" } });
+
+// Block — execution is prevented
+return GuardRailCheckResult.Blocked(
+    errorMessage: "Rate limit exceeded: 100 req/s (limit: 10)",
+    retryAfterSeconds: 30,
+    metadata: new Dictionary&lt;string, object?&gt;
+    {
+        { "scope",             "tenant"  },
+        { "requests_in_window", 100      },
+        { "limit",              10       }
+    });
+
+// Warning — execution continues but a warning is logged
+return GuardRailCheckResult.Warning(
+    warningMessage: "Token usage is approaching quota (85% used)",
+    metadata: new Dictionary&lt;string, object?&gt; { { "usage_percent", 85 } });</code></pre>
+
+  <h2>When Each Result Is Used</h2>
+  <table>
+    <thead><tr><th>Result</th><th>IsAllowed</th><th>When to Use</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>Success()</code></td>
+        <td>true</td>
+        <td>Guard check passed — no issues found</td>
+      </tr>
+      <tr>
+        <td><code>Success(outputModified: true)</code></td>
+        <td>true</td>
+        <td>Post-phase: guard sanitized output (e.g. PII redaction applied)</td>
+      </tr>
+      <tr>
+        <td><code>Warning(message)</code></td>
+        <td>true</td>
+        <td>Issue detected but not severe enough to block (quota at 85%, for example)</td>
+      </tr>
+      <tr>
+        <td><code>Blocked(message)</code></td>
+        <td>false</td>
+        <td>Constraint violated — must stop execution</td>
+      </tr>
+      <tr>
+        <td><code>Blocked(message, retryAfterSeconds)</code></td>
+        <td>false</td>
+        <td>Rate limit or temporary block — tells the client when to retry</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Warning Is Not a Block</strong>
+    <code>GuardRailCheckResult.Warning</code> sets <code>IsAllowed = true</code>. The execution proceeds normally. The warning message is logged by the guard infrastructure and may appear in the Observer Panel logs, but it does not change the execution outcome. Use it for advisory conditions, not enforcement.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-interface.html">&#8592; IGuardRail Interface</a>
+    <a href="04-guard-context.html">Next: GuardRailExecutionContext &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

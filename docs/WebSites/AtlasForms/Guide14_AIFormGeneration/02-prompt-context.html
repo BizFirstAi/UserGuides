@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Prompt Context — AI Form Generation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>AI Form Generation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-generation-workflow.html">6-Step Workflow</a>
+  <a href="02-prompt-context.html" class="active">AI Prompt Context</a>
+  <a href="03-pattern-learning.html">What the AI Learns</a>
+  <a href="04-generated-artefacts.html">Generated Artefacts</a>
+  <a href="05-form-id-assignment.html">FormID Assignment</a>
+  <a href="06-sql-pattern.html">SQL File Pattern</a>
+  <a href="07-validation.html">Validating Generated Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>AI Prompt Context</h1>
+    <p class="lead">The AI generator receives a rich context package before producing the form schema. This context is what enables pattern-consistent generation — the AI does not invent conventions, it learns and follows the ones already established in the group.</p>
+  </div>
+
+  <h2>Context Package Structure</h2>
+  <pre><code>// The context package passed to the AI before generation
+interface FormGenerationContext {
+  // Task description from the user
+  userRequest: {
+    groupId:      string;                  // e.g. 'guard-rails'
+    description:  string;                  // e.g. 'Property form for editing IP allowlist rules'
+    requiredFields: FieldRequirement[];
+  };
+
+  // Group metadata
+  groupDefinition: FormGroupDefinition;    // Full group definition (see Guide 13)
+
+  // All existing form schemas in the group — sorted by FormID
+  existingForms: ExistingFormSummary[];
+
+  // The next available FormID in the group range
+  nextFormId: number;
+
+  // Database folder path for output file
+  outputFolder: string;
+}
+
+interface FieldRequirement {
+  name:       string;
+  type:       string;   // 'text' | 'select' | 'date' | 'textarea' | ...
+  required:   boolean;
+  validation?: string;  // Free-text description e.g. 'CIDR format'
+  options?:   string[]; // For select fields
+}
+
+interface ExistingFormSummary {
+  formId:    number;
+  formCode:  string;
+  schema:    FormSchema;   // Parsed full schema
+}</code></pre>
+
+  <h2>User Request Section</h2>
+  <p>This is the only part of the context the user directly controls. The <code>description</code> and <code>requiredFields</code> drive what the form does; everything else is read from the group automatically:</p>
+  <pre><code>// Example user request that drives generation
+{
+  "groupId": "guard-rails",
+  "description": "Property form for editing an IP allowlist rule. Allows admins to specify IP ranges that bypass or trigger GuardRail checks.",
+  "requiredFields": [
+    { "name": "ruleName",    "type": "text",     "required": true,  "validation": "Max 100 chars" },
+    { "name": "ipRange",     "type": "text",     "required": true,  "validation": "CIDR notation, e.g. 192.168.1.0/24" },
+    { "name": "action",      "type": "select",   "required": true,  "options": ["Allow", "Block"] },
+    { "name": "expiryDate",  "type": "date",     "required": false },
+    { "name": "notes",       "type": "textarea", "required": false  }
+  ]
+}</code></pre>
+
+  <h2>Group Definition Section</h2>
+  <p>Provided automatically from the registered <code>FormGroupDefinition</code>:</p>
+  <pre><code>{
+  "formGroupId":          "guard-rails",
+  "label":                "GuardRails",
+  "ownerApp":             "BizFirst.Ai.ProcessSecurity",
+  "categoryId":           130,
+  "formIdRange":          { "start": 13000, "end": 13099 },
+  "aiGenerationEnabled":  true,
+  "defaultPrimaryUsage":  "guardrails"
+}</code></pre>
+
+  <h2>Existing Forms Summary Section</h2>
+  <p>The AI receives the full parsed schema of every existing form in the group. This is the largest part of the context and is the primary source of pattern learning:</p>
+  <pre><code>// Existing forms fed into the AI context (abridged)
+[
+  {
+    "formId":   13001,
+    "formCode": "GuardRail_Edit",
+    "schema": {
+      "metadata": { "formId": 13001, "title": "Edit GuardRail" },
+      "sections": [
+        { "id": "details",  "title": "GuardRail Details",  "order": 1 },
+        { "id": "settings", "title": "Policy Settings",    "order": 2 }
+      ],
+      "controls": [ ... ],
+      "actions":  [ ... ]
+    }
+  },
+  {
+    "formId":   13003,
+    "formCode": "GuardRail_RateLimit_Edit",
+    "schema": { ... }
+  }
+]</code></pre>
+
+  <h2>What the AI Does NOT Receive</h2>
+  <table>
+    <thead><tr><th>Excluded</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td>Forms from other groups</td><td>Cross-group context would dilute pattern learning and risk ID collisions</td></tr>
+      <tr><td>Tenant override rows</td><td>Tenant data is not a pattern source — base forms only</td></tr>
+      <tr><td>Database credentials</td><td>The AI writes SQL files; it does not connect to the database</td></tr>
+      <tr><td>Application business logic</td><td>The form schema defines UX and validation, not business rules</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Richer Context = Better Output</strong>
+    The more complete your existing forms are (clear section titles, consistent naming, well-specified validation), the better the AI's pattern learning and the higher-quality the generated form. Invest in clean existing forms and the AI pays dividends on every subsequent generation.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-generation-workflow.html">&#8592; 6-Step Workflow</a>
+    <a href="03-pattern-learning.html">Next: What the AI Learns &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

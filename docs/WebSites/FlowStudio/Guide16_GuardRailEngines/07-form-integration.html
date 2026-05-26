@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GuardRail Atlas Forms — GuardRail Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>GuardRail Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-guard-pipeline.html">The Guard Pipeline</a>
+  <a href="02-interface.html">IGuardRail Interface</a>
+  <a href="03-guard-result.html">GuardRailCheckResult</a>
+  <a href="04-guard-context.html">GuardRailExecutionContext</a>
+  <a href="05-built-in-engines.html">Built-In Guard Engines</a>
+  <a href="06-custom-engine.html">Building a Custom Guard</a>
+  <a href="07-form-integration.html" class="active">GuardRail Atlas Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>GuardRail Atlas Forms</h1>
+    <p class="lead">Guard rail configuration is authored in Atlas Forms, not in code. Each built-in guard has a dedicated Atlas Form (IDs 13000–13007). When a guard is added to a node type in the Flow Studio designer, the Atlas Form for that guard is embedded in the node's configuration panel, and its saved values are passed to <code>SetConfiguration()</code> at runtime.</p>
+  </div>
+
+  <h2>How Atlas Forms Connect to Guards</h2>
+  <p>The flow from designer to runtime has four steps:</p>
+  <ol>
+    <li>A designer opens a node's configuration panel and navigates to the <strong>Guard Rails</strong> tab.</li>
+    <li>They select a guard (e.g. <em>Rate Limiting</em>) from the available guard list. The corresponding Atlas Form (e.g. Form 13000) is rendered inline.</li>
+    <li>The designer fills in the guard's fields and saves. The values are stored as a JSON dictionary alongside the node's ProcessElement record.</li>
+    <li>At execution time, <code>BaseNodeExecutor</code> loads the stored configuration dictionary and calls <code>guard.SetConfiguration(config)</code> before the pipeline runs.</li>
+  </ol>
+
+  <div class="callout info">
+    <strong>ConfigurationSchema Drives Field Generation</strong>
+    The fields rendered in the Atlas Form are generated from the guard's <code>IGuardRailDescriptor.ConfigurationSchema</code> property (a JSON Schema string). When you implement a custom guard and register it with DI, the Atlas Form system reads its <code>ConfigurationSchema</code> and automatically generates the form fields — no manual Atlas Form creation is needed for custom guards.
+  </div>
+
+  <h2>Atlas Form Registry (IDs 13000–13007)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Form ID</th>
+        <th>Guard</th>
+        <th>Phase</th>
+        <th>Key Fields</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>13000</code></td>
+        <td>RateLimitingGuard</td>
+        <td>Pre</td>
+        <td><code>rps</code>, <code>window</code>, <code>scope</code></td>
+      </tr>
+      <tr>
+        <td><code>13001</code></td>
+        <td>InputValidationGuard</td>
+        <td>Pre</td>
+        <td><code>requiredFields</code>, <code>strictMode</code></td>
+      </tr>
+      <tr>
+        <td><code>13002</code></td>
+        <td>TimeoutGuard</td>
+        <td>Pre + Post</td>
+        <td><code>maxExecutionMs</code></td>
+      </tr>
+      <tr>
+        <td><code>13003</code></td>
+        <td>PiiDetectionGuard</td>
+        <td>Post</td>
+        <td><code>mode</code>, <code>piiPatterns</code>, <code>redactionValue</code></td>
+      </tr>
+      <tr>
+        <td><code>13004</code></td>
+        <td>CircuitBreakerGuard</td>
+        <td>Pre</td>
+        <td><code>failureThreshold</code>, <code>cooldownSeconds</code>, <code>scope</code></td>
+      </tr>
+      <tr>
+        <td><code>13005–13007</code></td>
+        <td>Reserved</td>
+        <td>—</td>
+        <td>Reserved for future built-in guards</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Form 13000 — RateLimitingGuard</h2>
+  <p>Configures the rate limit applied in the Pre phase. All three fields are required.</p>
+  <pre><code>// Stored configuration (from Atlas Form 13000)
+{
+  "rps":    10,        // requests per second — minimum 0.1, maximum 10000
+  "window": 60,        // measurement window in seconds — minimum 1, maximum 3600
+  "scope":  "tenant"  // "global" | "tenant" | "user"
+}</code></pre>
+  <p>Validation rules enforced by <code>RateLimitingGuardConfigValidator</code>:</p>
+  <ul>
+    <li><code>rps</code> must be a number; minimum 0.1; values above 10000 produce a warning</li>
+    <li><code>window</code> must be an integer; minimum 1; values above 3600 produce a warning</li>
+    <li><code>scope</code> must be exactly <code>"global"</code>, <code>"tenant"</code>, or <code>"user"</code></li>
+  </ul>
+
+  <h2>Form 13001 — InputValidationGuard</h2>
+  <p>Declares which input fields must be present before the executor runs.</p>
+  <pre><code>// Stored configuration (from Atlas Form 13001)
+{
+  "requiredFields": ["orderId", "customerId", "amount"],
+  "strictMode": false   // true: any field not in requiredFields causes Blocked
+}</code></pre>
+
+  <h2>Form 13002 — TimeoutGuard</h2>
+  <p>Sets the maximum wall-clock execution time for this node. The Pre phase records a start timestamp; the Post phase measures elapsed time and blocks if exceeded.</p>
+  <pre><code>// Stored configuration (from Atlas Form 13002)
+{
+  "maxExecutionMs": 30000   // 30 000 ms = 30 seconds
+}</code></pre>
+
+  <h2>Form 13003 — PiiDetectionGuard</h2>
+  <p>Configures post-execution scanning of the executor's output data for PII patterns.</p>
+  <pre><code>// Stored configuration (from Atlas Form 13003)
+{
+  "mode":           "redact",           // "warn" | "block" | "redact"
+  "piiPatterns":    ["email", "ccn", "ssn", "phone"],
+  "redactionValue": "[REDACTED]"        // replacement text used in "redact" mode
+}</code></pre>
+  <p><strong>Mode behaviours:</strong></p>
+  <ul>
+    <li><code>warn</code> — PII found; returns <code>Warning</code> (execution continues, warning logged)</li>
+    <li><code>block</code> — PII found; returns <code>Blocked</code> (output is suppressed)</li>
+    <li><code>redact</code> — PII found; replaces values in-place and returns <code>Success(outputModified: true)</code></li>
+  </ul>
+
+  <h2>Form 13004 — CircuitBreakerGuard</h2>
+  <p>Opens the circuit and blocks execution after repeated consecutive failures for the same node type and scope.</p>
+  <pre><code>// Stored configuration (from Atlas Form 13004)
+{
+  "failureThreshold": 5,       // consecutive failures before circuit opens
+  "cooldownSeconds":  60,      // how long the circuit stays open
+  "scope":            "tenant" // "global" | "tenant"
+}</code></pre>
+
+  <h2>Configuration Validation at Design Time</h2>
+  <p>When a designer saves guard configuration in the Atlas Form, the system calls <code>IGuardRail.ValidateWithDetails(config)</code> before persisting. If validation fails, the form displays the returned errors and refuses to save.</p>
+  <pre><code>// ValidateWithDetails is called on form save (design time)
+public GuardRailConfigValidationResult ValidateWithDetails(IDictionary&lt;string, object?&gt; configuration)
+{
+    var errors = new List&lt;string&gt;();
+
+    if (!configuration.ContainsKey("rps"))
+        errors.Add("rps is required");
+
+    if (!configuration.ContainsKey("window"))
+        errors.Add("window is required");
+
+    if (!configuration.ContainsKey("scope"))
+        errors.Add("scope is required");
+    else if (configuration["scope"]?.ToString() is not ("global" or "tenant" or "user"))
+        errors.Add("scope must be 'global', 'tenant', or 'user'");
+
+    return errors.Count > 0
+        ? GuardRailConfigValidationResult.Invalid(errors)
+        : GuardRailConfigValidationResult.Valid();
+}</code></pre>
+
+  <h2>Runtime Configuration Loading</h2>
+  <p><code>SetConfiguration()</code> is called once before the pipeline runs, not on every execution. Store parsed values in instance fields. Do not re-read the configuration dictionary inside <code>ExecuteAsync</code>.</p>
+  <pre><code>// Called once per guard instance lifetime, before any ExecuteAsync call
+public void SetConfiguration(IDictionary&lt;string, object?&gt; configuration)
+{
+    if (configuration.TryGetValue("rps", out var rpsObj)
+        &amp;&amp; double.TryParse(rpsObj?.ToString(), out var rps))
+    {
+        _rps = rps;
+    }
+
+    if (configuration.TryGetValue("window", out var windowObj)
+        &amp;&amp; int.TryParse(windowObj?.ToString(), out var window))
+    {
+        _windowSeconds = window;
+    }
+
+    _scope = configuration.TryGetValue("scope", out var scopeObj)
+        ? scopeObj?.ToString() ?? "tenant"
+        : "tenant";
+}</code></pre>
+
+  <h2>Custom Guard — No Atlas Form Required</h2>
+  <p>Custom guards registered via DI do not need a manually authored Atlas Form. The Atlas Form system reads the guard's <code>ConfigurationSchema</code> JSON Schema property and auto-generates form fields. The schema should describe every configuration key your <code>SetConfiguration</code> method reads:</p>
+  <pre><code>// ConfigurationSchema drives auto-generated Atlas Form fields
+public string ConfigurationSchema =&gt; @"{
+  ""type"": ""object"",
+  ""properties"": {
+    ""allowedDomains"": {
+      ""type"": ""array"",
+      ""items"": { ""type"": ""string"" },
+      ""description"": ""Approved email domains, e.g. ['example.com']"",
+      ""minItems"": 1
+    }
+  },
+  ""required"": [""allowedDomains""]
+}";</code></pre>
+
+  <div class="callout warning">
+    <strong>ConfigurationSchema Is Authoritative</strong>
+    The JSON Schema in <code>ConfigurationSchema</code> is what the Atlas Form system uses to generate fields. If you add a new configuration key to <code>SetConfiguration</code> but do not add it to <code>ConfigurationSchema</code>, designers will have no way to set that key in the UI. Keep the schema and the implementation in sync.
+  </div>
+
+  <h2>Guard Configuration Lifecycle Summary</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Stage</th>
+        <th>Who</th>
+        <th>What Happens</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Design time</td>
+        <td>Atlas Form system</td>
+        <td>Reads <code>ConfigurationSchema</code>; renders form fields in the Guard Rails tab</td>
+      </tr>
+      <tr>
+        <td>Design time (save)</td>
+        <td>Atlas Form system</td>
+        <td>Calls <code>ValidateWithDetails(config)</code>; stores JSON on success, shows errors on failure</td>
+      </tr>
+      <tr>
+        <td>Startup / first execution</td>
+        <td><code>BaseNodeExecutor</code></td>
+        <td>Loads stored JSON; calls <code>SetConfiguration(config)</code> on each guard instance</td>
+      </tr>
+      <tr>
+        <td>Pre phase</td>
+        <td>Guard infrastructure</td>
+        <td>Calls <code>ExecuteAsync(context, GuardRailPhase.Pre, ct)</code> on all guards with Pre in <code>SupportedPhases</code></td>
+      </tr>
+      <tr>
+        <td>Post phase</td>
+        <td>Guard infrastructure</td>
+        <td>Calls <code>ExecuteAsync(context, GuardRailPhase.Post, ct)</code> on all guards with Post in <code>SupportedPhases</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-custom-engine.html">&#8592; Building a Custom Guard</a>
+    <a href="index.html">Back to Overview &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

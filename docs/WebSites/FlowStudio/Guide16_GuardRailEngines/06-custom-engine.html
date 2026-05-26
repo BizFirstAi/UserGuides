@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Building a Custom Guard — GuardRail Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>GuardRail Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-guard-pipeline.html">The Guard Pipeline</a>
+  <a href="02-interface.html">IGuardRail Interface</a>
+  <a href="03-guard-result.html">GuardRailCheckResult</a>
+  <a href="04-guard-context.html">GuardRailExecutionContext</a>
+  <a href="05-built-in-engines.html">Built-In Guard Engines</a>
+  <a href="06-custom-engine.html" class="active">Building a Custom Guard</a>
+  <a href="07-form-integration.html">GuardRail Atlas Forms</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Building a Custom Guard</h1>
+    <p class="lead">A custom guard implements <code>IGuardRail</code> and is registered in DI as <code>IGuardRail</code>. The guard infrastructure auto-discovers all <code>IGuardRail</code> registrations and calls them in the appropriate pipeline phase.</p>
+  </div>
+
+  <h2>Complete Custom Guard Example</h2>
+  <pre><code>// DomainAllowlistGuard.cs — only allows execution if the email domain is approved
+using BizFirst.Ai.GuardRails.Domain.Contracts;
+using BizFirst.Ai.GuardRails.Domain.Enums;
+using BizFirst.Ai.GuardRails.Domain.Models;
+
+public class DomainAllowlistGuard : IGuardRail
+{
+    // IGuardRailExecutor
+    public string Name    =&gt; "DomainAllowlistGuard";
+    public string Version =&gt; "1.0.0";
+    public IReadOnlyList&lt;GuardRailPhase&gt; SupportedPhases =&gt;
+        new[] { GuardRailPhase.Pre };
+
+    // IGuardRailDescriptor
+    public string GuardName    =&gt; "Domain Allowlist Guard";
+    public string Description  =&gt; "Blocks execution if the recipient email domain is not in the allowlist.";
+    public bool IsSecurityCritical =&gt; true;
+
+    public string ConfigurationSchema =&gt; @"{
+      ""type"": ""object"",
+      ""properties"": {
+        ""allowedDomains"": {
+          ""type"": ""array"",
+          ""items"": { ""type"": ""string"" },
+          ""description"": ""List of approved email domains (e.g. ['example.com'])""
+        }
+      },
+      ""required"": [""allowedDomains""]
+    }";
+
+    public IReadOnlyList&lt;GuardRailDependency&gt; Dependencies =&gt;
+        Array.Empty&lt;GuardRailDependency&gt;();
+
+    private IList&lt;string&gt; _allowedDomains = new List&lt;string&gt;();
+
+    public void SetConfiguration(IDictionary&lt;string, object?&gt; configuration)
+    {
+        if (configuration.TryGetValue("allowedDomains", out var domains)
+            &amp;&amp; domains is IList&lt;object&gt; list)
+        {
+            _allowedDomains = list.Select(d =&gt; d?.ToString() ?? "").ToList();
+        }
+    }
+
+    // IGuardRailExecutor.ExecuteAsync
+    public Task&lt;GuardRailCheckResult&gt; ExecuteAsync(
+        GuardRailExecutionContext context,
+        GuardRailPhase phase,
+        CancellationToken ct)
+    {
+        if (phase != GuardRailPhase.Pre)
+            return Task.FromResult(GuardRailCheckResult.Success());
+
+        var input = context.Input as IDictionary&lt;string, object&gt;;
+        var email = input?.TryGetValue("recipientEmail", out var e) == true
+            ? e?.ToString() ?? "" : "";
+
+        var domain = email.Contains('@')
+            ? email.Split('@')[1].ToLowerInvariant() : "";
+
+        if (!_allowedDomains.Contains(domain))
+        {
+            return Task.FromResult(GuardRailCheckResult.Blocked(
+                $"Email domain '{domain}' is not in the allowlist.",
+                metadata: new Dictionary&lt;string, object?&gt; { { "domain", domain } }));
+        }
+        return Task.FromResult(GuardRailCheckResult.Success());
+    }
+
+    // IGuardRailConfigValidator
+    public bool Validate(IDictionary&lt;string, object?&gt; configuration)
+        =&gt; ValidateWithDetails(configuration).IsValid;
+
+    public GuardRailConfigValidationResult ValidateWithDetails(IDictionary&lt;string, object?&gt; configuration)
+    {
+        if (!configuration.ContainsKey("allowedDomains"))
+            return GuardRailConfigValidationResult.Invalid(new[] { "allowedDomains is required" });
+        return GuardRailConfigValidationResult.Valid();
+    }
+}</code></pre>
+
+  <h2>Registering the Custom Guard</h2>
+  <pre><code>// In your INodeExecutorDependency.RegisterDefaults() or startup
+services.AddScoped&lt;IGuardRail, DomainAllowlistGuard&gt;();
+// The IGuardRailsExecutor resolves all IGuardRail registrations automatically</code></pre>
+
+  <h2>Testing Pattern</h2>
+  <pre><code>[Fact]
+public async Task Guard_BlocksDisallowedDomain()
+{
+    var guard = new DomainAllowlistGuard();
+    guard.SetConfiguration(new Dictionary&lt;string, object?&gt;
+    {
+        { "allowedDomains", new List&lt;object&gt; { "example.com" } }
+    });
+
+    var ctx = new GuardRailExecutionContext
+    {
+        Input = new Dictionary&lt;string, object&gt;
+            { { "recipientEmail", "alice@badactor.io" } }
+    };
+
+    var result = await guard.ExecuteAsync(ctx, GuardRailPhase.Pre);
+
+    Assert.False(result.IsAllowed);
+    Assert.Contains("badactor.io", result.ErrorMessage);
+}</code></pre>
+
+  <div class="callout info">
+    <strong>SetConfiguration Is Called Before ExecuteAsync</strong>
+    The guard infrastructure calls <code>SetConfiguration()</code> with the Atlas Form values before the pipeline runs. Store configuration in instance fields after parsing. Do not read configuration inside <code>ExecuteAsync</code>.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-built-in-engines.html">&#8592; Built-In Guard Engines</a>
+    <a href="07-form-integration.html">Next: GuardRail Atlas Forms &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

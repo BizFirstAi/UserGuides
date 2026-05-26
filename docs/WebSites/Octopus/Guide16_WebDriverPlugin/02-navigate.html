@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Navigate Tool — Web Driver Plugin | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Web Driver Plugin</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enabling.html">Enabling the Plugin</a>
+  <a href="02-navigate.html" class="active">Navigate Tool</a>
+  <a href="03-extract.html">Extract Data Tool</a>
+  <a href="04-fill-form.html">Fill Form Tool</a>
+  <a href="05-screenshot.html">Screenshot Tool</a>
+  <a href="06-session-management.html">Session Management</a>
+  <a href="07-security.html">Security and Sandboxing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Navigate Tool</h1>
+    <p class="lead">The <code>browser_navigate</code> tool navigates the browser to a URL and waits for the page to reach a specified load state before returning control to the agent.</p>
+  </div>
+
+  <h2>Tool Schema</h2>
+  <pre><code>{
+  "name": "browser_navigate",
+  "description": "Navigate the browser to a URL and wait for the page to load. " +
+                 "Use this before any other browser tools. " +
+                 "Only domains on the allowlist can be accessed.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "format": "uri",
+        "description": "The full URL to navigate to, including https:// (e.g. https://example.com/page)"
+      },
+      "wait_until": {
+        "type": "string",
+        "enum": ["load", "domcontentloaded", "networkidle"],
+        "default": "load",
+        "description": "When to consider navigation complete. 'networkidle' waits for no network activity."
+      },
+      "timeout_ms": {
+        "type": "integer",
+        "default": 30000,
+        "description": "Maximum milliseconds to wait for navigation. Overrides the plugin default."
+      }
+    },
+    "required": ["url"]
+  }
+}</code></pre>
+
+  <h2>Tool Handler Implementation</h2>
+  <pre><code>public async Task&lt;string&gt; HandleNavigateAsync(
+    JsonElement input, ConversationContext ctx, IBrowserSession session, CancellationToken ct)
+{
+    var url      = input.GetProperty("url").GetString()!;
+    var waitUntil = input.TryGetProperty("wait_until", out var wu)
+        ? wu.GetString()! : "load";
+    var timeoutMs = input.TryGetProperty("timeout_ms", out var t)
+        ? t.GetInt32() : _config.NavigationTimeoutMs;
+
+    // Domain allowlist check (security — see Security page)
+    if (!_domainPolicy.IsAllowed(url))
+        return JsonSerializer.Serialize(new
+        {
+            error  = "Navigation blocked",
+            reason = $"The domain in '{url}' is not on the approved allowlist."
+        });
+
+    var page = await session.GetPageAsync(ct);
+
+    var waitState = waitUntil switch
+    {
+        "domcontentloaded" => WaitUntilState.DOMContentLoaded,
+        "networkidle"      => WaitUntilState.NetworkIdle,
+        _                  => WaitUntilState.Load
+    };
+
+    var response = await page.GotoAsync(url, new PageGotoOptions
+    {
+        WaitUntil = waitState,
+        Timeout   = timeoutMs
+    });
+
+    return JsonSerializer.Serialize(new
+    {
+        url         = page.Url,
+        title       = await page.TitleAsync(),
+        status_code = response?.Status ?? 0,
+        ok          = response?.Ok ?? false
+    });
+}</code></pre>
+
+  <h2>Response Format</h2>
+  <pre><code>// Successful navigation
+{
+  "url":         "https://finance.yahoo.com/quote/AAPL",
+  "title":       "Apple Inc. (AAPL) Stock Price, News, Quote & History - Yahoo Finance",
+  "status_code": 200,
+  "ok":          true
+}
+
+// Blocked navigation
+{
+  "error":  "Navigation blocked",
+  "reason": "The domain in 'https://malicious.example.com/' is not on the approved allowlist."
+}
+
+// Timeout
+{
+  "error":  "NavigationTimeout",
+  "reason": "Navigation to https://slow-site.com timed out after 30000ms."
+}</code></pre>
+
+  <h2>waitUntil Strategies</h2>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>When to Use</th><th>Typical Latency</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>load</code></td><td>Standard pages — waits for the <code>load</code> event</td><td>1–3 s</td></tr>
+      <tr><td><code>domcontentloaded</code></td><td>SPAs where DOM is ready before resources finish loading</td><td>0.5–1 s</td></tr>
+      <tr><td><code>networkidle</code></td><td>Pages with dynamic content loaded via AJAX after initial load</td><td>3–10 s</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-enabling.html">&#8592; Enabling the Plugin</a>
+    <a href="03-extract.html">Next: Extract Data Tool &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
