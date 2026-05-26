@@ -1,0 +1,202 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Continuation — Instagram</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style></head>
+<body><div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst AI</h2>
+    <h1>HIL Continuation</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-building-a-channel.html">Building a Channel</a>
+  <div class="section-label">Channels</div>
+  <a href="03-slack.html" class="ch-slack">Slack</a>
+  <a href="04-whatsapp.html" class="ch-whatsapp">WhatsApp</a>
+  <a href="05-facebook.html" class="ch-facebook">Facebook Messenger</a>
+  <a href="06-instagram.html" class="ch-instagram active">Instagram</a>
+  <a href="07-telegram.html" class="ch-telegram">Telegram</a>
+  <a href="08-teams.html" class="ch-teams">Microsoft Teams</a>
+  <a href="09-email.html" class="ch-email">Email</a>
+  <a href="10-sms.html" class="ch-sms">SMS / Twilio</a>
+  <a href="11-discord.html" class="ch-discord">Discord</a>
+  <a href="12-line.html" class="ch-line">LINE</a>
+
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="channel-tag ch-tag-instagram">Instagram</div>
+    <h1>Instagram HIL Channel</h1>
+    <p class="lead">
+      Instagram messaging runs on the same Meta Messaging API as Facebook Messenger.
+      The implementation is almost identical — the key difference is the access token scope
+      and the fact that Instagram users are addressed by their Instagram-Scoped User ID (IGSID),
+      not a Facebook PSID.
+    </p>
+  </div>
+
+  <h2>Instagram vs Facebook Messenger API</h2>
+  <table>
+    <thead><tr><th>Aspect</th><th>Facebook Messenger</th><th>Instagram</th></tr></thead>
+    <tbody>
+      <tr><td>API endpoint</td><td><code>/me/messages</code> with Page token</td><td><code>/me/messages</code> with Page token connected to Instagram Business Account</td></tr>
+      <tr><td>User identifier</td><td>Page-Scoped ID (PSID)</td><td>Instagram-Scoped User ID (IGSID)</td></tr>
+      <tr><td>Button templates</td><td>Full Generic Template supported</td><td>Generic Template <strong>not supported</strong> — use quick replies or plain text + postback</td></tr>
+      <tr><td>Quick replies</td><td>Supported</td><td>Supported</td></tr>
+      <tr><td>24-hour window</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Webhook events</td><td><code>messages</code>, <code>messaging_postbacks</code></td><td><code>messages</code>, <code>messaging_postbacks</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>No Generic Template on Instagram</strong>
+    The card-style Generic Template that works well in Messenger is not available in Instagram DMs.
+    Use <strong>Quick Replies</strong> for approve/reject flows, or send a text message followed
+    by a list of quick reply options.
+  </div>
+
+  <h2>Building the Message with Quick Replies</h2>
+  <pre><code>private object BuildInstagramMessage(
+    IReadOnlyList&lt;ResolvedHilField&gt; fields,
+    string resId,
+    string recipientIgsid)
+{
+    var lines = new List&lt;string&gt; { "📋 *Approval Required*\n" };
+    foreach (var field in fields)
+    {
+        if (field.DisplayMode == HilDisplayMode.Concealed) continue;
+        string val = field.DisplayMode == HilDisplayMode.ReadableMasked
+            ? "••••••••"
+            : field.CurrentValue?.ToString() ?? "—";
+        lines.Add($"• {field.Label}: {val}");
+    }
+    lines.Add("\nPlease select an action:");
+
+    return new {
+        recipient = new { id = recipientIgsid },
+        message = new {
+            text = string.Join("\n", lines),
+            quick_replies = new object[] {
+                new {
+                    content_type = "text",
+                    title        = "Approve ✅",
+                    payload      = $"HIL_APPROVE|{resId}"
+                },
+                new {
+                    content_type = "text",
+                    title        = "Reject ❌",
+                    payload      = $"HIL_REJECT|{resId}"
+                }
+            }
+        }
+    };
+}</code></pre>
+
+  <h2>Sending the Message</h2>
+  <pre><code>// Identical endpoint to Messenger — same Graph API, different token scope
+await _httpClient.PostAsJsonAsync(
+    $"https://graph.facebook.com/v19.0/me/messages?access_token={settings.PageAccessToken}",
+    message,
+    cancellationToken);
+
+return NodeExecutionResult.Suspend("waiting");</code></pre>
+
+  <h2>Webhook Handler</h2>
+  <p>
+    Instagram quick reply responses arrive as regular <code>messaging</code> events with
+    <code>message.quick_reply.payload</code>. The handler is nearly identical to Messenger.
+  </p>
+  <pre><code>[HttpPost("webhooks/instagram")]
+public async Task&lt;IActionResult&gt; Handle([FromBody] MessengerWebhookPayload payload)
+{
+    foreach (var entry in payload.Entry)
+    foreach (var messaging in entry.Messaging)
+    {
+        // Quick reply response
+        var quickReplyPayload = messaging.Message?.QuickReply?.Payload;
+        if (quickReplyPayload != null &amp;&amp; quickReplyPayload.StartsWith("HIL_"))
+        {
+            var parts  = quickReplyPayload.Split('|', 2);
+            var action = parts[0];
+            var resId  = parts[1];
+
+            var responseData = new Dictionary&lt;string, object&gt;
+            {
+                ["approved"]    = action == "HIL_APPROVE",
+                ["respondedBy"] = messaging.Sender.Id
+            };
+
+            _ = Task.Run(() => _continuationOrchestrator.ContinueAsync(resId, responseData));
+        }
+    }
+    return Ok();
+}</code></pre>
+
+  <h2>Sharing the Same Webhook</h2>
+  <p>
+    Meta allows a single webhook URL to receive events from multiple products (Messenger,
+    Instagram, WhatsApp) by subscribing to different object types.
+    You can route all three to the same controller and dispatch by the object type
+    in the payload:
+  </p>
+  <pre><code>// payload.Object == "instagram"  → Instagram handler
+// payload.Object == "page"       → Messenger handler
+// payload.Object == "whatsapp_business_account" → WhatsApp handler</code></pre>
+
+  <h2>Required Permissions</h2>
+  <table>
+    <thead><tr><th>Permission</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>instagram_basic</code></td><td>Read Instagram Business Account info</td></tr>
+      <tr><td><code>instagram_manage_messages</code></td><td>Send and receive DMs</td></tr>
+      <tr><td><code>pages_messaging</code></td><td>Access to the connected Facebook Page for token</td></tr>
+      <tr><td><code>pages_read_engagement</code></td><td>Required alongside pages_messaging</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Required Configuration</h2>
+  <table>
+    <thead><tr><th>Config Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td><code>PageAccessToken</code></td><td><code>@{secret:InstagramPageAccessToken}</code> — token for the Page connected to the Instagram Business Account</td></tr>
+      <tr><td><code>WebhookVerifyToken</code></td><td><code>@{secret:InstagramVerifyToken}</code></td></tr>
+      <tr><td><code>RecipientIgsid</code></td><td><code>@{input:instagramScopedUserId}</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Getting the IGSID</strong>
+    The Instagram-Scoped User ID (IGSID) is only available after the user has sent your account
+    a message first — it appears in the inbound webhook event's <code>sender.id</code>. You cannot
+    initiate a first contact unless the user has already messaged you within the 24-hour window.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-facebook.html">← Facebook Messenger</a>
+    <a href="07-telegram.html">Next: Telegram →</a>
+  </div>
+</main>
+
+</div>
+<script src="/search.js"></script></body>
+</html>

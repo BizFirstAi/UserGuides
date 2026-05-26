@@ -1,0 +1,211 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataFlow Policies — Node Policies — BizFirstAI</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Node Policies</h1></div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-manifest-types.html">Manifest Types</a>
+  <div class="section-label">Policies</div>
+  <a href="03-field-descriptors.html">Field Descriptors</a>
+  <a href="04-expression-policies.html">Expression Policies</a>
+  <a href="05-dataflow-policies.html" class="active">DataFlow Policies</a>
+  <a href="06-hil-policies.html">HIL Policies</a>
+  <a href="07-security-policies.html">Security Policies</a>
+  <a href="08-suspension-policies.html">Suspension Policies</a>
+  <div class="section-label">Reference</div>
+  <a href="09-use-cases.html">Developer Use Cases</a>
+  <a href="10-business-cases.html">Business Cases</a>
+  <a href="11-quick-reference.html">Quick Reference</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Policy Reference</div>
+    <h1>DataFlow Policies</h1>
+    <p class="lead">
+      A <code>DataFlowPolicy</code> controls how data moves into and out of a node through a
+      specific field — which fields participate in the platform's automatic input/output mapping
+      pipeline, and which are isolated from it.
+    </p>
+  </div>
+
+  <h2>Structure</h2>
+  <pre><code>public sealed class DataFlowPolicy
+{
+    public bool AcceptsUpstreamInput     { get; init; } = false;
+    public bool EmitsToDownstream        { get; init; } = false;
+    public bool PersistsToMemory         { get; init; } = false;
+    public bool ExcludeFromInputMapping  { get; init; } = false;
+    public bool ExcludeFromOutputMapping { get; init; } = false;
+}</code></pre>
+
+  <h2>AcceptsUpstreamInput</h2>
+  <p>
+    When <code>true</code>, this field can receive its value from an upstream node's output.
+    The platform's input mapper automatically populates the field from the incoming data bag.
+  </p>
+  <table>
+    <thead><tr><th>Set to true</th><th>Set to false</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Email <code>to</code> (from customer lookup), Slack <code>channel</code> (from team config), form <code>assignedTo</code> (from role resolution)</td>
+        <td>Credential fields (always from static config), output-only fields (no upstream provides them)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>EmitsToDownstream</h2>
+  <p>
+    When <code>true</code>, this field's value is included in the node's output data and can
+    be consumed by downstream nodes.
+  </p>
+  <table>
+    <thead><tr><th>Set to true</th><th>Set to false</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>SMTP <code>messageId</code>, HTTP <code>response.body</code>, Slack <code>slack.ts</code>, approval <code>approvalDecision</code></td>
+        <td>Input / config fields consumed by this node — they should not propagate</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>PersistsToMemory</h2>
+  <p>
+    When <code>true</code>, the field's value is written to the workflow's persistent memory store
+    after execution, available throughout the rest of the workflow lifetime.
+  </p>
+  <p><strong>Use when:</strong> The value must survive suspension/resumption cycles, is needed for audit, or other non-immediate downstream nodes may reference it.</p>
+  <table>
+    <thead><tr><th>Set to true (persist)</th><th>Set to false (transient)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>HTTP <code>response.body</code>, approval <code>approvalDecision</code>, form <code>form.submission</code>, Slack <code>slack.ts</code></td>
+        <td>HTTP <code>response.status</code> — useful for immediate routing, not long-term storage</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>ExcludeFromInputMapping</h2>
+  <p>
+    When <code>true</code>, this field is <strong>skipped by the automatic input mapper</strong>
+    even if upstream data contains a matching key. The field can only be set via its own static
+    config or expression evaluation.
+  </p>
+  <p><strong>Primary use case:</strong> Credentials and internal routing fields that must never be overwritten by upstream data regardless of name collisions.</p>
+  <pre><code>// credentialId must never be overwritten by upstream
+ExcludeFromInputMapping = true   // defensive — even though AcceptsUpstreamInput is false</code></pre>
+
+  <h2>ExcludeFromOutputMapping</h2>
+  <p>
+    When <code>true</code>, this field is <strong>not included in the node's output data bag</strong>
+    sent to downstream nodes, even if <code>EmitsToDownstream</code> is set.
+  </p>
+  <p><strong>Use on all input/config fields</strong> to prevent them from leaking into downstream data.</p>
+
+  <h2>Field Archetype Patterns</h2>
+
+  <h3>Static Config</h3>
+  <p>Fixed in the workflow definition — does not flow in or out.</p>
+  <pre><code>DataFlowPolicy = new DataFlowPolicy
+{
+    AcceptsUpstreamInput     = false,
+    EmitsToDownstream        = false,
+    PersistsToMemory         = false,
+    ExcludeFromInputMapping  = true,
+    ExcludeFromOutputMapping = true
+}
+// Examples: strategy, method, host, resource, operation</code></pre>
+
+  <h3>Dynamic Input</h3>
+  <p>Receives its value from upstream nodes at runtime.</p>
+  <pre><code>DataFlowPolicy = new DataFlowPolicy
+{
+    AcceptsUpstreamInput     = true,
+    EmitsToDownstream        = false,
+    PersistsToMemory         = false,
+    ExcludeFromInputMapping  = false,
+    ExcludeFromOutputMapping = true
+}
+// Examples: to, body, channel, actors, assignedTo</code></pre>
+
+  <h3>Output / Result</h3>
+  <p>Produced by the executor; downstream nodes consume it.</p>
+  <pre><code>DataFlowPolicy = new DataFlowPolicy
+{
+    AcceptsUpstreamInput     = false,
+    EmitsToDownstream        = true,
+    PersistsToMemory         = true,
+    ExcludeFromInputMapping  = true,
+    ExcludeFromOutputMapping = false
+}
+// Examples: messageId, response.body, approvalDecision, form.submission, slack.ts</code></pre>
+
+  <h3>Transient Output (not persisted)</h3>
+  <p>Flows downstream but not worth storing in workflow memory.</p>
+  <pre><code>DataFlowPolicy = new DataFlowPolicy
+{
+    AcceptsUpstreamInput     = false,
+    EmitsToDownstream        = true,
+    PersistsToMemory         = false,
+    ExcludeFromInputMapping  = true,
+    ExcludeFromOutputMapping = false
+}
+// Example: response.status</code></pre>
+
+  <h2>Data Flow Diagram</h2>
+  <pre><code>Upstream Node Output
+        │
+        ▼  (AcceptsUpstreamInput = true  AND  ExcludeFromInputMapping = false)
+┌───────────────────────────────┐
+│         Node Execution        │
+│                               │
+│  [INPUT FIELDS]               │  ← static config + expression eval + upstream mapping
+│  [OUTPUT FIELDS]              │  ← set by executor after running
+└───────────────────────────────┘
+        │
+        ├── Downstream nodes   (EmitsToDownstream = true  AND  ExcludeFromOutputMapping = false)
+        │
+        └── Workflow Memory    (PersistsToMemory = true)</code></pre>
+
+  <div class="callout danger">
+    <strong>Contradictory combinations to avoid</strong>
+    <ul>
+      <li><code>AcceptsUpstreamInput: true</code> on a credential field — allows upstream to overwrite the vault reference. Always <code>false</code> for credentials.</li>
+      <li><code>EmitsToDownstream: true</code> + <code>ExcludeFromOutputMapping: true</code> — field says it emits but is blocked from the output bag. Set <code>ExcludeFromOutputMapping: false</code> for output fields.</li>
+    </ul>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-expression-policies.html">← Expression Policies</a>
+    <a href="06-hil-policies.html">Next: HIL Policies →</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

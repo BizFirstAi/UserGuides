@@ -1,0 +1,213 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suspension Policies — Node Policies — BizFirstAI</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Node Policies</h1></div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-manifest-types.html">Manifest Types</a>
+  <div class="section-label">Policies</div>
+  <a href="03-field-descriptors.html">Field Descriptors</a>
+  <a href="04-expression-policies.html">Expression Policies</a>
+  <a href="05-dataflow-policies.html">DataFlow Policies</a>
+  <a href="06-hil-policies.html">HIL Policies</a>
+  <a href="07-security-policies.html">Security Policies</a>
+  <a href="08-suspension-policies.html" class="active">Suspension Policies</a>
+  <div class="section-label">Reference</div>
+  <a href="09-use-cases.html">Developer Use Cases</a>
+  <a href="10-business-cases.html">Business Cases</a>
+  <a href="11-quick-reference.html">Quick Reference</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Policy Reference</div>
+    <h1>Suspension Policies</h1>
+    <p class="lead">
+      A <code>SuspensionPolicy</code> is a node-level policy that controls how long the node
+      waits, when it times out, how it escalates, and how it reminds actors — for nodes that
+      suspend workflow execution and wait for human response.
+    </p>
+  </div>
+
+  <div class="callout info">
+    <strong>Node-level, not field-level</strong>
+    Unlike the other four policies, <code>SuspensionPolicy</code> is set on the manifest itself
+    (not on individual field descriptors) and applies to the entire node's wait behaviour.
+  </div>
+
+  <h2>Structure</h2>
+  <pre><code>public sealed class SuspensionPolicy
+{
+    public int             TimeoutSeconds               { get; init; } = 0;
+    public string          TimeoutPortKey               { get; init; } = string.Empty;
+    public TimeoutBehavior TimeoutBehavior              { get; init; } = TimeoutBehavior.AbsoluteDeadline;
+    public int[]           ReminderIntervalSeconds      { get; init; } = Array.Empty&lt;int&gt;();
+    public int             SlaThresholdSeconds          { get; init; } = 0;
+    public bool            EmitSlaBreachEvent           { get; init; } = false;
+    public bool            AllowAdminForceComplete      { get; init; } = false;
+    public bool            CapturePreSuspensionSnapshot { get; init; } = false;
+}</code></pre>
+
+  <h2>TimeoutSeconds</h2>
+  <p>
+    Maximum seconds the node may remain suspended before the timeout action triggers.
+    <code>0</code> means no timeout (waits indefinitely).
+  </p>
+  <table>
+    <thead><tr><th>Duration</th><th>Seconds</th></tr></thead>
+    <tbody>
+      <tr><td>1 hour</td><td>3600</td></tr>
+      <tr><td>12 hours</td><td>43200</td></tr>
+      <tr><td>24 hours</td><td>86400</td></tr>
+      <tr><td>48 hours</td><td>172800</td></tr>
+      <tr><td>7 days</td><td>604800</td></tr>
+    </tbody>
+  </table>
+
+  <h2>TimeoutPortKey</h2>
+  <p>
+    The output port the node routes to when the timeout fires. Must be defined in the node's
+    port configuration.
+  </p>
+  <pre><code>// Output ports
+"approved"  → approval accepted path
+"rejected"  → approval rejected path
+"expired"   → timeout / escalation path  ← TimeoutPortKey points here</code></pre>
+  <p>Common values: <code>"expired"</code>, <code>"timeout"</code>, <code>"escalated"</code>.</p>
+
+  <h2>TimeoutBehavior</h2>
+
+  <h3><span class="pill pill-blue">AbsoluteDeadline</span></h3>
+  <p>The timeout clock starts <strong>at the moment of suspension</strong>. The node has exactly <code>TimeoutSeconds</code> from suspension regardless of SLA configuration.</p>
+  <p><strong>Use when:</strong> There is a hard business deadline that counts from task creation.</p>
+  <pre><code>// Timeline
+T+0h   Node suspends          ← Clock starts
+T+24h  SLA breach event       (if slaThresholdSeconds = 86400)
+T+48h  Timeout fires          ← TimeoutPortKey route</code></pre>
+
+  <h3><span class="pill pill-purple">AfterSlaThreshold</span></h3>
+  <p>The timeout clock starts <strong>after the SLA threshold has been breached</strong>. The actor has a grace period equal to <code>SlaThresholdSeconds</code> before the timeout countdown begins.</p>
+  <p><strong>Use when:</strong> There is a soft SLA commitment and a hard cutoff only after the SLA is missed.</p>
+  <pre><code>// Timeline (SlaThreshold = 12h, TimeoutSeconds = 24h)
+T+0h   Node suspends
+T+12h  SLA breach event       ← Countdown starts here
+T+36h  Timeout fires          ← T+12h + 24h</code></pre>
+
+  <h2>ReminderIntervalSeconds</h2>
+  <p>
+    Array of intervals (in seconds) at which reminder notifications are sent to the assigned actor.
+    Intervals are relative to when the countdown starts (depends on <code>TimeoutBehavior</code>).
+    Set to an empty array for no reminders.
+  </p>
+  <pre><code>"reminderIntervalSeconds": [86400, 43200, 3600]
+// Reminders at 24h, 12h, and 1h before timeout (AbsoluteDeadline)
+
+"reminderIntervalSeconds": [43200, 7200]
+// Reminders at 12h and 2h after SLA breach (AfterSlaThreshold)</code></pre>
+
+  <h2>SlaThresholdSeconds</h2>
+  <p>Seconds after which the suspension is an SLA breach. Triggers <code>EmitSlaBreachEvent</code> and starts the <code>AfterSlaThreshold</code> countdown. Set to <code>0</code> for no SLA monitoring.</p>
+  <p><strong>SLA vs Timeout:</strong> SLA = the commitment ("should be done in X hours"). Timeout = the hard cutoff ("if not done, we move on"). Typically <code>SlaThresholdSeconds &lt; TimeoutSeconds</code>.</p>
+
+  <h2>EmitSlaBreachEvent</h2>
+  <p>When <code>true</code>, emits a domain event when <code>SlaThresholdSeconds</code> is exceeded. Consumed by monitoring dashboards, SLA compliance reports, and automatic escalation workflows.</p>
+
+  <h2>AllowAdminForceComplete</h2>
+  <table>
+    <thead><tr><th>Set to true</th><th>Set to false</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Approval nodes — admin override is an acceptable escape hatch when a vote is stalled</td>
+        <td>Data collection forms — actual human data is required; admin cannot substitute the submission</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>CapturePreSuspensionSnapshot</h2>
+  <p>
+    When <code>true</code>, captures a complete snapshot of workflow state immediately before
+    suspension — for audit trail, replay capability, and debugging. Disable for high-volume
+    workflows where storage cost matters.
+  </p>
+
+  <h2>Complete Examples</h2>
+
+  <h3>High-stakes approval — hard 48h deadline</h3>
+  <pre><code>suspensionPolicy: new SuspensionPolicy
+{
+    TimeoutSeconds               = 172800,   // 48 hours
+    TimeoutPortKey               = "expired",
+    TimeoutBehavior              = TimeoutBehavior.AbsoluteDeadline,
+    ReminderIntervalSeconds      = new[] { 86400, 43200, 3600 },  // 24h, 12h, 1h before expiry
+    SlaThresholdSeconds          = 86400,    // 24h SLA
+    EmitSlaBreachEvent           = true,
+    AllowAdminForceComplete      = true,
+    CapturePreSuspensionSnapshot = true
+}</code></pre>
+
+  <h3>Data collection form — SLA + grace period</h3>
+  <pre><code>suspensionPolicy: new SuspensionPolicy
+{
+    TimeoutSeconds               = 86400,    // 24h after SLA breach
+    TimeoutPortKey               = "expired",
+    TimeoutBehavior              = TimeoutBehavior.AfterSlaThreshold,
+    ReminderIntervalSeconds      = new[] { 43200, 7200 },  // 12h and 2h after breach
+    SlaThresholdSeconds          = 43200,    // 12h SLA
+    EmitSlaBreachEvent           = true,
+    AllowAdminForceComplete      = false,    // actual form data required
+    CapturePreSuspensionSnapshot = true
+}</code></pre>
+
+  <h3>No suspension (action node)</h3>
+  <pre><code>NodeExecutorManifest.From(
+    ProcessElementTypeCode,
+    fields: new[] { ... },
+    suspensionPolicy: null   // executes immediately, no waiting
+)</code></pre>
+
+  <h2>Suspension Infrastructure Services</h2>
+  <table>
+    <thead><tr><th>Service</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>SuspensionPolicyOrchestrator</code></td><td>Reads the policy and registers all timers/events at suspension time</td></tr>
+      <tr><td><code>ISuspensionTimerService</code></td><td>Manages timeout and reminder timers</td></tr>
+      <tr><td><code>ISuspensionReminderService</code></td><td>Delivers reminder notifications to actors</td></tr>
+      <tr><td><code>ISuspensionSlaMonitor</code></td><td>Tracks SLA thresholds and emits breach events</td></tr>
+    </tbody>
+  </table>
+  <p>The node executor does not call these directly — it calls <code>SuspendAsync()</code> on <code>BaseNodeExecutor</code>, which triggers the orchestrator.</p>
+
+  <div class="page-nav">
+    <a href="07-security-policies.html">← Security Policies</a>
+    <a href="09-use-cases.html">Next: Developer Use Cases →</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

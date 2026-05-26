@@ -1,0 +1,229 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL Continuation — WhatsApp</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style></head>
+<body><div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<div class="layout">
+
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst AI</h2>
+    <h1>HIL Continuation</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-building-a-channel.html">Building a Channel</a>
+  <div class="section-label">Channels</div>
+  <a href="03-slack.html" class="ch-slack">Slack</a>
+  <a href="04-whatsapp.html" class="ch-whatsapp active">WhatsApp</a>
+  <a href="05-facebook.html" class="ch-facebook">Facebook Messenger</a>
+  <a href="06-instagram.html" class="ch-instagram">Instagram</a>
+  <a href="07-telegram.html" class="ch-telegram">Telegram</a>
+  <a href="08-teams.html" class="ch-teams">Microsoft Teams</a>
+  <a href="09-email.html" class="ch-email">Email</a>
+  <a href="10-sms.html" class="ch-sms">SMS / Twilio</a>
+  <a href="11-discord.html" class="ch-discord">Discord</a>
+  <a href="12-line.html" class="ch-line">LINE</a>
+
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="channel-tag ch-tag-whatsapp">WhatsApp</div>
+    <h1>WhatsApp HIL Channel</h1>
+    <p class="lead">
+      WhatsApp Business Platform supports interactive messages with reply buttons and list
+      menus. The 256-character button payload limit requires a correlation table strategy
+      rather than embedding the full <code>ExecutionResId</code> directly.
+    </p>
+  </div>
+
+  <h2>WhatsApp Interactive Message Types</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Max buttons</th><th>Best for</th></tr></thead>
+    <tbody>
+      <tr><td>Reply Buttons (<code>button</code>)</td><td>3 buttons</td><td>Approve / Reject / Request Changes</td></tr>
+      <tr><td>List Message (<code>list</code>)</td><td>10 rows across sections</td><td>Multi-option selections, category choices</td></tr>
+      <tr><td>Template Message</td><td>3 quick-reply buttons</td><td>First contact — required for outbound messages to new users</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Template requirement for first contact</strong>
+    WhatsApp only allows free-form messages within a 24-hour customer service window.
+    If the workflow reaches the HIL node more than 24 hours after the human last messaged
+    your number — or if this is the first message ever — you must use a pre-approved
+    <strong>template message</strong>. Register a template in the Meta Business Manager
+    for each HIL scenario.
+  </div>
+
+  <h2>Correlation Key Strategy: Short Token Table</h2>
+  <p>
+    WhatsApp button payloads are limited to 256 characters, but a GUID + any prefix
+    already uses 36+ characters. The safe approach is a <strong>correlation table</strong>
+    mapping a short opaque token to the <code>ExecutionResId</code>.
+  </p>
+  <pre><code>// HilCorrelation table (created by your Social ExecutionNodes project)
+// Columns: Token (varchar 16), ExecutionResId (uniqueidentifier), ExpiresAt, TenantId
+
+// Generate a short token
+string token = GenerateShortToken(); // e.g. "A7xQ2mNp" (8 chars)
+
+// Store it
+await _hilCorrelationStore.StoreAsync(token, resId, expiresAt: DateTime.UtcNow.AddDays(3));
+
+// Embed token in button payload (well within 256-char limit)
+"payload": "hil:A7xQ2mNp:approve"
+"payload": "hil:A7xQ2mNp:reject"</code></pre>
+
+  <h2>Building the Interactive Message</h2>
+  <pre><code>private object BuildWhatsAppMessage(
+    IReadOnlyList&lt;ResolvedHilField&gt; fields,
+    string token,
+    string recipientPhone)
+{
+    var bodyLines = new List&lt;string&gt; { "*Approval Required*\n" };
+
+    foreach (var field in fields)
+    {
+        if (field.DisplayMode == HilDisplayMode.Concealed) continue;
+
+        string val = field.DisplayMode == HilDisplayMode.ReadableMasked
+            ? "••••••••"
+            : field.CurrentValue?.ToString() ?? "—";
+
+        string editMarker = field.InputMode != HilInputMode.Locked ? " ✏️" : "";
+        bodyLines.Add($"*{field.Label}:*{editMarker} {val}");
+        if (!string.IsNullOrEmpty(field.Description))
+            bodyLines.Add($"_{field.Description}_");
+        bodyLines.Add("");
+    }
+
+    return new {
+        messaging_product = "whatsapp",
+        recipient_type    = "individual",
+        to                = recipientPhone,
+        type              = "interactive",
+        interactive = new {
+            type = "button",
+            body = new { text = string.Join("\n", bodyLines) },
+            action = new {
+                buttons = new[] {
+                    new { type = "reply", reply = new { id = $"hil:{token}:approve", title = "Approve ✅" } },
+                    new { type = "reply", reply = new { id = $"hil:{token}:reject",  title = "Reject ❌"  } }
+                }
+            }
+        }
+    };
+}</code></pre>
+
+  <h2>Sending the Message</h2>
+  <pre><code>// In OnProcess:
+string token = GenerateShortToken();
+await _correlationStore.StoreAsync(token, resId, expiresAt: DateTime.UtcNow.AddDays(3));
+
+var message = BuildWhatsAppMessage(hilFields, token, settings.RecipientPhone);
+await _whatsAppClient.SendMessageAsync(message, cancellationToken);
+
+return NodeExecutionResult.Suspend("waiting");</code></pre>
+
+  <h2>Webhook Handler</h2>
+  <p>
+    WhatsApp sends events to your registered webhook URL. Button reply events arrive with
+    <code>type = "interactive"</code> and the reply payload in <code>button_reply.id</code>.
+  </p>
+  <pre><code>[HttpPost("webhooks/whatsapp")]
+public async Task&lt;IActionResult&gt; HandleWhatsApp([FromBody] WhatsAppWebhookPayload payload)
+{
+    // 1. Verify webhook token (GET challenge) or signature (POST events)
+    if (!_whatsAppVerifier.Verify(Request, payload))
+        return Unauthorized();
+
+    foreach (var entry in payload.Entry)
+    foreach (var change in entry.Changes)
+    foreach (var message in change.Value.Messages ?? [])
+    {
+        if (message.Type != "interactive") continue;
+
+        var buttonId = message.Interactive.ButtonReply?.Id;
+        if (buttonId == null || !buttonId.StartsWith("hil:")) continue;
+
+        // Parse "hil:{token}:{action}"
+        var parts  = buttonId.Split(':');
+        var token  = parts[1];
+        var action = parts[2]; // "approve" or "reject"
+
+        // Look up the ExecutionResId
+        var resId = await _correlationStore.ResolveAsync(token);
+        if (resId == null) continue; // expired or not found
+
+        var responseData = new Dictionary&lt;string, object&gt;
+        {
+            ["approved"]      = action == "approve",
+            ["respondedBy"]   = message.From,
+            ["respondedAt"]   = DateTime.UtcNow
+        };
+
+        _ = Task.Run(() => _continuationOrchestrator.ContinueAsync(resId, responseData));
+    }
+
+    return Ok();
+}</code></pre>
+
+  <h2>Handling Editable Fields via Text Reply</h2>
+  <p>
+    WhatsApp has no inline text input on interactive messages. For fields requiring human-provided
+    values (<code>RequiredFromHuman</code>), use a <strong>two-step flow</strong>:
+  </p>
+  <ol>
+    <li>Send the interactive message with an "Edit Values" button.</li>
+    <li>When the human taps "Edit Values", send a follow-up text message prompting for each field in sequence.</li>
+    <li>Track the conversation state in a session table (keyed by phone number + token).</li>
+    <li>When all fields are collected, call <code>ContinueAsync</code>.</li>
+  </ol>
+  <pre><code>// Session state table
+// Columns: Phone, Token, PendingFieldKey, CollectedValues (JSON), CreatedAt</code></pre>
+
+  <h2>Required Configuration</h2>
+  <table>
+    <thead><tr><th>Config Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td><code>PhoneNumberId</code></td><td>WhatsApp Business phone number ID (from Meta)</td></tr>
+      <tr><td><code>AccessToken</code></td><td><code>@{secret:WhatsAppAccessToken}</code></td></tr>
+      <tr><td><code>WebhookVerifyToken</code></td><td><code>@{secret:WhatsAppWebhookVerifyToken}</code></td></tr>
+      <tr><td><code>RecipientPhone</code></td><td>Runtime field — <code>@{input:phoneNumber}</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Token expiry</strong>
+    Always set an expiry on correlation tokens. If a human never responds, the token and
+    the suspended execution should be cleaned up by a background job. Match the token
+    expiry to your workflow's SLA for the approval step.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-slack.html">← Slack</a>
+    <a href="05-facebook.html">Next: Facebook Messenger →</a>
+  </div>
+</main>
+
+</div>
+<script src="/search.js"></script></body>
+</html>

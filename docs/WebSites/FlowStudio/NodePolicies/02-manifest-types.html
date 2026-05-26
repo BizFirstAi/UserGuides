@@ -1,0 +1,202 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manifest Types — Node Policies — BizFirstAI</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Node Policies</h1></div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-manifest-types.html" class="active">Manifest Types</a>
+  <div class="section-label">Policies</div>
+  <a href="03-field-descriptors.html">Field Descriptors</a>
+  <a href="04-expression-policies.html">Expression Policies</a>
+  <a href="05-dataflow-policies.html">DataFlow Policies</a>
+  <a href="06-hil-policies.html">HIL Policies</a>
+  <a href="07-security-policies.html">Security Policies</a>
+  <a href="08-suspension-policies.html">Suspension Policies</a>
+  <div class="section-label">Reference</div>
+  <a href="09-use-cases.html">Developer Use Cases</a>
+  <a href="10-business-cases.html">Business Cases</a>
+  <a href="11-quick-reference.html">Quick Reference</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Core Concept</div>
+    <h1>Manifest Types</h1>
+    <p class="lead">
+      A <code>NodeExecutorManifest</code> comes in two forms: <strong>Empty</strong> (a minimal
+      placeholder) and <strong>From</strong> (a full field + suspension declaration). Knowing
+      which to use and when is the first decision when adding policy support to a node.
+    </p>
+  </div>
+
+  <h2>Empty Manifest</h2>
+  <pre><code>NodeExecutorManifest.Empty(ProcessElementTypeCode)</code></pre>
+  <p>
+    An empty manifest tells the platform: <em>"This node exists and is registered, but has no
+    field policy declarations. Apply defaults for all cross-cutting concerns."</em>
+  </p>
+
+  <h3>When to use Empty</h3>
+  <ul>
+    <li>The node has no fields requiring expression evaluation, data routing, HIL, or masking</li>
+    <li>The node is a simple action — no human interaction, no sensitive data</li>
+    <li>You are writing a new node and the full manifest is not yet designed (use Empty as a placeholder)</li>
+  </ul>
+
+  <h3>What the platform does with Empty</h3>
+  <table>
+    <thead><tr><th>Concern</th><th>Behaviour with Empty</th></tr></thead>
+    <tbody>
+      <tr><td>Expression evaluation</td><td>No field-level evaluation occurs</td></tr>
+      <tr><td>Data flow</td><td>Input/output mapping skipped; node receives raw data</td></tr>
+      <tr><td>HIL rendering</td><td>No fields sent to human inbox</td></tr>
+      <tr><td>Security masking</td><td>No masking applied</td></tr>
+      <tr><td>Suspension</td><td>No timers registered</td></tr>
+    </tbody>
+  </table>
+
+  <pre><code>// StopWorkflow node — no fields, just halts execution
+protected override NodeExecutorManifest? GetNodeExecutorManifest()
+    => NodeExecutorManifest.Empty(ProcessElementTypeCode);</code></pre>
+
+  <h2>Full Manifest (From)</h2>
+  <pre><code>NodeExecutorManifest.From(
+    ProcessElementTypeCode,
+    fields: new[] { /* NodeFieldDescriptor[] */ },
+    suspensionPolicy: null  // or: new SuspensionPolicy { ... }
+)</code></pre>
+  <p>
+    A full manifest declares every field the node cares about and, optionally, a
+    <code>SuspensionPolicy</code> if the node pauses and waits for human input.
+  </p>
+
+  <h3>When to use From</h3>
+  <ul>
+    <li>The node has fields requiring evaluation, routing, HIL display, or security handling</li>
+    <li>The node suspends and waits for human input (approval, form, chat)</li>
+    <li>You need to control which fields a human reviewer sees and what they can do</li>
+  </ul>
+
+  <h3>Full example</h3>
+  <pre><code>protected override NodeExecutorManifest? GetNodeExecutorManifest()
+    => NodeExecutorManifest.From(
+        nodeTypeName: ProcessElementTypeCode,
+
+        fields: new[]
+        {
+            new NodeFieldDescriptor
+            {
+                FieldId          = "to",
+                Description      = "Recipient address",
+                ExpressionPolicy = new ExpressionPolicy
+                {
+                    EvaluationStage = EvaluationStage.AtInputReady,
+                    EvaluatorKind   = EvaluatorKind.Template
+                },
+                DataFlowPolicy = new DataFlowPolicy
+                {
+                    AcceptsUpstreamInput     = true,
+                    ExcludeFromOutputMapping = true
+                },
+                HilPolicy = new HilPolicy
+                {
+                    SendToHil   = true,
+                    DisplayMode = HilDisplayMode.ReadableContext,
+                    InputMode   = HilInputMode.EditableOptional,
+                    Label       = "To"
+                },
+                SecurityPolicy = new SecurityPolicy()
+            }
+            // ... more descriptors
+        },
+
+        suspensionPolicy: new SuspensionPolicy
+        {
+            TimeoutSeconds  = 86400,
+            TimeoutPortKey  = "expired",
+            TimeoutBehavior = TimeoutBehavior.AbsoluteDeadline
+        }
+        // or: suspensionPolicy: null
+    );</code></pre>
+
+  <h2>Extension JSON (Database Overrides)</h2>
+  <p>
+    Extension JSON does not use "empty" vs "full" — it just lists the fields to add or override.
+    The resolver merges JSON fields with the code manifest; only the properties present in JSON are
+    overridden. Everything else keeps its code-defined values.
+  </p>
+  <pre><code>{
+  "nodeTypeName": "email-smtp",
+  "suspensionPolicy": null,
+  "fields": [
+    {
+      "id": "body",
+      "hilPolicy": {
+        "sendToHil": true,
+        "inputMode": "RequiredFromHuman",
+        "label": "Email Body",
+        "description": "Compliance requires you to confirm every email body."
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>Registration Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>DI container loads executor assembly</h4><p><code>AddSmtpNodeExecutor()</code> or <code>AddExecutorPluginsFromAssembly()</code> registers the executor.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4><code>GetNodeExecutorManifest()</code> invoked</h4><p>Called once per executor type. Result stored in <code>NodeFieldManifestRegistry</code> keyed by node type name.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Resolver merges at execution time</h4><p><code>NodeFieldManifestResolver.GetManifest(nodeTypeName, extensionJson)</code> — code manifest + DB JSON → final resolved manifest.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body"><h4>Platform subsystems read the merged result</h4><p>Expression evaluator, data flow mapper, HIL renderer, security layer, and suspension orchestrator all read from the final manifest.</p></div>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <strong>Null return</strong>
+    If <code>GetNodeExecutorManifest()</code> returns <code>null</code> the platform treats it identically to <code>Empty</code>. The base class default returns <code>null</code>. Always return <code>Empty(ProcessElementTypeCode)</code> explicitly to make intent clear.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-overview.html">← Overview</a>
+    <a href="03-field-descriptors.html">Next: Field Descriptors →</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>
