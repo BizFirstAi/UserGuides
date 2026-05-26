@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var BASE = '/UserGuides';
+  var BASE = '';
 
   var css = [
     '#bfai-search-btn{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;',
