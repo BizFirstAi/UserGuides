@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Policy Evaluation — IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">IAM Overview</a>
+  <a href="01-roles.html">Roles</a>
+  <a href="02-permissions.html">Permissions</a>
+  <a href="03-policy-evaluation.html" class="active">Policy Evaluation</a>
+  <a href="04-resource-policies.html">Resource-Level Policies</a>
+  <a href="05-groups.html">User Groups</a>
+  <a href="06-runtime-checks.html">Runtime Permission Checks</a>
+  <a href="07-capability-integration.html">Integration with Node Capabilities</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Policy Evaluation</h1>
+    <p class="lead">How the IAM engine evaluates a permission check — the six-step pipeline from identity resolution to final allow/deny decision, with caching and audit logging at each stage.</p>
+  </div>
+
+  <h2>IIAMPolicyEngine</h2>
+  <pre><code>namespace BizFirst.Ai.ProcessSecurity.Extended.Domain;
+
+public interface IIAMPolicyEngine
+{
+    /// &lt;summary&gt;
+    /// Evaluate whether a subject can perform an action on a resource.
+    /// Subject: token claims principal. Resource: optional resource identifier.
+    /// Returns Allow or Deny — never throws on evaluation failure (returns Deny).
+    /// &lt;/summary&gt;
+    Task&lt;PolicyDecision&gt; EvaluateAsync(
+        PolicyEvaluationRequest request,
+        CancellationToken ct = default);
+}
+
+public record PolicyEvaluationRequest
+{
+    public required ClaimsPrincipal Subject { get; init; }
+    public required string Permission       { get; init; }  // e.g., "workflow.execute"
+    public string? ResourceId               { get; init; }  // optional resource scoping
+    public string? ResourceType             { get; init; }  // e.g., "workflow", "form"
+    public IReadOnlyDictionary&lt;string, object&gt; Context { get; init; } = new Dictionary&lt;string, object&gt;();
+}
+
+public record PolicyDecision
+{
+    public required bool Allow              { get; init; }
+    public string? Reason                   { get; init; }  // why the decision was made
+    public string? DecisionSource           { get; init; }  // which layer made the decision
+}</code></pre>
+
+  <h2>Evaluation Pipeline</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Identity Resolution</h4>
+        <p>Extract <code>UserId</code>, <code>TenantId</code>, and base claims from the <code>ClaimsPrincipal</code> using <code>IIdentityProvider</code>. If any required claim is missing: <strong>DENY</strong> immediately.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Membership Resolution</h4>
+        <p><code>IMembershipProvider.GetUserGroupsAsync()</code> returns the user's current role IDs. These are resolved from the JWT claim or the identity provider's API. If this call fails, the cached result is used; if no cache exists: <strong>DENY</strong>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Permission Expansion</h4>
+        <p>For each role, look up the role's permission set. Expand wildcard permissions (<code>workflow.*</code>). Build the effective permission set as the union of all role permissions plus explicit user permissions from <code>IPermissionProvider</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Permission Match</h4>
+        <p>Check if the requested permission is in the effective set. Exact match first; then wildcard match (<code>workflow.*</code> covers <code>workflow.design</code>). If matched: tentative <strong>ALLOW</strong>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">5</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Resource Policy Check</h4>
+        <p>If a <code>ResourceId</code> is provided, look up resource-level policies. A resource-level DENY overrides the tentative ALLOW. A resource-level ALLOW on an otherwise denied permission still requires the base role permission — resource policies cannot grant new permissions, only restrict existing ones.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">6</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Access Decision Provider</h4>
+        <p><code>IAccessDecisionProvider.CanUserAccessAsync(userId, nodeId)</code> — optional final gate. A <code>false</code> response forces <strong>DENY</strong> even if previous steps returned ALLOW. A <code>null</code> response means "no opinion" — don't change the current decision.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Deny-by-Default Principle</h2>
+  <p>The policy engine is <strong>deny-by-default</strong>. A permission check returns ALLOW only if every evaluation step either returns ALLOW or abstains. Any step returning DENY is final.</p>
+  <pre><code>// Evaluation outcomes summary
+Step 1 — Missing claims         → DENY (immediately, no further evaluation)
+Step 2 — Membership failure     → DENY (no roles = no permissions)
+Step 3 — Permission not in set  → DENY (no role grants this permission)
+Step 4 — Wildcard match found   → tentative ALLOW
+Step 5 — Resource DENY policy   → DENY (overrides previous ALLOW)
+Step 6 — AccessDecision false   → DENY (final override)
+Step 6 — AccessDecision null    → previous decision stands</code></pre>
+
+  <h2>Caching Strategy</h2>
+  <table>
+    <thead>
+      <tr><th>Cache Level</th><th>TTL</th><th>Key</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Membership (roles)</td><td>5 min (token-based)</td><td>UserId + TenantId</td></tr>
+      <tr><td>Permission sets</td><td>10 min (in-memory)</td><td>RoleId</td></tr>
+      <tr><td>Resource policies</td><td>2 min (distributed)</td><td>ResourceType + ResourceId</td></tr>
+      <tr><td>Policy decisions</td><td>Not cached</td><td>— (always fresh)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Audit Logging</h2>
+  <p>Every non-trivial policy evaluation is written to the security audit log. This includes the decision, the reason, and the context:</p>
+  <pre><code>// Audit log entry for a policy evaluation
+{
+  "eventType": "PolicyEvaluated",
+  "timestamp": "2026-05-25T10:00:00Z",
+  "userId": "user-guid",
+  "tenantId": "tenant-abc",
+  "permission": "workflow.execute",
+  "resourceId": "workflow-guid",
+  "decision": "Allow",
+  "decisionSource": "RolePermission",
+  "reason": "Role 'manager' grants 'workflow.execute'",
+  "rolesEvaluated": ["manager", "finance-user"],
+  "durationMs": 12
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="02-permissions.html">&#8592; Permissions</a>
+    <a href="04-resource-policies.html">Next: Resource-Level Policies &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

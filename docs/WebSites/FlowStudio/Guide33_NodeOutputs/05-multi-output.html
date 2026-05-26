@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parallel Outputs (Fan-Out) — Guide33_NodeOutputs | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Outputs</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-output-object.html"><i class="fa-solid fa-box"></i> The Output Object</a>
+  <a href="02-accessing-output.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Accessing Output</a>
+  <a href="03-output-ports.html"><i class="fa-solid fa-plug"></i> Output Ports</a>
+  <a href="04-conditional-ports.html"><i class="fa-solid fa-code-branch"></i> Conditional Ports</a>
+  <a href="05-multi-output.html" class="active"><i class="fa-solid fa-share-nodes"></i> Parallel Outputs</a>
+  <a href="06-naming.html"><i class="fa-solid fa-tag"></i> NodeId Naming</a>
+  <a href="07-no-output.html"><i class="fa-solid fa-ban"></i> Nodes With No Output</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Parallel Outputs (Fan-Out)</h1>
+    <p class="lead">Connecting one node's output port to multiple downstream nodes — all branches receive the same output data and execute in parallel.</p>
+  </div>
+
+  <h2>What Is Fan-Out?</h2>
+  <p>Fan-out occurs when a single output port has multiple edges leading to different downstream nodes. The engine fires all those edges simultaneously, launching all target nodes in parallel. Each downstream node receives the same output data from the source node via <code>$output.{sourceId}</code>.</p>
+
+  <pre><code>
+             ┌─────────────┐
+             │  FetchOrder │
+             └──────┬──────┘
+                    │ (main port — 3 edges)
+          ┌─────────┼─────────┐
+          ▼         ▼         ▼
+   ┌──────────┐ ┌──────────┐ ┌──────────┐
+   │SendEmail │ │LogAudit  │ │UpdateERP │
+   └──────────┘ └──────────┘ └──────────┘
+
+Each node reads: $output.FetchOrder.orderId, .total, etc.
+  </code></pre>
+
+  <h2>All Branches Get the Same Data</h2>
+  <p>The output object is written once to <code>ExecutionMemory</code>. All parallel branches read from the same location — there is no duplication of data, and no branch can mutate another branch's view of the output.</p>
+
+  <h2>Scheduling Model</h2>
+  <p>The engine uses a task queue to schedule parallel nodes. When fan-out occurs:</p>
+  <ol>
+    <li>The source node completes and its output is written to memory</li>
+    <li>All edge targets are enqueued as independent execution tasks</li>
+    <li>The task runner picks them up concurrently (up to the configured parallelism limit)</li>
+    <li>Each branch executes independently with its own stack frame, but shared <code>ExecutionMemory</code></li>
+  </ol>
+
+  <h2>Joining Parallel Branches</h2>
+  <p>To synchronize after fan-out, use a <strong>Join Gateway</strong> node. It waits until all incoming branches have completed before firing its output port. The join gateway merges all branch outputs into <code>$output.joinGateway.branches</code>:</p>
+  <pre><code class="language-javascript">// After a join gateway that waited for SendEmail, LogAudit, UpdateERP:
+$output.joinGateway.branches.SendEmail.success   // true/false
+$output.joinGateway.branches.LogAudit.auditId    // "audit-xyz"
+$output.joinGateway.branches.UpdateERP.erpRef    // "erp-001"</code></pre>
+
+  <h2>Parallel Fan-Out vs. Loop</h2>
+  <table>
+    <thead><tr><th>Pattern</th><th>Use When</th><th>Node</th></tr></thead>
+    <tbody>
+      <tr><td>Fan-out</td><td>Fixed number of parallel tasks known at design time</td><td>Multiple edges from one port</td></tr>
+      <tr><td>Loop (iteration)</td><td>Dynamic number of items to process (array)</td><td>ForEach / Loop node</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-warning">
+    <strong>Shared memory caution:</strong> Parallel branches share <code>ExecutionMemory</code>. If two branches both write to the same variable (e.g., via a SetVariable node with the same key), a race condition may occur. Design branches to write to distinct variable names or use the Join Gateway to merge results safely.
+  </div>
+
+  <h2>Fan-Out with Edge Conditions</h2>
+  <p>You can combine fan-out with edge conditions to create selective parallel branches. Some downstream nodes only activate if their edge condition is true:</p>
+  <pre><code class="language-javascript">// Edge 1: always fires (no condition)
+// Edge 2: only if order total > 1000
+$output.FetchOrder.total > 1000
+// Edge 3: only if customer is VIP
+$output.FetchOrder.customerTier === "vip"</code></pre>
+
+  <div class="page-nav">
+    <a href="04-conditional-ports.html">&#8592; Conditional Ports</a>
+    <a href="06-naming.html">Next: NodeId Naming &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

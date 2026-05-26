@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Instrumentation Layer — Physical Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Physical Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Architecture Overview</a>
+  <a href="01-instrumentation.html" class="active">Instrumentation Layer</a>
+  <a href="02-collection.html">Collection Layer</a>
+  <a href="03-storage.html">Storage Layer</a>
+  <a href="04-visualization.html">Visualization Layer</a>
+  <a href="05-data-flow.html">Data Flow</a>
+  <a href="06-network-topology.html">Network Topology</a>
+  <a href="07-sizing.html">Sizing Guidelines</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Instrumentation Layer</h1>
+    <p class="lead">Every BizFirstGO service is pre-instrumented with the OpenTelemetry SDK. This page explains what the SDK captures automatically, what is captured manually, and how telemetry is emitted to the OTel Collector.</p>
+  </div>
+
+  <h2>OpenTelemetry SDK Integration</h2>
+  <p>All BizFirstGO backend services register the OTel SDK during startup via <code>ObservabilityServiceExtensions.AddBizFirstObservability()</code>. This single call configures all three signal types — logs, metrics, and traces — with sensible defaults for the BizFirstGO runtime.</p>
+
+  <pre><code>// ProcessEngine startup — ObservabilityServiceExtensions.cs
+builder.Services.AddBizFirstObservability(options =>
+{
+    options.ServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "processengine";
+    options.OtlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://otel-collector:4317";
+    options.EnableTracing = true;
+    options.EnableMetrics = true;
+    options.EnableLogging = true;
+    options.SamplingRate = 1.0; // 100% in development; adjust for production
+});</code></pre>
+
+  <h2>Auto-Instrumentation Coverage</h2>
+  <p>The OTel SDK automatically instruments the following without any code changes in individual services:</p>
+  <table>
+    <thead>
+      <tr><th>Library / Framework</th><th>What is Captured</th><th>Signal</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ASP.NET Core</td><td>HTTP request duration, status codes, route templates</td><td>Traces + Metrics</td></tr>
+      <tr><td>HttpClient</td><td>Outbound HTTP calls with URL, method, status</td><td>Traces</td></tr>
+      <tr><td>Entity Framework Core</td><td>Database query duration and SQL text (sanitized)</td><td>Traces</td></tr>
+      <tr><td>SQL Client</td><td>Connection pool metrics, query durations</td><td>Metrics + Traces</td></tr>
+      <tr><td>Serilog</td><td>Structured log events forwarded to OTel log pipeline</td><td>Logs</td></tr>
+      <tr><td>gRPC (server + client)</td><td>RPC method duration, status codes</td><td>Traces + Metrics</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Manual Instrumentation — BizFirstGO Specifics</h2>
+  <p>In addition to auto-instrumentation, BizFirstGO adds manual instrumentation at key workflow lifecycle points:</p>
+
+  <h3>Workflow Execution Spans</h3>
+  <p>When <code>ProcessEngine</code> begins executing a workflow, it creates a root span named <code>workflow.execute</code> with the following attributes:</p>
+  <pre><code>Activity span = ActivitySource.StartActivity("workflow.execute");
+span?.SetTag("workflow.id", workflowId);
+span?.SetTag("workflow.name", workflowName);
+span?.SetTag("tenant.id", tenantId);
+span?.SetTag("execution.id", executionId);
+span?.SetTag("triggered_by", triggeredBy); // manual | scheduler | webhook</code></pre>
+
+  <h3>Node Execution Spans</h3>
+  <p>Each node executor creates a child span within the workflow execution span:</p>
+  <pre><code>// BaseNodeExecutor.cs — automatically wraps all node executions
+using var nodeSpan = ActivitySource.StartActivity("node.execute", ActivityKind.Internal, parentContext);
+nodeSpan?.SetTag("node.key", nodeKey);
+nodeSpan?.SetTag("node.type", nodeType);
+nodeSpan?.SetTag("node.name", displayName);
+nodeSpan?.SetTag("execution.id", executionId);</code></pre>
+
+  <h3>HIL Suspension and Resume Spans</h3>
+  <pre><code>// When a workflow suspends for human-in-the-loop
+span?.SetTag("hil.reason", suspensionReason);
+span?.SetTag("hil.actor", assignedActorId);
+span?.AddEvent("hil.suspended", DateTimeOffset.UtcNow);
+
+// When resumed
+span?.AddEvent("hil.resumed", DateTimeOffset.UtcNow, new ActivityTagsCollection {
+    ["hil.duration_seconds"] = (resumedAt - suspendedAt).TotalSeconds,
+    ["hil.outcome"] = outcome // approved | rejected | timeout
+});</code></pre>
+
+  <h2>Structured Log Format</h2>
+  <p>BizFirstGO services emit structured JSON logs. Every log line includes the OTel correlation fields so that logs can be linked to their corresponding traces:</p>
+  <pre><code>{
+  "timestamp": "2026-05-25T14:32:01.123Z",
+  "level": "Information",
+  "message": "Node executed successfully",
+  "service.name": "processengine",
+  "tenant_id": "tenant-abc-123",
+  "workflow_id": "wf-8a4c2f91",
+  "execution_id": "exec-d1e2f3a4",
+  "node_key": "approval-node-01",
+  "node_type": "ApprovalNode",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "spanId": "00f067aa0ba902b7",
+  "duration_ms": 142
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>TraceId Presence is Mandatory</strong>
+    <p>Every log line emitted during a request context must include <code>traceId</code> and <code>spanId</code>. The Serilog OTel sink handles this automatically when trace context is active. If you see log lines without TraceId, it indicates the code is running outside a traced activity context — investigate the call path.</p>
+  </div>
+
+  <h2>Metrics Registered at Startup</h2>
+  <p>The <code>MetricsRegistry</code> class registers all BizFirstGO OTel meters at service startup:</p>
+  <table>
+    <thead>
+      <tr><th>Metric Name</th><th>Type</th><th>Labels</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>bizfirst_workflow_executions_total</code></td><td>Counter</td><td>tenant_id, status</td><td>Total workflow executions</td></tr>
+      <tr><td><code>bizfirst_node_execution_duration_seconds</code></td><td>Histogram</td><td>node_type, tenant_id</td><td>Node execution latency distribution</td></tr>
+      <tr><td><code>bizfirst_hil_pending_count</code></td><td>Gauge</td><td>tenant_id</td><td>Number of HIL tasks awaiting action</td></tr>
+      <tr><td><code>bizfirst_hil_suspension_duration_seconds</code></td><td>Histogram</td><td>tenant_id, outcome</td><td>Time workflow was suspended waiting for human</td></tr>
+      <tr><td><code>bizfirst_edgestream_messages_total</code></td><td>Counter</td><td>topic, tenant_id</td><td>Messages processed by EdgeStream</td></tr>
+      <tr><td><code>bizfirst_active_connections</code></td><td>Gauge</td><td>service</td><td>Active SignalR / WebSocket connections</td></tr>
+    </tbody>
+  </table>
+
+  <h2>OTLP Export Configuration</h2>
+  <p>The SDK exports all three signal types via OTLP/gRPC to the OTel Collector. The endpoint is configured via environment variables — the same configuration pattern works for all BizFirstGO services:</p>
+  <pre><code># Environment variables for OTLP export
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+OTEL_SERVICE_NAME=processengine
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,service.version=3.2.1,tenant.cluster=us-east-1
+
+# Per-signal overrides (optional)
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel-collector:4317
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://otel-collector:4317
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4317</code></pre>
+
+  <div class="callout success">
+    <strong>Zero-Code Instrumentation for Custom Executors</strong>
+    <p>Custom ExecutionNode executors that extend <code>BaseNodeExecutor</code> automatically receive trace spans, duration metrics, and structured logging. You do not need to add any observability code to your executor class unless you want to add custom span attributes or custom metrics beyond the defaults.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Architecture Overview</a>
+    <a href="02-collection.html">Next: Collection Layer &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

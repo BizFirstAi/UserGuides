@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Designing the Data Schema — Application Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Application Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema-design.html" class="active">Designing the Data Schema</a>
+  <a href="02-ai-form-generation.html">AI-Generated Forms</a>
+  <a href="03-crud-workflows.html">CRUD Workflow Patterns</a>
+  <a href="04-data-api.html">Exposing Data as an API</a>
+  <a href="05-data-visualization.html">Data Visualization</a>
+  <a href="06-access-control.html">Access Control</a>
+  <a href="07-example.html">End-to-End Example</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Designing the Data Schema</h1>
+    <p class="lead">How to translate a business requirement into a Data Ocean SQL table schema — from identifying entities and attributes, to adding the standard metadata columns, to creating the migration script.</p>
+  </div>
+
+  <h2>Step 1 — Identify the Business Entity</h2>
+  <p>Start with the question: <em>what real-world thing are we tracking?</em> Each entity becomes a table. Common patterns:</p>
+  <ul>
+    <li><strong>People</strong>: Customer, Employee, Contact, Applicant</li>
+    <li><strong>Events</strong>: Order, Invoice, Appointment, SupportTicket</li>
+    <li><strong>Assets</strong>: Product, InventoryItem, Document, Vehicle</li>
+    <li><strong>Relationships</strong>: CustomerOrder, EmployeeProject (junction tables)</li>
+  </ul>
+  <p>For a lead management application, the primary entity is <strong>Lead</strong>. A lead represents a potential customer who has expressed interest but has not yet been qualified.</p>
+
+  <h2>Step 2 — List the Business Attributes</h2>
+  <p>For each entity, list the attributes that need to be captured. Focus on what the business actually needs, not what the technology allows:</p>
+  <pre><code>-- Lead entity — business attributes identified with stakeholders:
+-- Full name of the lead
+-- Company name
+-- Email address (required, unique per company)
+-- Phone number
+-- Source of the lead (web form, referral, conference, cold outreach)
+-- Lead status (New, Contacted, Qualified, Disqualified, Converted)
+-- Assigned sales representative (user ID)
+-- Estimated deal value
+-- Notes (free text)
+-- Follow-up date</code></pre>
+
+  <h2>Step 3 — Design the SQL Schema</h2>
+  <p>Translate the business attributes into SQL columns with correct types, constraints, and the required Data Ocean metadata columns:</p>
+  <pre><code>CREATE TABLE Lead (
+    -- Primary key
+    LeadId          uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+
+    -- ── Required Data Ocean metadata columns ──
+    TenantId        int              NOT NULL,
+    CreatedAt       datetime2        NOT NULL DEFAULT GETUTCDATE(),
+    UpdatedAt       datetime2        NOT NULL DEFAULT GETUTCDATE(),
+    CreatedBy       nvarchar(200)    NULL,
+    IsDeleted       bit              NOT NULL DEFAULT 0,
+    DeletedAt       datetime2        NULL,
+
+    -- ── Business columns ──
+    FullName        nvarchar(300)    NOT NULL,
+    CompanyName     nvarchar(300)    NULL,
+    Email           nvarchar(300)    NOT NULL,
+    Phone           nvarchar(50)     NULL,
+    Source          nvarchar(100)    NOT NULL DEFAULT 'Unknown',
+    Status          nvarchar(50)     NOT NULL DEFAULT 'New',
+    AssignedToUserId nvarchar(200)   NULL,
+    EstimatedValue  decimal(18,2)    NULL,
+    Notes           nvarchar(max)    NULL,
+    FollowUpDate    date             NULL,
+
+    -- ── Optional AI enhancement columns ──
+    SummaryText         nvarchar(max)    NULL,
+    ClassificationLabel nvarchar(200)    NULL,   -- e.g., "High Value", "Unlikely to Convert"
+    SentimentScore      decimal(5,4)     NULL,
+    EmbeddingRef        nvarchar(500)    NULL,
+    AiProcessedAt       datetime2        NULL,
+    AiModelVersion      nvarchar(100)    NULL,
+
+    -- Constraints
+    CONSTRAINT PK_Lead PRIMARY KEY CLUSTERED (LeadId)
+);
+
+-- ── Indexes ──
+CREATE INDEX IX_Lead_TenantId_Status
+    ON Lead (TenantId, Status, UpdatedAt DESC)
+    INCLUDE (FullName, Email, AssignedToUserId, EstimatedValue)
+    WHERE IsDeleted = 0;
+
+CREATE INDEX IX_Lead_TenantId_AssignedTo
+    ON Lead (TenantId, AssignedToUserId, Status)
+    WHERE IsDeleted = 0;
+
+CREATE INDEX IX_Lead_TenantId_FollowUpDate
+    ON Lead (TenantId, FollowUpDate)
+    WHERE IsDeleted = 0 AND FollowUpDate IS NOT NULL;
+
+CREATE INDEX IX_Lead_TenantId_AiProcessedAt
+    ON Lead (TenantId, AiProcessedAt)
+    WHERE AiProcessedAt IS NULL AND IsDeleted = 0;</code></pre>
+
+  <h2>Schema Design Decisions</h2>
+  <table>
+    <thead>
+      <tr><th>Decision</th><th>Choice Made</th><th>Rationale</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Primary key type</td><td>uniqueidentifier (GUID)</td><td>GUIDs allow distributed ID generation — records created offline or in batch can be merged without collision</td></tr>
+      <tr><td>Primary key default</td><td>NEWSEQUENTIALID()</td><td>Sequential GUIDs avoid clustered index fragmentation (vs. random NEWID())</td></tr>
+      <tr><td>Soft delete</td><td>IsDeleted + DeletedAt</td><td>Data Ocean convention — never physically delete records for audit trail</td></tr>
+      <tr><td>Status column type</td><td>nvarchar(50) with default</td><td>String status is more readable in SQL than integer status codes</td></tr>
+      <tr><td>Notes column type</td><td>nvarchar(max)</td><td>Notes are unbounded in length; nvarchar(max) handles this</td></tr>
+      <tr><td>FollowUpDate type</td><td>date (not datetime2)</td><td>Follow-up dates are day-granularity business data — storing time is unnecessary and confusing</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Add AI Columns From Day One</strong>
+    <p>Even if you do not plan to use AI enrichment immediately, add the AI enhancement columns (<code>SummaryText</code>, <code>ClassificationLabel</code>, <code>EmbeddingRef</code>, <code>AiProcessedAt</code>) to every table from the start. Adding them later requires a schema migration and a backfill job. They are nullable, so they have zero impact on current functionality while keeping the door open for AI features.</p>
+  </div>
+
+  <h2>Reference Data Tables</h2>
+  <p>For columns like <code>Source</code> and <code>Status</code> that have a controlled set of valid values, create a companion reference data table rather than hardcoding values in application logic:</p>
+  <pre><code>CREATE TABLE LeadStatus (
+    LeadStatusId    int              NOT NULL IDENTITY(1,1),
+    TenantId        int              NOT NULL,
+    Code            nvarchar(50)     NOT NULL,
+    Label           nvarchar(200)    NOT NULL,
+    SortOrder       int              NOT NULL DEFAULT 0,
+    IsActive        bit              NOT NULL DEFAULT 1,
+    CONSTRAINT PK_LeadStatus PRIMARY KEY (LeadStatusId),
+    CONSTRAINT UQ_LeadStatus_TenantCode UNIQUE (TenantId, Code)
+);
+
+-- Default values (seed via migration)
+INSERT INTO LeadStatus (TenantId, Code, Label, SortOrder)
+VALUES
+    (0, 'New', 'New Lead', 1),           -- TenantId 0 = system defaults
+    (0, 'Contacted', 'Contacted', 2),
+    (0, 'Qualified', 'Qualified', 3),
+    (0, 'Disqualified', 'Disqualified', 4),
+    (0, 'Converted', 'Converted to Customer', 5);</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-ai-form-generation.html">Next: AI-Generated Forms &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Flow — Physical Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Physical Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Architecture Overview</a>
+  <a href="01-instrumentation.html">Instrumentation Layer</a>
+  <a href="02-collection.html">Collection Layer</a>
+  <a href="03-storage.html">Storage Layer</a>
+  <a href="04-visualization.html">Visualization Layer</a>
+  <a href="05-data-flow.html" class="active">Data Flow</a>
+  <a href="06-network-topology.html">Network Topology</a>
+  <a href="07-sizing.html">Sizing Guidelines</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Data Flow</h1>
+    <p class="lead">A complete walkthrough of how telemetry flows from a BizFirstGO service — through the Collector, into storage — and how an engineer retrieves it in Grafana. Understanding the data flow is essential for diagnosing missing telemetry and optimizing ingestion.</p>
+  </div>
+
+  <h2>Complete Data Flow — Write Path</h2>
+  <p>When a workflow executes, telemetry is produced and flows through the system as follows:</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Service emits telemetry</h4>
+        <p>The BizFirstGO ProcessEngine service begins executing a workflow. The OTel SDK immediately starts a root <code>workflow.execute</code> Activity span. As the workflow progresses, the SDK emits log records (via Serilog), metric samples (counter increments, histogram observations), and span events — all tagged with the same <code>traceId</code>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>SDK batches and exports</h4>
+        <p>The OTel SDK's built-in BatchExporter accumulates telemetry and flushes it every 5 seconds (or when the batch reaches 512 items). It sends the batch to the OTel Collector via OTLP/gRPC on port 4317. For metrics, Prometheus scrapes the <code>/metrics</code> endpoint every 15 seconds instead.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Collector receives and processes</h4>
+        <p>The OTel Collector's OTLP receiver accepts the batch. Processors run in order: memory limiter check → resource attribute enrichment → PII redaction (for logs/traces) → batching. Processing is synchronous within the pipeline.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Fan-out to storage backends</h4>
+        <p>The Collector exports to three backends simultaneously: logs go to Loki via the Loki exporter, metrics go to Prometheus via remote write, and traces go to Tempo via OTLP/gRPC. These exports happen concurrently — a slow Loki write does not delay trace export.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Storage backends index and store</h4>
+        <p>Loki indexes the label set and appends the log line to the appropriate stream chunk. Prometheus stores the metric sample in its WAL (Write-Ahead Log), which is compacted into TSDB blocks. Tempo writes the trace spans to its WAL, then flushes to object storage within minutes.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Complete Data Flow — Read Path</h2>
+  <p>When an engineer opens Grafana to investigate an incident:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Engineer opens Grafana dashboard or Explore</h4>
+        <p>Grafana renders the dashboard or Explore view. For each panel, it constructs a query (LogQL, PromQL, or TraceQL) with the selected time range and variable values.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Grafana queries the data source</h4>
+        <p>Grafana sends the query to the appropriate backend: LogQL to Loki's <code>/loki/api/v1/query_range</code>, PromQL to Prometheus's <code>/api/v1/query_range</code>, or TraceQL to Tempo's <code>/api/search</code>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Backend executes the query</h4>
+        <p>The storage backend scans its index to find matching series/streams, fetches the relevant data blocks, applies any filters, and returns the result set to Grafana.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Grafana renders the result</h4>
+        <p>Grafana transforms the raw query result into the appropriate panel visualization — time-series graph, log list, trace timeline — and displays it to the engineer.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Cross-signal correlation</h4>
+        <p>If a log line contains a <code>traceId</code>, Grafana renders a link button. Clicking it opens Tempo's trace detail for that TraceId in a split pane. Similarly, clicking a Prometheus exemplar point on a histogram opens the linked trace in Tempo.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Write Latency Expectations</h2>
+  <table>
+    <thead>
+      <tr><th>Signal Type</th><th>From Emission to Queryable</th><th>Controlling Factor</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Logs (Loki)</td><td>5–30 seconds</td><td>OTel SDK batch interval (5s) + Loki ingester flush (up to 25s)</td></tr>
+      <tr><td>Metrics (Prometheus)</td><td>15–30 seconds</td><td>Prometheus scrape interval (15s) + scrape duration</td></tr>
+      <tr><td>Traces (Tempo)</td><td>5–60 seconds</td><td>OTel SDK batch interval (5s) + Tempo WAL flush (up to 55s)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Not Real-Time</strong>
+    <p>BizFirst Observe is a near-real-time observability system — not a real-time alerting system. Do not use it for sub-second latency monitoring. The minimum practical latency from a log line being emitted to it appearing in Grafana Explore is approximately 5–15 seconds under normal load.</p>
+  </div>
+
+  <h2>Failure Modes and Resilience</h2>
+  <table>
+    <thead>
+      <tr><th>Component Failure</th><th>Impact</th><th>Recovery</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>OTel Collector down</td><td>All telemetry from services is queued in SDK buffer (default 2048 items), then dropped on overflow</td><td>SDK automatically reconnects when Collector returns; no data replay for dropped items</td></tr>
+      <tr><td>Loki down</td><td>Collector retries log export with backoff; other signals (metrics, traces) continue normally</td><td>Loki restarts, Collector resumes; WAL on Loki prevents data loss for recent logs</td></tr>
+      <tr><td>Prometheus down</td><td>Metrics scrapes fail; existing TSDB data intact; Collector buffers remote write attempts</td><td>Prometheus restarts, resumes scraping; some metric samples lost during downtime</td></tr>
+      <tr><td>Tempo down</td><td>Trace export fails; Collector retries with backoff; logs and metrics continue</td><td>Tempo restarts; traces in flight may be lost; WAL protects recent data</td></tr>
+      <tr><td>Grafana down</td><td>No user access to dashboards or alerts; all write paths continue unaffected</td><td>Grafana restarts; stateless — reconnects to backends immediately</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-visualization.html">&#8592; Visualization Layer</a>
+    <a href="06-network-topology.html">Next: Network Topology &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

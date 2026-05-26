@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pre-Send Hook — Interaction Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-pre-send.html" class="active">Pre-Send Hook</a>
+  <a href="02-post-receive.html">Post-Receive Hook</a>
+  <a href="03-response-validation.html">Response Validation Hook</a>
+  <a href="04-audit-hook.html">Audit Hook</a>
+  <a href="05-rate-limit-hook.html">Rate Limit Hook</a>
+  <a href="06-custom.html">Custom Interaction Hooks</a>
+  <a href="07-order.html">Hook Execution Order</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Pre-Send Hook</h1>
+    <p class="lead">The pre-send hook (<code>OnBeforePublish</code>) runs after the request is constructed and validated but before it is delivered to the client via EdgeStream. It can inspect, enrich, modify, or block the interaction.</p>
+  </div>
+
+  <h2>What the Pre-Send Hook Can Do</h2>
+  <ul>
+    <li><strong>Inspect:</strong> Read the request without modifying it — for logging, tracing, metrics</li>
+    <li><strong>Enrich:</strong> Add metadata fields, attach correlation IDs, populate dynamic payload fields</li>
+    <li><strong>Modify target:</strong> Change the <code>targetUserId</code> — e.g., redirect to an out-of-office substitute</li>
+    <li><strong>Block:</strong> Throw <code>InteractionBlockedException</code> to prevent the interaction from being sent at all</li>
+    <li><strong>Rate limit:</strong> Check the current rate for the target user and block if exceeded (the built-in <code>RateLimitInteractionHook</code> does this)</li>
+  </ul>
+
+  <h2>Blocking an Interaction</h2>
+  <pre><code>public class OutOfOfficeRedirectHook : IInteractionHook
+{
+    private readonly IUserPresenceService _presence;
+
+    public OutOfOfficeRedirectHook(IUserPresenceService presence)
+    {
+        _presence = presence;
+    }
+
+    public async Task OnBeforePublish(
+        InteractionRequest request,
+        CancellationToken ct)
+    {
+        var userStatus = await _presence.GetStatusAsync(request.TargetUserId, ct);
+
+        if (userStatus == UserStatus.OutOfOffice)
+        {
+            var substitute = await _presence.GetSubstituteAsync(request.TargetUserId, ct);
+
+            if (substitute is null)
+            {
+                // No substitute — block the interaction
+                throw new InteractionBlockedException(
+                    $"User {request.TargetUserId} is out of office and has no substitute.");
+            }
+
+            // Redirect to substitute
+            request = request with { TargetUserId = substitute.UserId };
+        }
+    }
+
+    public Task OnAfterRespond(
+        InteractionRequest request,
+        InteractionResponse response,
+        CancellationToken ct) => Task.CompletedTask;
+}
+</code></pre>
+
+  <h2>Enriching the Request</h2>
+  <pre><code>public class TraceEnrichmentHook : IInteractionHook
+{
+    private readonly ITraceContext _trace;
+
+    public async Task OnBeforePublish(
+        InteractionRequest request,
+        CancellationToken ct)
+    {
+        // Add OpenTelemetry trace context to metadata
+        request.Metadata["traceparent"] = _trace.CurrentTraceParent;
+        request.Metadata["tracestate"]  = _trace.CurrentTraceState;
+        request.Metadata["publishedBy"] = _trace.CurrentService;
+        await Task.CompletedTask;
+    }
+
+    public Task OnAfterRespond(
+        InteractionRequest request,
+        InteractionResponse response,
+        CancellationToken ct) => Task.CompletedTask;
+}
+</code></pre>
+
+  <h2>InteractionBlockedException</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>Message</code></td><td>string</td><td>Human-readable reason for blocking</td></tr>
+      <tr><td><code>BlockedBy</code></td><td>string</td><td>Name of the hook that blocked (auto-populated)</td></tr>
+      <tr><td><code>InteractionId</code></td><td>string</td><td>The interaction that was blocked</td></tr>
+    </tbody>
+  </table>
+  <p>When <code>InteractionBlockedException</code> is thrown, <code>PublishAndWaitAsync()</code> re-throws it to the caller. The interaction is recorded in the audit log as <code>status: "blocked"</code>.</p>
+
+  <div class="callout warning">
+    <strong>Modifying the Request Object</strong>
+    The <code>InteractionRequest</code> passed to <code>OnBeforePublish</code> is mutable during the hook chain. Modifications made in one hook are visible to subsequent hooks and to the delivery stage. Be careful about ordering when multiple hooks modify the same field.
+  </div>
+
+  <h2>Pre-Send Hook Use Cases</h2>
+  <table>
+    <thead><tr><th>Use Case</th><th>Implementation</th></tr></thead>
+    <tbody>
+      <tr><td>Out-of-office redirect</td><td>Check user presence; change <code>TargetUserId</code> to substitute</td></tr>
+      <tr><td>Rate limiting</td><td>Count interactions per user per minute; throw if exceeded</td></tr>
+      <tr><td>Payload enrichment</td><td>Add dynamic fields to payload from external data sources</td></tr>
+      <tr><td>Spam protection</td><td>Detect duplicate interactions (same type + target within N seconds)</td></tr>
+      <tr><td>Trace context injection</td><td>Add OTel traceparent to metadata for distributed tracing</td></tr>
+      <tr><td>Permission check</td><td>Verify the requester has permission to send this type to this user</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Hooks Overview</a>
+    <a href="02-post-receive.html">Next: Post-Receive Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

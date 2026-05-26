@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OnSkippedAsync — Node Event Subscriptions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Event Subscriptions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interface.html">INodeEventSubscriber</a>
+  <a href="02-event-args.html">NodeExecutionEventArgs</a>
+  <a href="03-before-execute.html">OnBeforeExecuteAsync</a>
+  <a href="04-after-execute.html">OnAfterExecuteAsync</a>
+  <a href="05-error-event.html">OnErrorAsync</a>
+  <a href="06-skip-event.html" class="active">OnSkippedAsync</a>
+  <a href="07-registration.html">Registering a Subscriber</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>OnSkippedAsync</h1>
+    <p class="lead">Fired when the execution router determines a node should not execute — due to conditional branching, a parallel path not being active, or a node being manually disabled. Essential for completeness auditing.</p>
+  </div>
+
+  <h2>Why Nodes Get Skipped</h2>
+  <p>The workflow engine does not simply execute every node in the graph. It routes execution based on edge conditions and branching logic. Nodes that are not on the active path are skipped rather than executed. The engine still fires <code>OnSkippedAsync</code> for them, allowing subscribers to maintain a complete audit record of every node's outcome.</p>
+
+  <table>
+    <thead><tr><th>SkipReason</th><th>When It Occurs</th></tr></thead>
+    <tbody>
+      <tr><td><code>ConditionalBranchNotTaken</code></td><td>An edge has a condition expression that evaluated to false — this node's branch was not chosen</td></tr>
+      <tr><td><code>ParallelPathNotActive</code></td><td>Node is on a parallel branch that was excluded by a gateway or fork condition</td></tr>
+      <tr><td><code>LoopIterationSkipped</code></td><td>A loop's condition evaluated to skip this iteration — loop body nodes fire Skipped</td></tr>
+      <tr><td><code>ManuallyDisabled</code></td><td>The node was explicitly disabled in the designer (toggle off)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Completeness Audit Pattern</h2>
+  <p>For compliance workflows it is important to record not just what ran, but what was skipped and why. This pattern ensures every node in every execution has an audit row:</p>
+  <pre><code>public async Task OnSkippedAsync(NodeExecutionEventArgs args, CancellationToken ct)
+{
+    await _auditRepo.InsertAsync(new NodeExecutionAudit
+    {
+        ExecutionId = args.ExecutionId,
+        NodeId      = args.NodeId,
+        NodeType    = args.NodeType,
+        TenantId    = args.TenantId,
+        Status      = AuditStatus.Skipped,
+        SkipReason  = args.SkipReason.ToString(),
+        Timestamp   = DateTimeOffset.UtcNow
+    }, ct);
+}</code></pre>
+
+  <h2>Metrics for Skip Rates</h2>
+  <pre><code>public Task OnSkippedAsync(NodeExecutionEventArgs args, CancellationToken ct)
+{
+    _metrics.IncrementCounter("node.skipped",
+        ("node_type",   args.NodeType),
+        ("skip_reason", args.SkipReason.ToString()),
+        ("process_id",  args.ProcessId));
+    return Task.CompletedTask;
+}</code></pre>
+
+  <h2>Available Data in OnSkipped</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Available?</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>args.SkipReason</code></td><td>Yes</td><td>Always set, never None</td></tr>
+      <tr><td><code>args.NodeId</code></td><td>Yes</td><td>The node that was skipped</td></tr>
+      <tr><td><code>args.NodeType</code></td><td>Yes</td><td>TypeCode of the skipped node</td></tr>
+      <tr><td><code>args.Context</code></td><td>Yes (snapshot)</td><td>Memory at point of skip decision</td></tr>
+      <tr><td><code>args.DurationMs</code></td><td>null</td><td>Node never ran</td></tr>
+      <tr><td><code>args.Result</code></td><td>null</td><td>No result from a skipped node</td></tr>
+      <tr><td><code>args.Exception</code></td><td>null</td><td>No error from a skipped node</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Skipped vs. Errored:</strong> A skipped node is not an error — it is a normal routing outcome. Do not conflate the two in your metrics dashboards. Track skip rates separately from error rates.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-error-event.html">&#8592; OnErrorAsync</a>
+    <a href="07-registration.html">Next: Registering a Subscriber &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

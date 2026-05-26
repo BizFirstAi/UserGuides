@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logout — SSO Consumers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Consumers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-oidc-client.html">OIDC Client Setup</a>
+  <a href="02-auth-flow.html">Authorization Code Flow</a>
+  <a href="03-token-validation.html">Token Validation</a>
+  <a href="04-claims-mapping.html">Claims to User Context</a>
+  <a href="05-token-refresh.html">Token Refresh</a>
+  <a href="06-logout.html" class="active">Logout</a>
+  <a href="07-sdk.html">BizFirstGO SSO SDK</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Logout</h1>
+    <p class="lead">Properly terminate both the application session and the Passport SSO session — local logout clears your app's tokens; Passport logout ends the SSO session for all connected applications.</p>
+  </div>
+
+  <h2>Logout Types</h2>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>What It Does</th><th>When to Use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Local Logout</td><td>Clears tokens from your application only. Passport session remains active — user can log back in without re-entering credentials.</td><td>Low-security apps; user clicks "switch account"</td></tr>
+      <tr><td>Passport Logout (End Session)</td><td>Terminates the Passport session. User must re-authenticate to access any SSO-connected app. Does not notify other SPs automatically (OIDC does not include SLO).</td><td>Default logout for most applications</td></tr>
+      <tr><td>Full SSO Logout (SAML SLO)</td><td>Terminates Passport session AND sends logout notifications to all SAML-connected SPs. User is logged out everywhere.</td><td>High-security / shared device scenarios</td></tr>
+    </tbody>
+  </table>
+
+  <h2>OIDC End Session (Recommended)</h2>
+  <pre><code>// Step 1 — Clear local application session/tokens
+await _tokenStorage.ClearTokensAsync(userId);
+HttpContext.Session.Clear();
+Response.Cookies.Delete(".BizFirst.Session");
+
+// Step 2 — Redirect to Passport end session endpoint
+// The id_token_hint ensures Passport knows which user to log out
+var endSessionUrl = new UriBuilder("https://passport.bizfirst.ai/passport/logout");
+endSessionUrl.Query = QueryString.Create([
+    ("id_token_hint",            idToken),  // the id_token from the original login
+    ("post_logout_redirect_uri", "https://myapp.example.com/"),
+    ("state",                    Guid.NewGuid().ToString("N"))
+]).ToString();
+
+return Redirect(endSessionUrl.ToString());</code></pre>
+
+  <h2>ASP.NET Core Logout Action</h2>
+  <pre><code>[HttpPost("/auth/logout")]
+[Authorize]
+[ValidateAntiForgeryToken]
+public async Task&lt;IActionResult&gt; Logout()
+{
+    var idInfo  = HttpContext.GetIDInfo();
+    var idToken = await _tokenStorage.GetIdTokenAsync(idInfo!.UserId);
+
+    // Clear local session
+    await _tokenStorage.ClearTokensAsync(idInfo.UserId);
+    await HttpContext.SignOutAsync();
+
+    // Revoke refresh token at Passport
+    var refreshToken = await _tokenStorage.GetRefreshTokenAsync(idInfo.UserId);
+    if (refreshToken is not null)
+    {
+        await _passportClient.RevokeTokenAsync(refreshToken);
+    }
+
+    // Redirect to Passport end session
+    var logoutUrl = _passportOptions.BuildLogoutUrl(
+        idTokenHint:            idToken,
+        postLogoutRedirectUri:  Url.ActionAbsolute("Index", "Home"));
+
+    return Redirect(logoutUrl);
+}
+
+// Callback after Passport ends the session
+[HttpGet("/auth/logged-out")]
+[AllowAnonymous]
+public IActionResult LoggedOut() =&gt; View();</code></pre>
+
+  <h2>Token Revocation</h2>
+  <p>When logging out, revoke the refresh token at Passport. This prevents the token from being used even if an attacker somehow obtained it.</p>
+  <pre><code>POST /passport/token/revoke
+Authorization: Basic base64("workflow-api-prod:client-secret")
+Content-Type: application/x-www-form-urlencoded
+
+token=refresh-token-to-revoke
+&token_type_hint=refresh_token
+
+// Response — always 200 OK (even if token was already revoked)
+// RFC 7009 — token revocation is idempotent</code></pre>
+
+  <h2>Handling Back-Channel Logout (Pushed Logout)</h2>
+  <p>Passport can push back-channel logout notifications to registered applications when a session is administratively terminated (e.g., security incident, admin revokes session). Register a logout notification endpoint in your client registration:</p>
+  <pre><code>// Consumer registration addition
+{
+  "backChannelLogoutUri": "https://myapp.example.com/auth/back-channel-logout",
+  "backChannelLogoutSessionRequired": true
+}
+
+// Your back-channel logout handler
+[HttpPost("/auth/back-channel-logout")]
+[AllowAnonymous]
+public async Task&lt;IActionResult&gt; BackChannelLogout([FromForm] string logout_token)
+{
+    // Validate the logout_token JWT (same as access token validation)
+    var result = await _validator.ValidateAsync(logout_token);
+    if (!result.IsValid) return BadRequest();
+
+    // Extract the session ID or subject
+    var sub = result.Principal!.FindFirstValue("sub");
+    var sid = result.Principal!.FindFirstValue("sid");
+
+    // Terminate the user's session in your application
+    await _sessionService.TerminateAsync(sub: sub, sessionId: sid);
+
+    return Ok();
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Always Revoke, Then Redirect</strong>
+    <p>The correct logout sequence is: (1) clear local tokens, (2) revoke refresh token at Passport, (3) redirect to Passport end session endpoint. Skipping step 2 leaves the refresh token valid until it naturally expires — a security risk on shared devices.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-token-refresh.html">&#8592; Token Refresh</a>
+    <a href="07-sdk.html">Next: BizFirstGO SSO SDK &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Validation — SSO Consumers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Consumers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-oidc-client.html">OIDC Client Setup</a>
+  <a href="02-auth-flow.html">Authorization Code Flow</a>
+  <a href="03-token-validation.html" class="active">Token Validation</a>
+  <a href="04-claims-mapping.html">Claims to User Context</a>
+  <a href="05-token-refresh.html">Token Refresh</a>
+  <a href="06-logout.html">Logout</a>
+  <a href="07-sdk.html">BizFirstGO SSO SDK</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Token Validation</h1>
+    <p class="lead">Validate JWT access tokens issued by Passport — verify the RS256 signature using JWKS, check expiry, issuer, and audience before trusting the claims.</p>
+  </div>
+
+  <h2>IPassportTokenValidator</h2>
+  <pre><code>namespace BizFirst.Essentials.Passport;
+
+public interface IPassportTokenValidator
+{
+    /// &lt;summary&gt;
+    /// Validates a JWT access token issued by Passport.
+    /// Verifies: signature (RS256 via JWKS), expiry, issuer, audience.
+    /// Does NOT check revocation — use token introspection for that.
+    /// &lt;/summary&gt;
+    Task&lt;TokenValidationResult&gt; ValidateAsync(
+        string token,
+        CancellationToken ct = default);
+}
+
+public class TokenValidationResult
+{
+    public bool IsValid                    { get; init; }
+    public ClaimsPrincipal? Principal      { get; init; }  // populated if valid
+    public TokenValidationError? Error     { get; init; }  // populated if invalid
+    public DateTimeOffset? ExpiresAt       { get; init; }
+    public string? TokenId                 { get; init; }  // jti claim
+}
+
+public enum TokenValidationError
+{
+    SignatureInvalid,
+    TokenExpired,
+    IssuerMismatch,
+    AudienceMismatch,
+    MalformedToken,
+    KeyNotFound,       // kid in token not in JWKS
+    ClaimsRequired     // required claim missing
+}</code></pre>
+
+  <h2>Validation Checklist</h2>
+  <p>Passport tokens are RS256 JWTs. You MUST validate all of the following before processing claims:</p>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Claim / Header</th><th>Expected Value</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Algorithm</td><td><code>alg</code> header</td><td>Must be <code>RS256</code> — reject anything else</td></tr>
+      <tr><td>Signature</td><td>Token signature</td><td>Valid RSA-SHA256 using public key from JWKS (matched by <code>kid</code>)</td></tr>
+      <tr><td>Issuer</td><td><code>iss</code></td><td><code>https://passport.bizfirst.ai</code></td></tr>
+      <tr><td>Audience</td><td><code>aud</code></td><td>Your client ID (e.g., <code>workflow-api-prod</code>)</td></tr>
+      <tr><td>Expiry</td><td><code>exp</code></td><td>Must be in the future (allow ±60s clock skew)</td></tr>
+      <tr><td>Issued At</td><td><code>iat</code></td><td>Must be in the past — reject tokens with future <code>iat</code></td></tr>
+      <tr><td>Subject</td><td><code>sub</code></td><td>Must be present — user/service identity</td></tr>
+    </tbody>
+  </table>
+
+  <h2>JWKS Key Fetching</h2>
+  <p>Passport signs tokens with a rotating RSA key pair. The public keys are published at the JWKS URI. Cache the JWKS response (10 minutes recommended) and refresh it when a token references an unknown <code>kid</code>.</p>
+  <pre><code>GET /passport/.well-known/jwks.json
+
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "signing-key-2026-05",
+      "n": "0vx7agoebGcQSuu...base64url-modulus...",
+      "e": "AQAB"
+    }
+  ]
+}</code></pre>
+
+  <h2>ASP.NET Core — JWT Bearer Validation</h2>
+  <pre><code>// Program.cs — using Go.Essentials AddPassportAuthentication()
+builder.Services.AddPassportAuthentication(options =&gt;
+{
+    options.Authority    = builder.Configuration["Passport:Authority"];
+    options.ClientId     = builder.Configuration["Passport:ClientId"];
+    options.ValidIssuers = new[] { "https://passport.bizfirst.ai" };
+
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer           = true,
+        ValidateAudience         = true,
+        ValidateLifetime         = true,
+        ValidateIssuerSigningKey = true,
+        ClockSkew                = TimeSpan.FromSeconds(60),
+        RequireExpirationTime    = true,
+        RequireSignedTokens      = true,
+        // JWKS is auto-fetched from the Authority discovery document
+    };
+});
+
+// Controller — access validated claims
+[Authorize]
+[ApiController]
+public class WorkflowController : ControllerBase
+{
+    [HttpGet("workflows")]
+    public IActionResult GetWorkflows()
+    {
+        // Claims are available from the validated token
+        var userId   = User.FindFirstValue("sub");
+        var tenantId = User.FindFirstValue("tenant_id");
+        var roles    = User.FindAll("roles").Select(c =&gt; c.Value);
+
+        return Ok(/* ... */);
+    }
+}</code></pre>
+
+  <h2>Manual Token Validation (C#)</h2>
+  <pre><code>// Inject IPassportTokenValidator
+public class ApiGatewayMiddleware(IPassportTokenValidator validator)
+{
+    public async Task InvokeAsync(HttpContext context, RequestDelegate next)
+    {
+        var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
+        if (authHeader?.StartsWith("Bearer ") == true)
+        {
+            var token = authHeader["Bearer ".Length..];
+            var result = await validator.ValidateAsync(token);
+
+            if (!result.IsValid)
+            {
+                context.Response.StatusCode = 401;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    error = "invalid_token",
+                    reason = result.Error?.ToString()
+                });
+                return;
+            }
+
+            // Attach principal for downstream use
+            context.User = result.Principal!;
+        }
+
+        await next(context);
+    }
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Never Trust Unvalidated Tokens</strong>
+    <p>Never decode a JWT and use its claims without first verifying the signature. A JWT is just base64-encoded JSON — anyone can craft one with arbitrary claims. Always validate the RS256 signature against Passport's JWKS before extracting any identity information.</p>
+  </div>
+
+  <h2>Token Introspection (Revocation Check)</h2>
+  <p>Local JWT validation does not detect revoked tokens (e.g., from admin session termination). For high-security scenarios, use the introspection endpoint:</p>
+  <pre><code>POST /passport/token/introspect
+Authorization: Basic base64(clientId:clientSecret)
+Content-Type: application/x-www-form-urlencoded
+
+token=eyJhbGciOiJSUzI1NiJ9...
+
+// Response — token still active
+{ "active": true, "sub": "user-guid", "exp": 1748120400, ... }
+
+// Response — token revoked or expired
+{ "active": false }</code></pre>
+  <p>Introspection adds ~20-50ms latency. Use it for admin actions, financial transactions, or other high-stakes operations rather than every API request.</p>
+
+  <div class="page-nav">
+    <a href="02-auth-flow.html">&#8592; Authorization Code Flow</a>
+    <a href="04-claims-mapping.html">Next: Claims to User Context &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

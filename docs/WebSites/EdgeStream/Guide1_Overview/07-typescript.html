@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TypeScript-First Design — EdgeStream Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Architecture</a>
+  <a href="02-packages.html">Package Structure</a>
+  <a href="03-core-concepts.html">Core Concepts</a>
+  <a href="04-use-cases.html">Use Cases</a>
+  <a href="05-getting-started.html">Getting Started</a>
+  <a href="06-bizfirstgo-integration.html">BizFirstGO Integration</a>
+  <a href="07-typescript.html" class="active">TypeScript-First Design</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>TypeScript-First Design</h1>
+    <p class="lead">EdgeStream is built with strict TypeScript 5.3+ throughout. Generics flow from the envelope through hooks to subscribers — giving you compile-time safety at every step.</p>
+  </div>
+
+  <h2>Strict Type Configuration</h2>
+  <p>EdgeStream uses strict TypeScript settings across all packages. The tsconfig enforces no implicit any, strict null checks, and exact optional property types:</p>
+  <pre><code>// tsconfig.base.json
+{
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true
+  }
+}</code></pre>
+
+  <h2>Generic Envelope — Type Safety End to End</h2>
+  <p>The <code>IEnvelope&lt;TBody&gt;</code> generic parameter flows from subscription registration all the way to the callback. Define your message type once; TypeScript enforces it everywhere.</p>
+
+  <pre><code>// 1. Define your message shape
+interface WorkflowNodeEvent {
+  nodeId: string;
+  eventType: 'started' | 'completed' | 'failed';
+  status: 'running' | 'success' | 'error';
+  output?: Record&lt;string, unknown&gt;;
+  error?: { message: string; stack?: string };
+  durationMs?: number;
+}
+
+// 2. Subscribe with typed envelope
+const sub = edgeStream.subscribe&lt;WorkflowNodeEvent&gt;(
+  'bas',
+  'workflow.execution.*',
+  (envelope: IEnvelope&lt;WorkflowNodeEvent&gt;) =&gt; {
+    // body is typed as WorkflowNodeEvent
+    const { nodeId, eventType, output } = envelope.body;  // ✅ fully typed
+    const topic = envelope.meta.topic;                    // ✅ string
+    const at = envelope.meta.receivedAt;                  // ✅ Date
+  }
+);</code></pre>
+
+  <h2>Interface-First Design</h2>
+  <p>Every major component in EdgeStream is defined as an interface first, with implementation classes depending on those interfaces. This enables clean testing and custom implementations:</p>
+
+  <pre><code>// Core interfaces
+IEdgeStream     // top-level facade
+IServer         // single server/domain
+ITransport      // network layer
+IHook           // pipeline processor
+IPipelineContext // hook execution context
+ISubscription   // subscription handle
+ISubscriptionManager // pub/sub registry
+IPipelineObserver    // observability sink</code></pre>
+
+  <h2>Typed Hook Context</h2>
+  <p>Hook implementations can extend <code>IPipelineContext</code> with domain-specific context types using TypeScript generics:</p>
+
+  <pre><code>// Custom context for auth hooks
+interface IAuthPipelineContext extends IPipelineContext {
+  readonly claims: JwtClaims;
+  readonly tenantId: string;
+}
+
+// Typed hook using custom context
+class AuthorizationHook implements IHook&lt;IAuthPipelineContext&gt; {
+  readonly name = 'AuthorizationHook';
+  readonly priority = 30;
+
+  async execute(context: IAuthPipelineContext): Promise&lt;HookResult&gt; {
+    if (!context.claims.roles.includes('workflow.read')) {
+      context.abort('Insufficient permissions');
+      return { continue: false };
+    }
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Discriminated Unions for Events</h2>
+  <p>EdgeStream event types are discriminated unions — exhaustive switch handling with TypeScript's type narrowing:</p>
+
+  <pre><code>type AgentStreamEvent =
+  | { eventType: 'token'; token: string }
+  | { eventType: 'tool-call'; toolName: string; args: Record&lt;string, unknown&gt; }
+  | { eventType: 'tool-result'; result: unknown }
+  | { eventType: 'error'; message: string }
+  | { eventType: 'done' };
+
+edgeStream.subscribe&lt;AgentStreamEvent&gt;('bas', 'agent.chat.*', (envelope) =&gt; {
+  const event = envelope.body;
+  switch (event.eventType) {
+    case 'token':
+      appendToken(event.token);        // event.token: string ✅
+      break;
+    case 'tool-call':
+      startTool(event.toolName);       // event.toolName: string ✅
+      break;
+    case 'done':
+      markComplete();
+      break;
+    // TypeScript warns if you miss a case
+  }
+});</code></pre>
+
+  <h2>Transport Status as Union Type</h2>
+  <pre><code>type TransportStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+type EdgeStreamStatus = 'idle' | 'starting' | 'running' | 'stopping' | 'error';
+type TransportType = 'signalr' | 'http-polling' | 'sse' | 'websocket';
+type ServerType = 'bas' | 'chat';
+type EnvelopeProtocol = 'json' | 'didcomm-v2' | 'cloudevents' | 'custom';</code></pre>
+
+  <h2>Type-Only Imports</h2>
+  <p>EdgeStream uses <code>import type</code> throughout to minimize compiled output and make tree-shaking more effective:</p>
+  <pre><code>// Internal usage in EdgeStream.ts
+import type {
+  IEdgeStream,
+  EdgeStreamConfig,
+  EdgeStreamStatus,
+  IServer,
+  ISubscription,
+  SubscriberCallback,
+} from './types';</code></pre>
+
+  <div class="callout info">
+    <strong>Type Exports</strong>
+    All types are re-exported from <code>edge-stream-js/index.ts</code> via <code>export * from './types'</code>. Import them with <code>import type { IEnvelope, IHook } from 'edge-stream-js'</code> for zero runtime cost.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-bizfirstgo-integration.html">&#8592; BizFirstGO Integration</a>
+    <a href="../Guide2_MessagePipeline/index.html">Next Guide: Message Pipeline &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

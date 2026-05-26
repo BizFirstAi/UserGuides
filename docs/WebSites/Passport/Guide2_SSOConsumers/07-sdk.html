@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BizFirstGO SSO SDK — SSO Consumers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Consumers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-oidc-client.html">OIDC Client Setup</a>
+  <a href="02-auth-flow.html">Authorization Code Flow</a>
+  <a href="03-token-validation.html">Token Validation</a>
+  <a href="04-claims-mapping.html">Claims to User Context</a>
+  <a href="05-token-refresh.html">Token Refresh</a>
+  <a href="06-logout.html">Logout</a>
+  <a href="07-sdk.html" class="active">BizFirstGO SSO SDK</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>BizFirstGO SSO SDK</h1>
+    <p class="lead">The Go.Essentials OIDC middleware — one method call sets up JWT validation, IDInfo resolution, token refresh, and Passport client integration for ASP.NET Core applications.</p>
+  </div>
+
+  <h2>AddPassportAuthentication() Extension</h2>
+  <p>The <code>AddPassportAuthentication()</code> extension is the primary integration point for ASP.NET Core applications. It wires up JWT bearer validation, JWKS auto-refresh, IDInfo population, and token refresh handling in a single call.</p>
+  <pre><code>// Program.cs — minimal setup
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services
+    .AddPassportAuthentication(options =&gt;
+    {
+        options.Authority     = "https://passport.bizfirst.ai";
+        options.ClientId      = builder.Configuration["Passport:ClientId"];
+        options.ClientSecret  = builder.Configuration["Passport:ClientSecret"];
+    })
+    .AddPassportClient()   // IPassportClient — for permission checks
+    .AddTokenRefresh();    // background refresh token management
+
+var app = builder.Build();
+app.UseAuthentication();
+app.UseAuthorization();
+app.Run();</code></pre>
+
+  <h2>PassportAuthenticationOptions</h2>
+  <pre><code>public class PassportAuthenticationOptions
+{
+    /// &lt;summary&gt;Passport issuer URL. Used for OIDC discovery.&lt;/summary&gt;
+    public required string Authority { get; set; }
+
+    /// &lt;summary&gt;Your OIDC client ID (registered in Passport Admin).&lt;/summary&gt;
+    public required string ClientId { get; set; }
+
+    /// &lt;summary&gt;Client secret (null for public clients — use PKCE instead).&lt;/summary&gt;
+    public string? ClientSecret { get; set; }
+
+    /// &lt;summary&gt;Scopes to request. Defaults: openid, profile, email, roles, tenant.&lt;/summary&gt;
+    public string[] Scopes { get; set; } = ["openid", "profile", "email", "roles", "tenant"];
+
+    /// &lt;summary&gt;Clock skew tolerance for token expiry. Default: 60 seconds.&lt;/summary&gt;
+    public TimeSpan ClockSkew { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// &lt;summary&gt;Custom token validation parameters (merged with defaults).&lt;/summary&gt;
+    public TokenValidationParameters? TokenValidationParameters { get; set; }
+
+    /// &lt;summary&gt;Interval for refreshing JWKS from Passport. Default: 10 minutes.&lt;/summary&gt;
+    public TimeSpan JwksRefreshInterval { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// &lt;summary&gt;
+    /// Called when token validation fails — return true to allow bypass (not recommended).
+    /// &lt;/summary&gt;
+    public Func&lt;TokenValidationFailedContext, Task&lt;bool&gt;&gt;? OnTokenValidationFailed { get; set; }
+}</code></pre>
+
+  <h2>IPassportClient</h2>
+  <pre><code>public interface IPassportClient
+{
+    /// &lt;summary&gt;Check if a user has a permission (resource:action format).&lt;/summary&gt;
+    Task&lt;bool&gt; CheckPermissionAsync(
+        string userId,
+        string permission,
+        string? resourceId = null,
+        CancellationToken ct = default);
+
+    /// &lt;summary&gt;Get all roles assigned to a user in the current tenant.&lt;/summary&gt;
+    Task&lt;IReadOnlyList&lt;string&gt;&gt; GetUserRolesAsync(
+        string userId,
+        CancellationToken ct = default);
+
+    /// &lt;summary&gt;Exchange an authorization code for tokens.&lt;/summary&gt;
+    Task&lt;TokenResponse&gt; ExchangeCodeAsync(
+        CodeExchangeRequest request,
+        CancellationToken ct = default);
+
+    /// &lt;summary&gt;Refresh an access token using a refresh token.&lt;/summary&gt;
+    Task&lt;TokenResponse&gt; RefreshTokenAsync(
+        string refreshToken,
+        CancellationToken ct = default);
+
+    /// &lt;summary&gt;Revoke a token (access or refresh).&lt;/summary&gt;
+    Task RevokeTokenAsync(
+        string token,
+        string tokenTypeHint = "refresh_token",
+        CancellationToken ct = default);
+}</code></pre>
+
+  <h2>Full Configuration Example</h2>
+  <pre><code>// Program.cs — production configuration
+builder.Services.AddPassportAuthentication(options =&gt;
+{
+    options.Authority    = builder.Configuration["Passport:Authority"];
+    options.ClientId     = builder.Configuration["Passport:ClientId"];
+    options.ClientSecret = builder.Configuration["Passport:ClientSecret"];
+    options.Scopes       = ["openid", "profile", "email", "roles", "tenant"];
+    options.ClockSkew    = TimeSpan.FromSeconds(60);
+    options.JwksRefreshInterval = TimeSpan.FromMinutes(10);
+
+    options.OnTokenValidationFailed = ctx =&gt;
+    {
+        // Log but don't bypass
+        Log.Warning("Token validation failed: {Reason}", ctx.Exception.Message);
+        return Task.FromResult(false);  // false = reject
+    };
+});
+
+// Register authorization policies driven by Passport roles
+builder.Services.AddAuthorization(opts =&gt;
+{
+    opts.DefaultPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .RequireClaim("tenant_id")
+        .Build();
+
+    opts.AddPolicy("Admin",    p =&gt; p.RequireClaim("roles", "admin"));
+    opts.AddPolicy("Manager",  p =&gt; p.RequireClaim("roles", "admin", "manager"));
+    opts.AddPolicy("CanExecute", p =&gt; p.RequireClaim("roles", "admin", "manager", "executor"));
+});</code></pre>
+
+  <h2>Middleware Pipeline Order</h2>
+  <pre><code>// Correct middleware order in Program.cs
+var app = builder.Build();
+
+app.UseHttpsRedirection();
+
+// Security headers
+app.UseHsts();
+
+// Authentication MUST come before Authorization
+app.UseAuthentication();   // validates JWT, populates ClaimsPrincipal
+app.UseAuthorization();    // checks [Authorize] attributes
+
+// IDInfo is available in all downstream middleware after here
+app.MapControllers();
+app.Run();</code></pre>
+
+  <div class="callout success">
+    <strong>What AddPassportAuthentication() Sets Up For You</strong>
+    <ul>
+      <li>JWT Bearer scheme with RS256 signature validation</li>
+      <li>JWKS auto-fetch and refresh from the Passport discovery document</li>
+      <li>Issuer and audience validation</li>
+      <li>Clock skew tolerance</li>
+      <li>IPassportTokenValidator registered in DI</li>
+      <li>IPassportIdentityResolver registered in DI</li>
+      <li>HttpContext.GetIDInfo() extension method</li>
+      <li>IPassportClient HTTP client with auth header injection</li>
+    </ul>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-logout.html">&#8592; Logout</a>
+    <span class="spacer"></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

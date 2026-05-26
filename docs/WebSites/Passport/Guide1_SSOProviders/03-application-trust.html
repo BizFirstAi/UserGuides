@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Application Trust — SSO Providers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Providers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-saml.html">SAML 2.0 Provider</a>
+  <a href="02-oidc.html">OIDC Provider</a>
+  <a href="03-application-trust.html" class="active">Application Trust</a>
+  <a href="04-attribute-mapping.html">Attribute Mapping</a>
+  <a href="05-session-management.html">SSO Session Management</a>
+  <a href="06-mfa.html">MFA in SSO Flows</a>
+  <a href="07-testing.html">Testing SSO Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Application Trust</h1>
+    <p class="lead">Register a relying party in Passport — define the application's identity, permitted redirect URIs, allowed scopes, and role/group mappings that govern what identity data is shared.</p>
+  </div>
+
+  <h2>What Is a Relying Party?</h2>
+  <p>In SSO terminology, a <strong>Relying Party (RP)</strong> is an application that trusts Passport to authenticate users on its behalf. For SAML this is called a Service Provider (SP); for OIDC it is called a Client. Passport uses the term <strong>Consumer Registration</strong> internally to represent either type uniformly.</p>
+  <p>Every consumer registration is tenant-scoped. A registration in <code>tenant-A</code> cannot be used by users from <code>tenant-B</code>. The <code>consumerKey</code> is a URL-safe string that uniquely identifies the registration within a tenant.</p>
+
+  <h2>Consumer Registration Fields</h2>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>consumerKey</code></td><td>string</td><td>URL-safe unique identifier, e.g., <code>salesforce-prod</code></td></tr>
+      <tr><td><code>protocol</code></td><td>enum</td><td><code>SAML2</code>, <code>OIDC</code>, or <code>DiscourseConnect</code></td></tr>
+      <tr><td><code>displayName</code></td><td>string</td><td>Friendly name shown in audit logs and admin UI</td></tr>
+      <tr><td><code>entityId</code></td><td>string</td><td>SAML Entity ID of the SP (SAML only)</td></tr>
+      <tr><td><code>acsUrl</code></td><td>string</td><td>SAML Assertion Consumer Service URL</td></tr>
+      <tr><td><code>redirectUris</code></td><td>string[]</td><td>OIDC allowed redirect URIs — exact match enforced</td></tr>
+      <tr><td><code>allowedScopes</code></td><td>string[]</td><td>OIDC scopes this client may request</td></tr>
+      <tr><td><code>signingSecret</code></td><td>string</td><td>DiscourseConnect shared secret (DiscourseConnect only)</td></tr>
+      <tr><td><code>requireSignedRequests</code></td><td>bool</td><td>SAML — require signed AuthnRequests</td></tr>
+      <tr><td><code>requireMfa</code></td><td>bool</td><td>Force MFA before issuing assertion to this consumer</td></tr>
+      <tr><td><code>groupMappings</code></td><td>object</td><td>Maps Passport role names → SP group names</td></tr>
+      <tr><td><code>assertionLifetimeSeconds</code></td><td>int</td><td>SAML assertion validity window (default 300)</td></tr>
+      <tr><td><code>tenantId</code></td><td>string</td><td>Owning tenant — enforced automatically</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Registering a SAML Consumer</h2>
+  <pre><code>POST /passport/admin/consumers
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "consumerKey": "salesforce-prod",
+  "protocol": "SAML2",
+  "displayName": "Salesforce (Production)",
+  "entityId": "https://bizfirst-dev-ed.my.salesforce.com",
+  "acsUrl": "https://bizfirst-dev-ed.my.salesforce.com/saml/ssoinit/externalKey=BizFirstSSO",
+  "nameIdFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+  "requireSignedRequests": true,
+  "requireMfa": false,
+  "assertionLifetimeSeconds": 300,
+  "groupMappings": {
+    "admin": "Salesforce_Admin",
+    "manager": "Salesforce_Manager",
+    "user": "Salesforce_Standard"
+  },
+  "tenantId": "tenant-abc"
+}</code></pre>
+
+  <h2>Registering an OIDC Consumer</h2>
+  <pre><code>POST /passport/admin/consumers
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "consumerKey": "internal-portal",
+  "protocol": "OIDC",
+  "displayName": "Internal Employee Portal",
+  "redirectUris": [
+    "https://portal.internal.example.com/auth/callback",
+    "https://portal.internal.example.com/auth/silent"
+  ],
+  "postLogoutRedirectUris": [
+    "https://portal.internal.example.com/"
+  ],
+  "allowedScopes": ["openid", "profile", "email", "roles", "tenant"],
+  "grantTypes": ["authorization_code", "refresh_token"],
+  "requirePkce": true,
+  "requireMfa": true,
+  "accessTokenLifetimeSeconds": 900,
+  "refreshTokenLifetimeSeconds": 604800,
+  "tenantId": "tenant-abc"
+}</code></pre>
+
+  <h2>Redirect URI Validation</h2>
+  <p>Passport enforces <strong>exact match</strong> on redirect URIs. No wildcards, no path prefix matching. This prevents open redirect attacks where an authorization code could be delivered to a malicious URL.</p>
+  <div class="callout danger">
+    <strong>Security: Exact URI Match</strong>
+    <p>The redirect URI in the authorization request must exactly match one of the registered URIs — including scheme, host, port, and path. Query parameters in the registered URI are not supported. Register each environment (dev, staging, prod) as a separate consumer or add each URI individually.</p>
+  </div>
+
+  <h2>Group and Role Mappings</h2>
+  <p>The <code>groupMappings</code> field controls how Passport roles appear in assertions delivered to the consumer. This is important when the SP has its own role naming convention that differs from Passport's.</p>
+  <pre><code>// groupMappings in consumer registration
+"groupMappings": {
+  "admin":        "SFDC_Sys_Admin",
+  "manager":      "SFDC_Sales_Manager",
+  "finance-user": "SFDC_Finance_Profile",
+  "user":         "SFDC_Standard_User"
+}
+
+// Result in SAML assertion (user has roles: admin, finance-user)
+&lt;saml:Attribute Name="groups"&gt;
+  &lt;saml:AttributeValue&gt;SFDC_Sys_Admin&lt;/saml:AttributeValue&gt;
+  &lt;saml:AttributeValue&gt;SFDC_Finance_Profile&lt;/saml:AttributeValue&gt;
+&lt;/saml:Attribute&gt;</code></pre>
+
+  <h2>Consumer Cache</h2>
+  <p>Consumer registrations are cached in-memory for 5 minutes. Changes made via the Admin API propagate to all Passport nodes within one cache cycle. For immediate propagation (e.g., disabling a compromised consumer), use the admin <code>PURGE</code> endpoint:</p>
+  <pre><code>POST /passport/admin/consumers/{consumerKey}/purge-cache
+Authorization: Bearer {admin-token}
+
+// Response
+{ "purged": true, "nodes": 3 }</code></pre>
+
+  <div class="page-nav">
+    <a href="02-oidc.html">&#8592; OIDC Provider</a>
+    <a href="04-attribute-mapping.html">Next: Attribute Mapping &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

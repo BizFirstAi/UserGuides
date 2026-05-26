@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocol Versioning — Introduction to ANCP | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>ANCP</h2>
+    <h1>Introduction to ANCP</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-message-envelope.html">Message Envelope</a>
+  <a href="02-message-types.html">Message Types</a>
+  <a href="03-transport.html">Transport Layer</a>
+  <a href="04-addressing.html">Addressing</a>
+  <a href="05-security.html">Security</a>
+  <a href="06-versioning.html" class="active">Protocol Versioning</a>
+  <a href="07-use-cases.html">Use Cases</a>
+  <a href="08-devtools.html">ANCP in DevTools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">ANCP</div>
+    <h1>Protocol Versioning</h1>
+    <p class="lead">The <code>protocolVersion</code> field in every ANCP message enables the platform to evolve its message format over time without breaking nodes or agents that have not yet been updated.</p>
+  </div>
+
+  <h2>The protocolVersion Field</h2>
+  <p>Every ANCP envelope carries a <code>protocolVersion</code> string in the header. This field tells the receiving router and handler <strong>which version of the ANCP specification</strong> this message conforms to. Routers use it to select the correct deserializer and to decide whether a compatibility shim is needed.</p>
+
+  <pre><code>{
+  "id":              "msg-uuid",
+  "type":            "Command",
+  "protocolVersion": "1.0",   // ← always present, always a string
+  // ... other fields ...
+}</code></pre>
+
+  <h2>Version Format</h2>
+  <p>ANCP uses a <strong>MAJOR.MINOR</strong> versioning scheme:</p>
+
+  <table>
+    <thead>
+      <tr><th>Component</th><th>When it increments</th><th>Backward compatible?</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>MAJOR</strong></td>
+        <td>A breaking change is introduced — required fields added, field semantics changed, or a type is removed.</td>
+        <td>No — consumers must be updated before accepting new MAJOR messages.</td>
+      </tr>
+      <tr>
+        <td><strong>MINOR</strong></td>
+        <td>A non-breaking addition — new optional fields, new optional message types, or additive changes to the payload convention.</td>
+        <td>Yes — consumers that read only the fields they know about continue to work correctly.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Current Version: 1.0</strong>
+    <p>All messages in the current BizFirstGO platform use <code>"protocolVersion": "1.0"</code>. ANCP 1.1 (adding optional message signing) is planned. ANCP 2.0 would be a major version with advance deprecation notice of at least 6 months.</p>
+  </div>
+
+  <h2>Version History</h2>
+  <table>
+    <thead>
+      <tr><th>Version</th><th>Released</th><th>Status</th><th>Changes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>1.0</code></td><td>2026-01</td><td><span class="badge badge-green">Current</span></td><td>Initial release. Core envelope, four message types, addressing scheme, tenant isolation.</td></tr>
+      <tr><td><code>1.1</code></td><td>Planned Q3 2026</td><td><span class="badge badge-yellow">Planned</span></td><td>Optional Ed25519 message signing (<code>signature</code> field). Backward compatible — unsigned messages remain valid.</td></tr>
+      <tr><td><code>2.0</code></td><td>TBD</td><td><span class="badge badge-blue">Future</span></td><td>Breaking changes TBD. Will carry 6-month deprecation window for 1.x.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Router Behaviour for Received Messages</h2>
+
+  <h3>Known Version (exact match)</h3>
+  <p>The router deserializes and processes the message using the matching specification.</p>
+
+  <h3>Known MAJOR, Higher MINOR</h3>
+  <p>The router applies <strong>forward compatibility</strong>: it reads the fields it knows about and ignores unknown fields. This is safe for MINOR version increments because they only add optional fields.</p>
+
+  <pre><code>// Router logic (pseudocode)
+if (message.protocolVersion.major === SUPPORTED_MAJOR) {
+  // Safe to process — ignore unknown fields
+  processWithKnownFields(message);
+} else {
+  // Unknown major version — reject with explanation
+  rejectWithVersion(message, SUPPORTED_MAJOR);
+}</code></pre>
+
+  <h3>Unknown MAJOR</h3>
+  <p>If the MAJOR version is not supported by the router, the message is rejected with a <code>PROTOCOL_VERSION_UNSUPPORTED</code> error returned to the sender (if the sender is reachable via a Response). The sender must downgrade or the router must be updated.</p>
+
+  <h2>Sender Responsibility</h2>
+  <p>Message producers must always set <code>protocolVersion</code> to the version they are targeting. Do not omit it, do not default it dynamically at runtime — set it explicitly in the message construction code so upgrades are intentional and visible in code review.</p>
+
+  <pre><code>// TypeScript — building an ANCP envelope
+const envelope: AncpEnvelope = {
+  id:              generateUuid(),
+  type:            'Command',
+  source:          AncpAddress.node({ tenantId, flowId, nodeId }),
+  destination:     AncpAddress.node({ tenantId, flowId, nextNodeId }),
+  tenantId:        tenantId,
+  timestamp:       new Date().toISOString(),
+  protocolVersion: '1.0',    // ← explicit, never computed
+  payload:         { action: 'proceed', data: outputData }
+};</code></pre>
+
+  <h2>Migration Strategy for Breaking Changes</h2>
+  <p>When ANCP 2.0 (or any future MAJOR version) is released, the platform runs both versions in parallel during a transition window. The router is updated first to accept both MAJOR versions. Nodes and agents are then updated incrementally. Only after all producers and consumers have migrated is support for the old MAJOR version removed.</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Announce + Release New MAJOR</h4><p>6-month deprecation notice. Release 1.x compatibility window alongside 2.0.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Update Router</h4><p>Router accepts both old and new MAJOR. Applies compatibility shims for old messages if needed.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Update Producers</h4><p>All message-sending nodes and agents upgraded to emit new MAJOR. Old consumers still work via shim.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body"><h4>Update Consumers</h4><p>All message-receiving nodes and agents upgraded to accept new MAJOR natively.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body"><h4>Remove Old MAJOR Support</h4><p>After all producers and consumers are on the new MAJOR, the router stops accepting old MAJOR messages.</p></div>
+    </div>
+  </div>
+
+  <h2>Detecting Version in Handlers</h2>
+  <p>Handler code that needs to branch on version should read <code>protocolVersion</code> from the envelope and handle explicitly:</p>
+
+  <pre><code>// C# — version-aware handler
+public async Task HandleAsync(AncpEnvelope envelope)
+{
+    var version = Version.Parse(envelope.ProtocolVersion);
+
+    if (version.Major == 1)
+    {
+        await HandleV1Async(envelope);
+    }
+    else
+    {
+        _logger.LogWarning("Unsupported ANCP major version {Version}", version.Major);
+        // Return a Response with error status rather than throwing
+        await SendErrorResponseAsync(envelope, "UNSUPPORTED_VERSION");
+    }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Do Not Hard-Code Version Strings in Routing Logic</strong>
+    <p>Read the version from a configuration or constant — never scatter <code>"1.0"</code> literals through routing and handler code. When the platform version changes, you want a single place to update, not a grep-and-replace across dozens of files.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-security.html">&#8592; Security</a>
+    <a href="07-use-cases.html">Next: Use Cases &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

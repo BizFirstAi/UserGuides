@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nodes With No Output — Guide33_NodeOutputs | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Outputs</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-output-object.html"><i class="fa-solid fa-box"></i> The Output Object</a>
+  <a href="02-accessing-output.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Accessing Output</a>
+  <a href="03-output-ports.html"><i class="fa-solid fa-plug"></i> Output Ports</a>
+  <a href="04-conditional-ports.html"><i class="fa-solid fa-code-branch"></i> Conditional Ports</a>
+  <a href="05-multi-output.html"><i class="fa-solid fa-share-nodes"></i> Parallel Outputs</a>
+  <a href="06-naming.html"><i class="fa-solid fa-tag"></i> NodeId Naming</a>
+  <a href="07-no-output.html" class="active"><i class="fa-solid fa-ban"></i> Nodes With No Output</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Nodes With No Output</h1>
+    <p class="lead">What happens when a node returns <code>NodeExecutionResult.Skip()</code> or null — how the engine handles empty outputs and what downstream nodes observe.</p>
+  </div>
+
+  <h2>When to Return Skip</h2>
+  <p><code>NodeExecutionResult.Skip()</code> signals that the node completed without producing meaningful data and does not wish to route to any downstream node. Common use cases:</p>
+  <ul>
+    <li>A conditional guard node that checks a condition and decides to halt this branch silently</li>
+    <li>A logging/audit node that has a side-effect but no data to pass forward</li>
+    <li>A node that detects it has already run and skips duplicate execution</li>
+  </ul>
+
+  <pre><code class="language-csharp">public class IdempotencyCheckExecutor : BaseNodeExecutor
+{
+    public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(NodeExecutionContext ctx)
+    {
+        var key = ctx.GetInput&lt;string&gt;("idempotencyKey");
+        if (await _cache.ExistsAsync(key))
+        {
+            // Already processed — skip silently, do not continue
+            return NodeExecutionResult.Skip();
+        }
+        await _cache.SetAsync(key);
+        return NodeExecutionResult.Success(new { processed = true });
+    }
+}</code></pre>
+
+  <h2>What Skip Does to the Graph</h2>
+  <p>When <code>Skip()</code> is returned:</p>
+  <ol>
+    <li><code>ExecutionMemory.nodeOutputs[nodeId]</code> is set to <code>null</code></li>
+    <li>No edges from any port are followed — execution stops at this node for this branch</li>
+    <li>If the node is part of a join, the join gateway treats this branch as completed with null</li>
+    <li>The node status in the observer panel shows as "Skipped" (gray icon)</li>
+  </ol>
+
+  <h2>Null Output vs. Skip</h2>
+  <table>
+    <thead><tr><th>Return Value</th><th>Memory Entry</th><th>Routing</th><th>Observer State</th></tr></thead>
+    <tbody>
+      <tr><td><code>Skip()</code></td><td><code>null</code></td><td>No edges followed</td><td>Skipped</td></tr>
+      <tr><td><code>Success(null)</code></td><td><code>null</code></td><td>Main port edges followed</td><td>Completed</td></tr>
+      <tr><td><code>Success(new {})</code></td><td><code>{}</code></td><td>Main port edges followed</td><td>Completed</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-info">
+    <strong>Key distinction:</strong> <code>Success(null)</code> still routes downstream via the main port — it just passes null as the data. <code>Skip()</code> halts routing entirely. Use <code>Skip()</code> only when you intentionally want to stop this execution branch.
+  </div>
+
+  <h2>Accessing Null Output Safely</h2>
+  <p>If a downstream node references a skipped node's output, it receives <code>null</code>. Guard with optional chaining:</p>
+  <pre><code class="language-javascript">// idempotencyCheck was skipped — its output is null
+$output.idempotencyCheck?.processed ?? false   // → false (safe)
+$output.idempotencyCheck.processed             // → runtime error: cannot read property of null</code></pre>
+
+  <h2>Fire-and-Forget Side-Effect Nodes</h2>
+  <p>Nodes that perform side effects (send a log event, increment a counter, post to an analytics service) but have no downstream consumers should return <code>Success(new { ok = true })</code> rather than <code>Skip()</code>. This records that the node ran and provides a completion signal for join gateways:</p>
+  <pre><code class="language-csharp">// Audit logger — fire-and-forget style
+return NodeExecutionResult.Success(new
+{
+    ok = true,
+    auditId = auditEntry.Id,
+    timestamp = DateTimeOffset.UtcNow
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="06-naming.html">&#8592; NodeId Naming</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

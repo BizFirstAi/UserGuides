@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Performance Patterns — SQL Server Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>SQL Server Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-setup.html">SQL Server Setup</a>
+  <a href="02-datasource-registration.html">Datasource Registration</a>
+  <a href="03-ai-ready-schema.html">AI-Ready Schema Design</a>
+  <a href="04-sql-nodes.html">Access from Flow Studio</a>
+  <a href="05-form-generation.html">AI Form Generation</a>
+  <a href="06-security.html">Security and Credentials</a>
+  <a href="07-performance.html" class="active">Performance Patterns</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Performance Patterns</h1>
+    <p class="lead">Indexes optimized for workflow query patterns, connection pool configuration, pagination strategies for large result sets, and query tuning guidance for Data Ocean SQL Server.</p>
+  </div>
+
+  <h2>Index Strategy for Workflow Queries</h2>
+  <p>Workflow queries in Flow Studio follow predictable patterns — they always filter by <code>TenantId</code> first, then by a secondary filter (status, date range, or a specific ID). Indexes should be designed around this pattern:</p>
+
+  <h3>The Composite Index Rule</h3>
+  <p>Every table should have composite indexes that start with <code>TenantId</code> and cover the most common secondary filters. The leading column of every non-clustered index should be <code>TenantId</code>:</p>
+  <pre><code>-- Standard index pattern for Data Ocean tables
+-- Index 1: Active record lookup by tenant + status
+CREATE INDEX IX_Customer_TenantId_Status
+    ON Customer (TenantId, Status, UpdatedAt DESC)
+    INCLUDE (Name, Email, ClassificationLabel)
+    WHERE IsDeleted = 0;
+
+-- Index 2: Single record lookup by tenant + PK (needed when PK is GUID)
+CREATE INDEX IX_Customer_TenantId_CustomerId
+    ON Customer (TenantId, CustomerId)
+    WHERE IsDeleted = 0;
+
+-- Index 3: AI enrichment targeting — find un-processed records
+CREATE INDEX IX_Customer_TenantId_AiProcessedAt
+    ON Customer (TenantId, AiProcessedAt)
+    WHERE AiProcessedAt IS NULL AND IsDeleted = 0;
+
+-- Index 4: Date-range queries (common in reporting workflows)
+CREATE INDEX IX_Customer_TenantId_CreatedAt
+    ON Customer (TenantId, CreatedAt DESC)
+    WHERE IsDeleted = 0;</code></pre>
+
+  <h2>Connection Pool Configuration</h2>
+  <p>The datasource connection factory uses ADO.NET connection pooling. Configure the pool size in the connection string parameters:</p>
+  <pre><code>-- Connection string with pool settings
+Server=your-server;Database=DataOcean_CustomerData;
+User Id=BizFirstApp;Password=...;
+Min Pool Size=5;
+Max Pool Size=100;
+Connection Timeout=15;
+MultipleActiveResultSets=True;</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Parameter</th><th>Recommended Value</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Min Pool Size</code></td><td>5</td><td>Keeps 5 connections warm — reduces cold-start latency on workflow burst</td></tr>
+      <tr><td><code>Max Pool Size</code></td><td>100</td><td>Cap at 100 to protect the SQL Server from connection exhaustion. Increase if your workflow concurrency regularly saturates this.</td></tr>
+      <tr><td><code>Connection Timeout</code></td><td>15</td><td>Fail fast if the pool is exhausted — 15 seconds is aggressive but prevents cascading timeouts in the workflow engine</td></tr>
+      <tr><td><code>MultipleActiveResultSets</code></td><td>True</td><td>Required for EF Core and async pattern compatibility</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pagination Pattern</h2>
+  <p>Workflow nodes that return lists should always paginate. Never return unbounded result sets from SQL nodes — this can exhaust workflow memory for large tables. Use OFFSET-FETCH pagination:</p>
+  <pre><code>-- Paginated list query pattern
+SELECT CustomerId, Name, Email, Status, CreatedAt
+FROM Customer
+WHERE TenantId = @tenantId
+  AND Status = @status
+  AND IsDeleted = 0
+ORDER BY CreatedAt DESC
+OFFSET @offset ROWS
+FETCH NEXT @pageSize ROWS ONLY;
+
+-- Accompanying count query (for UI pagination controls)
+SELECT COUNT(*) AS TotalCount
+FROM Customer
+WHERE TenantId = @tenantId
+  AND Status = @status
+  AND IsDeleted = 0;</code></pre>
+
+  <div class="callout info">
+    <strong>Recommended Page Size</strong>
+    <p>Use a page size of 25-50 for interactive UI workflows and 100-500 for batch processing workflows. Never exceed 1000 rows per page in interactive workflows — larger result sets are better handled by batch processing patterns that stream results through the workflow loop node.</p>
+  </div>
+
+  <h2>READ_COMMITTED_SNAPSHOT Isolation</h2>
+  <p>Enable <code>READ_COMMITTED_SNAPSHOT</code> (RCSI) on your Data Ocean database. This uses row versioning to eliminate read-write lock contention — critical for workflows that mix reads and writes on the same tables:</p>
+  <pre><code>-- Enable RCSI (one-time setup — no downtime needed)
+ALTER DATABASE DataOcean_CustomerData
+    SET READ_COMMITTED_SNAPSHOT ON;
+
+-- Verify
+SELECT name, is_read_committed_snapshot_on
+FROM sys.databases
+WHERE name = 'DataOcean_CustomerData';</code></pre>
+
+  <h2>Avoiding Common Performance Mistakes</h2>
+  <table>
+    <thead>
+      <tr><th>Mistake</th><th>Impact</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Missing <code>TenantId</code> in index leading column</td><td>Table scan on every tenant's data</td><td>All indexes start with <code>TenantId</code></td></tr>
+      <tr><td>No <code>IsDeleted = 0</code> filtered index</td><td>Queries scan soft-deleted rows</td><td>Add <code>WHERE IsDeleted = 0</code> to indexes</td></tr>
+      <tr><td>Returning <code>SELECT *</code> in workflow queries</td><td>Transfers unnecessary data; index coverage fails</td><td>Always SELECT only the columns needed</td></tr>
+      <tr><td>No pagination on list queries</td><td>Memory exhaustion for large tenants</td><td>Mandatory OFFSET-FETCH on all list queries</td></tr>
+      <tr><td>Implicit string conversion in WHERE clause</td><td>Index cannot be used; full scan</td><td>Match parameter types exactly to column types</td></tr>
+      <tr><td>Long-running queries in synchronous workflow steps</td><td>Workflow timeouts; user-facing latency</td><td>Use async workflow steps; increase commandTimeoutSeconds; optimize query</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Query Performance Monitoring</h2>
+  <pre><code>-- Find top 20 slowest queries in the plan cache (run in SSMS)
+SELECT TOP 20
+    SUBSTRING(qt.TEXT, (qs.statement_start_offset/2)+1,
+        ((CASE qs.statement_end_offset
+            WHEN -1 THEN DATALENGTH(qt.TEXT)
+            ELSE qs.statement_end_offset END
+            - qs.statement_start_offset)/2)+1) AS QueryText,
+    qs.execution_count,
+    qs.total_logical_reads / qs.execution_count AS AvgLogicalReads,
+    qs.total_elapsed_time / qs.execution_count / 1000 AS AvgElapsedMs
+FROM sys.dm_exec_query_stats qs
+CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) qt
+WHERE qt.dbid = DB_ID('DataOcean_CustomerData')
+ORDER BY AvgElapsedMs DESC;</code></pre>
+
+  <div class="page-nav">
+    <a href="06-security.html">&#8592; Security and Credentials</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

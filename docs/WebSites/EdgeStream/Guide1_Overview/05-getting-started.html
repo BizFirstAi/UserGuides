@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Getting Started — EdgeStream Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Architecture</a>
+  <a href="02-packages.html">Package Structure</a>
+  <a href="03-core-concepts.html">Core Concepts</a>
+  <a href="04-use-cases.html">Use Cases</a>
+  <a href="05-getting-started.html" class="active">Getting Started</a>
+  <a href="06-bizfirstgo-integration.html">BizFirstGO Integration</a>
+  <a href="07-typescript.html">TypeScript-First Design</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Getting Started</h1>
+    <p class="lead">From zero to your first typed subscription in five steps — create an EdgeStream instance, register a server, add hooks, start the stream, and subscribe.</p>
+  </div>
+
+  <h2>Step 1 — Add Dependencies</h2>
+  <p>EdgeStream packages are workspace-local. Reference them from your package.json using the pnpm workspace protocol:</p>
+  <pre><code>{
+  "dependencies": {
+    "edge-stream-js": "workspace:*",
+    "edge-stream-js-react": "workspace:*"
+  }
+}</code></pre>
+  <pre><code>pnpm install</code></pre>
+
+  <h2>Step 2 — Create an EdgeStream Instance</h2>
+  <p>Use the <code>createEdgeStream()</code> factory function. Pass optional config for log level and devtools:</p>
+  <pre><code>import { createEdgeStream } from 'edge-stream-js';
+
+export const edgeStream = createEdgeStream({
+  logLevel: 'info',         // 'debug' | 'info' | 'warn' | 'error'
+  enableDevtools: true,     // enable React devtools integration
+});</code></pre>
+
+  <h2>Step 3 — Register a Server</h2>
+  <p>A server connects EdgeStream to a backend hub. Use SignalR transport for browser apps:</p>
+  <pre><code>import { createEdgeStream } from 'edge-stream-js';
+
+const edgeStream = createEdgeStream({ logLevel: 'info' });
+
+edgeStream.registerServer({
+  id: 'bas',           // your server identifier
+  type: 'bas',         // 'bas' or 'chat'
+  name: 'BizFirst Application Server',
+  url: '/edge-stream-hub',  // hub path (relative or absolute)
+  transportConfig: {
+    type: 'signalr',
+    url: '/edge-stream-hub',
+    accessToken: () =&gt; authService.getToken(),  // async token factory
+    reconnect: {
+      maxAttempts: 0,         // 0 = infinite reconnect attempts
+      initialDelayMs: 1000,
+      maxDelayMs: 30000,
+      backoffMultiplier: 2,
+    },
+  },
+});</code></pre>
+
+  <h2>Step 4 — Add Hooks (Optional)</h2>
+  <p>Register hooks to add logging, normalization, or custom validation. The <code>HookActivityLogger</code> is strongly recommended during development:</p>
+  <pre><code>import { NormalizationHook } from 'edge-stream-js';
+import { HookActivityLogger } from 'observability-hooks-js';
+
+const server = edgeStream.server('bas')!;
+
+// Priority 5 — runs first, captures timing for all hooks
+server.incomingPipeline.addHook(new HookActivityLogger());
+
+// Priority 110 — CloudEvents normalization
+server.incomingPipeline.addHook(new NormalizationHook(true));</code></pre>
+
+  <h2>Step 5 — Start and Subscribe</h2>
+  <pre><code>// Start all registered servers (connect transports)
+await edgeStream.start();
+
+// Subscribe to a topic
+const sub = edgeStream.subscribe(
+  'bas',
+  'workflow.execution.*',
+  (envelope) =&gt; {
+    console.log('Received:', envelope.body);
+    console.log('Topic:', envelope.meta.topic);
+    console.log('At:', envelope.meta.receivedAt);
+  }
+);
+
+// Later — clean up when done
+sub.unsubscribe();</code></pre>
+
+  <h2>Complete Minimal Example</h2>
+  <pre><code>import { createEdgeStream, NormalizationHook } from 'edge-stream-js';
+
+// 1. Create instance
+const edgeStream = createEdgeStream({ logLevel: 'debug' });
+
+// 2. Register server with SignalR transport
+edgeStream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  url: '/hubs/edge-stream',
+  transportConfig: {
+    type: 'signalr',
+    url: '/hubs/edge-stream',
+    reconnect: { maxAttempts: 10, initialDelayMs: 1000, maxDelayMs: 30000, backoffMultiplier: 2 },
+  },
+});
+
+// 3. Add normalization hook
+edgeStream.server('bas')!.incomingPipeline.addHook(new NormalizationHook());
+
+// 4. Subscribe to lifecycle events
+edgeStream.on('stream:started', () =&gt; console.log('EdgeStream ready'));
+edgeStream.on('server:error', (e) =&gt; console.error('Connection error', e.data?.error));
+
+// 5. Start
+await edgeStream.start();
+
+// 6. Subscribe to workflow events
+const sub = edgeStream.subscribe('bas', 'workflow.*', (env) =&gt; {
+  console.log('Workflow event:', env.meta.topic, env.body);
+});
+
+// 7. Send a message
+await edgeStream.send('bas', 'workflow.ping', { timestamp: new Date() });
+
+// 8. Cleanup
+sub.unsubscribe();
+await edgeStream.stop();</code></pre>
+
+  <h2>React Quick Start</h2>
+  <p>Wrap your app with <code>EdgeStreamProvider</code> and use hooks in components:</p>
+  <pre><code>// main.tsx
+import React from 'react';
+import { EdgeStreamProvider } from 'edge-stream-js-react';
+import { edgeStream } from './edge-stream-instance';
+
+function App() {
+  return (
+    &lt;EdgeStreamProvider
+      edgeStreamClient={edgeStream}
+      onError={(err) =&gt; console.error('EdgeStream error:', err)}
+      onConnectionStatusChange={(status) =&gt; console.log('Status:', status)}
+    &gt;
+      &lt;YourApp /&gt;
+    &lt;/EdgeStreamProvider&gt;
+  );
+}
+
+// WorkflowStatus.tsx
+import { useSubscription, useEdgeStream } from 'edge-stream-js-react';
+
+function WorkflowStatus({ workflowId }: { workflowId: string }) {
+  const { isSubscribed, error } = useSubscription(
+    'bas',
+    `workflow.${workflowId}.*`,
+    (envelope) =&gt; {
+      console.log('Status update:', envelope.body);
+    }
+  );
+
+  if (error) return &lt;div&gt;Connection error: {error.message}&lt;/div&gt;;
+  if (!isSubscribed) return &lt;div&gt;Connecting...&lt;/div&gt;;
+  return &lt;div&gt;Listening for workflow events&lt;/div&gt;;
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Next Steps</strong>
+    Now that you have a working EdgeStream instance, explore the <a href="01-architecture.html">Architecture</a> page for a deeper look at how the pipeline works, then move on to <a href="../Guide2_MessagePipeline/index.html">Guide 2: Message Pipeline</a> for the full pipeline breakdown.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-use-cases.html">&#8592; Use Cases</a>
+    <a href="06-bizfirstgo-integration.html">Next: BizFirstGO Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

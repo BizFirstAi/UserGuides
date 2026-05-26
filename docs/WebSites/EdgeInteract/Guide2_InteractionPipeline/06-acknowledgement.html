@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Acknowledgement — Interaction Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-interaction-request.html">InteractionRequest</a>
+  <a href="02-targeting.html">Targeting</a>
+  <a href="03-display.html">Display Stage</a>
+  <a href="04-user-response.html">User Response</a>
+  <a href="05-response-routing.html">Response Routing</a>
+  <a href="06-acknowledgement.html" class="active">Acknowledgement</a>
+  <a href="07-timeout.html">Interaction Timeout</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Acknowledgement</h1>
+    <p class="lead">The acknowledgement stage completes the interaction cycle. After the server processes the response, it sends an <code>InteractionAck</code> back to the client. The client uses this to confirm the cycle is complete and dismiss the UI component cleanly.</p>
+  </div>
+
+  <h2>InteractionAck Schema</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>interactionId</code></td><td>string</td><td>The interaction that was completed</td></tr>
+      <tr><td><code>status</code></td><td><code>"acknowledged" | "error"</code></td><td>Whether the server processed the response successfully</td></tr>
+      <tr><td><code>processedAt</code></td><td>ISO 8601</td><td>When the server finished processing</td></tr>
+      <tr><td><code>errorMessage</code></td><td>string (optional)</td><td>Present only when <code>status: "error"</code> — human-readable error description</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Ack Topic</h2>
+  <p>The <code>InteractionAck</code> is published on a per-interaction ack topic: <code>interactions.ack.{interactionId}</code>. The client subscribes to this topic as soon as it sends the response, and unsubscribes when the ack arrives.</p>
+
+  <h2>Client Behavior on Ack</h2>
+  <p>When the ack arrives with <code>status: "acknowledged"</code>:</p>
+  <ul>
+    <li>The <code>respond()</code> promise resolves — the calling component knows the cycle is complete</li>
+    <li>The interaction is marked as <code>acknowledged</code> in the local queue and moved to the history store</li>
+    <li>The UI component is unmounted (or hidden) — the user sees it disappear</li>
+    <li>The callback topic subscription is cleaned up</li>
+  </ul>
+
+  <p>When the ack arrives with <code>status: "error"</code>:</p>
+  <ul>
+    <li>The <code>respond()</code> promise rejects with an <code>InteractionResponseError</code></li>
+    <li>The component should display the error and allow the user to retry</li>
+    <li>The interaction remains in the queue (not dismissed) so the user can try again</li>
+  </ul>
+
+  <h2>Ack Timeout</h2>
+  <p>The client waits up to 10 seconds for the ack after submitting a response. If no ack arrives within that window:</p>
+  <ul>
+    <li>The <code>respond()</code> promise rejects with a <code>InteractionAckTimeoutError</code></li>
+    <li>The interaction is left in an ambiguous state — the server may or may not have processed the response</li>
+    <li>The UI should display a "response submitted, awaiting confirmation" state and allow the user to refresh</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Idempotent Response Handling</strong>
+    Design your server-side response handlers to be idempotent. In rare cases (network issues, server restarts), the same response may be delivered more than once. Use the <code>interactionId</code> as the idempotency key.
+  </div>
+
+  <h2>Full Ack Flow (Code)</h2>
+  <pre><code>// Inside InteractionResponsePublisher (simplified)
+async function respond(
+  interaction: InteractionRequest,
+  outcome: string,
+  data?: unknown
+): Promise&lt;void&gt; {
+
+  const response: InteractionResponse = {
+    interactionId: interaction.interactionId,
+    respondedBy: currentUser.id,
+    outcome,
+    data,
+    timestamp: new Date().toISOString(),
+    sessionId: edgeStreamSession.id
+  };
+
+  // Publish response to callback topic
+  await edgeStreamClient.publish(
+    `interactions.callback.${interaction.interactionId}`,
+    response
+  );
+
+  // Wait for server ack (with 10s timeout)
+  const ack = await edgeStreamClient.waitForMessage(
+    `interactions.ack.${interaction.interactionId}`,
+    { timeoutMs: 10_000 }
+  );
+
+  if (ack.status === 'error') {
+    throw new InteractionResponseError(ack.errorMessage);
+  }
+
+  // Success — ack received
+}
+</code></pre>
+
+  <div class="page-nav">
+    <a href="05-response-routing.html">&#8592; Response Routing</a>
+    <a href="07-timeout.html">Next: Interaction Timeout &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

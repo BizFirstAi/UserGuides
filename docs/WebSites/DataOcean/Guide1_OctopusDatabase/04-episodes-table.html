@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Octopus_Episodes Table — Octopus Database | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Octopus Database</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema.html">Database Schema</a>
+  <a href="02-agent-table.html">Octopus_Agents Table</a>
+  <a href="03-conversation-table.html">Octopus_Conversations Table</a>
+  <a href="04-episodes-table.html" class="active">Octopus_Episodes Table</a>
+  <a href="05-procedures-table.html">Octopus_Procedures Table</a>
+  <a href="06-querying.html">Querying the Database</a>
+  <a href="07-maintenance.html">Database Maintenance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Octopus_Episodes Table</h1>
+    <p class="lead">The episodic memory table — one row per conversation turn. This is the highest-volume table in the Octopus database, storing the actual message content, tool call records, and embedding references for every interaction.</p>
+  </div>
+
+  <h2>What Is an Episode?</h2>
+  <p>In Octopus terminology, an <strong>episode</strong> is a single unit of episodic memory — one conversational turn. When a user sends a message, that message is an episode. When the agent replies, that reply is another episode. When the agent makes a tool call, the tool call request and response are recorded as episodes.</p>
+  <p>This fine-grained recording enables the memory system to reconstruct any conversation in precise detail, perform semantic recall of specific past interactions, and provide an auditable log of every agent action.</p>
+
+  <h2>Column Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Constraints</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>EpisodeId</code></td><td>uniqueidentifier</td><td>PK, NOT NULL</td><td>GUID primary key. Generated using <code>NEWSEQUENTIALID()</code> for clustered index efficiency.</td></tr>
+      <tr><td><code>SessionId</code></td><td>uniqueidentifier</td><td>FK, NOT NULL</td><td>References the parent conversation in <code>Octopus_Conversations</code>.</td></tr>
+      <tr><td><code>TenantId</code></td><td>int</td><td>NOT NULL, IX</td><td>Multi-tenancy discriminator. Present on every episode for direct tenant-scoped queries without requiring a join to Conversations.</td></tr>
+      <tr><td><code>Role</code></td><td>nvarchar(50)</td><td>NOT NULL</td><td>The speaker role for this episode: <code>user</code>, <code>assistant</code>, <code>system</code>, <code>tool</code>.</td></tr>
+      <tr><td><code>Messages</code></td><td>varbinary(max)</td><td>NOT NULL</td><td>GZip-compressed JSON array of message content objects. Decompressed by the EF Core value converter on read.</td></tr>
+      <tr><td><code>ToolCalls</code></td><td>varbinary(max)</td><td>NULL</td><td>GZip-compressed JSON of tool/function call records. Only populated for <code>tool</code> role episodes.</td></tr>
+      <tr><td><code>EmbeddingRef</code></td><td>nvarchar(500)</td><td>NULL</td><td>ID in the vector store pointing to the embedding generated for this episode's content. Used for semantic recall lookup.</td></tr>
+      <tr><td><code>Timestamp</code></td><td>datetime2</td><td>NOT NULL</td><td>UTC time when this episode was created. Used for chronological ordering and retention windowing.</td></tr>
+      <tr><td><code>TokenCount</code></td><td>int</td><td>NULL</td><td>Approximate token count of this episode's content. Used by the context window manager to stay within model limits.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Messages JSON Structure</h2>
+  <p>The <code>Messages</code> column (after decompression) contains a JSON array of message objects following the OpenAI/chat completion message format:</p>
+  <pre><code>[
+  {
+    "role": "user",
+    "content": "What is the status of my order #ORD-8821?",
+    "name": null
+  }
+]</code></pre>
+  <p>For multi-part messages (e.g., text + image), the <code>content</code> field is an array of content parts:</p>
+  <pre><code>[
+  {
+    "role": "user",
+    "content": [
+      { "type": "text", "text": "Analyze this chart:" },
+      { "type": "image_url", "image_url": { "url": "data:image/png;base64,..." } }
+    ]
+  }
+]</code></pre>
+
+  <h2>ToolCalls JSON Structure</h2>
+  <p>Tool call episodes record both the function call request (from the model) and the function result (returned to the model):</p>
+  <pre><code>{
+  "toolCallId": "call_abc123",
+  "functionName": "get_order_status",
+  "arguments": { "orderId": "ORD-8821" },
+  "result": {
+    "status": "shipped",
+    "carrier": "FedEx",
+    "trackingNumber": "1Z999AA1012345678",
+    "estimatedDelivery": "2026-05-27"
+  },
+  "durationMs": 142,
+  "isError": false
+}</code></pre>
+
+  <h2>Role Values</h2>
+  <table>
+    <thead>
+      <tr><th>Role</th><th>Source</th><th>Has ToolCalls</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>user</code></td><td>Human</td><td>No</td><td>The human's message to the agent</td></tr>
+      <tr><td><code>assistant</code></td><td>AI Model</td><td>Sometimes</td><td>The agent's response — may include tool call requests inline</td></tr>
+      <tr><td><code>system</code></td><td>Framework</td><td>No</td><td>System-injected context (e.g., memory summaries injected mid-conversation)</td></tr>
+      <tr><td><code>tool</code></td><td>Framework</td><td>Yes</td><td>The result returned from a tool/function call execution</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Embedding Reference and Semantic Recall</h2>
+  <p>When an episode is stored, the Octopus memory system asynchronously generates a vector embedding of the episode content and stores it in the configured vector store (Qdrant or PGVector). The <code>EmbeddingRef</code> column records the vector store's internal ID for that embedding.</p>
+  <p>During semantic recall (when a new user message triggers a search for relevant past episodes), the flow is:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Query Embedding</h4>
+        <p>The user's new message is embedded into a vector using the same model that embedded past episodes.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Vector Search</h4>
+        <p>The vector store finds the top-K most semantically similar episode embeddings and returns their <code>EmbeddingRef</code> IDs.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div></div>
+      <div class="body">
+        <h4>SQL Lookup</h4>
+        <p>The returned IDs are used to query <code>Octopus_Episodes WHERE EmbeddingRef IN (@ids) AND TenantId = @tenantId</code> to retrieve the full message text for injection into the context window.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <strong>EmbeddingRef Can Be Null</strong>
+    <p>Short episodes (under a minimum token threshold), system injections, and tool result episodes may not have embeddings generated. The memory system skips semantic recall for episodes without an <code>EmbeddingRef</code>. This is by design — embedding every token would waste vector store capacity on low-value data.</p>
+  </div>
+
+  <h2>Volume Considerations</h2>
+  <p><code>Octopus_Episodes</code> is by far the highest-volume table. In a production multi-tenant deployment with 100 active agents each handling 50 conversations per day averaging 20 turns per conversation, you get approximately <strong>100,000 new episode rows per day</strong>. At an average compressed size of 2KB per row, that is 200MB of new data daily before archival kicks in.</p>
+  <p>The <code>MemoryRetentionJob</code> runs nightly and moves episodes older than the configured TTL to an archive table, keeping the active table query-fast. See the Maintenance page for details.</p>
+
+  <div class="page-nav">
+    <a href="03-conversation-table.html">&#8592; Octopus_Conversations Table</a>
+    <a href="05-procedures-table.html">Next: Octopus_Procedures Table &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

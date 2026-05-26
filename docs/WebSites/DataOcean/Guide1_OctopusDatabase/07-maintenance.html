@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Database Maintenance — Octopus Database | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Octopus Database</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema.html">Database Schema</a>
+  <a href="02-agent-table.html">Octopus_Agents Table</a>
+  <a href="03-conversation-table.html">Octopus_Conversations Table</a>
+  <a href="04-episodes-table.html">Octopus_Episodes Table</a>
+  <a href="05-procedures-table.html">Octopus_Procedures Table</a>
+  <a href="06-querying.html">Querying the Database</a>
+  <a href="07-maintenance.html" class="active">Database Maintenance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Database Maintenance</h1>
+    <p class="lead">Operational guidance for keeping the Octopus database healthy — index maintenance, JSON column management, archival jobs, backup strategy, and monitoring.</p>
+  </div>
+
+  <h2>Memory Retention Job</h2>
+  <p>The <strong>MemoryRetentionJob</strong> is a background service that runs nightly (configurable) and performs three tasks:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Session Timeout</h4>
+        <p>Sets any <code>Active</code> conversations that have had no new episodes in the last <code>SessionInactivityTimeoutMinutes</code> (default: 60) to <code>TimedOut</code> status.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Episode Archival</h4>
+        <p>Moves episodes older than the configured <code>EpisodeRetentionDays</code> (default: 90) from <code>Octopus_Episodes</code> to <code>Octopus_Episodes_Archive</code>. The archive table has the same schema and is queryable — it just is not part of the active working set.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Stale Procedure Cleanup</h4>
+        <p>Optionally deletes or archives procedures that have never been activated and are older than <code>ProcedureRetentionDays</code> (default: 180). Enabled by setting <code>PurgeUnusedProcedures = true</code>.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>Configuration</h3>
+  <pre><code>// appsettings.json — Octopus memory retention settings
+{
+  "Octopus": {
+    "MemoryRetention": {
+      "EpisodeRetentionDays": 90,
+      "ProcedureRetentionDays": 180,
+      "SessionInactivityTimeoutMinutes": 60,
+      "PurgeUnusedProcedures": false,
+      "ArchiveEnabled": true,
+      "JobScheduleCron": "0 2 * * *"   // 2:00 AM UTC daily
+    }
+  }
+}</code></pre>
+
+  <h2>Index Maintenance</h2>
+  <p>The <code>Octopus_Episodes</code> table receives the most writes and is the most critical to keep defragmented. The clustered index is on <code>EpisodeId</code> (NEWSEQUENTIALID), which minimizes page splits. However, the non-clustered indexes (especially <code>IX_Episodes_TenantId_SessionId_Timestamp</code>) need periodic rebuilding.</p>
+
+  <h3>Recommended Index Maintenance Script</h3>
+  <pre><code>-- Run weekly during off-peak hours
+-- Rebuild indexes with > 30% fragmentation
+DECLARE @TableName NVARCHAR(200) = 'Octopus_Episodes';
+DECLARE @IndexName NVARCHAR(200);
+DECLARE @Fragmentation FLOAT;
+
+DECLARE index_cursor CURSOR FOR
+SELECT i.name, s.avg_fragmentation_in_percent
+FROM sys.dm_db_index_physical_stats(DB_ID(), OBJECT_ID(@TableName), NULL, NULL, 'LIMITED') s
+JOIN sys.indexes i ON i.object_id = s.object_id AND i.index_id = s.index_id
+WHERE s.avg_fragmentation_in_percent > 10;
+
+OPEN index_cursor;
+FETCH NEXT FROM index_cursor INTO @IndexName, @Fragmentation;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF @Fragmentation > 30
+        EXEC('ALTER INDEX [' + @IndexName + '] ON [' + @TableName + '] REBUILD WITH (ONLINE = ON)');
+    ELSE
+        EXEC('ALTER INDEX [' + @IndexName + '] ON [' + @TableName + '] REORGANIZE');
+    FETCH NEXT FROM index_cursor INTO @IndexName, @Fragmentation;
+END
+
+CLOSE index_cursor;
+DEALLOCATE index_cursor;</code></pre>
+
+  <h2>JSON Column Storage and Compression</h2>
+  <p>The <code>Messages</code> and <code>ToolCalls</code> columns use GZip compression via an EF Core value converter. This reduces storage for typical conversational content by 60-75%. A few important points for DBAs:</p>
+  <ul>
+    <li>The compressed binary cannot be read with <code>OPENJSON()</code> directly — always use the application layer to read episode content.</li>
+    <li>You can check uncompressed vs. compressed sizes using application-side diagnostics or by sampling rows and decompressing in a test harness.</li>
+    <li>If you need to inspect episode content in SSMS for debugging, use the Octopus Admin API's <code>GET /api/octopus/episodes/{episodeId}</code> endpoint — it returns decompressed JSON.</li>
+  </ul>
+
+  <h2>Archive Table Strategy</h2>
+  <p>The archive table <code>Octopus_Episodes_Archive</code> mirrors the schema of <code>Octopus_Episodes</code> exactly but is optimized for cold storage:</p>
+  <ul>
+    <li>No non-clustered indexes by default — use covering indexes only if archive reporting is required</li>
+    <li>Columnstore index is recommended for reporting workloads on the archive table</li>
+    <li>Archive data can be offloaded to Azure Blob Storage or S3 using SQL Server's Data Tiering feature for long-term retention</li>
+  </ul>
+
+  <pre><code>-- Example: Add columnstore index to archive for analytical queries
+CREATE NONCLUSTERED COLUMNSTORE INDEX NCCI_Episodes_Archive
+ON Octopus_Episodes_Archive
+(TenantId, SessionId, Role, Timestamp, TokenCount);
+-- Excludes varbinary columns (Messages, ToolCalls) — not supported in columnstore</code></pre>
+
+  <h2>Backup Strategy</h2>
+  <table>
+    <thead>
+      <tr><th>Backup Type</th><th>Frequency</th><th>Retention</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Full Backup</td><td>Weekly (Sunday 01:00 UTC)</td><td>4 weeks</td><td>Covers all tables including archive</td></tr>
+      <tr><td>Differential Backup</td><td>Daily (01:00 UTC, except Sunday)</td><td>7 days</td><td>Incremental from last full</td></tr>
+      <tr><td>Transaction Log Backup</td><td>Every 15 minutes</td><td>48 hours</td><td>Enables point-in-time recovery</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Vector Store Backup Is Separate</strong>
+    <p>The SQL database backup does NOT include the vector store data (embeddings in Qdrant or PGVector). The vector store must be backed up independently. If the vector store and SQL database backups are not synchronized, restoring them to mismatched points-in-time will result in orphaned <code>EmbeddingRef</code> values in SQL with no corresponding vector store entry, breaking semantic recall. Coordinate your backup windows.</p>
+  </div>
+
+  <h2>Monitoring Queries</h2>
+  <pre><code>-- Check table sizes (run periodically to track growth)
+SELECT
+    t.NAME AS TableName,
+    p.rows AS RowCounts,
+    CAST(ROUND((SUM(a.total_pages) * 8) / 1024.0, 2) AS DECIMAL(10,2)) AS TotalSpaceMB,
+    CAST(ROUND((SUM(a.used_pages) * 8) / 1024.0, 2) AS DECIMAL(10,2)) AS UsedSpaceMB
+FROM sys.tables t
+INNER JOIN sys.indexes i ON t.OBJECT_ID = i.object_id
+INNER JOIN sys.partitions p ON i.object_id = p.OBJECT_ID AND i.index_id = p.index_id
+INNER JOIN sys.allocation_units a ON p.partition_id = a.container_id
+WHERE t.NAME LIKE 'Octopus_%'
+  AND t.is_ms_shipped = 0
+  AND i.OBJECT_ID > 255
+  AND i.index_id <= 1
+GROUP BY t.NAME, p.Rows
+ORDER BY TotalSpaceMB DESC;</code></pre>
+
+  <div class="page-nav">
+    <a href="06-querying.html">&#8592; Querying the Database</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

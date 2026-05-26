@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Use Cases — EdgeStream Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Architecture</a>
+  <a href="02-packages.html">Package Structure</a>
+  <a href="03-core-concepts.html">Core Concepts</a>
+  <a href="04-use-cases.html" class="active">Use Cases</a>
+  <a href="05-getting-started.html">Getting Started</a>
+  <a href="06-bizfirstgo-integration.html">BizFirstGO Integration</a>
+  <a href="07-typescript.html">TypeScript-First Design</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Use Cases</h1>
+    <p class="lead">Real-world scenarios where EdgeStream is the right choice — from workflow execution monitoring to LLM token streaming and UI action routing.</p>
+  </div>
+
+  <h2>Workflow Execution Events</h2>
+  <p>The Flow Studio Observer Panel uses EdgeStream to display live node execution state. Every time a workflow node starts, completes, or fails, the backend publishes an event on the <code>workflow.execution.*</code> topic namespace. The frontend subscribes and updates the visual graph in real time.</p>
+
+  <pre><code>// Frontend: subscribe to all workflow execution events
+const subscription = edgeStream.subscribe(
+  'bas',
+  'workflow.execution.*',
+  (envelope: IEnvelope&lt;WorkflowNodeEvent&gt;) =&gt; {
+    const { nodeId, status, output } = envelope.body;
+    observerStore.updateNodeStatus(nodeId, status);
+    if (output) observerStore.setNodeOutput(nodeId, output);
+  }
+);
+
+// Backend publishes via IEdgeStreamPublisher
+await publisher.PublishAsync(
+  'workflow.execution.node-completed',
+  new WorkflowNodeEvent { NodeId = nodeId, Status = "completed", Output = result },
+  tenantId: tenantId
+);</code></pre>
+
+  <h2>LLM Token Streaming (Octopus)</h2>
+  <p>Octopus agent responses stream token-by-token over EdgeStream. Each token is a tiny message on the <code>agent.chat.*</code> topic. The chat UI subscribes and appends tokens to the current message bubble as they arrive — producing the streaming effect without polling.</p>
+
+  <pre><code>// Subscribe to streaming tokens for a specific conversation
+edgeStream.subscribe(
+  'bas',
+  `agent.chat.${conversationId}.*`,
+  (envelope: IEnvelope&lt;AgentTokenEvent&gt;) =&gt; {
+    if (envelope.body.type === 'token') {
+      chatStore.appendToken(envelope.body.token);
+    } else if (envelope.body.type === 'done') {
+      chatStore.markComplete();
+    }
+  }
+);</code></pre>
+
+  <h2>Human-in-the-Loop Approval</h2>
+  <p>HIL (Human-in-the-Loop) workflows pause execution and wait for human approval. EdgeStream carries the approval request to the WorkDesk UI and delivers the response back to the workflow engine. The pipeline's <code>pause()</code> feature enables the flow-control side of this pattern.</p>
+
+  <pre><code>// Approval request arrives on a topic
+edgeStream.subscribe('bas', 'hil.approval.request', async (envelope) =&gt; {
+  const { taskId, requestedBy, deadline, formSchema } = envelope.body;
+  // Show approval UI to user
+  hilInboxStore.addPendingApproval({ taskId, requestedBy, deadline, formSchema });
+});
+
+// User submits decision — send response
+await edgeStream.send('bas', 'hil.approval.response', {
+  taskId: taskId,
+  decision: 'approved',
+  comment: 'Looks good',
+  decidedBy: currentUserId,
+});</code></pre>
+
+  <h2>Real-Time Notifications</h2>
+  <p>WorkDesk receives notifications for task assignments, mentions, and system alerts. A single subscriber on a per-user topic namespace ensures the right user sees the right notification.</p>
+
+  <pre><code>// Per-user notification subscription
+edgeStream.subscribe(
+  'bas',
+  `notifications.user.${userId}.*`,
+  (envelope: IEnvelope&lt;Notification&gt;) =&gt; {
+    notificationStore.push({
+      id: envelope.meta.id,
+      type: envelope.body.notificationType,
+      title: envelope.body.title,
+      at: envelope.meta.receivedAt,
+    });
+  }
+);</code></pre>
+
+  <h2>ANCP Protocol Messages</h2>
+  <p>The Agent Node Communication Protocol (ANCP) uses EdgeStream as its transport. ANCP messages flow between agent nodes during workflow execution — tool calls, results, memory reads, and orchestration signals all travel on the <code>ancp.*</code> namespace.</p>
+
+  <pre><code>// ANCP tool call message
+edgeStream.subscribe('bas', 'ancp.tool-call', (envelope) =&gt; {
+  const { nodeId, toolName, args, correlationId } = envelope.body;
+  toolRegistry.execute(toolName, args).then(result =&gt; {
+    edgeStream.send('bas', 'ancp.tool-result', {
+      correlationId,
+      result,
+      nodeId,
+    });
+  });
+});</code></pre>
+
+  <h2>Form Interaction Events</h2>
+  <p>Atlas Forms publishes interaction events over EdgeStream when users open, complete, or abandon a form. The backend can react instantly — triggering downstream workflow steps without polling.</p>
+
+  <pre><code>// Subscribe to all form events for a workflow
+edgeStream.subscribe(
+  'bas',
+  `form.${workflowId}.*`,
+  (envelope: IEnvelope&lt;FormEvent&gt;) =&gt; {
+    switch (envelope.body.eventType) {
+      case 'form.opened':
+        analytics.track('form_opened', envelope.body);
+        break;
+      case 'form.submitted':
+        workflowEngine.resumeAfterForm(envelope.body.formId, envelope.body.data);
+        break;
+      case 'form.abandoned':
+        workflowEngine.handleFormTimeout(envelope.body.formId);
+        break;
+    }
+  }
+);</code></pre>
+
+  <h2>Choosing EdgeStream vs. Direct HTTP</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>EdgeStream</th><th>Direct HTTP</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Real-time UI updates</td><td>Preferred — push model, no polling</td><td>Requires polling or SSE manually</td></tr>
+      <tr><td>LLM token streaming</td><td>Preferred — per-token events, typed</td><td>Complex with HTTP streaming</td></tr>
+      <tr><td>CRUD operations</td><td>Not recommended</td><td>Preferred</td></tr>
+      <tr><td>File uploads</td><td>Not recommended</td><td>Preferred (multipart)</td></tr>
+      <tr><td>Workflow event fanout</td><td>Preferred — multiple subscribers</td><td>Would need event bus</td></tr>
+      <tr><td>Request/response</td><td>Use only when correlation needed</td><td>Preferred (simple)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-core-concepts.html">&#8592; Core Concepts</a>
+    <a href="05-getting-started.html">Next: Getting Started &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

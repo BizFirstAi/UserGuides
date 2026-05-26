@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hooks Overview — Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Hooks Overview</a>
+  <a href="01-normalization-hook.html">NormalizationHook</a>
+  <a href="02-pre-pipeline-hook.html">Pre-Pipeline Hook</a>
+  <a href="03-post-pipeline-hook.html">Post-Pipeline Hook</a>
+  <a href="04-incoming-hook.html">Incoming Hook</a>
+  <a href="05-outgoing-hook.html">Outgoing Hook</a>
+  <a href="06-activity-logger.html">HookActivityLogger</a>
+  <a href="07-custom-hook.html">Implementing a Custom Hook</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Hooks Overview</h1>
+    <p class="lead">EdgeStream hooks are composable, priority-ordered message processors that intercept the pipeline at defined stages. There are six hook types — each fires at a specific moment in the message lifecycle.</p>
+  </div>
+
+  <h2>The Six Hook Types</h2>
+  <table>
+    <thead>
+      <tr><th>Hook Type</th><th>Default Priority</th><th>When It Fires</th><th>Can Abort?</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>NormalizationHook</code></td><td>110</td><td>After security, before processing</td><td>No (non-fatal)</td></tr>
+      <tr><td>Pre-Pipeline Hooks</td><td>120–199</td><td>After normalization, before processing</td><td>Yes</td></tr>
+      <tr><td>Processing Hooks</td><td>200–299</td><td>Core transformation stage</td><td>Yes</td></tr>
+      <tr><td>Post-Pipeline Hooks</td><td>300+</td><td>After processing, before delivery</td><td>Discouraged</td></tr>
+      <tr><td><code>HookActivityLogger</code></td><td>5</td><td>First — captures timing for all hooks</td><td>No</td></tr>
+      <tr><td>Incoming/Outgoing Hooks</td><td>Any</td><td>Incoming: transport→app; Outgoing: app→transport</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Hook Interface</h2>
+  <p>All hooks implement <code>IHook</code>. The <code>priority</code> field determines execution order within a pipeline — lower number executes first.</p>
+
+  <pre><code>export interface IHook&lt;TContext extends IPipelineContext = IPipelineContext&gt; {
+  readonly name: string;      // display name for logging + HooksMonitor
+  readonly priority: number;  // lower = runs first
+  execute(context: TContext): Promise&lt;HookResult&gt;;
+}
+
+export interface HookResult {
+  continue: boolean;   // false = abort pipeline (message dropped)
+  paused?: boolean;    // true = pipeline paused for user input
+  error?: string;      // error message for observability
+}</code></pre>
+
+  <h2>Hook Type Reference</h2>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>NormalizationHook</h4>
+      <p>Converts raw message body to CloudEvents format. Runs at priority 110. Optional — normalization failure is non-fatal. Never modifies business data.</p>
+    </div>
+    <div class="card">
+      <h4>Pre-Pipeline (120–199)</h4>
+      <p>Enrichment, routing decisions, rate limiting, deduplication. Runs on normalized envelope. Can abort pipeline cleanly.</p>
+    </div>
+    <div class="card">
+      <h4>Processing (200–299)</h4>
+      <p>Content transformation, business logic, HIL pause. Where the core message handling happens.</p>
+    </div>
+    <div class="card">
+      <h4>Post-Pipeline (300+)</h4>
+      <p>Audit logging, metrics emission, acknowledgment, caching. Runs after processing, before subscriber delivery.</p>
+    </div>
+    <div class="card">
+      <h4>HookActivityLogger</h4>
+      <p>Priority 5 — runs before all others. Captures start/success/error/skip events with timing. Feeds HooksMonitor React component.</p>
+    </div>
+    <div class="card">
+      <h4>Incoming / Outgoing</h4>
+      <p>Transport-level interceptors. Incoming fires when raw bytes arrive. Outgoing fires when send() is called. Used for signing, compression, auth headers.</p>
+    </div>
+  </div>
+
+  <h2>Built-in Hook Types (Interfaces Only)</h2>
+  <p>EdgeStream defines interface types for common hook patterns. These are contracts you implement — not built-in implementations (except NormalizationHook and HookActivityLogger):</p>
+
+  <table>
+    <thead>
+      <tr><th>Interface</th><th>Name Constant</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ILogHook</code></td><td><code>'LogHook'</code></td><td>Logging/diagnostics hook</td></tr>
+      <tr><td><code>IFilterHook</code></td><td><code>'FilterHook'</code></td><td>Predicate-based message filtering</td></tr>
+      <tr><td><code>IValidationHook</code></td><td><code>'ValidationHook'</code></td><td>Schema validation, abort on failure</td></tr>
+      <tr><td><code>IDecryptHook</code></td><td><code>'DecryptHook'</code></td><td>Decrypt encrypted message body</td></tr>
+      <tr><td><code>IVerifySignatureHook</code></td><td><code>'VerifySignatureHook'</code></td><td>HMAC/signature verification</td></tr>
+      <tr><td><code>IAcknowledgeHook</code></td><td><code>'AcknowledgeHook'</code></td><td>Send ACK to message broker</td></tr>
+      <tr><td><code>IRenderToFormHook</code></td><td><code>'RenderToFormHook'</code></td><td>Render form, pause for user input</td></tr>
+      <tr><td><code>IPublishToSubscribersHook</code></td><td><code>'PublishToSubscribersHook'</code></td><td>Terminal hook — deliver to subscribers</td></tr>
+      <tr><td><code>ISignMessageHook</code></td><td><code>'SignMessageHook'</code></td><td>Sign outgoing messages</td></tr>
+      <tr><td><code>IEncryptMessageHook</code></td><td><code>'EncryptMessageHook'</code></td><td>Encrypt outgoing messages</td></tr>
+      <tr><td><code>IRetryHook</code></td><td><code>'RetryHook'</code></td><td>Retry failed message sends</td></tr>
+      <tr><td><code>IUiQueryHook</code></td><td><code>'UiQueryHook'</code></td><td>Query UI, await user response</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Hook Registration</h2>
+  <pre><code>import { createEdgeStream, NormalizationHook } from 'edge-stream-js';
+import { HookActivityLogger } from 'observability-hooks-js';
+
+const stream = createEdgeStream();
+stream.registerServer({ id: 'bas', ... });
+
+const server = stream.server('bas')!;
+
+// Add to incoming pipeline — hooks are sorted by priority automatically
+server.incomingPipeline.addHook(new HookActivityLogger());  // priority 5
+server.incomingPipeline.addHook(new NormalizationHook());   // priority 110
+server.incomingPipeline.addHook(new TenantFilterHook());    // priority 130
+server.incomingPipeline.addHook(new AuditLogHook());        // priority 300
+
+// Add to outgoing pipeline
+server.outgoingPipeline.addHook(new SignMessageHook());     // priority 50</code></pre>
+
+  <div class="callout info">
+    <strong>Hooks Must Be Registered Before start()</strong>
+    All hooks should be added to the pipeline before calling <code>edgeStream.start()</code>. Adding hooks after start is technically possible but may cause race conditions on high-throughput servers.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-normalization-hook.html">Next: NormalizationHook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Output Ports — Guide33_NodeOutputs | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Outputs</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-output-object.html"><i class="fa-solid fa-box"></i> The Output Object</a>
+  <a href="02-accessing-output.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Accessing Output</a>
+  <a href="03-output-ports.html" class="active"><i class="fa-solid fa-plug"></i> Output Ports</a>
+  <a href="04-conditional-ports.html"><i class="fa-solid fa-code-branch"></i> Conditional Ports</a>
+  <a href="05-multi-output.html"><i class="fa-solid fa-share-nodes"></i> Parallel Outputs</a>
+  <a href="06-naming.html"><i class="fa-solid fa-tag"></i> NodeId Naming</a>
+  <a href="07-no-output.html"><i class="fa-solid fa-ban"></i> Nodes With No Output</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Output Ports</h1>
+    <p class="lead">The four standard port types — main, error, timeout, and conditional — how they appear on the canvas, and how the edge router uses them to direct execution flow.</p>
+  </div>
+
+  <h2>What Is a Port?</h2>
+  <p>A port is a named connection point on a node where edges can originate. The edge router reads the <code>portKey</code> from <code>NodeExecutionResult</code> and fires all edges that are registered to that port. Edges not connected to the fired port are ignored for this execution.</p>
+
+  <h2>Standard Port Types</h2>
+  <table>
+    <thead>
+      <tr><th>Port Key</th><th>Color (canvas)</th><th>When Fires</th><th>Set By</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>main</code></td><td>Green</td><td>Node completed successfully</td><td>Default — <code>NodeExecutionResult.Success()</code></td></tr>
+      <tr><td><code>error</code></td><td>Red</td><td>Unhandled exception thrown</td><td>Engine — wraps any thrown exception</td></tr>
+      <tr><td><code>timeout</code></td><td>Orange</td><td>Node exceeded configured timeout</td><td>Engine — cancels node on timeout</td></tr>
+      <tr><td><em>custom</em></td><td>Blue/Gray</td><td>Node logic returned named key</td><td><code>portKey</code> in <code>Success()</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Port Declaration in the Frontend</h2>
+  <p>Custom ports are declared in the React node component using <code>CustomHandle</code>. The handle's <code>id</code> property must match the <code>portKey</code> returned by the executor:</p>
+  <pre><code class="language-tsx">// packages/flow-studio-designer/src/components/Handles/CustomHandle.tsx
+interface CustomHandleProps {
+  id: string;         // must match portKey from executor
+  label: string;      // displayed on canvas
+  type: "source" | "target";
+  position: Position;
+  color?: string;
+}
+
+// Example: A decision node with approved/rejected ports
+export function DecisionNode({ data }: NodeProps) {
+  return (
+    &lt;div className="node decision-node"&gt;
+      &lt;NodeLabel&gt;{data.label}&lt;/NodeLabel&gt;
+      &lt;CustomHandle id="approved" label="Approved" type="source" position={Position.Right} color="#22c55e" /&gt;
+      &lt;CustomHandle id="rejected" label="Rejected" type="source" position={Position.Bottom} color="#ef4444" /&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Edge Router Logic</h2>
+  <p>The backend <code>EdgeRouter</code> selects edges to follow based on the fired port key:</p>
+  <pre><code class="language-csharp">// ProcessEngine/EdgeRouter.cs (simplified)
+public IEnumerable&lt;WorkflowEdge&gt; GetEdgesForPort(
+    string nodeId,
+    string portKey,
+    IEnumerable&lt;WorkflowEdge&gt; allEdges)
+{
+    return allEdges.Where(edge =>
+        edge.SourceNodeId == nodeId &&
+        edge.SourcePortKey == portKey &&
+        EvaluateCondition(edge.Condition));
+}</code></pre>
+
+  <h2>Error Port Behavior</h2>
+  <p>When a node throws an unhandled exception, the engine:</p>
+  <ol>
+    <li>Catches the exception and wraps it in an error output: <code>{ message, stackTrace, exceptionType }</code></li>
+    <li>Stores this error object at <code>ExecutionMemory.nodeOutputs[nodeId]</code></li>
+    <li>Routes to the <code>error</code> port — all edges from that port execute</li>
+    <li>If no edges are connected to the error port, the entire execution fails</li>
+  </ol>
+  <pre><code class="language-javascript">// Accessing error details in the error handler node
+$output.failedNode.message        // "Connection refused"
+$output.failedNode.exceptionType  // "System.Net.Http.HttpRequestException"</code></pre>
+
+  <h2>Timeout Port</h2>
+  <p>Set a node timeout in the node inspector panel (in seconds). If the node's <code>ExecuteAsync</code> does not return within the timeout, the engine cancels the task and fires the <code>timeout</code> port with output:</p>
+  <pre><code class="language-javascript">$output.slowNode.timedOutAfterMs   // 30000
+$output.slowNode.nodeId            // "slowNode"</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Best practice:</strong> Always connect an error port edge for nodes that call external services. Unhandled errors with no error edge will terminate the workflow execution in a failed state with no compensation path.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-accessing-output.html">&#8592; Accessing Output</a>
+    <a href="04-conditional-ports.html">Next: Conditional Ports &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

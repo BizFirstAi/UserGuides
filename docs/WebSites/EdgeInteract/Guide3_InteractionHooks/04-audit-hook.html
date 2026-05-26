@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audit Hook — Interaction Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-pre-send.html">Pre-Send Hook</a>
+  <a href="02-post-receive.html">Post-Receive Hook</a>
+  <a href="03-response-validation.html">Response Validation Hook</a>
+  <a href="04-audit-hook.html" class="active">Audit Hook</a>
+  <a href="05-rate-limit-hook.html">Rate Limit Hook</a>
+  <a href="06-custom.html">Custom Interaction Hooks</a>
+  <a href="07-order.html">Hook Execution Order</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Audit Hook</h1>
+    <p class="lead">The <code>AuditInteractionHook</code> logs every interaction — published request, received response (or timeout), and blocked attempts — to an immutable audit store. This creates a compliance-grade record of every human decision made through EdgeInteract.</p>
+  </div>
+
+  <h2>What Gets Audited</h2>
+  <p>The audit hook runs at both lifecycle points and creates records for every event:</p>
+  <table>
+    <thead><tr><th>Event</th><th>Hook Point</th><th>Record Created</th></tr></thead>
+    <tbody>
+      <tr><td>Interaction published</td><td>OnBeforePublish (after hook)</td><td><code>InteractionAuditEvent { status: "published" }</code></td></tr>
+      <tr><td>Interaction blocked</td><td>OnBeforePublish (catch)</td><td><code>InteractionAuditEvent { status: "blocked", blockedBy }</code></td></tr>
+      <tr><td>Response received</td><td>OnAfterRespond</td><td><code>InteractionAuditEvent { status: "responded", outcome, responseMs }</code></td></tr>
+      <tr><td>Interaction timed out</td><td>Timeout handler</td><td><code>InteractionAuditEvent { status: "timed_out" }</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Audit Record Schema</h2>
+  <pre><code>public record InteractionAuditEvent
+{
+    public string AuditId { get; init; } = Guid.NewGuid().ToString();
+    public string InteractionId { get; init; } = default!;
+    public string Type { get; init; } = default!;
+    public string TargetUserId { get; init; } = default!;
+    public string Status { get; init; } = default!; // published|blocked|responded|timed_out
+    public string? Outcome { get; init; }
+    public string? RespondedBy { get; init; }
+    public double? ResponseTimeMs { get; init; }
+    public string? CorrelationId { get; init; }
+    public string? BlockedBy { get; init; }
+    public DateTimeOffset OccurredAt { get; init; } = DateTimeOffset.UtcNow;
+    public Dictionary&lt;string, string&gt; Metadata { get; init; } = new();
+}
+</code></pre>
+
+  <h2>Registering the Audit Hook</h2>
+  <pre><code>// In Program.cs
+builder.Services.AddEdgeInteract(options =&gt; {
+    options.AuditLog.Enabled = true;
+    options.AuditLog.RetentionDays = 365; // 1 year
+    options.AuditLog.StorageProvider = AuditStorageProvider.SqlServer;
+    options.AuditLog.SensitiveFields = ["payload.formData.ssn", "payload.formData.accountNumber"];
+});
+
+builder.Services.AddInteractionHook&lt;AuditInteractionHook&gt;();
+</code></pre>
+
+  <h2>Sensitive Field Redaction</h2>
+  <p>The audit hook supports field-level redaction for sensitive payload data. Fields listed in <code>SensitiveFields</code> are replaced with <code>[REDACTED]</code> before the audit record is persisted:</p>
+  <pre><code>// Configuration
+options.AuditLog.SensitiveFields = [
+    "payload.formData.socialSecurityNumber",
+    "payload.formData.creditCardNumber",
+    "payload.context"  // Redact the entire context string
+];
+</code></pre>
+
+  <h2>Querying the Audit Log</h2>
+  <p>The audit log is queryable via <code>IInteractionAuditStore</code>:</p>
+  <pre><code>// C# — query audit records
+var records = await _auditStore.QueryAsync(new AuditQuery
+{
+    UserId = "usr_abc123",
+    Type = InteractionTypes.Approval,
+    Status = "responded",
+    FromDate = DateTimeOffset.UtcNow.AddDays(-30),
+    ToDate = DateTimeOffset.UtcNow
+});
+
+foreach (var record in records)
+{
+    Console.WriteLine($"{record.OccurredAt}: {record.Type} → {record.Outcome} by {record.RespondedBy}");
+}
+</code></pre>
+
+  <div class="callout success">
+    <strong>Compliance Requirement</strong>
+    For GDPR and SOC 2 compliance, the audit hook is strongly recommended for all production EdgeInteract deployments. Audit records are immutable — once written, they cannot be modified or deleted via the API (only expired by the retention policy).
+  </div>
+
+  <div class="page-nav">
+    <a href="03-response-validation.html">&#8592; Response Validation Hook</a>
+    <a href="05-rate-limit-hook.html">Next: Rate Limit Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

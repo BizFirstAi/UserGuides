@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Server Setup — SQL Server Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>SQL Server Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-setup.html" class="active">SQL Server Setup</a>
+  <a href="02-datasource-registration.html">Datasource Registration</a>
+  <a href="03-ai-ready-schema.html">AI-Ready Schema Design</a>
+  <a href="04-sql-nodes.html">Access from Flow Studio</a>
+  <a href="05-form-generation.html">AI Form Generation</a>
+  <a href="06-security.html">Security and Credentials</a>
+  <a href="07-performance.html">Performance Patterns</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>SQL Server Setup</h1>
+    <p class="lead">Step-by-step instructions for provisioning a dedicated SQL Server instance as your Data Ocean backend — server configuration, database creation, user setup, and network access for BizFirstGO connectivity.</p>
+  </div>
+
+  <h2>Choosing Your SQL Server Deployment</h2>
+  <p>Data Ocean SQL Server can be deployed in three configurations depending on your infrastructure:</p>
+  <table>
+    <thead>
+      <tr><th>Option</th><th>Best For</th><th>Minimum Spec</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>SQL Server on-premises</strong></td><td>Enterprise environments with existing SQL Server infrastructure</td><td>SQL Server 2019 Standard, 8GB RAM, SSD storage</td></tr>
+      <tr><td><strong>Azure SQL Database</strong></td><td>Cloud-native deployments with managed maintenance</td><td>General Purpose, 4 vCores, 20.4GB RAM</td></tr>
+      <tr><td><strong>SQL Server in Docker</strong></td><td>Development, staging, or containerized environments</td><td>SQL Server 2022 Developer or Express image</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Step 1 — Install SQL Server</h2>
+
+  <h3>On-Premises (Windows Server)</h3>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Download SQL Server 2022</h4>
+        <p>Download from Microsoft's official page. Choose <strong>Standard</strong> for production or <strong>Developer</strong> for local development (Developer is feature-identical to Enterprise but licensed for non-production use only).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Run the Installer</h4>
+        <p>Select <strong>Database Engine Services</strong> as the only required feature. Full-Text Search is recommended if you plan to use SQL-level full-text search on top of semantic search.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Configure Authentication</h4>
+        <p>Choose <strong>Mixed Mode</strong> (Windows + SQL Server authentication) and set a strong SA password. BizFirstGO will connect via a dedicated SQL login — not the SA account.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>Docker (Development)</h3>
+  <pre><code>docker run -e "ACCEPT_EULA=Y" \
+           -e "MSSQL_SA_PASSWORD=YourStrong!Password" \
+           -p 1433:1433 \
+           --name dataocean-sql \
+           -d mcr.microsoft.com/mssql/server:2022-latest</code></pre>
+
+  <h2>Step 2 — Create the Data Ocean Database</h2>
+  <pre><code>-- Connect as SA or a sysadmin account and run:
+CREATE DATABASE DataOcean_CustomerData
+    COLLATE SQL_Latin1_General_CP1_CI_AS;
+GO
+
+-- Use READ_COMMITTED_SNAPSHOT isolation to avoid lock contention
+-- from concurrent workflow reads and writes
+ALTER DATABASE DataOcean_CustomerData
+    SET READ_COMMITTED_SNAPSHOT ON;
+GO
+
+ALTER DATABASE DataOcean_CustomerData
+    SET RECOVERY FULL;  -- Required for point-in-time restore
+GO</code></pre>
+
+  <div class="callout info">
+    <strong>One Database Per Application Domain</strong>
+    <p>Name your database to reflect its domain — <code>DataOcean_CustomerData</code>, <code>DataOcean_Inventory</code>, <code>DataOcean_Finance</code>. Each domain is registered as a separate datasource with its own <code>datasourceId</code>, allowing workflows to target the correct database precisely.</p>
+  </div>
+
+  <h2>Step 3 — Create the Application Login</h2>
+  <pre><code>-- Create a SQL Server login for the BizFirstGO application
+USE master;
+CREATE LOGIN BizFirstApp
+    WITH PASSWORD = 'A_Strong_Password_Here!',
+         DEFAULT_DATABASE = DataOcean_CustomerData,
+         CHECK_EXPIRATION = OFF,
+         CHECK_POLICY = ON;
+GO
+
+-- Create a database user for this login
+USE DataOcean_CustomerData;
+CREATE USER BizFirstApp FOR LOGIN BizFirstApp;
+GO
+
+-- Grant the minimum required permissions
+-- db_datareader: SELECT on all tables
+-- db_datawriter: INSERT, UPDATE, DELETE on all tables
+-- db_ddladmin: CREATE TABLE (needed for EF Core migrations, optional for runtime)
+ALTER ROLE db_datareader ADD MEMBER BizFirstApp;
+ALTER ROLE db_datawriter ADD MEMBER BizFirstApp;
+GO</code></pre>
+
+  <div class="callout warning">
+    <strong>Principle of Least Privilege</strong>
+    <p>Do not grant the application login <code>db_owner</code> or <code>sysadmin</code>. Use <code>db_datareader</code> + <code>db_datawriter</code> for runtime. If you need to run schema migrations from the application, add <code>db_ddladmin</code> — but consider running migrations manually in production via a separate DBA-owned process.</p>
+  </div>
+
+  <h2>Step 4 — Configure Network Access</h2>
+  <p>The BizFirstGO backend must be able to reach TCP port 1433 on your SQL Server. Check:</p>
+  <ul>
+    <li><strong>SQL Server Configuration Manager</strong>: Enable TCP/IP protocol under SQL Server Network Configuration → Protocols for [Instance]</li>
+    <li><strong>Windows Firewall</strong>: Inbound rule allowing TCP 1433 from the BizFirstGO server IP range</li>
+    <li><strong>Azure SQL</strong>: Add the BizFirstGO server's outbound IP to the SQL Server firewall rules in the Azure portal</li>
+    <li><strong>Private Endpoints</strong>: For production Azure deployments, use Private Endpoint + Private DNS Zone instead of public firewall rules</li>
+  </ul>
+
+  <h2>Step 5 — Verify Connectivity</h2>
+  <pre><code>-- From the BizFirstGO server, test connectivity using sqlcmd:
+sqlcmd -S your-sql-server.database.windows.net -U BizFirstApp -P "YourPassword" \
+       -d DataOcean_CustomerData -Q "SELECT @@VERSION"
+
+-- Expected output: SQL Server version string
+-- If this fails, check firewall rules and network path first</code></pre>
+
+  <h2>Connection String Format</h2>
+  <p>Once the server is reachable, the connection string you will register in the BizFirstGO credential store follows this format:</p>
+  <pre><code>-- Standard SQL Server
+Server=your-sql-server;Database=DataOcean_CustomerData;User Id=BizFirstApp;Password=YourPassword;TrustServerCertificate=True;MultipleActiveResultSets=True;
+
+-- Azure SQL Database
+Server=your-server.database.windows.net;Database=DataOcean_CustomerData;User Id=BizFirstApp@your-server;Password=YourPassword;Encrypt=True;TrustServerCertificate=False;MultipleActiveResultSets=True;</code></pre>
+
+  <div class="callout success">
+    <strong>Store Connection Strings in the Credential Store — Never in Code</strong>
+    <p>Never put the connection string directly in appsettings.json, workflow definitions, or SQL node configuration. Always register it in the BizFirstGO credential store as a credential, then reference it by <code>credentialId</code>. See the Security and Credentials page for details.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-datasource-registration.html">Next: Datasource Registration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

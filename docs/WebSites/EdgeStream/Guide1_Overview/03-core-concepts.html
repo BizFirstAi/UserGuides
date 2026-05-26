@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Core Concepts — EdgeStream Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html">Architecture</a>
+  <a href="02-packages.html">Package Structure</a>
+  <a href="03-core-concepts.html" class="active">Core Concepts</a>
+  <a href="04-use-cases.html">Use Cases</a>
+  <a href="05-getting-started.html">Getting Started</a>
+  <a href="06-bizfirstgo-integration.html">BizFirstGO Integration</a>
+  <a href="07-typescript.html">TypeScript-First Design</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Core Concepts</h1>
+    <p class="lead">Six foundational concepts that appear throughout all EdgeStream APIs — understand these and everything else clicks into place.</p>
+  </div>
+
+  <h2>1. Envelope (IEnvelope)</h2>
+  <p>Every message in EdgeStream is wrapped in an <code>IEnvelope</code>. The envelope is the universal container that all hooks, subscribers, and pipelines work with — regardless of transport or protocol.</p>
+
+  <pre><code>export interface IEnvelope&lt;TBody = unknown&gt; {
+  meta: EnvelopeMeta;          // id, transport, topic, timestamps
+  direction: 'incoming' | 'outgoing';
+  raw: string | ArrayBuffer;   // original bytes as received/to-send
+  body: TBody;                 // parsed, typed message body
+  headers?: Record&lt;string, string&gt;;
+  attributes?: Record&lt;string, unknown&gt;; // set by hooks during pipeline
+}</code></pre>
+
+  <h3>EnvelopeMeta</h3>
+  <pre><code>export interface EnvelopeMeta {
+  id: string;                   // UUID for this envelope
+  serverId: string;             // which server received this
+  transport: 'signalr' | 'http-polling' | 'sse' | 'websocket';
+  protocol: 'json' | 'didcomm-v2' | 'cloudevents' | 'custom';
+  receivedAt: Date;
+  topic?: string;               // routing key, e.g. 'workflow.started'
+  correlationId?: string;       // link related messages
+  source?: string;              // originating system
+  type?: string;                // message type discriminator
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Typed Body</strong>
+    Use the generic parameter to get type safety in subscribers: <code>IEnvelope&lt;WorkflowStartedEvent&gt;</code>. The <code>body</code> property is then typed as <code>WorkflowStartedEvent</code>.
+  </div>
+
+  <h2>2. Hook</h2>
+  <p>A hook is a composable, single-responsibility message processor. Hooks are ordered by priority and execute sequentially within a pipeline stage. Any hook can abort processing or pause the pipeline waiting for user input.</p>
+
+  <pre><code>// Implementing a custom hook
+import { BaseHook, IPipelineContext, HookResult } from 'edge-stream-js';
+
+export class TenantValidationHook extends BaseHook {
+  readonly name = 'TenantValidationHook';
+  readonly priority = 50; // runs after decrypt (90) but before normalization (110)
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const tenantId = (context.body as any)?.tenantId;
+    if (!tenantId) {
+      context.abort('Missing tenantId in message body');
+      return { continue: false };
+    }
+    context.metadata.validatedTenantId = tenantId;
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h3>Built-in Hook Priority Reference</h3>
+  <table>
+    <thead>
+      <tr><th>Hook</th><th>Priority</th><th>Stage</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>HookActivityLogger</code></td><td>5</td><td>Both</td></tr>
+      <tr><td><code>DecryptHook</code></td><td>90</td><td>Incoming</td></tr>
+      <tr><td><code>VerifySignatureHook</code></td><td>95</td><td>Incoming</td></tr>
+      <tr><td><code>ValidationHook</code></td><td>100</td><td>Incoming</td></tr>
+      <tr><td><code>NormalizationHook</code></td><td>110</td><td>Incoming</td></tr>
+      <tr><td><code>PublishToSubscribersHook</code></td><td>Terminal</td><td>Incoming</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. Subscriber</h2>
+  <p>A subscriber is a callback function registered against a topic pattern. When a message envelope is delivered, all matching subscribers are invoked concurrently. Errors in one subscriber do not affect others.</p>
+
+  <pre><code>// Subscribing to a topic
+const subscription = edgeStream.subscribe(
+  'bas',                              // server ID
+  'workflow.execution.*',             // topic pattern (wildcard)
+  (envelope: IEnvelope&lt;WorkflowEvent&gt;) =&gt; {
+    console.log('Event:', envelope.body.eventType);
+    console.log('Workflow:', envelope.meta.correlationId);
+  }
+);
+
+// Cleanup when done
+subscription.unsubscribe();</code></pre>
+
+  <h2>4. Server</h2>
+  <p>A server represents a single logical connection to a backend message hub. Each server has its own transport, pipeline, and subscription list. Most applications use a single <code>'bas'</code> server. Multi-server patterns are used when you need separate pipelines for different message domains.</p>
+
+  <pre><code>// Registering a server
+edgeStream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  name: 'BizFirst Application Server',
+  url: 'https://app.bizfirst.com/edge-stream-hub',
+  transportConfig: {
+    type: 'signalr',
+    url: 'https://app.bizfirst.com/edge-stream-hub',
+    accessToken: authToken,
+    reconnect: {
+      maxAttempts: 0,        // infinite
+      initialDelayMs: 1000,
+      maxDelayMs: 30000,
+      backoffMultiplier: 2
+    }
+  }
+});</code></pre>
+
+  <h2>5. Transport</h2>
+  <p>A transport is the network layer. It knows how to connect to a remote endpoint and exchange raw bytes. Transports are swappable — the rest of the pipeline never knows which transport is in use.</p>
+
+  <table>
+    <thead>
+      <tr><th>Transport</th><th>Best For</th><th>Direction</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SignalR</code></td><td>Browser apps with auto-reconnect and group routing</td><td>Full duplex</td></tr>
+      <tr><td><code>WebSocket</code></td><td>Performance-critical paths, server-to-server</td><td>Full duplex</td></tr>
+      <tr><td><code>SSE</code></td><td>Server push only, HTTP/1.1 firewalls</td><td>Server → Client</td></tr>
+      <tr><td><code>HTTP Polling</code></td><td>Strict firewall environments with no WebSocket</td><td>Emulated duplex</td></tr>
+    </tbody>
+  </table>
+
+  <h2>6. Topic</h2>
+  <p>Topics are dot-delimited string identifiers that route messages to subscribers. EdgeStream supports exact matches and single-level wildcards (<code>.*</code>).</p>
+
+  <pre><code>// Topic pattern rules
+'workflow.started'          // exact match
+'workflow.*'                // matches: workflow.started, workflow.completed, workflow.failed
+                            // does NOT match: workflow.execution.started (multi-level)
+'process.engine.node.*'     // matches: process.engine.node.started
+
+// Valid pattern characters: alphanumeric, dots, underscores, hyphens
+// Wildcard: only allowed at end as .*
+// Invalid: 'workflow.*.events', 'workflow..started'</code></pre>
+
+  <div class="callout warning">
+    <strong>Wildcard Scope</strong>
+    The <code>.*</code> wildcard matches exactly one additional segment. <code>workflow.*</code> does <strong>not</strong> match <code>workflow.execution.started</code>. For deeper matching, subscribe to the explicit topic or use a more specific wildcard pattern.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-packages.html">&#8592; Package Structure</a>
+    <a href="04-use-cases.html">Next: Use Cases &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

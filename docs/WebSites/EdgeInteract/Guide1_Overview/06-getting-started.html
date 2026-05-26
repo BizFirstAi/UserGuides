@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Getting Started — Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interaction-model.html">The Interaction Model</a>
+  <a href="02-vs-edgestream.html">EdgeInteract vs. EdgeStream</a>
+  <a href="03-use-cases.html">Use Cases</a>
+  <a href="04-package-structure.html">Package Structure</a>
+  <a href="05-bizfirstgo-integration.html">BizFirstGO Integration</a>
+  <a href="06-getting-started.html" class="active">Getting Started</a>
+  <a href="07-security.html">Security Model</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Getting Started</h1>
+    <p class="lead">Stand up a minimal EdgeInteract integration in under 30 minutes. This guide walks through the minimum code to send a confirmation interaction from the server and receive the response in a React client.</p>
+  </div>
+
+  <h2>Prerequisites</h2>
+  <ul>
+    <li>EdgeStream is already configured in your project (both server and client)</li>
+    <li>An authenticated user session is available (EdgeInteract requires a user ID to target)</li>
+    <li>React 18+ on the client side</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>EdgeStream First</strong>
+    EdgeInteract uses EdgeStream as its transport. If you have not set up EdgeStream, do that first before wiring up EdgeInteract.
+  </div>
+
+  <h2>Step 1 — Server: Register EdgeInteract Services</h2>
+  <p>In your ASP.NET Core <code>Program.cs</code> or <code>Startup.cs</code>, register the EdgeInteract services after EdgeStream:</p>
+  <pre><code>// Program.cs
+builder.Services.AddEdgeStream(options => {
+    options.HubPath = "/edge-stream";
+});
+
+builder.Services.AddEdgeInteract(options => {
+    options.DefaultTimeoutMs = 300_000; // 5 minutes default
+    options.AuditLog.Enabled = true;
+});
+
+// Register built-in hooks
+builder.Services.AddInteractionHook&lt;AuditInteractionHook&gt;();
+builder.Services.AddInteractionHook&lt;RateLimitInteractionHook&gt;();
+</code></pre>
+
+  <h2>Step 2 — Server: Publish an Interaction</h2>
+  <p>Inject <code>IInteractionPublisher</code> into your service or execution node and publish an interaction:</p>
+  <pre><code>// ExampleService.cs
+public class ExampleService
+{
+    private readonly IInteractionPublisher _publisher;
+
+    public ExampleService(IInteractionPublisher publisher)
+    {
+        _publisher = publisher;
+    }
+
+    public async Task&lt;bool&gt; RequestUserConfirmationAsync(string userId)
+    {
+        var request = new InteractionRequest
+        {
+            Type = InteractionTypes.Confirmation,
+            TargetUserId = userId,
+            Title = "Confirm Data Export",
+            Payload = new ConfirmationPayload
+            {
+                Message = "Export all customer records to CSV? This will include 3,421 records.",
+                ConfirmLabel = "Yes, Export",
+                CancelLabel = "Cancel"
+            },
+            TimeoutMs = 300_000 // 5 minutes
+        };
+
+        var response = await _publisher.PublishAndWaitAsync(request);
+
+        return response.Outcome == "confirmed";
+    }
+}
+</code></pre>
+
+  <h2>Step 3 — Client: Wrap App with InteractionProvider</h2>
+  <p>In your React app's entry point, add <code>InteractionProvider</code> inside the EdgeStream provider:</p>
+  <pre><code>// App.tsx
+import { EdgeStreamProvider } from 'edge-stream-react';
+import { InteractionProvider } from 'edge-interact-react';
+import { InteractionContainer } from 'edge-interact-ui';
+
+function App() {
+  return (
+    &lt;EdgeStreamProvider hubUrl="/edge-stream"&gt;
+      &lt;InteractionProvider&gt;
+        {/* InteractionContainer renders incoming interactions as UI */}
+        &lt;InteractionContainer /&gt;
+        &lt;YourAppContent /&gt;
+      &lt;/InteractionProvider&gt;
+    &lt;/EdgeStreamProvider&gt;
+  );
+}
+</code></pre>
+
+  <h2>Step 4 — Test It</h2>
+  <p>With the server and client wired up:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Start the server</h4>
+        <p>Ensure EdgeStream hub is running and EdgeInteract services are registered.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Open the React client and authenticate</h4>
+        <p>Log in as the user you'll target. <code>InteractionProvider</code> connects to EdgeStream automatically on mount.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Trigger <code>RequestUserConfirmationAsync</code> from the server</h4>
+        <p>Call via an API endpoint, test runner, or your integration test suite.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Observe the confirmation dialog appear in the browser</h4>
+        <p>The <code>InteractionContainer</code> detects the incoming interaction and renders the <code>ConfirmationComponent</code>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Click "Yes, Export" and observe the server receive the response</h4>
+        <p><code>PublishAndWaitAsync</code> resolves with <code>outcome: "confirmed"</code>. Your service returns <code>true</code>.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Minimal Working Example Summary</h2>
+  <table>
+    <thead><tr><th>Component</th><th>What It Does</th></tr></thead>
+    <tbody>
+      <tr><td><code>AddEdgeInteract()</code></td><td>Registers all EdgeInteract server services in DI</td></tr>
+      <tr><td><code>IInteractionPublisher.PublishAndWaitAsync()</code></td><td>Sends the request and awaits the response as a Task</td></tr>
+      <tr><td><code>InteractionProvider</code></td><td>Client context — connects to EdgeStream, manages interaction queue</td></tr>
+      <tr><td><code>InteractionContainer</code></td><td>Renders the appropriate UI component for each incoming interaction</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Next Steps</strong>
+    You have the basics working. Explore the remaining guides in this series to learn about the interaction pipeline, hooks, all interaction types, React bindings, and observability.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-bizfirstgo-integration.html">&#8592; BizFirstGO Integration</a>
+    <a href="07-security.html">Next: Security Model &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

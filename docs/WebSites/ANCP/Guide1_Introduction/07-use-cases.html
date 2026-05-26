@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Use Cases — Introduction to ANCP | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.scenario { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; margin: 20px 0; border-left: 4px solid var(--accent); }
+.scenario h3 { margin-top: 0; color: var(--text); }
+.scenario .context { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 12px; letter-spacing: .05em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>ANCP</h2>
+    <h1>Introduction to ANCP</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-message-envelope.html">Message Envelope</a>
+  <a href="02-message-types.html">Message Types</a>
+  <a href="03-transport.html">Transport Layer</a>
+  <a href="04-addressing.html">Addressing</a>
+  <a href="05-security.html">Security</a>
+  <a href="06-versioning.html">Protocol Versioning</a>
+  <a href="07-use-cases.html" class="active">Use Cases</a>
+  <a href="08-devtools.html">ANCP in DevTools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">ANCP</div>
+    <h1>Use Cases</h1>
+    <p class="lead">Concrete examples of how ANCP is used across BizFirstGO — from node-to-node data passing in workflows, to AI agent tool calls, EdgeStream pub/sub events, and DevTools inspection.</p>
+  </div>
+
+  <h2>1. Node-to-Node Data Passing</h2>
+  <p>The most common ANCP pattern: one workflow execution node passes its output to the next node in the flow. The sending node packages its output as a <code>Command</code> payload and addresses it to the downstream node.</p>
+
+  <div class="scenario">
+    <div class="context">Scenario — Expense Approval Workflow</div>
+    <h3>Data Transform → Approval Gate</h3>
+    <p>A data-transform node has extracted expense data from a form submission. It sends a Command to the approval-gate node to begin the approval check.</p>
+  </div>
+
+  <pre><code>// Step 1: Data Transform node sends Command to Approval Gate
+{
+  "id":              "cmd-dt-001",
+  "type":            "Command",
+  "source":          "node://tenant-acme/flow-42/data-transform",
+  "destination":     "node://tenant-acme/flow-42/approval-gate",
+  "tenantId":        "tenant-acme",
+  "timestamp":       "2026-05-25T09:00:00.000Z",
+  "protocolVersion": "1.0",
+  "payload": {
+    "action":      "processExpense",
+    "expenseData": {
+      "expenseId":  "EXP-9981",
+      "employeeId": "E-1042",
+      "amount":     750.00,
+      "currency":   "USD",
+      "category":   "travel",
+      "receipts":   ["receipt-001.pdf"]
+    },
+    "workflowContext": {
+      "flowId":    "flow-42",
+      "runId":     "run-7712",
+      "stepIndex": 2
+    }
+  }
+}
+
+// Step 2: Approval Gate processes and sends Command to Notify node
+{
+  "id":              "cmd-ag-001",
+  "type":            "Command",
+  "source":          "node://tenant-acme/flow-42/approval-gate",
+  "destination":     "node://tenant-acme/flow-42/send-notification",
+  "tenantId":        "tenant-acme",
+  "timestamp":       "2026-05-25T09:00:01.200Z",
+  "protocolVersion": "1.0",
+  "payload": {
+    "action":      "notifyApproval",
+    "approved":    true,
+    "approvedBy":  "manager-joe",
+    "expenseId":   "EXP-9981"
+  }
+}</code></pre>
+
+  <h2>2. Agent Tool Call (Query/Response)</h2>
+  <p>A workflow node needs to ask the Octopus AI agent to classify a document or make a policy decision. This follows the Query/Response pattern — the node sends a Query and waits for the Response.</p>
+
+  <div class="scenario">
+    <div class="context">Scenario — Document Classification</div>
+    <h3>Workflow Node → Octopus Classifier Agent</h3>
+    <p>An incoming-document node receives a PDF and needs the AI classifier agent to identify its type before routing it to the correct workflow branch.</p>
+  </div>
+
+  <pre><code>// Step 1: Node sends Query to AI Classifier Agent
+{
+  "id":              "qry-doc-001",
+  "type":            "Query",
+  "source":          "node://tenant-acme/flow-88/incoming-doc",
+  "destination":     "agent://tenant-acme/octopus/doc-classifier",
+  "tenantId":        "tenant-acme",
+  "timestamp":       "2026-05-25T10:00:00.000Z",
+  "protocolVersion": "1.0",
+  "correlationId":   "corr-doc-001",
+  "replyTo":         "node://tenant-acme/flow-88/incoming-doc",
+  "payload": {
+    "query":      "classifyDocument",
+    "documentId": "DOC-4421",
+    "mimeType":   "application/pdf",
+    "extractedText": "INVOICE\nDate: 2026-05-20\nAmount: $1,200.00..."
+  }
+}
+
+// Step 2: Agent sends Response back
+{
+  "id":              "rsp-doc-001",
+  "type":            "Response",
+  "source":          "agent://tenant-acme/octopus/doc-classifier",
+  "destination":     "node://tenant-acme/flow-88/incoming-doc",
+  "tenantId":        "tenant-acme",
+  "timestamp":       "2026-05-25T10:00:01.847Z",
+  "protocolVersion": "1.0",
+  "correlationId":   "corr-doc-001",
+  "payload": {
+    "status":    "success",
+    "data": {
+      "documentType":  "invoice",
+      "confidence":    0.97,
+      "subType":       "vendor-invoice",
+      "suggestedRoute": "accounts-payable-flow",
+      "extractedFields": {
+        "invoiceDate":   "2026-05-20",
+        "totalAmount":   1200.00,
+        "vendorName":    "ACME Supplies Inc."
+      }
+    }
+  }
+}</code></pre>
+
+  <h2>3. EdgeStream Pub/Sub (Event Fan-Out)</h2>
+  <p>When a workflow reaches a significant milestone, it publishes an ANCP Event to an EdgeStream topic. Multiple subscribers — the UI dashboard, an audit service, and a notification service — all receive the event independently.</p>
+
+  <div class="scenario">
+    <div class="context">Scenario — Workflow Completion Event</div>
+    <h3>Flow Engine → Multiple Subscribers</h3>
+    <p>An expense workflow completes successfully. The flow engine publishes a completion Event that triggers: (1) a UI update in the user's dashboard, (2) an audit log entry, and (3) a push notification.</p>
+  </div>
+
+  <pre><code>// Event published by Flow Engine
+{
+  "id":              "evt-wf-001",
+  "type":            "Event",
+  "source":          "service://tenant-acme/flow-engine",
+  "destination":     "topic://tenant-acme/workflow/completed",
+  "tenantId":        "tenant-acme",
+  "timestamp":       "2026-05-25T09:15:00.000Z",
+  "protocolVersion": "1.0",
+  "payload": {
+    "workflowId":   "flow-42",
+    "runId":        "run-7712",
+    "status":       "completed",
+    "outcome":      "approved",
+    "durationMs":   14200,
+    "completedAt":  "2026-05-25T09:15:00.000Z",
+    "initiatedBy":  "user-88"
+  }
+}
+
+// Subscriber 1: UI Dashboard (EdgeStream subscription)
+stream.subscribe('topic://tenant-acme/workflow/completed', (envelope) => {
+  dashboard.updateWorkflowStatus(envelope.payload.runId, 'Approved');
+});
+
+// Subscriber 2: Audit Service (EdgeStream subscription)
+stream.subscribe('topic://tenant-acme/workflow/*', (envelope) => {
+  auditLog.record(envelope);  // Matches all workflow events
+});
+
+// Subscriber 3: Notification Service
+stream.subscribe('topic://tenant-acme/workflow/completed', (envelope) => {
+  notificationService.sendPush(envelope.payload.initiatedBy, 'Expense approved!');
+});</code></pre>
+
+  <h2>4. Human-in-the-Loop Suspension</h2>
+  <p>When a workflow reaches an approval node that requires human input, ANCP carries the suspension and resume signals between the flow engine and the HIL system.</p>
+
+  <div class="scenario">
+    <div class="context">Scenario — HIL Approval Request</div>
+    <h3>Approval Node → HIL System → Workflow Resume</h3>
+    <p>An approval node suspends the workflow and sends an ANCP Command to the HIL service requesting a human decision. When the approver acts, the HIL service sends a Command back to the flow engine to resume.</p>
+  </div>
+
+  <pre><code>// Step 1: Approval node suspends and requests human decision
+{
+  "id":              "cmd-hil-001",
+  "type":            "Command",
+  "source":          "node://tenant-acme/flow-42/approval-gate",
+  "destination":     "service://tenant-acme/hil-service",
+  "tenantId":        "tenant-acme",
+  "timestamp":       "2026-05-25T09:05:00.000Z",
+  "protocolVersion": "1.0",
+  "correlationId":   "corr-hil-001",
+  "replyTo":         "service://tenant-acme/flow-engine",
+  "payload": {
+    "action":       "requestApproval",
+    "runId":        "run-7712",
+    "suspendToken": "susp-abc123",
+    "assignedTo":   ["manager-joe", "manager-alice"],
+    "formId":       "approval-form-13002",
+    "context":      { "expenseId": "EXP-9981", "amount": 750.00 },
+    "deadline":     "2026-05-27T17:00:00.000Z"
+  }
+}
+
+// Step 2: Manager approves; HIL service sends resume Command
+{
+  "id":              "cmd-resume-001",
+  "type":            "Command",
+  "source":          "service://tenant-acme/hil-service",
+  "destination":     "service://tenant-acme/flow-engine",
+  "tenantId":        "tenant-acme",
+  "timestamp":       "2026-05-26T11:30:00.000Z",
+  "protocolVersion": "1.0",
+  "correlationId":   "corr-hil-001",
+  "payload": {
+    "action":       "resumeWorkflow",
+    "runId":        "run-7712",
+    "suspendToken": "susp-abc123",
+    "decision":     "approved",
+    "decidedBy":    "manager-joe",
+    "comments":     "Approved — within policy limits"
+  }
+}</code></pre>
+
+  <h2>5. Real-Time Status Delivery to Browser</h2>
+  <p>The flow engine publishes ANCP Events; EdgeStream delivers them via SignalR to the user's browser in real time. The browser subscribes to a topic scoped to its session and renders live status updates.</p>
+
+  <pre><code>// Browser client subscribing to workflow status updates
+const stream = createEdgeStream({ logLevel: 'info' });
+await stream.start();
+
+stream.subscribe(
+  'signalr-server',
+  `topic://tenant-acme/workflow/run-7712/*`,  // All events for this run
+  (envelope) => {
+    const { type, status, durationMs } = envelope.body.payload;
+    updateProgressBar(status);
+    addTimelineEntry(type, status, durationMs);
+  }
+);</code></pre>
+
+  <h2>Use Case Summary</h2>
+  <table>
+    <thead>
+      <tr><th>Use Case</th><th>Message Type</th><th>Transport</th><th>Key Fields</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Node-to-node output passing</td><td>Command</td><td>In-process / SignalR</td><td>source, destination, payload.action</td></tr>
+      <tr><td>AI agent tool call</td><td>Query + Response</td><td>SignalR / HTTP</td><td>correlationId, replyTo, payload.query</td></tr>
+      <tr><td>Workflow milestone event</td><td>Event</td><td>EdgeStream pub/sub</td><td>destination (topic://), payload.status</td></tr>
+      <tr><td>HIL suspension/resume</td><td>Command</td><td>HTTP</td><td>correlationId, replyTo, payload.suspendToken</td></tr>
+      <tr><td>Real-time browser updates</td><td>Event</td><td>SignalR → EdgeStream</td><td>destination (topic://), sessionId</td></tr>
+      <tr><td>External webhook ingestion</td><td>Event</td><td>HTTP → ANCP bridge</td><td>source (service://), tenantId</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-versioning.html">&#8592; Protocol Versioning</a>
+    <a href="08-devtools.html">Next: ANCP in DevTools &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

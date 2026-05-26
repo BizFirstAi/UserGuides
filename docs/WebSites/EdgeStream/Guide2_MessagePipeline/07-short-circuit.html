@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Short-Circuit — Message Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-normalization.html">Normalization Stage</a>
+  <a href="02-pre-pipeline.html">Pre-Pipeline Stage</a>
+  <a href="03-processing.html">Processing Stage</a>
+  <a href="04-post-pipeline.html">Post-Pipeline Stage</a>
+  <a href="05-delivery.html">Delivery Stage</a>
+  <a href="06-error-handling.html">Error Handling</a>
+  <a href="07-short-circuit.html" class="active">Short-Circuit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Short-Circuit</h1>
+    <p class="lead">A hook can stop all further processing by returning <code>continue: false</code> — the message is silently dropped without reaching any subscriber. Short-circuiting is the mechanism behind filtering, blocking, and deduplication.</p>
+  </div>
+
+  <h2>How Short-Circuit Works</h2>
+  <p>When any hook returns <code>{ continue: false }</code>, the pipeline engine immediately stops executing remaining hooks and does not call <code>SubscriptionManager.publish()</code>. The message is dropped cleanly.</p>
+
+  <pre><code>// Pipeline engine (simplified)
+for (const hook of sortedHooks) {
+  const result = await hook.execute(context);
+
+  if (!result.continue || context.isAborted) {
+    // Short-circuit — stop here, message dropped
+    logger.debug(`Pipeline aborted at hook: ${hook.name}`);
+    return;
+  }
+}
+
+// Only reached if ALL hooks returned continue: true
+await subscriptionManager.publish(topic, envelope);</code></pre>
+
+  <h2>Short-Circuit Use Cases</h2>
+
+  <h3>Message Filtering</h3>
+  <pre><code>// Only pass through messages for the current tenant
+export class TenantFilterHook extends BaseHook {
+  readonly name = 'TenantFilterHook';
+  readonly priority = 130;
+
+  constructor(private allowedTenantId: string) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const messageTenantId = (context.body as any)?.data?.metadata?.tenantId;
+
+    if (messageTenantId &amp;&amp; messageTenantId !== this.allowedTenantId) {
+      // Silently drop — wrong tenant
+      return { continue: false };
+    }
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h3>Duplicate Detection</h3>
+  <pre><code>export class ExactDuplicateFilter extends BaseHook {
+  readonly name = 'ExactDuplicateFilter';
+  readonly priority = 125;
+
+  private processed = new Set&lt;string&gt;();
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const id = context.envelope.meta.id;
+
+    if (this.processed.has(id)) {
+      // Already processed this exact envelope — drop silently
+      return { continue: false };
+    }
+
+    this.processed.add(id);
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h3>Schema Validation Gate</h3>
+  <pre><code>import Ajv from 'ajv';
+
+export class SchemaValidationHook extends BaseHook {
+  readonly name = 'SchemaValidationHook';
+  readonly priority = 100;
+
+  private validators = new Map&lt;string, Ajv.ValidateFunction&gt;();
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const topic = context.envelope.meta.topic || '';
+    const validator = this.validators.get(topic);
+
+    if (!validator) {
+      return { continue: true }; // no schema registered for this topic
+    }
+
+    const valid = validator(context.body);
+    if (!valid) {
+      const errors = validator.errors?.map(e =&gt; e.message).join('; ');
+      context.abort(`Schema validation failed: ${errors}`);
+      return { continue: false, error: errors };
+    }
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>context.abort() vs. Return { continue: false }</h2>
+  <table>
+    <thead>
+      <tr><th>Approach</th><th>When to Use</th><th>Logs Reason?</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>context.abort('reason')</code> + <code>return { continue: false }</code></td><td>When you want a reason logged for observability</td><td>Yes — reason visible in HooksMonitor</td></tr>
+      <tr><td><code>return { continue: false }</code> only</td><td>Silent filter (no reason needed, e.g., tenant filter)</td><td>No — clean drop</td></tr>
+    </tbody>
+  </table>
+
+  <pre><code>// With reason (logged to observer)
+context.abort('Message rejected: tenant mismatch');
+return { continue: false };
+
+// Without reason (silent drop)
+return { continue: false };</code></pre>
+
+  <h2>Abort Does Not Throw</h2>
+  <p><code>context.abort()</code> sets an internal flag and records the reason. It does not throw. You must still return <code>{ continue: false }</code> explicitly — calling abort without returning false would allow the pipeline to continue:</p>
+
+  <pre><code>// WRONG — context.isAborted is set, but pipeline still continues
+async execute(context) {
+  context.abort('Stop this message');
+  return { continue: true }; // Bug! Pipeline continues despite abort
+}
+
+// CORRECT
+async execute(context) {
+  context.abort('Stop this message');
+  return { continue: false }; // Consistent — abort + stop
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Next: Hooks Guide</strong>
+    For a complete reference of all six hook types and how to implement each one, proceed to <a href="../Guide3_Hooks/index.html">Guide 3: Hooks</a>.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-error-handling.html">&#8592; Error Handling</a>
+    <a href="../Guide3_Hooks/index.html">Next Guide: Hooks &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

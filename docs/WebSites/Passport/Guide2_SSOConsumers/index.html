@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSO Consumer Overview — SSO Consumers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Consumers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-oidc-client.html">OIDC Client Setup</a>
+  <a href="02-auth-flow.html">Authorization Code Flow</a>
+  <a href="03-token-validation.html">Token Validation</a>
+  <a href="04-claims-mapping.html">Claims to User Context</a>
+  <a href="05-token-refresh.html">Token Refresh</a>
+  <a href="06-logout.html">Logout</a>
+  <a href="07-sdk.html">BizFirstGO SSO SDK</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>SSO Consumer Overview</h1>
+    <p class="lead">An SSO Consumer is any BizFirstGO application or third-party service that uses Passport as its identity source — authenticating users via the OIDC authorization code flow.</p>
+  </div>
+
+  <h2>What Is an SSO Consumer?</h2>
+  <p>In the Passport ecosystem, your application is the <strong>consumer</strong> — it delegates authentication to Passport rather than handling credentials itself. Passport authenticates the user, issues tokens, and your application uses those tokens to establish identity and access rights.</p>
+  <p>The consumer pattern has two dimensions:</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Outbound SSO (Login with External Provider)</h4>
+      <p>Passport itself acts as a consumer when users log in with Google, Microsoft, or other external providers. The <code>ISsoOrchestrationService</code> handles the OAuth callback and provisions the user into Passport's database.</p>
+    </div>
+    <div class="card">
+      <h4>Inbound SSO (BizFirstGO Apps)</h4>
+      <p>Your application uses Passport as the IdP. You configure an OIDC client, redirect users to Passport for authentication, and receive JWT access tokens. This is the primary pattern for BizFirstGO applications.</p>
+    </div>
+  </div>
+
+  <h2>The OIDC Authorization Code Flow</h2>
+  <p>BizFirstGO applications use the <strong>Authorization Code Flow</strong> with PKCE. This is the most secure OAuth 2.0 flow and is recommended for all client types — including SPAs and mobile apps.</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>User clicks "Sign In"</h4>
+        <p>Your app generates a PKCE code_verifier, hashes it to code_challenge, generates a random state, and redirects the browser to <code>/passport/authorize</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Passport authenticates the user</h4>
+        <p>If no Passport session exists, the user is presented with the login form. If a session exists, this step is skipped (SSO). MFA is triggered if configured.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Callback with authorization code</h4>
+        <p>Passport redirects to your registered callback URL with a short-lived <code>code</code> and the original <code>state</code>. Your app verifies the state matches.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Token exchange</h4>
+        <p>Your backend (or BFF) exchanges the code for tokens by posting to <code>/passport/token</code> with the code_verifier. Receives access_token, id_token, refresh_token.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot muted">5</div></div>
+      <div class="body">
+        <h4>Use access token</h4>
+        <p>Include the access token as a Bearer token in all API requests. Go.Essentials middleware validates the token and populates the <code>IDInfo</code> context.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Key Interfaces</h2>
+  <pre><code>// Core Passport consumer interfaces (Go.Essentials)
+namespace BizFirst.Essentials.Passport;
+
+// Validates a JWT access token issued by Passport
+public interface IPassportTokenValidator
+{
+    Task&lt;TokenValidationResult&gt; ValidateAsync(string token, CancellationToken ct = default);
+}
+
+// Resolves the user's identity context from a validated token
+public interface IPassportIdentityResolver
+{
+    Task&lt;IDInfo?&gt; ResolveAsync(ClaimsPrincipal principal, CancellationToken ct = default);
+}
+
+// Makes authorized calls to Passport APIs
+public interface IPassportClient
+{
+    Task&lt;bool&gt; CheckPermissionAsync(string userId, string permission, string? resourceId = null, CancellationToken ct = default);
+    Task&lt;IReadOnlyList&lt;string&gt;&gt; GetUserRolesAsync(string userId, CancellationToken ct = default);
+}</code></pre>
+
+  <h2>Architecture Layers</h2>
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Component</th><th>Responsibility</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>HTTP Controller</td><td><code>SsoLoginController</code></td><td>Handles <code>/api/sso/{provider}/login</code> and <code>/api/sso/{provider}/callback</code></td></tr>
+      <tr><td>Orchestration</td><td><code>ISsoOrchestrationService</code></td><td>Authorization URL generation, callback processing, PKCE validation</td></tr>
+      <tr><td>Provider Routing</td><td><code>ISsoGateway</code></td><td>Routes to the correct <code>ISsoProvider</code> implementation by name</td></tr>
+      <tr><td>State Security</td><td><code>ISsoStateManager</code></td><td>HMAC-signed state parameter, replay protection, CSRF</td></tr>
+      <tr><td>Token Issuance</td><td><code>IAuthenticationService</code></td><td>Mints BizFirstGO JWTs after successful external authentication</td></tr>
+      <tr><td>DB Persistence</td><td><code>IAM_ExternalIdentities</code></td><td>Links external OAuth identities to BizFirst user accounts</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Prerequisite: Guide1 — SSO Providers</strong>
+    <p>This guide covers how applications consume Passport's SSO. You should first understand how Passport operates as an SSO Provider by reading <a href="../Guide1_SSOProviders/index.html">Guide1: SSO Providers</a>. In particular, OIDC client registration (Guide1, OIDC Provider page) is a prerequisite for this guide.</p>
+  </div>
+
+  <div class="page-nav">
+    <span class="spacer"></span>
+    <a href="01-oidc-client.html">Next: OIDC Client Setup &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

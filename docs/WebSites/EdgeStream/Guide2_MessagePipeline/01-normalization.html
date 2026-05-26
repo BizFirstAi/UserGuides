@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Normalization Stage — Message Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-normalization.html" class="active">Normalization Stage</a>
+  <a href="02-pre-pipeline.html">Pre-Pipeline Stage</a>
+  <a href="03-processing.html">Processing Stage</a>
+  <a href="04-post-pipeline.html">Post-Pipeline Stage</a>
+  <a href="05-delivery.html">Delivery Stage</a>
+  <a href="06-error-handling.html">Error Handling</a>
+  <a href="07-short-circuit.html">Short-Circuit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Normalization Stage</h1>
+    <p class="lead">The NormalizationHook converts raw incoming messages into standardized CloudEvents envelopes — without ever touching the business data payload.</p>
+  </div>
+
+  <h2>What Normalization Does</h2>
+  <p>When a message arrives from a transport, it's in whatever format the backend chose to send — plain JSON, a custom object, or a partially structured payload. The normalization stage converts this into the standardized <code>NormalizedEnvelopeBody</code> format that the rest of the pipeline and subscribers expect.</p>
+
+  <div class="callout warning">
+    <strong>Sacred Rule: Business Data is Never Modified</strong>
+    The NormalizationHook adds CloudEvents protocol fields at the root level of the body. It never modifies <code>body.data</code> or <code>body.data.metadata</code>. Your business payload is completely protected.
+  </div>
+
+  <h2>NormalizationHook Specification</h2>
+  <pre><code>export class NormalizationHook implements IHook {
+  readonly name = 'NormalizationHook';
+  readonly priority = 110; // runs AFTER: Decrypt(90), VerifySignature(95), Validation(100)
+  readonly enabled: boolean;
+
+  constructor(enabled: boolean = true) { ... }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    // Skip if already CloudEvents format
+    if (this.isAlreadyNormalized(context.envelope)) {
+      return { continue: true };
+    }
+    // ... normalize body
+  }
+}</code></pre>
+
+  <h2>The Normalized Body Shape</h2>
+  <p>After normalization, <code>envelope.body</code> conforms to <code>NormalizedEnvelopeBody</code>:</p>
+  <pre><code>export interface NormalizedEnvelopeBody {
+  // CloudEvents protocol wrapper (added by NormalizationHook)
+  specversion: string;          // always '1.0'
+  type: string;                 // inferred event type (e.g., 'com.bizfirst.workflow.event')
+  source: string;               // e.g., 'https://bas-server/edge-stream'
+  id: string;                   // UUID
+  time?: string;                // ISO timestamp
+  subject?: string;             // topic string
+  datacontenttype?: string;     // 'application/json'
+  dataschema?: string;          // 'https://schema.bizfirst.com/event/v1'
+
+  // BizFirstAI business data — COMPLETELY UNTOUCHED
+  data: {
+    metadata?: {                // routing metadata
+      workflowId?: string;
+      userId?: string;
+      correlationId?: string;
+      priority?: string;
+      tags?: string[];
+    };
+    data?: { [key: string]: unknown }; // actual business payload
+  };
+
+  // Original message preserved for audit trail
+  _original?: {
+    format: string;     // e.g., 'json'
+    body: unknown;      // snapshot of the original message
+    timestamp: string;  // when normalization occurred
+  };
+}</code></pre>
+
+  <h2>Event Type Inference</h2>
+  <p>The hook infers the CloudEvents <code>type</code> field from heuristics applied to the business data — reading only, never modifying:</p>
+  <pre><code>// Type inference logic (read-only heuristics)
+if (data?.type)          → use data.type
+if (data?.eventType)     → use data.eventType
+if (data?.messageType)   → use data.messageType
+if (data?.author && text) → 'com.bizfirst.chat.message'
+if (data?.formID)         → 'com.bizfirst.form.submission'
+if (data?.workflowId)     → 'com.bizfirst.workflow.event'
+else                      → 'com.bizfirst.generic.event'</code></pre>
+
+  <h2>Execution Order Requirement</h2>
+  <p>The NormalizationHook must run after security hooks to ensure data integrity:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">90</div><div class="line"></div></div>
+      <div class="body">
+        <h4>DecryptHook (priority 90)</h4>
+        <p>Decrypts the message body first — NormalizationHook should never see encrypted data.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">95</div><div class="line"></div></div>
+      <div class="body">
+        <h4>VerifySignatureHook (priority 95)</h4>
+        <p>Verifies HMAC/signature on the original format — before any transformation changes the bytes.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">100</div><div class="line"></div></div>
+      <div class="body">
+        <h4>ValidationHook (priority 100)</h4>
+        <p>Validates the original message structure — schema validation on raw input.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">110</div></div>
+      <div class="body">
+        <h4>NormalizationHook (priority 110)</h4>
+        <p>Now safe to normalize — data is decrypted, verified, and validated. Wraps in CloudEvents structure.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Registering the Hook</h2>
+  <pre><code>import { NormalizationHook } from 'edge-stream-js';
+
+const server = edgeStream.server('bas')!;
+
+// Add to the incoming pipeline
+server.incomingPipeline.addHook(new NormalizationHook(true));
+
+// Or create disabled (no-op) — useful for testing
+const noopHook = new NormalizationHook(false);</code></pre>
+
+  <h2>Skipping Already-Normalized Messages</h2>
+  <p>If the message body already has CloudEvents fields (<code>specversion</code> + <code>type</code>), the hook skips normalization. This prevents double-normalization when a message passes through multiple pipeline stages.</p>
+
+  <pre><code>// Hook checks first — returns early if already normalized
+private isAlreadyNormalized(envelope: IEnvelope): boolean {
+  const body = envelope.body as any;
+  return (
+    envelope.meta.protocol === 'cloudevents' ||
+    (body && typeof body.specversion === 'string' && typeof body.type === 'string')
+  );
+}</code></pre>
+
+  <h2>Using NormalizationService Directly</h2>
+  <p>Subscribers that want normalized access without using the hook can use the standalone <code>NormalizationService</code>:</p>
+  <pre><code>import { NormalizationService } from 'edge-stream-js';
+
+edgeStream.subscribe('bas', 'some.topic', (rawEnvelope) =&gt; {
+  const normalized = NormalizationService.normalize(rawEnvelope);
+  console.log(normalized.type);           // 'com.bizfirst.workflow.event'
+  console.log(normalized.data.metadata);  // routing metadata
+  console.log(normalized.data.data);      // business payload
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Pipeline Overview</a>
+    <a href="02-pre-pipeline.html">Next: Pre-Pipeline Stage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

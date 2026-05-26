@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Response Validation Hook — Interaction Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-pre-send.html">Pre-Send Hook</a>
+  <a href="02-post-receive.html">Post-Receive Hook</a>
+  <a href="03-response-validation.html" class="active">Response Validation Hook</a>
+  <a href="04-audit-hook.html">Audit Hook</a>
+  <a href="05-rate-limit-hook.html">Rate Limit Hook</a>
+  <a href="06-custom.html">Custom Interaction Hooks</a>
+  <a href="07-order.html">Hook Execution Order</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Response Validation Hook</h1>
+    <p class="lead">The <code>ResponseValidationHook</code> is a special built-in hook that runs before <code>OnAfterRespond</code>. It validates that the response <code>outcome</code> and <code>data</code> match the expected schema for the interaction type. Invalid responses are rejected and an error is returned to the client.</p>
+  </div>
+
+  <h2>Why Response Validation Exists</h2>
+  <p>Without validation, a malicious or buggy client could submit an <code>InteractionResponse</code> with an invalid outcome (e.g., <code>"approved"</code> for a <code>notification</code> type that only accepts <code>"acknowledged"</code>) or a malformed data object (e.g., missing required form fields). The validation hook prevents invalid responses from reaching the application.</p>
+
+  <h2>Built-in Validation Rules</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Valid Outcomes</th><th>Required Data Fields</th></tr></thead>
+    <tbody>
+      <tr><td><code>approval</code></td><td><code>approved</code>, <code>rejected</code>, <code>abstained</code></td><td>None required; <code>comment</code> is optional string</td></tr>
+      <tr><td><code>confirmation</code></td><td><code>confirmed</code>, <code>cancelled</code></td><td>None</td></tr>
+      <tr><td><code>form</code></td><td><code>submitted</code></td><td>Validated against the form schema from the payload; required fields must be present</td></tr>
+      <tr><td><code>picker</code></td><td><code>selected</code></td><td><code>selectedIds</code> must be a non-empty array of strings from the options list</td></tr>
+      <tr><td><code>notification</code></td><td><code>acknowledged</code></td><td>None</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What Happens When Validation Fails</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">1</div><div class="line"></div></div>
+      <div class="body"><h4>Validation Rejects Response</h4><p>The hook throws <code>InteractionResponseValidationException</code> with a list of validation errors.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">2</div><div class="line"></div></div>
+      <div class="body"><h4>Error Ack Sent to Client</h4><p>The pipeline sends an <code>InteractionAck</code> with <code>status: "error"</code> and the validation error messages to the client's session.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">3</div></div>
+      <div class="body"><h4>Client Can Retry</h4><p>The client's <code>respond()</code> promise rejects. The component can show the error and allow the user to correct and resubmit.</p></div>
+    </div>
+  </div>
+
+  <h2>Custom Validation for Custom Types</h2>
+  <p>Register a custom validator for your custom interaction types:</p>
+  <pre><code>// Register a custom type validator
+builder.Services.AddInteractionTypeValidator&lt;MyCustomValidator&gt;(
+    typeKey: "my-company/special-review");
+
+// Implement the validator
+public class MyCustomValidator : IInteractionResponseValidator
+{
+    public string TypeKey =&gt; "my-company/special-review";
+
+    public ValidationResult Validate(
+        InteractionRequest request,
+        InteractionResponse response)
+    {
+        var validOutcomes = new[] { "approved-with-changes", "approved", "declined" };
+        if (!validOutcomes.Contains(response.Outcome))
+        {
+            return ValidationResult.Failure(
+                $"Invalid outcome '{response.Outcome}'. Expected one of: {string.Join(", ", validOutcomes)}");
+        }
+
+        if (response.Outcome == "approved-with-changes" &amp;&amp; response.Data is null)
+        {
+            return ValidationResult.Failure(
+                "outcome 'approved-with-changes' requires data.changes to be provided.");
+        }
+
+        return ValidationResult.Success();
+    }
+}
+</code></pre>
+
+  <h2>Disabling Built-in Validation</h2>
+  <div class="callout danger">
+    <strong>Do Not Disable Response Validation</strong>
+    The <code>ResponseValidationHook</code> is always active and cannot be disabled via configuration. This is intentional — it is a security boundary that prevents invalid responses from reaching application code. If you need to extend validation for a type, add a custom validator; do not bypass the built-in rules.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-post-receive.html">&#8592; Post-Receive Hook</a>
+    <a href="04-audit-hook.html">Next: Audit Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

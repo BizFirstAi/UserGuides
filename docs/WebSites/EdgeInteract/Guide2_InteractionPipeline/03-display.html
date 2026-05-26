@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Display Stage — Interaction Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-interaction-request.html">InteractionRequest</a>
+  <a href="02-targeting.html">Targeting</a>
+  <a href="03-display.html" class="active">Display Stage</a>
+  <a href="04-user-response.html">User Response</a>
+  <a href="05-response-routing.html">Response Routing</a>
+  <a href="06-acknowledgement.html">Acknowledgement</a>
+  <a href="07-timeout.html">Interaction Timeout</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Display Stage</h1>
+    <p class="lead">The display stage is where the EdgeStream message arrives in the browser and is transformed into a UI interaction. The <code>InteractionSubscriber</code> receives it, the <code>InteractionContainer</code> routes it, and the appropriate component renders.</p>
+  </div>
+
+  <h2>Client-Side Reception Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>EdgeStream Message Arrives</h4>
+        <p>The EdgeStream client receives a message on the <code>interactions.{userId}</code> topic. The message is a serialized <code>InteractionRequest</code> JSON object.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>InteractionSubscriber Handles It</h4>
+        <p><code>InteractionSubscriber</code> is already subscribed to this topic (set up by <code>InteractionProvider</code> on mount). It parses the JSON, validates the schema, and adds the interaction to the <code>InteractionQueue</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot info">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>InteractionQueue Notifies React</h4>
+        <p>The queue notifies React state (via the <code>InteractionContext</code>). Components subscribed to the context re-render with the new interaction in the queue.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot info">4</div></div>
+      <div class="body">
+        <h4>InteractionContainer Renders Component</h4>
+        <p><code>InteractionContainer</code> reads the <code>type</code> field from the first interaction in the queue, looks up the registered component for that type, and renders it with the typed payload and the <code>respond()</code> callback.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>InteractionContainer Routing</h2>
+  <p>The <code>InteractionContainer</code> maintains a registry of interaction type → component mappings. Built-in registrations:</p>
+  <table>
+    <thead><tr><th>Type Key</th><th>Component</th><th>Package</th></tr></thead>
+    <tbody>
+      <tr><td><code>"approval"</code></td><td><code>ApprovalComponent</code></td><td>edge-interact-ui</td></tr>
+      <tr><td><code>"confirmation"</code></td><td><code>ConfirmationComponent</code></td><td>edge-interact-ui</td></tr>
+      <tr><td><code>"form"</code></td><td><code>FormComponent</code></td><td>edge-interact-ui</td></tr>
+      <tr><td><code>"picker"</code></td><td><code>PickerComponent</code></td><td>edge-interact-ui</td></tr>
+      <tr><td><code>"notification"</code></td><td><code>NotificationComponent</code></td><td>edge-interact-ui</td></tr>
+    </tbody>
+  </table>
+
+  <p>Custom types are registered with the <code>registerInteractionRenderer</code> function before rendering:</p>
+  <pre><code>import { registerInteractionRenderer } from 'edge-interact-ui';
+import { MyCustomComponent } from './MyCustomComponent';
+
+// Register before the app renders
+registerInteractionRenderer('my-company/special-review', MyCustomComponent);
+</code></pre>
+
+  <h2>Component Props Contract</h2>
+  <p>Every component rendered by <code>InteractionContainer</code> receives this props interface:</p>
+  <pre><code>interface InteractionComponentProps&lt;TPayload = unknown&gt; {
+  /** The full interaction request */
+  interaction: InteractionRequest&lt;TPayload&gt;;
+
+  /** Call this when the user has responded */
+  respond: (outcome: string, data?: unknown) => void;
+
+  /** Call this to cancel/dismiss without responding (e.g., "remind me later") */
+  dismiss?: () => void;
+}
+</code></pre>
+
+  <h2>Interaction Queue</h2>
+  <p>Multiple interactions can be in-flight simultaneously. The <code>InteractionQueue</code> manages them:</p>
+  <ul>
+    <li>Interactions are queued in arrival order, with <code>priority: "high"</code> interactions inserted at the front</li>
+    <li>Only one interaction is displayed at a time (the front of the queue) — this prevents overwhelming the user</li>
+    <li>After the user responds (or an interaction times out), the next in the queue is displayed automatically</li>
+    <li>The queue is visible via <code>useInteractionContext().queue</code> — useful for building an inbox view that shows all pending interactions</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Custom Queue Rendering</strong>
+    You can bypass <code>InteractionContainer</code>'s one-at-a-time display and render the full queue as a list (e.g., the WorkDesk HIL Inbox). Access the queue via <code>useInteractionContext()</code> and render each interaction yourself.
+  </div>
+
+  <h2>Display Notification to Server</h2>
+  <p>When the <code>InteractionSubscriber</code> receives the message, it immediately sends a <code>displayed</code> acknowledgement to the server. This transitions the pipeline status from <code>delivered</code> to <code>displayed</code> and is used for response-time tracking (time from displayed to responded).</p>
+
+  <pre><code>// This happens automatically inside InteractionSubscriber — for reference only
+edgeStreamClient.publish('interactions.status', {
+  interactionId: interaction.interactionId,
+  status: 'displayed',
+  timestamp: new Date().toISOString()
+});
+</code></pre>
+
+  <div class="page-nav">
+    <a href="02-targeting.html">&#8592; Targeting</a>
+    <a href="04-user-response.html">Next: User Response &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

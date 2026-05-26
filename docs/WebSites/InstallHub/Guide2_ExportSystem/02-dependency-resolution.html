@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dependency Resolution — Export System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Export System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-selecting-artifacts.html">Selecting Artifacts</a>
+  <a href="02-dependency-resolution.html" class="active">Dependency Resolution</a>
+  <a href="03-manifest-generation.html">Manifest Generation</a>
+  <a href="04-bundle-creation.html">Bundle Creation</a>
+  <a href="05-export-api.html">Export API</a>
+  <a href="06-export-history.html">Export History</a>
+  <a href="07-validation.html">Pre-Export Validation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Dependency Resolution</h1>
+    <p class="lead">The DependencyResolver traverses the artifact reference graph recursively, discovering every artifact that a root requires — so the package consumer never encounters a missing reference at install time.</p>
+  </div>
+
+  <h2>Why Dependency Resolution Matters</h2>
+  <p>A workflow in BizFirstGO is never an island. It references forms, rules, entity schemas, and often sub-workflows. If you manually export just the process definition and install it in another tenant, the workflow will fail at runtime when it tries to load a form that doesn't exist.</p>
+  <p>The <code>DependencyResolver</code> eliminates this problem by following every reference in every artifact until the full closure is discovered. The resulting bundle is self-contained — everything needed is inside.</p>
+
+  <h2>How the Resolver Works</h2>
+  <p>The resolver implements a breadth-first traversal with a visited set to prevent cycles:</p>
+  <pre><code>public class DependencyResolver : IDependencyResolver
+{
+    public async Task&lt;DependencyGraph&gt; ResolveAsync(
+        string[]        rootArtifactIds,
+        string          tenantId,
+        CancellationToken ct = default)
+    {
+        var visited = new HashSet&lt;string&gt;();
+        var queue   = new Queue&lt;string&gt;(rootArtifactIds);
+        var graph   = new DependencyGraph();
+
+        while (queue.Count > 0)
+        {
+            var artifactId = queue.Dequeue();
+            if (!visited.Add(artifactId)) continue;  // already processed
+
+            var artifact     = await _repository.GetAsync(artifactId, tenantId, ct);
+            var dependencies = await _extractor.ExtractReferencesAsync(artifact, ct);
+
+            graph.AddArtifact(artifact);
+            foreach (var dep in dependencies)
+            {
+                graph.AddEdge(artifactId, dep.Id);
+                if (!visited.Contains(dep.Id))
+                    queue.Enqueue(dep.Id);
+            }
+        }
+
+        return graph;
+    }
+}</code></pre>
+
+  <h2>Reference Extraction Per Artifact Type</h2>
+  <p>Each artifact type has a dedicated reference extractor that knows where references are stored in that artifact's JSON structure:</p>
+  <table>
+    <thead>
+      <tr><th>Artifact Type</th><th>References Extracted</th><th>Where Found</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>ProcessDefinition</code></td>
+        <td>ThreadDefinitions, AtlasForms, RuleSets, EntitySchemas</td>
+        <td>Node configurations in the workflow graph JSON</td>
+      </tr>
+      <tr>
+        <td><code>ThreadDefinition</code></td>
+        <td>AtlasForms, RuleSets, EntitySchemas</td>
+        <td>Node configurations in the thread graph JSON</td>
+      </tr>
+      <tr>
+        <td><code>AtlasForm</code></td>
+        <td>FieldLibraries, RuleSets, EntitySchemas</td>
+        <td>Field source bindings and validation rule references</td>
+      </tr>
+      <tr>
+        <td><code>RuleSet</code></td>
+        <td>EntitySchemas</td>
+        <td>Entity references in rule conditions</td>
+      </tr>
+      <tr>
+        <td><code>EntitySchema</code></td>
+        <td>None (leaf node)</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>AppDefinition</code></td>
+        <td>AtlasForms, ProcessDefinitions</td>
+        <td>Widget bindings and action references</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Dependency Graph Output</h2>
+  <p>The resolved graph is a directed acyclic graph (DAG) that encodes the full dependency tree:</p>
+  <pre><code>{
+  "rootArtifacts": ["proc-1001"],
+  "nodes": [
+    { "id": "proc-1001",  "type": "ProcessDefinition", "name": "EmployeeOnboarding",  "depth": 0 },
+    { "id": "thread-2002","type": "ThreadDefinition",   "name": "ApprovalSubflow",     "depth": 1 },
+    { "id": "form-2005",  "type": "AtlasForm",          "name": "EmployeeForm",        "depth": 1 },
+    { "id": "rule-305",   "type": "RuleSet",            "name": "ApprovalRules",       "depth": 1 },
+    { "id": "lib-12",     "type": "FieldLibrary",       "name": "CommonFields",        "depth": 2 },
+    { "id": "ent-44",     "type": "EntitySchema",       "name": "EmployeeSchema",      "depth": 2 }
+  ],
+  "edges": [
+    { "from": "proc-1001",  "to": "thread-2002" },
+    { "from": "proc-1001",  "to": "form-2005"   },
+    { "from": "proc-1001",  "to": "rule-305"    },
+    { "from": "form-2005",  "to": "lib-12"      },
+    { "from": "form-2005",  "to": "ent-44"      },
+    { "from": "rule-305",   "to": "ent-44"      }
+  ],
+  "installOrder": ["ent-44", "lib-12", "rule-305", "form-2005", "thread-2002", "proc-1001"]
+}</code></pre>
+
+  <h2>Install Order</h2>
+  <p>The graph is topologically sorted to produce an install order where dependencies are always installed before the artifacts that depend on them. In the example above, <code>EntitySchema</code> is installed first because no artifact it depends on; <code>ProcessDefinition</code> is installed last because it depends on everything else.</p>
+
+  <h2>Shared Dependencies</h2>
+  <p>When multiple root artifacts reference the same dependency, that dependency appears only once in the bundle. For example, if two workflows both use the same <code>EmployeeForm</code>, the form is serialized once and both workflow definitions reference it by the same ID:</p>
+  <pre><code>// Both proc-1001 and proc-1003 reference form-2005
+// The bundle contains form-2005 only once
+artifacts/forms/form-2005.json  ← single copy
+
+// Both workflow JSONs reference it:
+// proc-1001.json: "formId": "form-2005"
+// proc-1003.json: "formId": "form-2005"</code></pre>
+
+  <h2>Circular Dependency Detection</h2>
+  <p>The resolver detects circular references (e.g., Workflow A includes Sub-workflow B which somehow references Workflow A) and aborts the export with a clear error:</p>
+  <pre><code>{
+  "error": "CircularDependencyDetected",
+  "message": "Circular reference detected: proc-1001 → thread-2002 → proc-1001",
+  "cycle": ["proc-1001", "thread-2002", "proc-1001"]
+}</code></pre>
+  <p>This is a data integrity issue that must be fixed in the source tenant before the export can proceed.</p>
+
+  <div class="callout warning">
+    <strong>Cross-Tenant References</strong>
+    If an artifact references another artifact from a different tenant (which should not be possible in a well-configured system, but can occur during migration), the resolver will flag this as an error. Cross-tenant references cannot be resolved automatically.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-selecting-artifacts.html">&#8592; Selecting Artifacts</a>
+    <a href="03-manifest-generation.html">Next: Manifest Generation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

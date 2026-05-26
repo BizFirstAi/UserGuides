@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Error Handling — Message Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-normalization.html">Normalization Stage</a>
+  <a href="02-pre-pipeline.html">Pre-Pipeline Stage</a>
+  <a href="03-processing.html">Processing Stage</a>
+  <a href="04-post-pipeline.html">Post-Pipeline Stage</a>
+  <a href="05-delivery.html">Delivery Stage</a>
+  <a href="06-error-handling.html" class="active">Error Handling</a>
+  <a href="07-short-circuit.html">Short-Circuit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Pipeline Error Handling</h1>
+    <p class="lead">EdgeStream distinguishes between hook errors (thrown exceptions), graceful aborts (context.abort()), and subscriber errors — each handled differently to maximize resilience.</p>
+  </div>
+
+  <h2>Three Types of Pipeline Errors</h2>
+  <table>
+    <thead>
+      <tr><th>Error Type</th><th>Cause</th><th>Pipeline Effect</th><th>Message Effect</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Hook throws</strong></td><td>Unhandled exception in hook.execute()</td><td>Pipeline aborts</td><td>Message dropped, error logged</td></tr>
+      <tr><td><strong>context.abort()</strong></td><td>Hook intentionally stops processing</td><td>Pipeline aborts cleanly</td><td>Message dropped, reason logged</td></tr>
+      <tr><td><strong>Subscriber throws</strong></td><td>Exception in subscriber callback</td><td>No effect on pipeline</td><td>Other subscribers still receive</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Hook Exception Handling</h2>
+  <p>If a hook's <code>execute()</code> throws, the pipeline engine catches the exception, logs it, and aborts. No subsequent hooks run. The NormalizationHook deliberately catches its own exceptions and returns <code>continue: true</code> — normalization failures are non-fatal.</p>
+
+  <pre><code>// Safe hook pattern — catch internally and decide whether to abort
+export class SafeEnrichmentHook extends BaseHook {
+  readonly name = 'SafeEnrichmentHook';
+  readonly priority = 150;
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    try {
+      const data = await this.externalService.fetch(context.envelope.meta.id);
+      context.metadata.enrichmentData = data;
+    } catch (error) {
+      // Log warning but allow pipeline to continue
+      console.warn('[SafeEnrichmentHook] Enrichment failed, continuing:', error);
+      context.metadata.enrichmentFailed = true;
+      // Return continue: true — message still delivered without enrichment
+    }
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Graceful Abort vs. Exception</h2>
+  <pre><code>// Preferred: use context.abort() for intentional stops
+async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+  if (!isValid(context.body)) {
+    context.abort('Validation failed: missing required field "tenantId"');
+    return { continue: false }; // must return after abort
+  }
+  return { continue: true };
+}
+
+// Avoid: letting exceptions propagate (less informative error messages)
+async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+  if (!isValid(context.body)) {
+    throw new Error('Invalid message'); // caught by pipeline, less informative
+  }
+  return { continue: true };
+}</code></pre>
+
+  <h2>Server-Level Error Events</h2>
+  <p>Unhandled pipeline errors bubble up to the EdgeStream facade as lifecycle events:</p>
+  <pre><code>edgeStream.on('stream:error', (event) =&gt; {
+  console.error('EdgeStream error:', event.data?.error);
+  // Log to monitoring system
+  monitoring.captureException(event.data?.error);
+});
+
+edgeStream.on('server:error', (event) =&gt; {
+  console.error(`Server ${event.serverId} error:`, event.data?.error);
+});</code></pre>
+
+  <h2>Subscriber Error Isolation</h2>
+  <p>Subscriber errors are logged to the pipeline observer but never rethrow or affect other subscribers. Design subscribers to be resilient — catch their own errors and update local state:</p>
+  <pre><code>// Defensive subscriber
+edgeStream.subscribe('bas', 'workflow.*', async (envelope) =&gt; {
+  try {
+    await workflowStore.updateFromEvent(envelope.body);
+  } catch (error) {
+    // Never let subscriber errors propagate
+    console.error('[WorkflowSubscriber] Failed to update store:', error);
+    errorReporter.captureException(error, { topic: envelope.meta.topic });
+  }
+});</code></pre>
+
+  <h2>NormalizationHook — Non-Fatal by Design</h2>
+  <p>The NormalizationHook catches all its internal errors and returns <code>continue: true</code> even on failure. This means the pipeline continues with the un-normalized body. Subscribers must handle both normalized and raw body shapes in this edge case:</p>
+  <pre><code>// NormalizationHook error handling (from source)
+try {
+  // ... normalize body
+  return { continue: true };
+} catch (error) {
+  const errorMsg = error instanceof Error ? error.message : String(error);
+  console.error(`[NormalizationHook] Error: ${errorMsg}`);
+  // Non-fatal — normalization is optional, pipeline continues
+  return { continue: true, error: errorMsg };
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="05-delivery.html">&#8592; Delivery Stage</a>
+    <a href="07-short-circuit.html">Next: Short-Circuit &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Access from Flow Studio — SQL Server Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>SQL Server Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-setup.html">SQL Server Setup</a>
+  <a href="02-datasource-registration.html">Datasource Registration</a>
+  <a href="03-ai-ready-schema.html">AI-Ready Schema Design</a>
+  <a href="04-sql-nodes.html" class="active">Access from Flow Studio</a>
+  <a href="05-form-generation.html">AI Form Generation</a>
+  <a href="06-security.html">Security and Credentials</a>
+  <a href="07-performance.html">Performance Patterns</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Access from Flow Studio</h1>
+    <p class="lead">How to use SqlQueryNode and SqlUpdateNode in Flow Studio workflows to read from and write to your Data Ocean SQL Server database — configuration, parameterization, output binding, and error handling.</p>
+  </div>
+
+  <h2>The Two SQL Nodes</h2>
+  <p>Flow Studio provides two execution nodes for SQL Server interaction, both under the <strong>Datasources capability</strong>:</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4><i class="fa-solid fa-magnifying-glass" style="color:var(--accent);margin-right:6px;"></i>SqlQueryNode</h4>
+      <p>Executes a <strong>SELECT</strong> query and returns the result set as a JSON array bound to an output variable. Use for all read operations.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-pen-to-square" style="color:var(--accent3);margin-right:6px;"></i>SqlUpdateNode</h4>
+      <p>Executes an <strong>INSERT, UPDATE, or DELETE</strong> command and returns the rows affected count. Use for all write operations.</p>
+    </div>
+  </div>
+
+  <h2>SqlQueryNode — Reading Data</h2>
+
+  <h3>Configuration Properties</h3>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Required</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>datasourceId</code></td><td>Yes</td><td>The registered datasource identifier (e.g., <code>customer-data-db</code>)</td></tr>
+      <tr><td><code>query</code></td><td>Yes</td><td>Parameterized SQL SELECT statement. Use <code>@paramName</code> placeholders — never string concatenation.</td></tr>
+      <tr><td><code>parameters</code></td><td>No</td><td>Object mapping parameter names to workflow variable expressions</td></tr>
+      <tr><td><code>outputVariable</code></td><td>Yes</td><td>Name of the workflow variable to store the result set (JSON array)</td></tr>
+      <tr><td><code>firstRowOnly</code></td><td>No</td><td>If true, output is a single object rather than an array (for single-row lookups)</td></tr>
+      <tr><td><code>commandTimeoutSeconds</code></td><td>No</td><td>Override the datasource default timeout for this node only</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Example: Single Record Lookup</h3>
+  <pre><code>{
+  "nodeType": "SqlQueryNode",
+  "nodeId": "fetch-customer",
+  "datasourceId": "customer-data-db",
+  "query": "SELECT CustomerId, Name, Email, Status, ClassificationLabel FROM Customer WHERE TenantId = @tenantId AND CustomerId = @customerId AND IsDeleted = 0",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "customerId": "{{input.customerId}}"
+  },
+  "firstRowOnly": true,
+  "outputVariable": "customer"
+}
+
+// After execution, workflow context has:
+// customer.CustomerId, customer.Name, customer.Email, etc.</code></pre>
+
+  <h3>Example: List Query with Filtering</h3>
+  <pre><code>{
+  "nodeType": "SqlQueryNode",
+  "nodeId": "list-active-customers",
+  "datasourceId": "customer-data-db",
+  "query": "SELECT CustomerId, Name, Email, ClassificationLabel FROM Customer WHERE TenantId = @tenantId AND Status = @status AND IsDeleted = 0 ORDER BY Name OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "status": "{{input.statusFilter}}",
+    "offset": "{{input.offset}}",
+    "pageSize": "{{input.pageSize}}"
+  },
+  "outputVariable": "customers"
+}
+
+// After execution:
+// customers = [ { "CustomerId": "...", "Name": "...", ... }, ... ]</code></pre>
+
+  <h2>SqlUpdateNode — Writing Data</h2>
+
+  <h3>Configuration Properties</h3>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Required</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>datasourceId</code></td><td>Yes</td><td>The registered datasource identifier</td></tr>
+      <tr><td><code>command</code></td><td>Yes</td><td>Parameterized INSERT, UPDATE, or DELETE statement</td></tr>
+      <tr><td><code>parameters</code></td><td>No</td><td>Object mapping parameter names to workflow variable expressions</td></tr>
+      <tr><td><code>outputVariable</code></td><td>No</td><td>Variable to store the rows-affected count (integer)</td></tr>
+      <tr><td><code>returnInsertedId</code></td><td>No</td><td>If true and the command is an INSERT, returns the generated identity/GUID value</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Example: INSERT New Record</h3>
+  <pre><code>{
+  "nodeType": "SqlUpdateNode",
+  "nodeId": "create-customer",
+  "datasourceId": "customer-data-db",
+  "command": "INSERT INTO Customer (CustomerId, TenantId, Name, Email, Industry, Status, CreatedBy, CreatedAt, UpdatedAt) VALUES (NEWID(), @tenantId, @name, @email, @industry, 'Active', @createdBy, GETUTCDATE(), GETUTCDATE())",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "name": "{{input.customerName}}",
+    "email": "{{input.customerEmail}}",
+    "industry": "{{input.industry}}",
+    "createdBy": "{{workflow.userId}}"
+  },
+  "outputVariable": "rowsAffected"
+}</code></pre>
+
+  <h3>Example: Soft Delete</h3>
+  <pre><code>{
+  "nodeType": "SqlUpdateNode",
+  "nodeId": "delete-customer",
+  "datasourceId": "customer-data-db",
+  "command": "UPDATE Customer SET IsDeleted = 1, DeletedAt = GETUTCDATE(), UpdatedAt = GETUTCDATE() WHERE TenantId = @tenantId AND CustomerId = @customerId AND IsDeleted = 0",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "customerId": "{{input.customerId}}"
+  },
+  "outputVariable": "rowsAffected"
+}</code></pre>
+
+  <h2>Parameter Binding Syntax</h2>
+  <p>Parameter values in SQL nodes support the standard workflow expression syntax:</p>
+  <table>
+    <thead>
+      <tr><th>Expression</th><th>Source</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>{{workflow.tenantId}}</code></td><td>Workflow execution context</td><td>Current tenant's integer ID</td></tr>
+      <tr><td><code>{{workflow.userId}}</code></td><td>Workflow execution context</td><td>ID of the user who triggered the workflow</td></tr>
+      <tr><td><code>{{input.fieldName}}</code></td><td>Workflow trigger input payload</td><td>Value from a form submission or API request body</td></tr>
+      <tr><td><code>{{variables.varName}}</code></td><td>Workflow variable store</td><td>Output from a previous node</td></tr>
+      <tr><td><code>{{nodes.nodeId.outputField}}</code></td><td>Named node output</td><td>Field from a prior node's result</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Never Use String Concatenation for SQL Parameters</strong>
+    <p>SQL nodes enforce parameterized queries. The query/command string is compiled with <code>@paramName</code> placeholders and parameters are bound via <code>SqlParameter</code> objects — never concatenated into the SQL string. Attempting to inject raw values into the SQL string will result in a validation error at workflow design time.</p>
+  </div>
+
+  <h2>Error Handling in SQL Nodes</h2>
+  <p>SQL nodes surface errors through the standard Flow Studio error handling mechanism. Common error scenarios:</p>
+  <ul>
+    <li><strong>Connection failure</strong>: The node retries up to <code>maxRetryCount</code> times with exponential back-off before failing the workflow step.</li>
+    <li><strong>Query timeout</strong>: Node raises a <code>SqlTimeoutException</code> — handle via a fault edge in the workflow graph.</li>
+    <li><strong>No rows found</strong>: <code>firstRowOnly: true</code> returns <code>null</code> — check for null before accessing fields.</li>
+    <li><strong>Constraint violation</strong>: INSERT/UPDATE violating a unique constraint raises a <code>SqlException</code> with error code 2627.</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="03-ai-ready-schema.html">&#8592; AI-Ready Schema Design</a>
+    <a href="05-form-generation.html">Next: AI Form Generation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

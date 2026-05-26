@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Querying the Octopus Database — Octopus Database | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Octopus Database</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema.html">Database Schema</a>
+  <a href="02-agent-table.html">Octopus_Agents Table</a>
+  <a href="03-conversation-table.html">Octopus_Conversations Table</a>
+  <a href="04-episodes-table.html">Octopus_Episodes Table</a>
+  <a href="05-procedures-table.html">Octopus_Procedures Table</a>
+  <a href="06-querying.html" class="active">Querying the Database</a>
+  <a href="07-maintenance.html">Database Maintenance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Querying the Octopus Database</h1>
+    <p class="lead">A practical reference of SQL queries for common data engineering and reporting tasks on the Octopus database — agent activity, conversation history, episode recall, and procedure usage analytics.</p>
+  </div>
+
+  <div class="callout warning">
+    <strong>Always Include TenantId</strong>
+    <p>Every query on this page must have <code>WHERE TenantId = @tenantId</code> (or equivalent) before running against a production database. The examples below include it. Replace <code>@tenantId</code> with the actual tenant integer value or a bound parameter.</p>
+  </div>
+
+  <h2>Agent Activity Queries</h2>
+
+  <h3>Active Agent Summary</h3>
+  <pre><code>-- Count active agents and their total conversations (all time)
+SELECT
+    a.AgentId,
+    a.Name,
+    a.Status,
+    COUNT(c.SessionId) AS TotalSessions,
+    MAX(c.StartedAt)   AS LastSessionAt
+FROM Octopus_Agents a
+LEFT JOIN Octopus_Conversations c
+    ON c.AgentId = a.AgentId AND c.TenantId = a.TenantId
+WHERE a.TenantId = @tenantId
+GROUP BY a.AgentId, a.Name, a.Status
+ORDER BY TotalSessions DESC;</code></pre>
+
+  <h3>Agent Usage in the Last 7 Days</h3>
+  <pre><code>SELECT
+    a.Name AS AgentName,
+    COUNT(DISTINCT c.SessionId) AS Sessions,
+    COUNT(e.EpisodeId)          AS TotalEpisodes,
+    SUM(e.TokenCount)           AS TotalTokens
+FROM Octopus_Agents a
+JOIN Octopus_Conversations c
+    ON c.AgentId = a.AgentId AND c.TenantId = a.TenantId
+JOIN Octopus_Episodes e
+    ON e.SessionId = c.SessionId AND e.TenantId = a.TenantId
+WHERE a.TenantId = @tenantId
+  AND c.StartedAt >= DATEADD(DAY, -7, GETUTCDATE())
+GROUP BY a.Name
+ORDER BY Sessions DESC;</code></pre>
+
+  <h2>Conversation History Queries</h2>
+
+  <h3>Full Conversation Transcript</h3>
+  <pre><code>-- Retrieve all episodes for a conversation, ordered chronologically
+SELECT
+    e.EpisodeId,
+    e.Role,
+    e.Timestamp,
+    e.TokenCount
+    -- Note: e.Messages is varbinary (compressed JSON) — decompress in application
+FROM Octopus_Episodes e
+WHERE e.TenantId = @tenantId
+  AND e.SessionId = @sessionId
+ORDER BY e.Timestamp ASC;</code></pre>
+
+  <h3>Recent Conversations for a User</h3>
+  <pre><code>SELECT TOP 20
+    c.SessionId,
+    a.Name AS AgentName,
+    c.StartedAt,
+    c.EndedAt,
+    c.Status,
+    COUNT(e.EpisodeId) AS TurnCount
+FROM Octopus_Conversations c
+JOIN Octopus_Agents a
+    ON a.AgentId = c.AgentId AND a.TenantId = c.TenantId
+LEFT JOIN Octopus_Episodes e
+    ON e.SessionId = c.SessionId AND e.TenantId = c.TenantId
+WHERE c.TenantId = @tenantId
+  AND c.UserId = @userId
+GROUP BY c.SessionId, a.Name, c.StartedAt, c.EndedAt, c.Status
+ORDER BY c.StartedAt DESC;</code></pre>
+
+  <h2>Episode Recall Queries</h2>
+
+  <h3>Look Up Episodes by EmbeddingRef (After Vector Search)</h3>
+  <pre><code>-- After a vector similarity search returns a list of EmbeddingRef IDs,
+-- retrieve the corresponding SQL episode records
+SELECT
+    e.EpisodeId,
+    e.SessionId,
+    e.Role,
+    e.Timestamp,
+    e.EmbeddingRef
+    -- Decompress e.Messages in application layer
+FROM Octopus_Episodes e
+WHERE e.TenantId = @tenantId
+  AND e.EmbeddingRef IN (
+      'vec_id_001', 'vec_id_002', 'vec_id_003'
+      -- Replace with actual IDs returned by vector store query
+  )
+ORDER BY e.Timestamp DESC;</code></pre>
+
+  <h3>Episodes With Tool Calls (Audit)</h3>
+  <pre><code>-- Find all episodes that included tool calls (non-null ToolCalls column)
+SELECT
+    e.EpisodeId,
+    e.SessionId,
+    e.Timestamp,
+    c.UserId,
+    a.Name AS AgentName
+FROM Octopus_Episodes e
+JOIN Octopus_Conversations c
+    ON c.SessionId = e.SessionId AND c.TenantId = e.TenantId
+JOIN Octopus_Agents a
+    ON a.AgentId = c.AgentId AND a.TenantId = c.TenantId
+WHERE e.TenantId = @tenantId
+  AND e.ToolCalls IS NOT NULL
+  AND e.Timestamp >= DATEADD(DAY, -7, GETUTCDATE())
+ORDER BY e.Timestamp DESC;</code></pre>
+
+  <h2>Procedure Usage Queries</h2>
+
+  <h3>Most-Used Procedures (Last 30 Days)</h3>
+  <pre><code>SELECT
+    p.Name,
+    p.AgentId,
+    a.Name AS AgentName,
+    p.ActivatedAt,
+    p.CreatedAt
+FROM Octopus_Procedures p
+JOIN Octopus_Agents a
+    ON a.AgentId = p.AgentId AND a.TenantId = p.TenantId
+WHERE p.TenantId = @tenantId
+  AND p.ActivatedAt >= DATEADD(DAY, -30, GETUTCDATE())
+ORDER BY p.ActivatedAt DESC;</code></pre>
+
+  <h3>Procedure Count Per Agent</h3>
+  <pre><code>SELECT
+    a.Name AS AgentName,
+    COUNT(p.ProcedureId) AS ProcedureCount
+FROM Octopus_Agents a
+LEFT JOIN Octopus_Procedures p
+    ON p.AgentId = a.AgentId AND p.TenantId = a.TenantId
+WHERE a.TenantId = @tenantId
+  AND a.Status = 'Active'
+GROUP BY a.Name
+ORDER BY ProcedureCount DESC;</code></pre>
+
+  <h2>Operational Dashboards</h2>
+
+  <h3>Daily Episode Volume (Last 14 Days)</h3>
+  <pre><code>SELECT
+    CAST(Timestamp AS DATE) AS EpisodeDate,
+    COUNT(*) AS EpisodeCount,
+    SUM(TokenCount) AS TotalTokens,
+    COUNT(DISTINCT SessionId) AS UniqueSessions
+FROM Octopus_Episodes
+WHERE TenantId = @tenantId
+  AND Timestamp >= DATEADD(DAY, -14, GETUTCDATE())
+GROUP BY CAST(Timestamp AS DATE)
+ORDER BY EpisodeDate DESC;</code></pre>
+
+  <h3>Error Sessions Summary</h3>
+  <pre><code>SELECT
+    a.Name AS AgentName,
+    COUNT(*) AS ErrorSessions,
+    MIN(c.StartedAt) AS EarliestError,
+    MAX(c.StartedAt) AS LatestError
+FROM Octopus_Conversations c
+JOIN Octopus_Agents a
+    ON a.AgentId = c.AgentId AND a.TenantId = c.TenantId
+WHERE c.TenantId = @tenantId
+  AND c.Status = 'Error'
+  AND c.StartedAt >= DATEADD(DAY, -7, GETUTCDATE())
+GROUP BY a.Name
+ORDER BY ErrorSessions DESC;</code></pre>
+
+  <div class="callout info">
+    <strong>Messages Column Is Compressed</strong>
+    <p>The <code>Messages</code> and <code>ToolCalls</code> columns in <code>Octopus_Episodes</code> are stored as GZip-compressed binary (<code>varbinary(max)</code>). You cannot read their content directly in SSMS. To inspect episode content, use the Octopus API or decompress in application code using <code>System.IO.Compression.GZipStream</code>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-procedures-table.html">&#8592; Octopus_Procedures Table</a>
+    <a href="07-maintenance.html">Next: Database Maintenance &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

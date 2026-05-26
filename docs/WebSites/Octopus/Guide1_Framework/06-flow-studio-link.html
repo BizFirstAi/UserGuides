@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flow Studio Integration — Octopus Framework | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Octopus Framework</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-three-composites.html">Three Composite Objects</a>
+  <a href="02-agent-composite.html">AgentComposite</a>
+  <a href="03-conversation-composite.html">ConversationComposite</a>
+  <a href="04-user-composite.html">UserComposite</a>
+  <a href="05-llm-providers.html">LLM Provider Integrations</a>
+  <a href="06-flow-studio-link.html" class="active">Flow Studio Integration</a>
+  <a href="07-micro-frontends.html">Octopus Micro-Frontends</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Flow Studio Integration</h1>
+    <p class="lead">Octopus and Flow Studio form a bidirectional integration. Agents can trigger workflows, workflows can invoke agents as nodes, and agents can participate as automated Human-In-the-Loop (HIL) actors.</p>
+  </div>
+
+  <h2>Two Integration Directions</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Agents → Workflows</h4>
+      <p>An Octopus agent calls the <code>start_workflow</code> MCP tool to trigger any Flow Studio process by name. The agent can wait for the result or fire-and-forget.</p>
+    </div>
+    <div class="card">
+      <h4>Workflows → Agents</h4>
+      <p>A Flow Studio workflow uses the <strong>AI Agent Node</strong> to call an Octopus agent with a prompt. The agent's text response becomes the node's output, feeding into subsequent workflow nodes.</p>
+    </div>
+  </div>
+
+  <h2>AI Agent Node in Flow Studio</h2>
+  <p>The AI Agent Node is a standard Flow Studio execution node that calls Octopus. It appears in the node palette under the "AI" category:</p>
+  <pre><code>// AIAgentNodeExecutor — the backend for the AI Agent Node
+public class AIAgentNodeExecutor : BaseNodeExecutor
+{
+    public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext context)
+    {
+        var agentId = context.GetInput&lt;Guid&gt;("agentId");
+        var prompt = context.GetInput&lt;string&gt;("prompt");
+        var sessionId = context.GetInput&lt;string&gt;("sessionId", Guid.NewGuid().ToString());
+
+        // Call Octopus agent
+        var response = await _octopusClient.ChatAsync(new OctopusRequest
+        {
+            AgentId = agentId,
+            SessionId = sessionId,
+            Message = prompt,
+            TenantId = context.TenantId
+        });
+
+        return NodeExecutionResult.Success(new
+        {
+            response = response.Content,
+            toolCalls = response.ToolCalls,
+            sessionId = sessionId
+        });
+    }
+}</code></pre>
+
+  <h2>Agent Triggers a Workflow</h2>
+  <p>With the Process plugin enabled, an agent can call the <code>start_workflow</code> tool:</p>
+  <pre><code>// Tool definition exposed by the Process plugin:
+// Tool name: start_workflow
+// Input schema:
+{
+  "processName": "string",      // the Flow Studio process name
+  "input": "object",            // JSON data passed as workflow input
+  "waitForResult": "boolean",   // true = synchronous, false = fire-and-forget
+  "timeoutSeconds": "integer"   // max wait time if synchronous
+}
+
+// Example agent conversation:
+// User: "Please onboard the new vendor Acme Corp with contract #12345"
+// Agent decides to call start_workflow:
+// → start_workflow({ processName: "VendorOnboarding", input: { vendor: "Acme Corp", contract: "12345" }, waitForResult: true })
+// → Workflow runs, returns { vendorId: "V-9912", status: "Onboarded" }
+// → Agent: "Acme Corp has been successfully onboarded as vendor V-9912."</code></pre>
+
+  <h2>Agent as HIL Actor</h2>
+  <p>An Octopus agent can be assigned as an automated responder to Human-In-the-Loop tasks in WorkDesk. Instead of a human reviewing the task, the agent reviews the data and responds:</p>
+  <pre><code>// HIL task routing: when a task is assigned to an "Octopus agent actor":
+public class OctopusHILActor : IHILActor
+{
+    public async Task&lt;HILResponse&gt; RespondAsync(HILTask task)
+    {
+        // Build a prompt from the HIL task data
+        var prompt = $"Review this approval request: {JsonSerializer.Serialize(task.Data)}. " +
+                     $"Based on the policy, approve or reject with a reason.";
+
+        var response = await _octopusClient.ChatAsync(new OctopusRequest
+        {
+            AgentId = _approvalAgentId,
+            Message = prompt,
+            TenantId = task.TenantId
+        });
+
+        // Parse agent's structured response
+        return ParseApprovalDecision(response.Content);
+    }
+}</code></pre>
+
+  <h2>The AI Function Node</h2>
+  <p>A lighter alternative to the AI Agent Node: the AI Function Node calls Octopus to generate and execute code for a specific computation, without maintaining a conversation session:</p>
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>AI Agent Node</th><th>AI Function Node</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Session / memory</td><td>Full conversation context</td><td>Stateless — no session</td></tr>
+      <tr><td>Tool use</td><td>Yes — all agent tools</td><td>No — code only</td></tr>
+      <tr><td>Use case</td><td>Reasoning, multi-step decisions</td><td>Data transformation, calculation</td></tr>
+      <tr><td>Latency</td><td>Higher (memory retrieval)</td><td>Lower (direct generation)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-llm-providers.html">&#8592; LLM Provider Integrations</a>
+    <a href="07-micro-frontends.html">Next: Octopus Micro-Frontends &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

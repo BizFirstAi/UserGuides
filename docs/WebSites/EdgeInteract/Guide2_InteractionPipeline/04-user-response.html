@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User Response — Interaction Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-interaction-request.html">InteractionRequest</a>
+  <a href="02-targeting.html">Targeting</a>
+  <a href="03-display.html">Display Stage</a>
+  <a href="04-user-response.html" class="active">User Response</a>
+  <a href="05-response-routing.html">Response Routing</a>
+  <a href="06-acknowledgement.html">Acknowledgement</a>
+  <a href="07-timeout.html">Interaction Timeout</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>User Response</h1>
+    <p class="lead">When the user takes action on an interaction — clicking Approve, submitting a form, selecting options — the component calls <code>respond()</code>. This triggers the <code>InteractionResponsePublisher</code> to build and publish the <code>InteractionResponse</code>.</p>
+  </div>
+
+  <h2>The respond() Callback</h2>
+  <p>Every interaction component receives a <code>respond(outcome, data?)</code> function as a prop. This is the single point of contact between the UI and the EdgeInteract pipeline:</p>
+  <pre><code>// respond signature
+type RespondFn = (outcome: string, data?: unknown) => Promise&lt;void&gt;;
+
+// Example: user clicks "Approve" in an ApprovalComponent
+function ApprovalComponent({ interaction, respond }: InteractionComponentProps) {
+  const handleApprove = async () => {
+    await respond('approved', { comment: 'Looks good to me.' });
+    // UI dismissal happens automatically after respond() resolves
+  };
+
+  const handleReject = async () => {
+    await respond('rejected', { comment: 'Budget exceeded.' });
+  };
+
+  return (
+    &lt;div&gt;
+      &lt;h3&gt;{interaction.title}&lt;/h3&gt;
+      &lt;button onClick={handleApprove}&gt;Approve&lt;/button&gt;
+      &lt;button onClick={handleReject}&gt;Reject&lt;/button&gt;
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+
+  <h2>InteractionResponse Schema</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>interactionId</code></td><td>string</td><td>Matches the original request's <code>interactionId</code></td></tr>
+      <tr><td><code>respondedBy</code></td><td>string</td><td>User ID of the responding user — injected by <code>InteractionResponsePublisher</code> from the authenticated session</td></tr>
+      <tr><td><code>outcome</code></td><td>string</td><td>Type-specific outcome string. See interaction type reference for valid values.</td></tr>
+      <tr><td><code>data</code></td><td>object (optional)</td><td>Type-specific response data. May be null for simple outcomes (e.g., <code>"acknowledged"</code>).</td></tr>
+      <tr><td><code>timestamp</code></td><td>ISO 8601</td><td>Set by the client when <code>respond()</code> is called</td></tr>
+      <tr><td><code>sessionId</code></td><td>string</td><td>The EdgeStream session ID of the responding session — for audit and security</td></tr>
+      <tr><td><code>correlationId</code></td><td>string (optional)</td><td>Passed through from the original request</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What respond() Does Internally</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Build InteractionResponse</h4>
+        <p><code>InteractionResponsePublisher</code> creates the response object, populating <code>respondedBy</code> from the authenticated session and <code>timestamp</code> from <code>Date.now()</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Publish to Callback Topic</h4>
+        <p>The response is serialized to JSON and published via EdgeStream to <code>interactions.callback.{interactionId}</code>. The server is subscribed to this topic and receives it immediately.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Remove from Queue</h4>
+        <p>The interaction is removed from the local <code>InteractionQueue</code>. The <code>InteractionContainer</code> advances to the next interaction in the queue (if any).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>Await Acknowledgement</h4>
+        <p><code>respond()</code> returns a promise that resolves when the <code>InteractionAck</code> arrives back from the server. This confirms the server processed the response. Components can show a loading state while awaiting the ack.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Outcome Values by Type</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Valid Outcomes</th><th>Data Shape</th></tr></thead>
+    <tbody>
+      <tr><td><code>approval</code></td><td><code>approved</code>, <code>rejected</code>, <code>abstained</code></td><td><code>{ comment?: string }</code></td></tr>
+      <tr><td><code>confirmation</code></td><td><code>confirmed</code>, <code>cancelled</code></td><td>none</td></tr>
+      <tr><td><code>form</code></td><td><code>submitted</code></td><td>submitted form field values object</td></tr>
+      <tr><td><code>picker</code></td><td><code>selected</code></td><td><code>{ selectedIds: string[] }</code></td></tr>
+      <tr><td><code>notification</code></td><td><code>acknowledged</code></td><td>none</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Invalid Outcomes Are Rejected</strong>
+    The response validation hook on the server checks that the <code>outcome</code> is valid for the declared interaction type. An invalid outcome triggers a validation error response back to the client.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-display.html">&#8592; Display Stage</a>
+    <a href="05-response-routing.html">Next: Response Routing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

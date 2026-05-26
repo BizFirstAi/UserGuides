@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pre-Pipeline Stage — Message Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-normalization.html">Normalization Stage</a>
+  <a href="02-pre-pipeline.html" class="active">Pre-Pipeline Stage</a>
+  <a href="03-processing.html">Processing Stage</a>
+  <a href="04-post-pipeline.html">Post-Pipeline Stage</a>
+  <a href="05-delivery.html">Delivery Stage</a>
+  <a href="06-error-handling.html">Error Handling</a>
+  <a href="07-short-circuit.html">Short-Circuit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Pre-Pipeline Stage</h1>
+    <p class="lead">Pre-pipeline hooks run on the normalized envelope before it reaches the core processing stage — the right place for enrichment, routing decisions, and cross-cutting concerns like rate limiting and tenant isolation.</p>
+  </div>
+
+  <h2>When Pre-Pipeline Hooks Run</h2>
+  <p>Pre-pipeline hooks execute after normalization (priority 110) and before the core processing stage. They receive a fully normalized <code>IEnvelope</code> and can read, transform, or abort it. Common pre-pipeline hook priorities are 120–199.</p>
+
+  <h2>What Belongs in Pre-Pipeline Hooks</h2>
+  <ul>
+    <li><strong>Message enrichment</strong> — add computed fields to <code>context.metadata</code> (e.g., resolved user object, tenant config)</li>
+    <li><strong>Routing decisions</strong> — determine target topic, fork to alternate topics</li>
+    <li><strong>Rate limiting</strong> — check and enforce per-tenant message rate</li>
+    <li><strong>Deduplication</strong> — skip already-processed messages by correlation ID</li>
+    <li><strong>Header injection</strong> — add tracing headers to outgoing messages</li>
+    <li><strong>Tenant isolation validation</strong> — confirm tenant ID matches authenticated user</li>
+  </ul>
+
+  <h2>Implementing a Pre-Pipeline Hook</h2>
+  <pre><code>import { BaseHook, IPipelineContext, HookResult } from 'edge-stream-js';
+
+// Enriches each message with resolved tenant configuration
+export class TenantEnrichmentHook extends BaseHook {
+  readonly name = 'TenantEnrichmentHook';
+  readonly priority = 120; // just after NormalizationHook (110)
+
+  constructor(private tenantService: TenantService) {
+    super();
+  }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const tenantId = (context.body as any)?.data?.metadata?.tenantId;
+
+    if (!tenantId) {
+      // Not all messages have tenantId — pass through
+      return { continue: true };
+    }
+
+    try {
+      const tenant = await this.tenantService.get(tenantId);
+      // Store in metadata — available to all subsequent hooks and subscribers
+      context.metadata.tenant = tenant;
+      context.metadata.tenantId = tenantId;
+      context.addActivity(`Enriched with tenant: ${tenant.name}`);
+    } catch (error) {
+      // Enrichment failure — abort to prevent unauthorized processing
+      context.abort(`Tenant ${tenantId} not found or inactive`);
+      return { continue: false };
+    }
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Deduplication Hook Pattern</h2>
+  <pre><code>export class DeduplicationHook extends BaseHook {
+  readonly name = 'DeduplicationHook';
+  readonly priority = 130;
+
+  private seen = new Set&lt;string&gt;();
+  private readonly maxSize = 10000;
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const messageId = context.envelope.meta.id;
+    const correlationId = context.envelope.meta.correlationId;
+    const key = correlationId || messageId;
+
+    if (this.seen.has(key)) {
+      // Duplicate — abort silently
+      context.abort(`Duplicate message: ${key}`);
+      return { continue: false };
+    }
+
+    this.seen.add(key);
+
+    // Evict oldest entries when cache is full
+    if (this.seen.size &gt; this.maxSize) {
+      const first = this.seen.values().next().value;
+      this.seen.delete(first);
+    }
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Rate Limiting Hook Pattern</h2>
+  <pre><code>export class RateLimitHook extends BaseHook {
+  readonly name = 'RateLimitHook';
+  readonly priority = 140;
+
+  private counters = new Map&lt;string, { count: number; resetAt: number }&gt;();
+  private readonly maxPerWindow: number;
+  private readonly windowMs: number;
+
+  constructor(options: { maxPerWindow: number; windowMs: number }) {
+    super();
+    this.maxPerWindow = options.maxPerWindow;
+    this.windowMs = options.windowMs;
+  }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const tenantId = context.metadata.tenantId as string || 'global';
+    const now = Date.now();
+
+    let entry = this.counters.get(tenantId);
+    if (!entry || now &gt; entry.resetAt) {
+      entry = { count: 0, resetAt: now + this.windowMs };
+      this.counters.set(tenantId, entry);
+    }
+
+    entry.count++;
+
+    if (entry.count &gt; this.maxPerWindow) {
+      context.abort(`Rate limit exceeded for tenant: ${tenantId}`);
+      return { continue: false, error: 'rate_limit_exceeded' };
+    }
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Registering Pre-Pipeline Hooks</h2>
+  <pre><code>const server = edgeStream.server('bas')!;
+
+// Hooks are added to the incoming pipeline
+server.incomingPipeline.addHook(new TenantEnrichmentHook(tenantService));
+server.incomingPipeline.addHook(new DeduplicationHook());
+server.incomingPipeline.addHook(new RateLimitHook({
+  maxPerWindow: 100,
+  windowMs: 60_000, // 100 messages per minute per tenant
+}));</code></pre>
+
+  <div class="callout info">
+    <strong>Context Metadata Flows Forward</strong>
+    Data written to <code>context.metadata</code> in any hook is accessible to all subsequent hooks and — importantly — to subscriber callbacks via the envelope's <code>attributes</code> field if you copy it there.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-normalization.html">&#8592; Normalization Stage</a>
+    <a href="03-processing.html">Next: Processing Stage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

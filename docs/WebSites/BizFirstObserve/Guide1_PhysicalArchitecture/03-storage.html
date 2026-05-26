@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Storage Layer — Physical Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Physical Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Architecture Overview</a>
+  <a href="01-instrumentation.html">Instrumentation Layer</a>
+  <a href="02-collection.html">Collection Layer</a>
+  <a href="03-storage.html" class="active">Storage Layer</a>
+  <a href="04-visualization.html">Visualization Layer</a>
+  <a href="05-data-flow.html">Data Flow</a>
+  <a href="06-network-topology.html">Network Topology</a>
+  <a href="07-sizing.html">Sizing Guidelines</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Storage Layer</h1>
+    <p class="lead">BizFirst Observe uses three purpose-built storage backends — Loki for logs, Prometheus for metrics, and Tempo for traces. Each backend is engineered for the unique query patterns and cardinality characteristics of its signal type.</p>
+  </div>
+
+  <h2>Storage Backend Comparison</h2>
+  <table>
+    <thead>
+      <tr><th>Attribute</th><th>Loki (Logs)</th><th>Prometheus (Metrics)</th><th>Tempo (Traces)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Data model</strong></td><td>Log streams (label sets + log lines)</td><td>Time series (label sets + float64 samples)</td><td>Trace objects (spans with attributes)</td></tr>
+      <tr><td><strong>Index strategy</strong></td><td>Label index only — log content not indexed</td><td>Labels fully indexed</td><td>No full index — lookup by TraceId or attribute search</td></tr>
+      <tr><td><strong>Query language</strong></td><td>LogQL</td><td>PromQL</td><td>TraceQL</td></tr>
+      <tr><td><strong>Storage format</strong></td><td>Compressed chunks (Snappy)</td><td>TSDB blocks</td><td>Parquet + object storage</td></tr>
+      <tr><td><strong>Default retention</strong></td><td>30 days</td><td>15 days (local); unlimited with Thanos</td><td>7 days</td></tr>
+      <tr><td><strong>Default port</strong></td><td>3100</td><td>9090</td><td>3200 (HTTP), 4317 (OTLP)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Grafana Loki — Log Storage</h2>
+  <p>Loki stores logs as compressed streams. A stream is identified by its label set — all log lines sharing the same labels form one stream. Loki only indexes the label set, not the log content itself.</p>
+  <p>This design choice has two important consequences:</p>
+  <ul>
+    <li><strong>Low storage cost</strong> — because log content is only compressed and stored, not indexed, Loki is significantly cheaper than Elasticsearch for the same log volume.</li>
+    <li><strong>Label cardinality matters</strong> — labels must be low-cardinality values (service names, environments, tenant tiers) not high-cardinality values (execution IDs, user IDs). High-cardinality labels create too many streams and degrade Loki performance.</li>
+  </ul>
+
+  <h3>Storage Backends for Loki</h3>
+  <ul>
+    <li><strong>Local filesystem</strong> — development only; not replicated</li>
+    <li><strong>Amazon S3</strong> — recommended for production; supports lifecycle rules for Glacier transition</li>
+    <li><strong>Azure Blob Storage</strong> — supported; recommended for Azure deployments</li>
+    <li><strong>Google Cloud Storage</strong> — supported; recommended for GCP deployments</li>
+    <li><strong>MinIO</strong> — S3-compatible self-hosted; good for on-premises deployments</li>
+  </ul>
+
+  <h2>Prometheus — Metrics Storage</h2>
+  <p>Prometheus uses its own embedded time-series database (TSDB). Each metric is stored as a series of <code>(timestamp, float64_value)</code> samples. The TSDB compacts data into immutable blocks over time, which are efficient for range queries.</p>
+
+  <h3>Prometheus TSDB Block Structure</h3>
+  <pre><code># Prometheus data directory layout
+/prometheus/data/
+  01BKGTZQ1SYQJTR4YNT1SDQPRH/   # Block (2-hour window)
+    chunks/
+      000001                      # Compressed sample data
+    index                         # Series + label index
+    meta.json                     # Block metadata
+    tombstones                    # Deleted series records
+  01BKGTZQ1SYQJTR4YNT1SDQPRI/   # Another block
+  wal/                            # Write-Ahead Log (recent data)</code></pre>
+
+  <h3>Retention Configuration</h3>
+  <pre><code># prometheus.yml — storage flags
+# Set via command-line argument:
+# --storage.tsdb.retention.time=90d
+# --storage.tsdb.retention.size=50GB
+# Whichever limit is hit first triggers deletion</code></pre>
+
+  <h2>Grafana Tempo — Trace Storage</h2>
+  <p>Tempo is designed for high-volume trace ingest at low cost. It writes traces directly to object storage (S3/GCS/Azure Blob) in Parquet format. Unlike Jaeger or Zipkin, Tempo does not use a separate index database — trace lookup by ID is achieved via bloom filters, and attribute-based search uses Tempo's native search index.</p>
+
+  <h3>Tempo Storage Tiers</h3>
+  <div class="card-grid">
+    <div class="card">
+      <h4>WAL (Write-Ahead Log)</h4>
+      <p>Newest traces — in-memory + local disk. Millisecond write latency. Not yet searchable by attribute.</p>
+    </div>
+    <div class="card">
+      <h4>Block Storage</h4>
+      <p>Flushed every 5 minutes to object storage. Searchable. Most trace queries hit this tier.</p>
+    </div>
+    <div class="card">
+      <h4>Compacted Blocks</h4>
+      <p>Older blocks are compacted for storage efficiency. Bloom filters enable fast TraceId lookup without full scan.</p>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <strong>Tempo Requires Object Storage for Production</strong>
+    <p>Tempo's local storage mode is suitable for development only. For production, configure an S3-compatible bucket. The <code>tempo-config.yaml</code> <code>storage.trace.backend</code> setting controls this. Tempo can handle thousands of traces per second with object storage backends on commodity hardware.</p>
+  </div>
+
+  <h2>Data Persistence and Backup</h2>
+  <p>Each storage component has a different backup approach:</p>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Backup Method</th><th>Restore Approach</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Loki</td><td>S3 bucket versioning + cross-region replication</td><td>Point Loki at restored S3 bucket</td></tr>
+      <tr><td>Prometheus</td><td><code>POST /api/v1/admin/tsdb/snapshot</code> API</td><td>Copy snapshot to data dir, restart</td></tr>
+      <tr><td>Tempo</td><td>S3 bucket versioning (traces already in object storage)</td><td>Point Tempo at restored S3 bucket</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-collection.html">&#8592; Collection Layer</a>
+    <a href="04-visualization.html">Next: Visualization Layer &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

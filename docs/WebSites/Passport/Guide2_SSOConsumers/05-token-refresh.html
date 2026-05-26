@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Refresh — SSO Consumers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Consumers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-oidc-client.html">OIDC Client Setup</a>
+  <a href="02-auth-flow.html">Authorization Code Flow</a>
+  <a href="03-token-validation.html">Token Validation</a>
+  <a href="04-claims-mapping.html">Claims to User Context</a>
+  <a href="05-token-refresh.html" class="active">Token Refresh</a>
+  <a href="06-logout.html">Logout</a>
+  <a href="07-sdk.html">BizFirstGO SSO SDK</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Token Refresh</h1>
+    <p class="lead">Obtain a new access token using a refresh token — understand refresh token rotation, implement proactive refresh in backend services, and handle silent refresh in SPAs.</p>
+  </div>
+
+  <h2>Token Lifetime Overview</h2>
+  <table>
+    <thead>
+      <tr><th>Token</th><th>Default Lifetime</th><th>Configurable?</th><th>Storage</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Access Token</td><td>15 minutes</td><td>Per client (min 5 min)</td><td>Memory / session — never localStorage</td></tr>
+      <tr><td>Refresh Token</td><td>7 days</td><td>Per client</td><td>Encrypted HttpOnly cookie (SPA) or server-side session (backend)</td></tr>
+      <tr><td>id_token</td><td>Same as access token</td><td>—</td><td>Memory — for identity display only</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Refresh Token Rotation</h2>
+  <p>Passport uses <strong>refresh token rotation</strong> — every time a refresh token is used, Passport issues a new refresh token and invalidates the old one. This means:</p>
+  <ul>
+    <li>You must always store the most recently issued refresh token</li>
+    <li>Using an old refresh token (after it was rotated) is treated as a possible replay attack and invalidates the entire token family</li>
+    <li>Concurrent refresh requests must be handled carefully — use a mutex or queue</li>
+  </ul>
+
+  <h2>Refreshing an Access Token</h2>
+  <pre><code>// POST /passport/token with refresh_token grant
+POST /passport/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic base64("workflow-api-prod:client-secret")
+
+grant_type=refresh_token
+&refresh_token=current-refresh-token-value
+
+// Successful response (200 OK)
+{
+  "access_token":  "eyJhbGciOiJSUzI1NiJ9...",  // new access token
+  "refresh_token": "new-refresh-token-value",    // MUST store this, old one is now invalid
+  "token_type":    "Bearer",
+  "expires_in":    900,
+  "scope":         "openid profile email roles tenant"
+}
+
+// Expired/invalid refresh token (400 Bad Request)
+{
+  "error": "invalid_grant",
+  "error_description": "The refresh token is expired, revoked, or has already been used."
+}</code></pre>
+
+  <h2>C# — Server-Side Refresh (Go.Essentials Pattern)</h2>
+  <pre><code>public sealed class PassportTokenRefreshService(
+    IPassportClient passportClient,
+    ITokenStorage tokenStorage,
+    ILogger&lt;PassportTokenRefreshService&gt; logger)
+{
+    // Mutex per user to prevent concurrent refresh races
+    private readonly ConcurrentDictionary&lt;string, SemaphoreSlim&gt; _locks = new();
+
+    public async Task&lt;string&gt; GetValidAccessTokenAsync(string userId, CancellationToken ct)
+    {
+        var tokens = await tokenStorage.GetTokensAsync(userId);
+
+        // Return existing token if not expiring within 60s
+        if (tokens.AccessTokenExpiresAt &gt; DateTimeOffset.UtcNow.AddSeconds(60))
+            return tokens.AccessToken;
+
+        // Serialize refresh per user
+        var semaphore = _locks.GetOrAdd(userId, _ =&gt; new SemaphoreSlim(1, 1));
+        await semaphore.WaitAsync(ct);
+        try
+        {
+            // Re-check after acquiring lock (another thread may have refreshed)
+            tokens = await tokenStorage.GetTokensAsync(userId);
+            if (tokens.AccessTokenExpiresAt &gt; DateTimeOffset.UtcNow.AddSeconds(60))
+                return tokens.AccessToken;
+
+            logger.LogInformation("Refreshing tokens for user {UserId}", userId);
+
+            var refreshed = await passportClient.RefreshTokenAsync(tokens.RefreshToken, ct);
+
+            await tokenStorage.StoreTokensAsync(userId, refreshed);
+            return refreshed.AccessToken;
+        }
+        catch (InvalidGrantException)
+        {
+            logger.LogWarning("Refresh token expired for user {UserId} — re-auth required", userId);
+            await tokenStorage.ClearTokensAsync(userId);
+            throw new ReAuthenticationRequiredException(userId);
+        }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
+}</code></pre>
+
+  <h2>Silent Refresh in SPAs</h2>
+  <p>For Single-Page Applications, silent refresh avoids visible login prompts by using an invisible iframe to silently obtain new tokens while the user is still active.</p>
+  <pre><code>// JavaScript — silent refresh using hidden iframe
+class PassportSilentRefresh {
+  private refreshTimer: number | null = null;
+
+  startSilentRefresh(accessTokenExpiresAt: Date) {
+    const refreshAt = new Date(accessTokenExpiresAt.getTime() - 60_000); // 60s before expiry
+    const delay = refreshAt.getTime() - Date.now();
+
+    if (delay &lt;= 0) {
+      this.doSilentRefresh();
+      return;
+    }
+
+    this.refreshTimer = setTimeout(() =&gt; this.doSilentRefresh(), delay);
+  }
+
+  private async doSilentRefresh() {
+    // Use an iframe to POST to the token endpoint silently
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = buildSilentRefreshUrl();
+    document.body.appendChild(iframe);
+
+    return new Promise&lt;void&gt;((resolve, reject) =&gt; {
+      iframe.onload = () =&gt; {
+        // Extract new tokens from iframe message
+        document.body.removeChild(iframe);
+        resolve();
+      };
+      setTimeout(() =&gt; {
+        document.body.removeChild(iframe);
+        reject(new Error('Silent refresh timeout'));
+      }, 5000);
+    });
+  }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Refresh Token Storage in SPAs</strong>
+    <p>In browser-based SPAs, never store refresh tokens in <code>localStorage</code> or <code>sessionStorage</code> — they are accessible to any JavaScript on the page (XSS risk). Use a Backend-for-Frontend (BFF) pattern where the BFF server holds the refresh token in an HttpOnly cookie and the SPA only receives short-lived access tokens.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-claims-mapping.html">&#8592; Claims to User Context</a>
+    <a href="06-logout.html">Next: Logout &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

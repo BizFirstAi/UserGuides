@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Targeting — Interaction Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-interaction-request.html">InteractionRequest</a>
+  <a href="02-targeting.html" class="active">Targeting</a>
+  <a href="03-display.html">Display Stage</a>
+  <a href="04-user-response.html">User Response</a>
+  <a href="05-response-routing.html">Response Routing</a>
+  <a href="06-acknowledgement.html">Acknowledgement</a>
+  <a href="07-timeout.html">Interaction Timeout</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Targeting</h1>
+    <p class="lead">EdgeInteract supports two targeting modes: single-user targeting (one specific user receives the interaction) and role targeting (any member of a role can respond — first-to-respond wins). Targeting is resolved server-side before delivery.</p>
+  </div>
+
+  <h2>Single-User Targeting</h2>
+  <p>The simplest and most common targeting mode. Set <code>targetUserId</code> to the exact user ID of the recipient:</p>
+  <pre><code>const request: InteractionRequest = {
+  type: 'approval',
+  targetUserId: 'usr_7f3a91bc',  // exact user ID
+  title: 'Approve Leave Request',
+  payload: { ... },
+  timeoutMs: 86_400_000
+};
+</code></pre>
+  <p>The pipeline publishes the request to <code>interactions.usr_7f3a91bc</code>. Only WebSocket sessions authenticated as that user will receive it. The user sees the interaction in their HIL inbox on all their active devices/tabs simultaneously.</p>
+
+  <div class="callout info">
+    <strong>Multi-Session Fan-Out</strong>
+    If the user has multiple active sessions (e.g., desktop + mobile), all sessions receive the interaction. The first session to respond wins — the remaining sessions receive a dismissal signal.
+  </div>
+
+  <h2>Role Targeting</h2>
+  <p>Role targeting is used when any member of a team can respond — for example, "any Finance Manager can approve this PO." Set <code>targetUserId</code> to a role key prefixed with <code>role:</code>:</p>
+  <pre><code>const request: InteractionRequest = {
+  type: 'approval',
+  targetUserId: 'role:finance-managers',  // role key
+  title: 'Emergency Purchase Approval',
+  payload: { ... },
+  timeoutMs: 7_200_000 // 2 hours
+};
+</code></pre>
+  <p><strong>Role resolution:</strong> The <code>InteractionPipeline</code> queries the Passport IAM service to resolve <code>role:finance-managers</code> to a list of user IDs. It then publishes to each user's individual <code>interactions.{userId}</code> topic. Users not in the role at publish time do not receive the interaction.</p>
+
+  <h2>First-to-Respond Wins</h2>
+  <p>For role-targeted interactions, only one response is accepted. When the first user responds:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>First Response Arrives</h4><p>The <code>InteractionResponse</code> from user A arrives on the callback topic. The pipeline marks the interaction as <code>responded</code>.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Lock Other Responses</h4><p>The pipeline atomically locks the interaction. Any subsequent response from user B (or other sessions of user A) is rejected with <code>InteractionAlreadyRespondedException</code>.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div></div>
+      <div class="body"><h4>Dismiss All Other Recipients</h4><p>EdgeInteract publishes a dismissal signal to the <code>interactions.dismiss.{userId}</code> topic for every other recipient. Their UI removes the interaction from the inbox.</p></div>
+    </div>
+  </div>
+
+  <h2>Targeting Modes Comparison</h2>
+  <table>
+    <thead><tr><th>Mode</th><th>targetUserId value</th><th>Who receives</th><th>Who can respond</th></tr></thead>
+    <tbody>
+      <tr><td>Single user</td><td><code>"usr_7f3a91bc"</code></td><td>One user, all their sessions</td><td>That user only</td></tr>
+      <tr><td>Role</td><td><code>"role:finance-managers"</code></td><td>All role members at publish time</td><td>First to respond (any role member)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Offline Users</h2>
+  <p>If the targeted user has no active EdgeStream session when the interaction is published:</p>
+  <ul>
+    <li>The interaction is stored in the pipeline state store with <code>status: "pending"</code></li>
+    <li>When the user connects (or reconnects), EdgeInteract delivers any pending interactions immediately as part of the EdgeStream session reconnect flow</li>
+    <li>The timeout continues running even while the user is offline — if they reconnect after the timeout has fired, the interaction is not delivered (it is already <code>timed_out</code>)</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Set Generous Timeouts for Offline Scenarios</strong>
+    If targeted users may be offline (e.g., approval flows sent to managers overnight), set a timeout that allows for their expected offline window. A 24-hour timeout is typical for approval interactions.
+  </div>
+
+  <h2>Group Targeting (Future)</h2>
+  <p>Group targeting (send to a specific list of user IDs, require N of M to respond) is planned for a future release. For now, use role targeting as the multi-user mechanism.</p>
+
+  <div class="page-nav">
+    <a href="01-interaction-request.html">&#8592; InteractionRequest</a>
+    <a href="03-display.html">Next: Display Stage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

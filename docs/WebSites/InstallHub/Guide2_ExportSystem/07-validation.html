@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pre-Export Validation — Export System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Export System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-selecting-artifacts.html">Selecting Artifacts</a>
+  <a href="02-dependency-resolution.html">Dependency Resolution</a>
+  <a href="03-manifest-generation.html">Manifest Generation</a>
+  <a href="04-bundle-creation.html">Bundle Creation</a>
+  <a href="05-export-api.html">Export API</a>
+  <a href="06-export-history.html">Export History</a>
+  <a href="07-validation.html" class="active">Pre-Export Validation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Pre-Export Validation</h1>
+    <p class="lead">Before the export pipeline runs, a series of validation checks ensure that the artifacts are complete, the graph is acyclic, the request is well-formed, and the caller is authorized. Validation failures return actionable error messages.</p>
+  </div>
+
+  <h2>Validation Checks</h2>
+  <p>Pre-export validation runs synchronously before any dependency resolution or serialization. If any check fails, the export is aborted with a <code>400 Bad Request</code> response listing all failures (not just the first).</p>
+
+  <h3>1. Request Validation</h3>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Rule</th><th>Error Code</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Package name</td><td>Required, 1–100 characters, no special characters except hyphens and spaces</td><td><code>InvalidPackageName</code></td></tr>
+      <tr><td>Package type</td><td>Must be one of the 5 valid enum values</td><td><code>InvalidPackageType</code></td></tr>
+      <tr><td>Version</td><td>Must be valid SemVer: <code>major.minor.patch</code></td><td><code>InvalidVersion</code></td></tr>
+      <tr><td>Artifact IDs</td><td>Array must have at least 1 element, max 50 root artifact IDs per export</td><td><code>ArtifactIdsMissing</code> / <code>TooManyRootArtifacts</code></td></tr>
+      <tr><td>Tenant ID</td><td>Must be a valid, active tenant ID</td><td><code>InvalidTenantId</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>2. Authorization Validation</h3>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Rule</th><th>Error Code</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Permission scope</td><td>Caller must have <code>installhub:export</code> permission</td><td><code>InsufficientPermission</code></td></tr>
+      <tr><td>Tenant access</td><td>Caller must have access to the specified tenantId</td><td><code>TenantAccessDenied</code></td></tr>
+      <tr><td>Artifact ownership</td><td>All specified artifact IDs must belong to the caller's tenant</td><td><code>TenantMismatch</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>3. Artifact Existence Validation</h3>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Rule</th><th>Error Code</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Existence</td><td>All specified artifact IDs must exist in the tenant</td><td><code>ArtifactNotFound</code></td></tr>
+      <tr><td>Status</td><td>Artifacts must be in Published or Active state (not Draft, Archived, or Deleted)</td><td><code>ArtifactNotExportable</code></td></tr>
+      <tr><td>Completeness</td><td>Artifacts must not have dangling references (e.g., a workflow node pointing to a deleted form)</td><td><code>IncompleteArtifact</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>4. Dependency Graph Validation</h3>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Rule</th><th>Error Code</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Circular dependency</td><td>The artifact reference graph must be a DAG (no cycles)</td><td><code>CircularDependency</code></td></tr>
+      <tr><td>Cross-tenant references</td><td>No artifact may reference an artifact from a different tenant</td><td><code>CrossTenantReference</code></td></tr>
+      <tr><td>Dependency depth</td><td>Maximum dependency depth is 10 levels (prevents pathological graphs)</td><td><code>DependencyDepthExceeded</code></td></tr>
+      <tr><td>Total artifact count</td><td>Maximum 500 artifacts in a single bundle (including auto-resolved)</td><td><code>BundleSizeExceeded</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>5. Version Conflict Validation</h3>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Rule</th><th>Error Code</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Version uniqueness</td><td>A package with the same name + version must not already exist for this tenant</td><td><code>VersionConflict</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Validation Error Response Format</h2>
+  <pre><code>HTTP 400 Bad Request
+{
+  "error": "ValidationFailed",
+  "message": "Export request failed validation. See 'errors' for details.",
+  "errors": [
+    {
+      "code":    "ArtifactNotFound",
+      "field":   "artifactIds[0]",
+      "message": "Artifact 'proc-9999' does not exist in tenant 'tenant-7f3a'"
+    },
+    {
+      "code":    "InvalidVersion",
+      "field":   "version",
+      "message": "Version 'v2.1' is not valid SemVer. Expected format: major.minor.patch (e.g., 2.1.0)"
+    }
+  ]
+}</code></pre>
+
+  <h2>Validation vs. Security Scanning</h2>
+  <p>Pre-export validation checks that the <em>export request is well-formed and the artifacts are complete</em>. It is not a security scan. Security scanning (expression injection, CVE checks) runs separately on the bundle before import. See <a href="../Guide8_SecurityScanning/index.html">Guide 8: Security Scanning</a> for details.</p>
+
+  <div class="callout info">
+    <strong>All Errors Returned at Once</strong>
+    Validation does not stop at the first error — it runs all checks and returns all failures together. This allows you to fix all issues in one iteration rather than discovering them one by one.
+  </div>
+
+  <h2>Draft Artifacts Cannot Be Exported</h2>
+  <p>Artifacts in <code>Draft</code> state cannot be exported. This prevents distributing incomplete or untested automation. Publish the artifact first, then run the export.</p>
+  <pre><code>{
+  "error": "ArtifactNotExportable",
+  "message": "Artifact 'proc-1001' (EmployeeOnboarding) is in Draft state. Publish it before exporting.",
+  "artifactId": "proc-1001",
+  "currentStatus": "Draft",
+  "requiredStatus": "Published"
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="06-export-history.html">&#8592; Export History</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security — Introduction to ANCP | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>ANCP</h2>
+    <h1>Introduction to ANCP</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-message-envelope.html">Message Envelope</a>
+  <a href="02-message-types.html">Message Types</a>
+  <a href="03-transport.html">Transport Layer</a>
+  <a href="04-addressing.html">Addressing</a>
+  <a href="05-security.html" class="active">Security</a>
+  <a href="06-versioning.html">Protocol Versioning</a>
+  <a href="07-use-cases.html">Use Cases</a>
+  <a href="08-devtools.html">ANCP in DevTools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">ANCP</div>
+    <h1>Security</h1>
+    <p class="lead">ANCP enforces security at four layers: transport encryption, connection authentication, tenant isolation, and (planned) message-level signing — so every message is verified before it reaches a handler.</p>
+  </div>
+
+  <h2>Security Layers Overview</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4><i class="fa-solid fa-lock" style="color:var(--accent);margin-right:6px"></i>Transport Encryption</h4>
+      <p>All transports require TLS 1.2 or higher. Plaintext connections are rejected at the server level.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-id-badge" style="color:var(--accent2);margin-right:6px"></i>Connection Authentication</h4>
+      <p>SignalR connections require a signed JWT. HTTP calls require a bearer token or API key. Unauthenticated connections are refused before any message is processed.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-building" style="color:var(--accent3);margin-right:6px"></i>Tenant Isolation</h4>
+      <p>Every message's <code>tenantId</code> is verified against the authenticated credential. Cross-tenant messages are silently discarded and audited.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-pen-nib" style="color:var(--accent4);margin-right:6px"></i>Message Signing</h4>
+      <p>Planned for ANCP 1.1 — Ed25519 signatures on the envelope header prevent message tampering in transit.</p>
+    </div>
+  </div>
+
+  <h2>Transport Encryption (TLS)</h2>
+  <p>All ANCP transports operate over TLS. The platform enforces TLS 1.2 as the minimum version, with TLS 1.3 preferred. Certificate validation is not optional — self-signed certificates are rejected in production deployments.</p>
+
+  <pre><code>// ASP.NET Core — enforce HTTPS on the SignalR hub
+app.UseHttpsRedirection();
+app.UseHsts();
+
+// In Kestrel configuration (appsettings.json)
+{
+  "Kestrel": {
+    "Endpoints": {
+      "Https": {
+        "Url": "https://+:443",
+        "Certificate": {
+          "Subject": "*.bizfirst.io",
+          "Store": "My",
+          "Location": "LocalMachine"
+        }
+      }
+    }
+  }
+}</code></pre>
+
+  <h2>Authentication</h2>
+
+  <h3>SignalR — JWT Bearer</h3>
+  <p>Browser clients and server-side node hosts authenticate to the SignalR hub using a JWT bearer token. The token is attached during connection negotiation and validated before the connection is accepted. Because WebSockets cannot send HTTP headers after the upgrade, the token is passed as a query parameter during negotiation:</p>
+
+  <pre><code>// Client-side connection with JWT
+const connection = new HubConnectionBuilder()
+  .withUrl('https://api.bizfirst.io/ancp-hub', {
+    accessTokenFactory: () => getAccessToken()  // Called on each connect/reconnect
+  })
+  .withAutomaticReconnect([1000, 2000, 5000, 10000, 30000])
+  .build();
+
+await connection.start();</code></pre>
+
+  <pre><code>// ASP.NET Core — JWT validation for SignalR
+services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+  .AddJwtBearer(options => {
+    options.TokenValidationParameters = new TokenValidationParameters {
+      ValidateIssuer     = true,
+      ValidIssuer        = "https://identity.bizfirst.io",
+      ValidateAudience   = true,
+      ValidAudience      = "ancp-api",
+      ValidateLifetime   = true,
+      ClockSkew          = TimeSpan.Zero,
+      IssuerSigningKey   = signingKey
+    };
+    // Allow JWT in query string for SignalR WebSocket upgrade
+    options.Events = new JwtBearerEvents {
+      OnMessageReceived = ctx => {
+        var token = ctx.Request.Query["access_token"];
+        if (!string.IsNullOrEmpty(token))
+          ctx.Token = token;
+        return Task.CompletedTask;
+      }
+    };
+  });</code></pre>
+
+  <h3>HTTP — Bearer Token and API Keys</h3>
+  <p>Server-to-server HTTP calls use a bearer JWT in the <code>Authorization</code> header. External integrations may use API keys scoped to a specific tenant and permission set:</p>
+
+  <pre><code>POST /api/ancp/messages HTTP/1.1
+Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...
+X-Tenant-Id: tenant-acme
+Content-Type: application/json</code></pre>
+
+  <h2>Tenant Isolation</h2>
+  <p>After authentication succeeds, the router performs tenant isolation checks on every incoming message. This is enforced at the protocol layer — it does not depend on application code to remember to check.</p>
+
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Failure Action</th><th>Audit Event</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Envelope <code>tenantId</code> matches JWT <code>tenantId</code> claim</td>
+        <td>Message discarded</td>
+        <td><code>ANCP_TENANT_MISMATCH</code></td>
+      </tr>
+      <tr>
+        <td>Source URI <code>tenantId</code> matches envelope <code>tenantId</code></td>
+        <td>Message discarded</td>
+        <td><code>ANCP_SOURCE_TENANT_MISMATCH</code></td>
+      </tr>
+      <tr>
+        <td>Destination URI <code>tenantId</code> matches envelope <code>tenantId</code></td>
+        <td>Message discarded</td>
+        <td><code>ANCP_DEST_TENANT_MISMATCH</code></td>
+      </tr>
+      <tr>
+        <td>Topic subscription belongs to same tenant</td>
+        <td>Subscription refused</td>
+        <td><code>ANCP_CROSS_TENANT_SUBSCRIBE</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Silent Drop — Not an Error Response</strong>
+    <p>Cross-tenant messages are not returned to the sender with an error message. This prevents an attacker from probing which tenants exist by watching for error vs. no-response. The message is dropped silently; only the audit log records the violation.</p>
+  </div>
+
+  <h2>Node Capability Authorization</h2>
+  <p>Beyond tenant isolation, the ProcessSecurity layer checks that the <code>source</code> node or agent has the capability to send the requested message type to the <code>destination</code>. Capabilities are defined in the <code>NodeCapabilityPolicy</code> table.</p>
+
+  <pre><code>// Example: Node capability check (C# — ProcessSecurity)
+public async Task&lt;bool&gt; CanSendAsync(string sourceAddress, string destAddress, string messageType)
+{
+    var sourceNodeId = AncpAddress.Parse(sourceAddress).NodeId;
+    var policy       = await _nodeCapabilityRepo.GetAsync(sourceNodeId);
+
+    return policy.AllowedDestinations.Contains(destAddress)
+        &amp;&amp; policy.AllowedMessageTypes.Contains(messageType);
+}</code></pre>
+
+  <h2>Message Signing (ANCP 1.1 — Planned)</h2>
+  <p>ANCP 1.1 will introduce optional message signing using Ed25519 asymmetric keys. The signature covers the canonical form of the envelope header fields and prevents tampering in transit.</p>
+
+  <pre><code>// Planned signature header format (ANCP 1.1)
+{
+  "id":        "msg-uuid",
+  "type":      "Command",
+  // ... other fields ...
+  "signature": {
+    "algorithm": "Ed25519",
+    "keyId":     "node-signing-key-v1",
+    "value":     "base64url-encoded-signature"
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>DIDComm for Agent-to-Agent Encryption</strong>
+    <p>For high-trust agent-to-agent communication, ANCP supports carrying DIDComm v2 encrypted payloads inside the <code>payload</code> field. The outer ANCP envelope handles routing and tenant isolation; the DIDComm layer provides end-to-end encryption between specific agents. See the DIDComm v2 documentation for key exchange and envelope format details.</p>
+  </div>
+
+  <h2>Security Audit Trail</h2>
+  <p>All security events are written to the <code>SecurityAuditLog</code> table in the ProcessSecurity database. Each audit entry records:</p>
+  <ul>
+    <li>Message ID and timestamp</li>
+    <li>Source and destination addresses</li>
+    <li>tenantId (from envelope and from JWT)</li>
+    <li>Event type (authentication, tenant check, capability check)</li>
+    <li>Outcome (allowed/denied)</li>
+    <li>Actor IP address and session ID</li>
+  </ul>
+
+  <h2>Security Checklist for Node Authors</h2>
+  <table>
+    <thead>
+      <tr><th>Requirement</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Always set <code>tenantId</code> from authenticated context — never from request input</td><td><span class="badge badge-red">Mandatory</span></td></tr>
+      <tr><td>Never log the full <code>payload</code> in production — it may contain PII</td><td><span class="badge badge-red">Mandatory</span></td></tr>
+      <tr><td>Use short-lived JWT tokens (15 min TTL) with refresh</td><td><span class="badge badge-red">Mandatory</span></td></tr>
+      <tr><td>Set <code>ttl</code> on time-sensitive Commands to prevent replay</td><td><span class="badge badge-yellow">Recommended</span></td></tr>
+      <tr><td>Set <code>traceId</code> from incoming request context for end-to-end tracing</td><td><span class="badge badge-yellow">Recommended</span></td></tr>
+      <tr><td>Validate <code>correlationId</code> on Responses before trusting the data</td><td><span class="badge badge-yellow">Recommended</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-addressing.html">&#8592; Addressing</a>
+    <a href="06-versioning.html">Next: Protocol Versioning &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

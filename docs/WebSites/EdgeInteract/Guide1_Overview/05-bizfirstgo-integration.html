@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BizFirstGO Integration — Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.product-section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;margin-bottom:24px;}
+.product-section h3{margin-top:0;font-size:1.05rem;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interaction-model.html">The Interaction Model</a>
+  <a href="02-vs-edgestream.html">EdgeInteract vs. EdgeStream</a>
+  <a href="03-use-cases.html">Use Cases</a>
+  <a href="04-package-structure.html">Package Structure</a>
+  <a href="05-bizfirstgo-integration.html" class="active">BizFirstGO Integration</a>
+  <a href="06-getting-started.html">Getting Started</a>
+  <a href="07-security.html">Security Model</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>BizFirstGO Integration</h1>
+    <p class="lead">EdgeInteract is wired into three major BizFirstGO products: WorkDesk (HIL Inbox), Flow Studio (HIL nodes), and Octopus (agent authorization). Each integration follows the same pipeline but with product-specific entry points and UI.</p>
+  </div>
+
+  <h2>WorkDesk — HIL Inbox</h2>
+  <div class="product-section">
+    <h3>WorkDesk HIL Inbox</h3>
+    <p>WorkDesk is the employee portal for the BizFirstGO platform. Its HIL Inbox is the primary surface where employees receive and respond to interaction requests from running workflows.</p>
+    <p>The inbox is powered entirely by EdgeInteract:</p>
+    <ul>
+      <li>On login, WorkDesk's <code>InteractionProvider</code> connects to EdgeStream and subscribes to <code>interactions.{currentUserId}</code></li>
+      <li>Incoming <code>InteractionRequest</code> messages appear in the inbox as cards, sorted by priority and timestamp</li>
+      <li>Each card renders the appropriate <code>InteractionComponent</code> (approval, form, picker, etc.)</li>
+      <li>When the employee responds, the <code>InteractionResponse</code> is published back and the card is dismissed</li>
+      <li>Timed-out interactions are grayed out and marked "Expired" — they cannot be responded to</li>
+    </ul>
+    <p><strong>Key WorkDesk interactions:</strong> expense approvals, leave requests, document sign-offs, bulk action confirmations, policy acknowledgements.</p>
+  </div>
+
+  <h2>Flow Studio — HIL Nodes</h2>
+  <div class="product-section">
+    <h3>HumanInLoopNode in Flow Studio</h3>
+    <p>Flow Studio's workflow engine contains the <code>HumanInLoopNode</code> — a first-class execution node that pauses a workflow and waits for a human response before continuing. The node uses EdgeInteract internally.</p>
+
+    <p><strong>How the HumanInLoopNode works:</strong></p>
+    <div class="pipeline">
+      <div class="pipeline-step">
+        <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+        <div class="body"><h4>Node Configuration</h4><p>The workflow designer sets the interaction type, target user/role, payload template, and timeout. These are stored as node settings.</p></div>
+      </div>
+      <div class="pipeline-step">
+        <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+        <div class="body"><h4>Execution: Suspend</h4><p>When the node executes, it calls <code>IInteractionPublisher.PublishAsync()</code>, then suspends the workflow coroutine (via HIL suspension mechanism). The workflow state is persisted to the database.</p></div>
+      </div>
+      <div class="pipeline-step">
+        <div class="connector"><div class="dot success">3</div><div class="line"></div></div>
+        <div class="body"><h4>Resume on Response</h4><p>When the <code>InteractionResponse</code> arrives on the callback topic, the HIL resume service wakes the suspended workflow. The response data is injected into the node's output and the workflow continues.</p></div>
+      </div>
+      <div class="pipeline-step">
+        <div class="connector"><div class="dot warn">!</div></div>
+        <div class="body"><h4>Timeout Handling</h4><p>If the interaction times out, the node receives an <code>InteractionTimeout</code>. The workflow takes the "timeout" branch — typically escalating to a manager or failing the workflow with a structured error.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Octopus — Agent Authorization</h2>
+  <div class="product-section">
+    <h3>Octopus Agent HIL</h3>
+    <p>Octopus AI agents run autonomously but are designed to pause and request human authorization before performing sensitive or irreversible actions. EdgeInteract is the mechanism for this authorization gate.</p>
+    <p><strong>Agent authorization patterns:</strong></p>
+    <ul>
+      <li><strong>Pre-action confirmation:</strong> Agent sends a <code>confirmation</code> interaction before performing a destructive operation (deleting records, sending bulk messages).</li>
+      <li><strong>Data access approval:</strong> Agent sends an <code>approval</code> interaction when accessing sensitive data, including context about what it needs and why.</li>
+      <li><strong>Option selection:</strong> Agent generates a list of candidate actions and sends a <code>picker</code> interaction so the human can choose the preferred path.</li>
+    </ul>
+    <p>Octopus agents use the server-side <code>IInteractionPublisher</code> directly and await the response before proceeding. If the response is rejected or times out, the agent logs the event and aborts the operation.</p>
+  </div>
+
+  <h2>Integration Architecture Diagram</h2>
+  <pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                     BizFirstGO Platform                          │
+│                                                                   │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐   │
+│  │  Flow Studio │    │   Octopus    │    │   WorkDesk       │   │
+│  │  HIL Nodes   │    │   Agents     │    │   HIL Inbox      │   │
+│  └──────┬───────┘    └──────┬───────┘    └────────┬─────────┘   │
+│         │                   │                     │              │
+│         ▼                   ▼                     ▼              │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                   EdgeInteract                            │   │
+│  │  IInteractionPublisher  ←→  InteractionSubscriber         │   │
+│  │  InteractionPipeline    ←→  InteractionResponsePublisher  │   │
+│  └──────────────────────┬───────────────────────────────────┘   │
+│                         │                                        │
+│  ┌──────────────────────▼───────────────────────────────────┐   │
+│  │                   EdgeStream                              │   │
+│  │         interactions.{userId}  topic                      │   │
+│  │         interactions.callback.{interactionId}  topic      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+
+  <h2>Shared Configuration</h2>
+  <p>All three integrations share the same EdgeInteract configuration block in <code>appsettings.json</code>:</p>
+  <pre><code>{
+  "EdgeInteract": {
+    "DefaultTimeoutMs": 86400000,
+    "MaxConcurrentInteractionsPerUser": 10,
+    "AuditLog": {
+      "Enabled": true,
+      "RetentionDays": 90
+    },
+    "RateLimiting": {
+      "MaxPerMinutePerUser": 5
+    }
+  }
+}
+</code></pre>
+
+  <div class="page-nav">
+    <a href="04-package-structure.html">&#8592; Package Structure</a>
+    <a href="06-getting-started.html">Next: Getting Started &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

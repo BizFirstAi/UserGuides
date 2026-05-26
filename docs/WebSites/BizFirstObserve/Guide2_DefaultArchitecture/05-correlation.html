@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cross-Signal Correlation — Default Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Default Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Default Stack Overview</a>
+  <a href="01-loki.html">Grafana Loki</a>
+  <a href="02-prometheus.html">Prometheus</a>
+  <a href="03-tempo.html">Grafana Tempo</a>
+  <a href="04-grafana.html">Grafana</a>
+  <a href="05-correlation.html" class="active">Cross-Signal Correlation</a>
+  <a href="06-compose.html">Docker Compose Deployment</a>
+  <a href="07-helm.html">Kubernetes Helm Deployment</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Cross-Signal Correlation</h1>
+    <p class="lead">The defining advantage of the Loki stack over disconnected observability tools is cross-signal correlation — the ability to jump seamlessly from a log entry to its distributed trace, or from a slow metric data point to the exact trace that caused it.</p>
+  </div>
+
+  <h2>The Three Correlation Links</h2>
+
+  <h3>1. Log-to-Trace (Loki → Tempo)</h3>
+  <p>Every BizFirstGO log line includes a <code>traceId</code> field. Grafana's Loki data source Derived Fields feature recognizes this field and renders it as a clickable link. Clicking the TraceId opens the corresponding trace in Tempo's trace detail view — without leaving Grafana.</p>
+  <pre><code># Log line in Loki (JSON format):
+{
+  "timestamp": "2026-05-25T14:32:01Z",
+  "level": "error",
+  "message": "Node execution failed: timeout waiting for external API",
+  "execution_id": "exec-d1e2f3a4",
+  "node_type": "DataFetchNode",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",  ← clickable link
+  "spanId": "00f067aa0ba902b7"
+}
+
+# Grafana Derived Fields config (in Loki data source):
+matcherRegex: '"traceId":"(\w+)"'
+url: '${__value.raw}'
+datasourceName: Tempo</code></pre>
+
+  <h3>2. Metric-to-Trace (Prometheus → Tempo via Exemplars)</h3>
+  <p>Prometheus histograms can carry exemplars — additional metadata attached to individual samples that includes a <code>traceId</code>. When Grafana renders a histogram panel, each data point can show a small dot indicating an exemplar is attached. Clicking the dot opens the linked trace in Tempo.</p>
+  <pre><code># OTel SDK automatically attaches exemplars to histogram observations
+# when a trace is active. In Prometheus exposition format:
+bizfirst_node_execution_duration_seconds_bucket{...,le="5.0"} 142 # {traceID="abc123"} 4.7 1716648000</code></pre>
+
+  <h3>3. Trace-to-Log (Tempo → Loki)</h3>
+  <p>From Tempo's trace detail view, you can jump to the logs that were emitted during the same time window by any service involved in the trace. This is configured in the Tempo data source settings:</p>
+  <pre><code># In Grafana, Tempo data source config:
+jsonData:
+  tracesToLogs:
+    datasourceName: Loki
+    tags: ['service.name', 'tenant_id']
+    # Queries Loki for logs from the same service during trace duration ±5 minutes
+    spanStartTimeShift: -5m
+    spanEndTimeShift: 5m</code></pre>
+
+  <h2>The Incident Investigation Workflow</h2>
+  <p>Here is how cross-signal correlation is used in practice when an engineer is investigating a slow workflow:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Alert fires or dashboard shows P99 spike</h4>
+        <p>The Node Performance dashboard shows a spike in <code>ApprovalNode</code> P99 latency. An exemplar dot is visible on the spike data point.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Click exemplar → open trace</h4>
+        <p>Clicking the exemplar dot opens Tempo's trace detail. The trace waterfall shows all spans for the slow workflow execution — revealing that <code>DataFetchNode</code> spent 4.2 seconds on an external API call.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Click "Logs" button on trace → open Loki</h4>
+        <p>From the trace view, clicking the Logs link opens Grafana Explore with a pre-built LogQL query scoped to the same service and time window. The logs reveal the specific API endpoint that timed out.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Resolution</h4>
+        <p>The engineer identifies the external API URL, escalates to the integration team. Total investigation time: under 2 minutes without switching tools.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout success">
+    <strong>TraceId is the Universal Key</strong>
+    <p>The <code>traceId</code> appears in logs, as an exemplar in metrics, and as the primary identifier in Tempo traces. It is the single value that ties all three signal types together for a single request. BizFirstGO's <code>ObservabilityServiceExtensions</code> ensures that every log line emitted during a traced request automatically includes the active traceId — no manual logging code required.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-grafana.html">&#8592; Grafana</a>
+    <a href="06-compose.html">Next: Docker Compose Deployment &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Post-Receive Hook — Interaction Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-pre-send.html">Pre-Send Hook</a>
+  <a href="02-post-receive.html" class="active">Post-Receive Hook</a>
+  <a href="03-response-validation.html">Response Validation Hook</a>
+  <a href="04-audit-hook.html">Audit Hook</a>
+  <a href="05-rate-limit-hook.html">Rate Limit Hook</a>
+  <a href="06-custom.html">Custom Interaction Hooks</a>
+  <a href="07-order.html">Hook Execution Order</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Post-Receive Hook</h1>
+    <p class="lead">The post-receive hook (<code>OnAfterRespond</code>) runs after a valid <code>InteractionResponse</code> has been received and validated. It cannot block the cycle, but it is the correct place for audit logging, metrics, and business side effects.</p>
+  </div>
+
+  <h2>What the Post-Receive Hook Can Do</h2>
+  <ul>
+    <li><strong>Audit:</strong> Record the full request + response pair for compliance</li>
+    <li><strong>Metrics:</strong> Emit response time metrics, completion counters</li>
+    <li><strong>Business events:</strong> Trigger downstream effects (send an email notification, update a record) based on the response outcome</li>
+    <li><strong>Notifications:</strong> Notify the requester or other parties of the outcome via EdgeStream or email</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Cannot Block</strong>
+    <code>OnAfterRespond</code> cannot prevent the response from being processed. If you throw an exception, it is caught, logged, and the cycle continues normally. Use the pre-send hook (<code>OnBeforePublish</code>) if you need to block.
+  </div>
+
+  <h2>Notification Hook Example</h2>
+  <pre><code>public class ApprovalNotificationHook : IInteractionHook
+{
+    private readonly IEmailService _email;
+    private readonly IUserService _users;
+
+    public Task OnBeforePublish(
+        InteractionRequest request,
+        CancellationToken ct) => Task.CompletedTask;
+
+    public async Task OnAfterRespond(
+        InteractionRequest request,
+        InteractionResponse response,
+        CancellationToken ct)
+    {
+        // Only handle approval interactions
+        if (request.Type != InteractionTypes.Approval)
+            return;
+
+        var requester = await _users.GetByCorrelationAsync(request.CorrelationId, ct);
+        if (requester is null) return;
+
+        var subject = response.Outcome == "approved"
+            ? $"[Approved] {request.Title}"
+            : $"[Rejected] {request.Title}";
+
+        await _email.SendAsync(requester.Email, subject,
+            body: $"Your request was {response.Outcome} by {response.RespondedBy} at {response.Timestamp}.",
+            ct: ct);
+    }
+}
+</code></pre>
+
+  <h2>Metrics Hook Example</h2>
+  <pre><code>public class MetricsInteractionHook : IInteractionHook
+{
+    private readonly IMeterFactory _meterFactory;
+    private readonly Histogram&lt;double&gt; _responseTimeHistogram;
+    private readonly Counter&lt;long&gt; _responseCounter;
+
+    public MetricsInteractionHook(IMeterFactory meterFactory)
+    {
+        var meter = meterFactory.Create("EdgeInteract");
+        _responseTimeHistogram = meter.CreateHistogram&lt;double&gt;(
+            "interaction_response_time_ms",
+            unit: "ms");
+        _responseCounter = meter.CreateCounter&lt;long&gt;(
+            "interaction_responses_total");
+    }
+
+    public Task OnBeforePublish(
+        InteractionRequest request,
+        CancellationToken ct) => Task.CompletedTask;
+
+    public Task OnAfterRespond(
+        InteractionRequest request,
+        InteractionResponse response,
+        CancellationToken ct)
+    {
+        var responseTimeMs = (response.TimestampUtc - request.PublishedAtUtc).TotalMilliseconds;
+
+        _responseTimeHistogram.Record(responseTimeMs,
+            new TagList {
+                { "interaction.type", request.Type },
+                { "outcome", response.Outcome }
+            });
+
+        _responseCounter.Add(1,
+            new TagList {
+                { "interaction.type", request.Type },
+                { "outcome", response.Outcome }
+            });
+
+        return Task.CompletedTask;
+    }
+}
+</code></pre>
+
+  <h2>Post-Receive Hook Best Practices</h2>
+  <table>
+    <thead><tr><th>Practice</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td>Keep hooks fast (under 100ms)</td><td>Hooks run synchronously in the pipeline before the ack is sent to the client</td></tr>
+      <tr><td>Use fire-and-forget for slow operations</td><td>Queue emails, notifications, and external calls via background jobs — don't block the hook</td></tr>
+      <tr><td>Handle exceptions internally</td><td>Don't let exceptions propagate — log and continue; the cycle must not fail due to a notification error</td></tr>
+      <tr><td>Filter by interaction type</td><td>Use early returns for types this hook doesn't handle</td></tr>
+      <tr><td>Use <code>correlationId</code> to find context</td><td>The original business entity (workflow execution ID, entity ID) is in <code>correlationId</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-pre-send.html">&#8592; Pre-Send Hook</a>
+    <a href="03-response-validation.html">Next: Response Validation Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

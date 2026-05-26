@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Post-Pipeline Stage — Message Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-normalization.html">Normalization Stage</a>
+  <a href="02-pre-pipeline.html">Pre-Pipeline Stage</a>
+  <a href="03-processing.html">Processing Stage</a>
+  <a href="04-post-pipeline.html" class="active">Post-Pipeline Stage</a>
+  <a href="05-delivery.html">Delivery Stage</a>
+  <a href="06-error-handling.html">Error Handling</a>
+  <a href="07-short-circuit.html">Short-Circuit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Post-Pipeline Stage</h1>
+    <p class="lead">Post-pipeline hooks run after the core processing stage and just before subscriber delivery — the right place for audit logging, metrics emission, acknowledgment, and side effects that should happen regardless of subscriber outcome.</p>
+  </div>
+
+  <h2>Post-Pipeline Hook Position</h2>
+  <p>Post-pipeline hooks use priorities of 300 and above. They execute after all processing hooks and before the terminal <code>PublishToSubscribersHook</code>. Since they run after processing, the message body is in its final, fully-transformed state.</p>
+
+  <h2>Audit Logging Hook</h2>
+  <pre><code>export class AuditLogHook extends BaseHook {
+  readonly name = 'AuditLogHook';
+  readonly priority = 300;
+
+  constructor(private auditService: AuditService) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const { envelope, metadata } = context;
+
+    // Audit every message — fire-and-forget (don't await)
+    this.auditService.log({
+      messageId: envelope.meta.id,
+      topic: envelope.meta.topic,
+      serverId: envelope.meta.serverId,
+      transport: envelope.meta.transport,
+      tenantId: metadata.tenantId as string,
+      receivedAt: envelope.meta.receivedAt,
+      bodySize: JSON.stringify(context.body).length,
+    }).catch(err =&gt; console.warn('[AuditLogHook] Non-critical audit failure:', err));
+
+    // Always continue — audit failure must not block delivery
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Metrics Emission Hook</h2>
+  <pre><code>export class MetricsHook extends BaseHook {
+  readonly name = 'MetricsHook';
+  readonly priority = 310;
+
+  private counters = new Map&lt;string, number&gt;();
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const topic = context.envelope.meta.topic || 'unknown';
+    const topicPrefix = topic.split('.')[0];
+
+    // Increment counters
+    const key = `messages.${topicPrefix}`;
+    this.counters.set(key, (this.counters.get(key) || 0) + 1);
+
+    // Emit to metrics system
+    metricsClient.increment('edge_stream.messages_processed', 1, {
+      topic: topicPrefix,
+      transport: context.envelope.meta.transport,
+      serverId: context.envelope.meta.serverId,
+    });
+
+    context.addActivity(`Metrics emitted for topic prefix: ${topicPrefix}`);
+    return { continue: true };
+  }
+
+  getCounters(): ReadonlyMap&lt;string, number&gt; {
+    return this.counters;
+  }
+}</code></pre>
+
+  <h2>Acknowledgment Hook</h2>
+  <p>Some systems require explicit message acknowledgment. The post-pipeline stage is the right place — after the message has been fully processed but before subscribers run:</p>
+  <pre><code>export class AcknowledgmentHook extends BaseHook {
+  readonly name = 'AcknowledgmentHook';
+  readonly priority = 320;
+
+  constructor(private ackService: MessageAckService) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const messageId = context.envelope.meta.id;
+    const correlationId = context.envelope.meta.correlationId;
+
+    if (correlationId) {
+      await this.ackService.acknowledge(messageId, correlationId);
+    }
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Snapshot / Cache Hook</h2>
+  <pre><code>export class MessageSnapshotHook extends BaseHook {
+  readonly name = 'MessageSnapshotHook';
+  readonly priority = 330;
+
+  private cache = new Map&lt;string, IEnvelope[]&gt;();
+  private readonly maxPerTopic = 50;
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const topic = context.envelope.meta.topic || 'default';
+
+    if (!this.cache.has(topic)) {
+      this.cache.set(topic, []);
+    }
+
+    const topicCache = this.cache.get(topic)!;
+    topicCache.push(context.envelope);
+
+    // Keep only the last N messages
+    if (topicCache.length &gt; this.maxPerTopic) {
+      topicCache.shift();
+    }
+
+    return { continue: true };
+  }
+
+  getRecent(topic: string, count = 10): IEnvelope[] {
+    const all = this.cache.get(topic) || [];
+    return all.slice(-count);
+  }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Post-Pipeline Hooks Must Not Abort</strong>
+    Post-pipeline hooks should almost never call <code>context.abort()</code>. By this stage the message has been fully validated, processed, and is ready for delivery. Aborting in post-pipeline wastes all preceding processing. If you need to conditionally block delivery, use a processing-stage hook instead.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-processing.html">&#8592; Processing Stage</a>
+    <a href="05-delivery.html">Next: Delivery Stage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

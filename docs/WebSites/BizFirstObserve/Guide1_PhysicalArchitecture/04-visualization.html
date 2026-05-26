@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visualization Layer — Physical Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Physical Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Architecture Overview</a>
+  <a href="01-instrumentation.html">Instrumentation Layer</a>
+  <a href="02-collection.html">Collection Layer</a>
+  <a href="03-storage.html">Storage Layer</a>
+  <a href="04-visualization.html" class="active">Visualization Layer</a>
+  <a href="05-data-flow.html">Data Flow</a>
+  <a href="06-network-topology.html">Network Topology</a>
+  <a href="07-sizing.html">Sizing Guidelines</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Visualization Layer</h1>
+    <p class="lead">Grafana is the single pane of glass for BizFirst Observe. It connects to Loki, Prometheus, and Tempo as data sources and provides dashboards, ad-hoc exploration, alerting, and access control — all in one UI.</p>
+  </div>
+
+  <h2>Grafana as the Unified UI</h2>
+  <p>A key architectural decision in BizFirst Observe is that users never interact directly with Loki, Prometheus, or Tempo. All observability workflows go through Grafana. This simplifies access control (one place to manage permissions), provides a consistent UX, and enables cross-signal correlation in a single view.</p>
+
+  <h2>Data Source Connections</h2>
+  <p>Grafana connects to each storage backend via its configured data source. BizFirst Observe provisions these connections automatically at startup via Grafana provisioning:</p>
+  <pre><code># grafana-provisioning/datasources/bizfirst-observe.yaml
+apiVersion: 1
+datasources:
+  - name: Loki
+    type: loki
+    url: http://loki:3100
+    access: proxy
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - datasourceName: Tempo
+          matcherRegex: '"traceId":"(\w+)"'
+          name: TraceID
+          url: '$${__value.raw}'
+          datasourceUid: tempo-uid
+
+  - name: Prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    access: proxy
+    jsonData:
+      timeInterval: 15s
+      exemplarTraceIdDestinations:
+        - name: traceID
+          datasourceUid: tempo-uid
+
+  - name: Tempo
+    type: tempo
+    url: http://tempo:3200
+    access: proxy
+    uid: tempo-uid
+    jsonData:
+      tracesToLogs:
+        datasourceName: Loki
+        tags: ['service.name', 'tenant_id']
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+      serviceMap:
+        datasourceUid: prometheus-uid
+      search:
+        hide: false</code></pre>
+
+  <h2>Pre-Built BizFirstGO Dashboards</h2>
+  <p>BizFirst Observe ships with 10 pre-built Grafana dashboards covering the most common observability scenarios for BizFirstGO:</p>
+  <table>
+    <thead>
+      <tr><th>Dashboard</th><th>Primary Metrics</th><th>Data Sources Used</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Flow Studio Overview</strong></td><td>Execution rate, error rate, p50/p95/p99 latency</td><td>Prometheus + Loki</td></tr>
+      <tr><td><strong>Node Performance</strong></td><td>Per-node-type execution time heatmap, error rates by node type</td><td>Prometheus</td></tr>
+      <tr><td><strong>HIL Analytics</strong></td><td>Suspension duration, approval rates, timeout rates, backlog gauge</td><td>Prometheus + Loki</td></tr>
+      <tr><td><strong>EdgeStream Throughput</strong></td><td>Messages/sec per topic, subscriber counts, delivery latency</td><td>Prometheus</td></tr>
+      <tr><td><strong>Octopus Agent Performance</strong></td><td>LLM call duration, token usage, memory access rates</td><td>Prometheus</td></tr>
+      <tr><td><strong>Tenant Health</strong></td><td>Per-tenant workflow success rate, resource consumption</td><td>Prometheus</td></tr>
+      <tr><td><strong>API Latency</strong></td><td>P99 latency per API endpoint, error rate</td><td>Prometheus</td></tr>
+      <tr><td><strong>Error Analysis</strong></td><td>Error log volume, top error patterns</td><td>Loki</td></tr>
+      <tr><td><strong>Trace Explorer</strong></td><td>Trace search by service/duration/status</td><td>Tempo</td></tr>
+      <tr><td><strong>Infrastructure</strong></td><td>CPU, memory, disk usage for all nodes</td><td>Prometheus (Node Exporter)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Alert Management</h2>
+  <p>BizFirst Observe supports two alerting paths, which can be used simultaneously:</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Grafana Unified Alerting</h4>
+      <p>Define alert rules directly in Grafana dashboards. Supports Loki, Prometheus, and Tempo queries as alert conditions. Manages contact points (Slack, email, PagerDuty) natively.</p>
+    </div>
+    <div class="card">
+      <h4>Prometheus Alertmanager</h4>
+      <p>Classic Prometheus-style alert rules in <code>alert-rules.yml</code>. Routes to Alertmanager which handles deduplication, grouping, and routing. Preferred for complex routing logic.</p>
+    </div>
+  </div>
+
+  <h2>Grafana Access Control</h2>
+  <p>Grafana's built-in role system controls who can see which dashboards and data sources:</p>
+  <table>
+    <thead>
+      <tr><th>Role</th><th>Dashboard Access</th><th>Can Create Dashboards</th><th>Can Manage Alerts</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Viewer</td><td>Read-only: assigned dashboards</td><td>No</td><td>No</td></tr>
+      <tr><td>Editor</td><td>Read/write: assigned dashboards</td><td>Yes (in assigned folders)</td><td>Yes</td></tr>
+      <tr><td>Admin</td><td>All dashboards + data sources</td><td>Yes</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Grafana is Stateless by Design</strong>
+    <p>Grafana stores its configuration (data sources, dashboards, users) in its own SQL database (default: SQLite, production: PostgreSQL). The dashboards and data sources defined in provisioning YAML files are automatically loaded at startup — this means you can manage the entire Grafana configuration as code in your repository and Grafana becomes stateless from a deployment perspective.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-storage.html">&#8592; Storage Layer</a>
+    <a href="05-data-flow.html">Next: Data Flow &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

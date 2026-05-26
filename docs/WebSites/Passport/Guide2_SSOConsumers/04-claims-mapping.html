@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claims to User Context — SSO Consumers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Consumers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-oidc-client.html">OIDC Client Setup</a>
+  <a href="02-auth-flow.html">Authorization Code Flow</a>
+  <a href="03-token-validation.html">Token Validation</a>
+  <a href="04-claims-mapping.html" class="active">Claims to User Context</a>
+  <a href="05-token-refresh.html">Token Refresh</a>
+  <a href="06-logout.html">Logout</a>
+  <a href="07-sdk.html">BizFirstGO SSO SDK</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Claims to User Context</h1>
+    <p class="lead">Map JWT claims from a validated Passport token into the BizFirstGO <code>IDInfo</code> struct — the unified identity context used throughout Go.Essentials middleware and execution nodes.</p>
+  </div>
+
+  <h2>The IDInfo Struct</h2>
+  <p><code>IDInfo</code> is the canonical identity representation in BizFirstGO. It is populated from validated JWT claims and propagated through the request pipeline. Every executor node, service, and middleware that needs identity context receives an <code>IDInfo</code>.</p>
+  <pre><code>namespace BizFirst.Essentials.Identity;
+
+/// &lt;summary&gt;
+/// Canonical identity context — populated from a validated Passport JWT.
+/// Immutable after creation — safe to share across threads.
+/// &lt;/summary&gt;
+public sealed record IDInfo
+{
+    public required string UserId       { get; init; }  // from "sub" claim
+    public required string TenantId     { get; init; }  // from "tenant_id" claim
+    public required string Email        { get; init; }  // from "email" claim
+    public string DisplayName           { get; init; } = string.Empty;
+    public IReadOnlyList&lt;string&gt; Roles  { get; init; } = [];
+    public IReadOnlyList&lt;string&gt; Permissions { get; init; } = [];
+    public bool IsServiceAccount        { get; init; }  // true for managed identities
+    public string? ManagedIdentityId    { get; init; }  // set for managed identity tokens
+    public DateTimeOffset TokenIssuedAt { get; init; }
+    public DateTimeOffset TokenExpiresAt{ get; init; }
+}</code></pre>
+
+  <h2>Claim-to-IDInfo Mapping</h2>
+  <table>
+    <thead>
+      <tr><th>JWT Claim</th><th>IDInfo Property</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>sub</code></td><td><code>UserId</code></td><td>Stable user GUID — never changes even if email changes</td></tr>
+      <tr><td><code>tenant_id</code></td><td><code>TenantId</code></td><td>Required for multi-tenant data isolation</td></tr>
+      <tr><td><code>email</code></td><td><code>Email</code></td><td>From <code>email</code> scope</td></tr>
+      <tr><td><code>name</code></td><td><code>DisplayName</code></td><td>From <code>profile</code> scope</td></tr>
+      <tr><td><code>roles</code></td><td><code>Roles</code></td><td>Array claim from <code>roles</code> scope</td></tr>
+      <tr><td><code>permissions</code></td><td><code>Permissions</code></td><td>Optional — explicit permission strings</td></tr>
+      <tr><td><code>iat</code></td><td><code>TokenIssuedAt</code></td><td>Unix timestamp → DateTimeOffset</td></tr>
+      <tr><td><code>exp</code></td><td><code>TokenExpiresAt</code></td><td>Unix timestamp → DateTimeOffset</td></tr>
+      <tr><td><code>managed_identity_id</code></td><td><code>ManagedIdentityId</code></td><td>Present only for managed identity tokens</td></tr>
+    </tbody>
+  </table>
+
+  <h2>IPassportIdentityResolver</h2>
+  <pre><code>public interface IPassportIdentityResolver
+{
+    /// &lt;summary&gt;
+    /// Builds an IDInfo from a validated ClaimsPrincipal.
+    /// The ClaimsPrincipal must come from a validated token — do not pass unvalidated principals.
+    /// &lt;/summary&gt;
+    Task&lt;IDInfo?&gt; ResolveAsync(
+        ClaimsPrincipal principal,
+        CancellationToken ct = default);
+}
+
+// Default implementation
+internal sealed class PassportIdentityResolver : IPassportIdentityResolver
+{
+    public Task&lt;IDInfo?&gt; ResolveAsync(ClaimsPrincipal principal, CancellationToken ct)
+    {
+        var userId   = principal.FindFirstValue("sub");
+        var tenantId = principal.FindFirstValue("tenant_id");
+        var email    = principal.FindFirstValue("email");
+
+        if (userId is null || tenantId is null || email is null)
+            return Task.FromResult&lt;IDInfo?&gt;(null);
+
+        var roles = principal.FindAll("roles")
+                             .Select(c =&gt; c.Value)
+                             .ToList();
+        var permissions = principal.FindAll("permissions")
+                                   .Select(c =&gt; c.Value)
+                                   .ToList();
+
+        var isManagedIdentity = principal.HasClaim("managed_identity_id", c =&gt; c.Value is not null);
+
+        var idInfo = new IDInfo
+        {
+            UserId           = userId,
+            TenantId         = tenantId,
+            Email            = email,
+            DisplayName      = principal.FindFirstValue("name") ?? email,
+            Roles            = roles,
+            Permissions      = permissions,
+            IsServiceAccount = isManagedIdentity,
+            ManagedIdentityId= principal.FindFirstValue("managed_identity_id"),
+            TokenIssuedAt    = DateTimeOffset.FromUnixTimeSeconds(
+                                   long.Parse(principal.FindFirstValue("iat") ?? "0")),
+            TokenExpiresAt   = DateTimeOffset.FromUnixTimeSeconds(
+                                   long.Parse(principal.FindFirstValue("exp") ?? "0"))
+        };
+
+        return Task.FromResult&lt;IDInfo?&gt;(idInfo);
+    }
+}</code></pre>
+
+  <h2>Accessing IDInfo in Request Pipeline</h2>
+  <pre><code>// In ASP.NET Core controllers — IDInfo is injected after AddPassportAuthentication()
+[Authorize]
+public class WorkflowController : ControllerBase
+{
+    private readonly IPassportIdentityResolver _resolver;
+
+    [HttpPost("workflows/{id}/execute")]
+    public async Task&lt;IActionResult&gt; Execute(Guid id)
+    {
+        // Resolve IDInfo from the validated ClaimsPrincipal
+        var idInfo = await _resolver.ResolveAsync(User);
+        if (idInfo is null) return Unauthorized();
+
+        // Use IDInfo in downstream services
+        await _workflowService.ExecuteAsync(id, idInfo);
+        return Accepted();
+    }
+}
+
+// In Go.Essentials middleware — IDInfo is available via HttpContext extension
+var idInfo = HttpContext.GetIDInfo();  // returns null if not authenticated</code></pre>
+
+  <h2>Role-Based Access with IDInfo</h2>
+  <pre><code>// Check role membership
+if (!idInfo.Roles.Contains("admin") &amp;&amp; !idInfo.Roles.Contains("manager"))
+    return Forbid();
+
+// ASP.NET Core attribute-based authorization
+[Authorize(Roles = "admin,manager")]
+public IActionResult AdminAction() { ... }
+
+// Policy-based (using Passport IAM)
+builder.Services.AddAuthorization(opts =&gt;
+{
+    opts.AddPolicy("CanExecuteWorkflows", policy =&gt;
+        policy.RequireClaim("roles", "manager", "admin", "workflow-executor"));
+});
+
+[Authorize(Policy = "CanExecuteWorkflows")]
+public IActionResult ExecuteWorkflow() { ... }</code></pre>
+
+  <div class="page-nav">
+    <a href="03-token-validation.html">&#8592; Token Validation</a>
+    <a href="05-token-refresh.html">Next: Token Refresh &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

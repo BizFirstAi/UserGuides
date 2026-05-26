@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Handoff — Multi-Agent System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Multi-Agent System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Multi-Agent Overview</a>
+  <a href="01-orchestrator-pattern.html">Orchestrator Agent Pattern</a>
+  <a href="02-handoff.html" class="active">Agent Handoff</a>
+  <a href="03-specialist-agents.html">Specialist Agents</a>
+  <a href="04-shared-conversation.html">Shared Conversation Context</a>
+  <a href="05-parallel-agents.html">Parallel Agent Execution</a>
+  <a href="06-agent-teams.html">Defining Agent Teams</a>
+  <a href="07-monitoring.html">Monitoring Multi-Agent Flows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Agent Handoff</h1>
+    <p class="lead">Agent handoff is the mechanism by which one Octopus agent transfers an active conversation to another agent. The handoff preserves context so the receiving agent can continue without requiring the user to repeat themselves.</p>
+  </div>
+
+  <h2>Handoff Context</h2>
+  <p>When a handoff occurs, a <code>HandoffContext</code> object is passed to the target agent. It contains exactly what the target agent needs to continue the conversation intelligently:</p>
+  <pre><code>public class HandoffContext
+{
+    public Guid SourceAgentId { get; set; }
+    public Guid ConversationId { get; set; }
+    public string UserMessage { get; set; }          // the message that triggered routing
+    public string HandoffReason { get; set; }         // why the handoff was initiated
+    public List&lt;LLMMessage&gt; RecentHistory { get; set; }  // last N messages from the conversation
+    public Dictionary&lt;string, object&gt; ContextData { get; set; }  // key facts extracted by orchestrator
+    public string SummaryForTarget { get; set; }      // brief summary for the target agent's context
+}</code></pre>
+
+  <h2>AgentHandoffService</h2>
+  <pre><code>public class AgentHandoffService : IAgentHandoffService
+{
+    public async Task&lt;HandoffResult&gt; TransferAsync(
+        Guid conversationId,
+        Guid targetAgentId,
+        HandoffContext context,
+        CancellationToken ct = default)
+    {
+        // 1. Load target agent
+        var targetAgent = await _agentRepo.GetCompositeAsync(targetAgentId, context.TenantId);
+
+        // 2. Build the target agent's initial context with handoff summary
+        var handoffMessage = new LLMMessage(Role.System,
+            $"[Handoff from {context.SourceAgentId}] {context.SummaryForTarget}");
+
+        // 3. Update conversation to reference the new agent
+        await _conversationRepo.UpdateAgentAsync(conversationId, targetAgentId);
+
+        // 4. Invoke target agent with handoff context
+        var response = await _agentExecutor.ExecuteAsync(
+            targetAgent,
+            conversation: await _conversationRepo.GetAsync(conversationId),
+            newMessage: context.UserMessage,
+            prependMessages: new[] { handoffMessage },
+            ct: ct);
+
+        return new HandoffResult
+        {
+            TargetAgentId = targetAgentId,
+            Response = response,
+            HandoffSucceeded = true
+        };
+    }
+}</code></pre>
+
+  <h2>Context Included in Handoff</h2>
+  <table>
+    <thead>
+      <tr><th>Item</th><th>Always Included</th><th>Configurable</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>User's triggering message</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Handoff reason (from orchestrator)</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Summary for target agent</td><td>Yes</td><td>Template in team config</td></tr>
+      <tr><td>Recent message history</td><td>No</td><td>MaxHandoffHistoryMessages setting</td></tr>
+      <tr><td>Tool call history</td><td>No</td><td>IncludeToolHistoryOnHandoff setting</td></tr>
+      <tr><td>Full conversation history</td><td>No</td><td>Not recommended — use episodic memory instead</td></tr>
+    </tbody>
+  </table>
+
+  <h2>User Experience During Handoff</h2>
+  <p>By default, handoffs are transparent to the user — they continue chatting without knowing which agent responded. Optionally, the chat-app can be configured to show a "Now speaking with: HR Agent" indicator:</p>
+  <pre><code>// TypeScript: chat-app handoff event
+interface HandoffEvent {
+  type: 'agent_handoff';
+  fromAgent: { id: string; displayName: string };
+  toAgent: { id: string; displayName: string };
+  handoffReason: string;
+  showToUser: boolean;  // controlled by team config
+}
+
+// SSE event sent during handoff:
+// event: handoff
+// data: {"type":"agent_handoff","toAgent":{"id":"...","displayName":"HR Agent"},"showToUser":true}</code></pre>
+
+  <div class="callout info">
+    <strong>Handoff vs. New Conversation</strong>
+    <p>A handoff keeps the same <code>ConversationComposite</code> — the session ID does not change. This means episodic memory still accumulates correctly. The conversation will appear as a single session in the user's history, even though multiple agents responded.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-orchestrator-pattern.html">&#8592; Orchestrator Agent Pattern</a>
+    <a href="03-specialist-agents.html">Next: Specialist Agents &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

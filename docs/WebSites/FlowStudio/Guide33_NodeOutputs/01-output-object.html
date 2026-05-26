@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Output Object — Guide33_NodeOutputs | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Outputs</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-output-object.html" class="active"><i class="fa-solid fa-box"></i> The Output Object</a>
+  <a href="02-accessing-output.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Accessing Output</a>
+  <a href="03-output-ports.html"><i class="fa-solid fa-plug"></i> Output Ports</a>
+  <a href="04-conditional-ports.html"><i class="fa-solid fa-code-branch"></i> Conditional Ports</a>
+  <a href="05-multi-output.html"><i class="fa-solid fa-share-nodes"></i> Parallel Outputs</a>
+  <a href="06-naming.html"><i class="fa-solid fa-tag"></i> NodeId Naming</a>
+  <a href="07-no-output.html"><i class="fa-solid fa-ban"></i> Nodes With No Output</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>The Output Object</h1>
+    <p class="lead">What <code>NodeExecutionResult.Success(output)</code> stores — arbitrary JSON object, storage location in ExecutionMemory, and the pinned data variant.</p>
+  </div>
+
+  <h2>NodeExecutionResult — The Return Type</h2>
+  <p>Every node executor returns a <code>NodeExecutionResult</code> from its <code>ExecuteAsync</code> method. This result carries both the routing decision (which port fires) and the data payload. The three static factory methods are:</p>
+
+  <pre><code class="language-csharp">// Happy path — node succeeded, returns data via main port
+NodeExecutionResult.Success(object? output, object? pinnedData = null, string portKey = "main")
+
+// Node failed — routes to error port, exception is captured
+NodeExecutionResult.Fail(Exception exception)
+
+// Node intentionally produced nothing — null in memory, no routing
+NodeExecutionResult.Skip()</code></pre>
+
+  <h2>What Gets Stored</h2>
+  <p>When <code>Success(output)</code> is called, the engine serializes the output to JSON and stores it at:</p>
+  <pre><code>ExecutionMemory.nodeOutputs[nodeId] = output</code></pre>
+  <p>The <code>output</code> parameter is typed as <code>object?</code> — it can be any JSON-serializable type: a plain class, an anonymous object, a dictionary, an array, or even a scalar string or number.</p>
+
+  <h2>Common Output Shapes</h2>
+  <pre><code class="language-csharp">// Returning a typed DTO
+return NodeExecutionResult.Success(new InvoiceResult
+{
+    InvoiceId = invoice.Id,
+    Total = invoice.Total,
+    Status = invoice.Status
+});
+
+// Returning an anonymous object
+return NodeExecutionResult.Success(new
+{
+    userId = user.Id,
+    email = user.Email,
+    roles = user.Roles
+});
+
+// Returning a list
+return NodeExecutionResult.Success(new
+{
+    items = queryResults,
+    rowCount = queryResults.Count
+});
+
+// Returning a scalar
+return NodeExecutionResult.Success(new { value = 42 });</code></pre>
+
+  <h2>Pinned Data vs. Live Output</h2>
+  <p><code>NodeExecutionResult.Success</code> accepts an optional <code>pinnedData</code> parameter. Pinned data is a snapshot stored alongside the live output and displayed in the Node Inspector during execution replay. It does not affect expression evaluation — only <code>output</code> is accessible via <code>$output.{nodeId}</code>.</p>
+  <pre><code class="language-csharp">return NodeExecutionResult.Success(
+    output: new { orderId = order.Id, status = "created" },
+    pinnedData: new { rawResponse = httpResponse.Body, elapsedMs = sw.ElapsedMilliseconds }
+);</code></pre>
+
+  <div class="callout callout-info">
+    <strong>Pinned data use case:</strong> Store debugging context (HTTP response body, timing, intermediate calculation steps) in pinned data so engineers can inspect it without exposing it to downstream nodes.
+  </div>
+
+  <h2>Custom Port Key</h2>
+  <p>By default, <code>Success()</code> fires the <code>"main"</code> port. To route to a custom port, pass the <code>portKey</code> parameter:</p>
+  <pre><code class="language-csharp">// Route to "approved" port
+return NodeExecutionResult.Success(new { decision = "approved" }, portKey: "approved");
+
+// Route to "rejected" port
+return NodeExecutionResult.Success(new { decision = "rejected", reason = "score too low" }, portKey: "rejected");</code></pre>
+
+  <h2>Data Persistence</h2>
+  <p>Node outputs are persisted to the database when the execution checkpoints (at each node boundary). This means output is available even after a server restart or during HIL suspension — the full <code>ExecutionMemory</code> is rehydrated from the database when execution resumes.</p>
+
+  <div class="callout callout-warning">
+    <strong>Size consideration:</strong> Keep node outputs reasonably sized. Very large outputs (e.g., full file contents or thousands of rows) should be stored in blob storage and a reference returned as output. The engine does not enforce a hard limit, but oversized memory degrades performance.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-accessing-output.html">Next: Accessing Output &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

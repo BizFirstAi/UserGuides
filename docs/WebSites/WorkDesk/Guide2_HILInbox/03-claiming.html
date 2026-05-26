@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claiming a Task — HIL Inbox | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>HIL Inbox</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Inbox Overview</a>
+  <a href="01-inbox-list.html">Task List</a>
+  <a href="02-filters.html">Filtering the Inbox</a>
+  <a href="03-claiming.html" class="active">Claiming a Task</a>
+  <a href="04-acting-approval.html">Approval Tasks</a>
+  <a href="05-acting-form.html">Form Tasks</a>
+  <a href="06-acting-review.html">Review Tasks</a>
+  <a href="07-history.html">Completed Tasks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Claiming a Task</h1>
+    <p class="lead">Claiming is an optional mechanism that locks a task to a single actor in multi-actor scenarios. When a task is assigned to a role group, multiple team members see it — claiming it signals intent and prevents duplicate responses.</p>
+  </div>
+
+  <h2>Why Claiming Exists</h2>
+  <p>When a Flow Studio HIL node is configured with a <strong>role assignment</strong> (e.g., "Finance Approvers" role) rather than a specific user, all members of that role see the task in their inboxes. Without claiming, two colleagues could both attempt to act on the same task simultaneously — causing a race condition.</p>
+  <p>Claiming solves this: the first actor to claim the task locks it. Other actors see the task but with action buttons disabled, showing "Claimed by [Name]". The claimer can release the claim if they cannot complete it, making it available again.</p>
+
+  <div class="callout info">
+    <strong>Claiming Is Optional</strong>
+    <p>Claiming is configured per-workflow in the Flow Studio HIL node settings (<code>requireClaim: true/false</code>). For single-actor tasks (assigned to a specific user), claiming is unnecessary and is typically disabled.</p>
+  </div>
+
+  <h2>Claim Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Task Assigned to Role</h4>
+        <p>HIL node suspends workflow. Task appears in inbox of all members of the "Finance Approvers" role. Task status: <code>pending</code>, <code>claimedBy: null</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Actor Claims Task</h4>
+        <p>Actor clicks <strong>Claim</strong>. WorkDesk sends <code>POST /api/workdesk/tasks/{taskId}/claim</code>. Task status: <code>claimed</code>, <code>claimedBy: "usr-001"</code>. Other actors see the task as "Claimed by Alice".</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Actor Acts or Releases</h4>
+        <p>The claimer acts on the task (Approve/Submit/Acknowledge) → task completes. Or the claimer clicks <strong>Release Claim</strong> → task returns to pending and is visible again to all role members.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>Workflow Resumes</h4>
+        <p>After action, the workflow receives the response and continues. The task is marked <code>completed</code> and moves to the Completed Tasks history.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Claiming API</h2>
+  <pre><code>// Claim a task (lock to authenticated actor)
+POST /api/workdesk/tasks/{taskId}/claim
+Authorization: Bearer {token}
+
+// Response: 200 OK
+{ "taskId": "...", "claimedBy": "usr-001", "claimedAt": "2026-05-25T11:00:00Z" }
+
+// Response: 409 Conflict (already claimed by someone else)
+{ "error": "ALREADY_CLAIMED", "claimedBy": { "name": "Bob Smith", "claimedAt": "..." } }
+
+// Release a claim
+DELETE /api/workdesk/tasks/{taskId}/claim
+Authorization: Bearer {token}
+
+// Response: 200 OK
+{ "taskId": "...", "claimedBy": null }</code></pre>
+
+  <h2>Claim Timeout</h2>
+  <p>Claims can have an optional timeout. If a task is claimed but not acted on within the configured timeout period (e.g., 30 minutes), the claim is automatically released. This prevents tasks from being locked indefinitely if an actor walks away without completing or releasing the claim.</p>
+
+  <table>
+    <thead><tr><th>Claim Configuration</th><th>Flow Studio Setting</th><th>Default</th></tr></thead>
+    <tbody>
+      <tr><td>Claiming required?</td><td><code>hilNode.requireClaim</code></td><td><code>false</code></td></tr>
+      <tr><td>Claim timeout</td><td><code>hilNode.claimTimeoutMinutes</code></td><td><code>null</code> (no timeout)</td></tr>
+      <tr><td>Auto-assign after timeout?</td><td><code>hilNode.autoAssignOnTimeout</code></td><td><code>false</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Admin Override</strong>
+    <p>Administrators can forcibly release a claim via the Admin Panel — useful when an actor is absent and the task is urgently needed. The force-release creates an audit log entry.</p>
+  </div>
+
+  <h2>React UI — Claim Button</h2>
+  <pre><code>function TaskClaimButton({ task }: { task: HilTask }) {
+  const { claim, release } = useTaskActions();
+  const currentUserId = useCurrentUser().id;
+
+  if (!task.requireClaim) return null;
+
+  if (task.claimedBy === null) {
+    return &lt;button onClick={() => claim(task.taskId)}&gt;Claim Task&lt;/button&gt;;
+  }
+
+  if (task.claimedBy === currentUserId) {
+    return &lt;button onClick={() => release(task.taskId)}&gt;Release Claim&lt;/button&gt;;
+  }
+
+  return (
+    &lt;div className="claimed-indicator"&gt;
+      Claimed by {task.claimerName}
+      {task.claimedAt &amp;&amp; &lt;span&gt; at {formatRelative(task.claimedAt)}&lt;/span&gt;}
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="02-filters.html">&#8592; Filtering the Inbox</a>
+    <a href="04-acting-approval.html">Next: Approval Tasks &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

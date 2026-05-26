@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Getting Started — InstallHub Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-three-phases.html">Three Phases</a>
+  <a href="02-artifact-types.html">Artifact Types</a>
+  <a href="03-package-concept.html">The Package Concept</a>
+  <a href="04-use-cases.html">Use Cases</a>
+  <a href="05-architecture.html">Architecture</a>
+  <a href="06-current-status.html">Current Status</a>
+  <a href="07-getting-started.html" class="active">Getting Started</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Getting Started</h1>
+    <p class="lead">Create your first InstallHub package — export a workflow from your tenant in under five minutes using the REST API.</p>
+  </div>
+
+  <h2>Prerequisites</h2>
+  <ul>
+    <li>A BizFirstGO tenant with at least one workflow or form to export</li>
+    <li>An API token with <code>installhub:export</code> permission</li>
+    <li>The IDs of the artifacts you want to include in the package</li>
+    <li>A REST client (curl, Postman, or any HTTP client)</li>
+  </ul>
+
+  <h2>Step 1 — Find Your Artifact IDs</h2>
+  <p>You need the artifact IDs of the workflows, forms, or apps you want to package. You can find these in the Flow Studio or Atlas Forms URL bar, or by querying the artifact API:</p>
+  <pre><code>GET /api/processes?tenantId={tenantId}
+Authorization: Bearer {your-token}
+
+// Response example:
+{
+  "items": [
+    { "id": "proc-1001", "name": "EmployeeOnboarding", "version": "2.1.0" },
+    { "id": "proc-1002", "name": "LeaveApproval",       "version": "1.3.0" }
+  ]
+}</code></pre>
+
+  <h2>Step 2 — Call the Export API</h2>
+  <p>POST to the export endpoint with the artifact IDs you want to bundle:</p>
+  <pre><code>POST /api/installhub/packages/export
+Authorization: Bearer {your-token}
+Content-Type: application/json
+
+{
+  "packageName":    "Employee Onboarding Suite",
+  "packageType":    "workflow-package",
+  "version":        "1.0.0",
+  "description":    "Complete onboarding workflow with employee form",
+  "artifactIds": [
+    "proc-1001"
+  ]
+}
+
+// The DependencyResolver will automatically include all artifacts
+// that proc-1001 depends on (forms, rules, entity schemas, etc.)</code></pre>
+
+  <h2>Step 3 — Receive the Bundle</h2>
+  <p>The response returns the export result with the ZIP bytes and manifest:</p>
+  <pre><code>HTTP 200 OK
+Content-Type: application/json
+
+{
+  "packageId":    "pkg-a3f9c821-4b2e-...",
+  "packageName":  "Employee Onboarding Suite",
+  "version":      "1.0.0",
+  "checksum":     "sha256:3a9f1c4e...",
+  "artifactCount": 4,
+  "bundleUrl":    "/api/installhub/packages/pkg-a3f9c821.../download",
+  "exportedAt":   "2026-05-25T09:30:00Z",
+  "manifest": {
+    "artifacts": [
+      { "type": "ProcessDefinition", "id": "proc-1001", "name": "EmployeeOnboarding" },
+      { "type": "AtlasForm",         "id": "form-2005", "name": "EmployeeForm" },
+      { "type": "RuleSet",           "id": "rule-305",  "name": "ApprovalRules" },
+      { "type": "EntitySchema",      "id": "ent-44",    "name": "EmployeeSchema" }
+    ]
+  }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Dependencies Auto-Included</strong>
+    Notice the response includes 4 artifacts even though you only specified <code>proc-1001</code>. The DependencyResolver automatically discovered the form, rules, and entity schema that the workflow depends on, and included them in the bundle.
+  </div>
+
+  <h2>Step 4 — Download the ZIP</h2>
+  <pre><code>GET /api/installhub/packages/{packageId}/download
+Authorization: Bearer {your-token}
+
+// Response: application/zip stream
+// Save as: employee-onboarding-1.0.0.zip</code></pre>
+
+  <h2>Step 5 — Inspect the Bundle</h2>
+  <p>Unzip the bundle to verify its contents:</p>
+  <pre><code>employee-onboarding-1.0.0.zip
+├── manifest.json
+├── README.md
+└── artifacts/
+    ├── workflows/
+    │   └── proc-1001.json
+    ├── forms/
+    │   └── form-2005.json
+    ├── rules/
+    │   └── rule-305.json
+    └── entities/
+        └── ent-44.json</code></pre>
+
+  <h2>Step 6 — Review Export History</h2>
+  <p>Every export is logged. You can retrieve your export history for audit purposes:</p>
+  <pre><code>GET /api/installhub/packages/history?tenantId={tenantId}
+Authorization: Bearer {your-token}
+
+// Response:
+{
+  "items": [
+    {
+      "packageId":    "pkg-a3f9c821-...",
+      "packageName":  "Employee Onboarding Suite",
+      "version":      "1.0.0",
+      "exportedAt":   "2026-05-25T09:30:00Z",
+      "exportedBy":   "engineer@company.com",
+      "artifactCount": 4,
+      "checksum":     "sha256:3a9f1c4e..."
+    }
+  ]
+}</code></pre>
+
+  <h2>Next Steps</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Export System Deep Dive</h4>
+      <p>Learn about artifact selection, dependency graphs, and the full export pipeline.</p>
+      <a href="../Guide2_ExportSystem/index.html" style="color:var(--accent);font-size:0.85rem;">Guide 2: Export System &#8594;</a>
+    </div>
+    <div class="card">
+      <h4>Package Format</h4>
+      <p>Understand the exact ZIP structure, manifest schema, and artifact serialization format.</p>
+      <a href="../Guide3_PackageFormat/index.html" style="color:var(--accent);font-size:0.85rem;">Guide 3: Package Format &#8594;</a>
+    </div>
+    <div class="card">
+      <h4>Security Scanning</h4>
+      <p>Learn what the security scanner checks and how to interpret scan results.</p>
+      <a href="../Guide8_SecurityScanning/index.html" style="color:var(--accent);font-size:0.85rem;">Guide 8: Security Scanning &#8594;</a>
+    </div>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-current-status.html">&#8592; Current Status</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

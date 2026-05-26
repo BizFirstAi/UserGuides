@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resource-Level Policies — IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">IAM Overview</a>
+  <a href="01-roles.html">Roles</a>
+  <a href="02-permissions.html">Permissions</a>
+  <a href="03-policy-evaluation.html">Policy Evaluation</a>
+  <a href="04-resource-policies.html" class="active">Resource-Level Policies</a>
+  <a href="05-groups.html">User Groups</a>
+  <a href="06-runtime-checks.html">Runtime Permission Checks</a>
+  <a href="07-capability-integration.html">Integration with Node Capabilities</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Resource-Level Policies</h1>
+    <p class="lead">Fine-grained access control layered on top of role permissions — restrict which specific workflows, forms, or agents a user can access even if their role would otherwise allow it.</p>
+  </div>
+
+  <h2>What Are Resource Policies?</h2>
+  <p>Role permissions define broad capability grants — "managers can execute workflows". Resource policies narrow this to specific resources — "this manager can only execute the payroll workflow, not the HR onboarding workflow".</p>
+  <p>Resource policies are <strong>restrictive only</strong> — they cannot grant permissions that the user's role does not already have. They only add constraints on top of existing role grants.</p>
+
+  <h2>Policy Model</h2>
+  <pre><code>// Resource policy definition
+public class ResourcePolicy
+{
+    public required string PolicyId    { get; init; }
+    public required string ResourceType{ get; init; }  // "workflow", "form", "agent", "report"
+    public required string ResourceId  { get; init; }  // the specific resource GUID
+    public required string TenantId    { get; init; }
+    public required PolicyEffect Effect{ get; init; }  // Allow or Deny
+    public required string Permission  { get; init; }  // permission being scoped
+    public required string[] SubjectIds{ get; init; }  // user IDs or group IDs this applies to
+    public string? Condition           { get; init; }  // optional CEL expression
+    public DateTimeOffset? ExpiresAt   { get; init; }
+}
+
+public enum PolicyEffect { Allow, Deny }</code></pre>
+
+  <h2>Creating Resource Policies</h2>
+  <pre><code>// Restrict a specific workflow to specific users
+POST /passport/admin/resource-policies
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "resourceType": "workflow",
+  "resourceId":   "payroll-monthly-run-workflow-guid",
+  "tenantId":     "tenant-abc",
+  "effect":       "Allow",
+  "permission":   "workflow.initiate",
+  "subjectIds":   ["user-guid-1", "user-guid-2", "group-guid-finance"],
+  "description":  "Only finance team can initiate the monthly payroll workflow"
+}
+
+// Deny access for a specific user even though their role would allow it
+POST /passport/admin/resource-policies
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "resourceType": "form",
+  "resourceId":   "salary-adjustment-form-guid",
+  "tenantId":     "tenant-abc",
+  "effect":       "Deny",
+  "permission":   "form.submit",
+  "subjectIds":   ["user-guid-contractor"],
+  "description":  "Contractors cannot submit salary adjustment forms"
+}</code></pre>
+
+  <h2>Use Cases</h2>
+  <table>
+    <thead>
+      <tr><th>Resource Type</th><th>Example Policy</th><th>Rationale</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Workflow</td><td>Allow only Finance group to initiate the payroll workflow</td><td>Sensitive workflows should be restricted even within the manager role</td></tr>
+      <tr><td>Form</td><td>Deny contractors from submitting salary forms</td><td>Role says "users can submit forms" but this specific form requires employee status</td></tr>
+      <tr><td>Agent</td><td>Allow only IT admins to interact with the infrastructure agent</td><td>Infrastructure automation should be restricted to IT administrators</td></tr>
+      <tr><td>Report</td><td>Allow Finance role to view the P&L report</td><td>Financial reports require explicit access beyond the general viewer permission</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Conditional Policies (CEL Expressions)</h2>
+  <p>Resource policies support optional CEL (Common Expression Language) conditions for time-based or attribute-based restrictions:</p>
+  <pre><code>// Time-based restriction — only allow access during business hours
+{
+  "resourceType": "workflow",
+  "resourceId":   "live-payment-workflow-guid",
+  "effect":       "Allow",
+  "permission":   "workflow.initiate",
+  "subjectIds":   ["group-guid-payment-team"],
+  "condition":    "timestamp.hours() >= 9 && timestamp.hours() < 17 && timestamp.dayOfWeek() >= 1 && timestamp.dayOfWeek() <= 5"
+}
+
+// Attribute-based — only users from a specific department
+{
+  "resourceType": "form",
+  "resourceId":   "payroll-correction-form-guid",
+  "effect":       "Allow",
+  "permission":   "form.submit",
+  "subjectIds":   ["role:manager"],
+  "condition":    "subject.department == 'Finance'"
+}</code></pre>
+
+  <h2>Policy Precedence</h2>
+  <p>When multiple resource policies match a check, the evaluation follows these precedence rules:</p>
+  <ol>
+    <li><strong>Explicit DENY wins</strong> — any matching Deny policy immediately denies the request</li>
+    <li><strong>Explicit ALLOW required</strong> — if the resource has any Allow policies defined, the subject must match at least one</li>
+    <li><strong>No policy = role decision</strong> — if no resource policy applies, the role-based decision stands</li>
+  </ol>
+
+  <div class="callout warning">
+    <strong>Resource Policies Do Not Grant New Permissions</strong>
+    <p>A resource Allow policy on <code>workflow.initiate</code> for a user with the <code>viewer</code> role does NOT grant them workflow initiation. The user must also have the <code>workflow.initiate</code> permission from their role. Resource policies only restrict — they never expand — what roles already allow.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-policy-evaluation.html">&#8592; Policy Evaluation</a>
+    <a href="05-groups.html">Next: User Groups &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

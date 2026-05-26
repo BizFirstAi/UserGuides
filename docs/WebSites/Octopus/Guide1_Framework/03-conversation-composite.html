@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ConversationComposite — Octopus Framework | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Octopus Framework</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-three-composites.html">Three Composite Objects</a>
+  <a href="02-agent-composite.html">AgentComposite</a>
+  <a href="03-conversation-composite.html" class="active">ConversationComposite</a>
+  <a href="04-user-composite.html">UserComposite</a>
+  <a href="05-llm-providers.html">LLM Provider Integrations</a>
+  <a href="06-flow-studio-link.html">Flow Studio Integration</a>
+  <a href="07-micro-frontends.html">Octopus Micro-Frontends</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>ConversationComposite</h1>
+    <p class="lead">The <code>ConversationComposite</code> is the stateful session object for one conversation. It holds the live message history, working memory context, and tool call records — and is the unit that gets saved as an episode at conversation end.</p>
+  </div>
+
+  <h2>Session Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Session Start</h4><p>A new ConversationComposite is created when a user sends their first message. The session ID is either provided by the client (for resuming) or generated fresh.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Active Turns</h4><p>Each user message + agent response pair adds to <code>Messages</code>. Tool calls are recorded in <code>ToolCalls</code>. Working memory context is rebuilt on each turn.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Session End</h4><p>The session ends via explicit close (user ends chat), timeout (configurable idle timeout), or agent decision. At close, the full conversation is persisted as an episode.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body"><h4>Episode Persisted</h4><p>The episodic memory store saves the full message history. The episode is indexed for future semantic search if embedding is enabled.</p></div>
+    </div>
+  </div>
+
+  <h2>Message Types in the Conversation</h2>
+  <table>
+    <thead>
+      <tr><th>Role</th><th>When Added</th><th>Content</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>system</code></td><td>Session start</td><td>Assembled system prompt from AgentComposite</td></tr>
+      <tr><td><code>context</code></td><td>Before each user turn</td><td>Injected semantic + episodic memory results</td></tr>
+      <tr><td><code>user</code></td><td>Each user message</td><td>The user's text input</td></tr>
+      <tr><td><code>assistant</code></td><td>Each LLM response</td><td>Agent's response text or tool call directive</td></tr>
+      <tr><td><code>tool</code></td><td>After tool execution</td><td>Tool execution result fed back to LLM</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Context Preservation Across Turns</h2>
+  <p>The <code>WorkingMemoryManager</code> rebuilds the context window on every turn. It reads from the ConversationComposite's message list and prunes as needed to stay within the token budget:</p>
+  <pre><code>public class WorkingMemoryManager
+{
+    public async Task&lt;IReadOnlyList&lt;LLMMessage&gt;&gt; BuildContextAsync(
+        ConversationComposite conversation,
+        AgentComposite agent,
+        string newUserMessage)
+    {
+        var budget = agent.MemoryConfig.MaxWorkingMemoryTokens;
+        var messages = new List&lt;LLMMessage&gt;();
+
+        // 1. System prompt (always first, always included)
+        messages.Add(new LLMMessage(Role.System, agent.SystemPrompt));
+
+        // 2. Semantic memory retrieval
+        var retrieved = await _semanticStore.SearchAsync(
+            agent.Id, newUserMessage, agent.MemoryConfig.SemanticTopK);
+        if (retrieved.Any())
+            messages.Add(new LLMMessage(Role.Context, FormatRetrieved(retrieved)));
+
+        // 3. Message history (with pruning)
+        var history = PruneToFit(conversation.Messages, budget - CountTokens(messages));
+        messages.AddRange(history);
+
+        // 4. Current user message
+        messages.Add(new LLMMessage(Role.User, newUserMessage));
+
+        return messages;
+    }
+}</code></pre>
+
+  <h2>Tool Call Recording</h2>
+  <p>Every tool call made during a conversation is recorded in the <code>ToolCalls</code> collection. This serves two purposes: audit trail and context for subsequent turns.</p>
+  <pre><code>public class ToolCallRecord
+{
+    public Guid Id { get; init; }
+    public string ToolName { get; set; }
+    public JsonDocument Input { get; set; }
+    public JsonDocument? Output { get; set; }
+    public bool Succeeded { get; set; }
+    public string? ErrorMessage { get; set; }
+    public DateTimeOffset CalledAt { get; init; }
+    public TimeSpan Duration { get; set; }
+}</code></pre>
+
+  <h2>Multi-Session Context</h2>
+  <p>When a user returns for a new session, the new ConversationComposite does not automatically have the history of past sessions. Past context arrives through episodic memory retrieval — the <code>MemoryOrchestrator</code> searches past episodes for semantically relevant content and injects it as context messages.</p>
+
+  <div class="callout info">
+    <strong>Session ID Strategy</strong>
+    <p>For web chat: session ID is stored in the browser session. For embedded widgets: the host application can provide a stable session ID to allow resuming. For API callers: pass <code>sessionId</code> in the request body. If omitted, a new session is always created.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-agent-composite.html">&#8592; AgentComposite</a>
+    <a href="04-user-composite.html">Next: UserComposite &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

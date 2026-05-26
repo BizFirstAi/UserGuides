@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saving Your Work — Getting Started | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Getting Started</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-dashboard.html">The Dashboard</a>
+  <a href="02-creating-project.html">Creating a Project</a>
+  <a href="03-creating-process.html">Creating a Workflow</a>
+  <a href="04-creating-thread.html">Creating an Instance</a>
+  <a href="05-opening-canvas.html">Opening the Designer</a>
+  <a href="06-designer-layout.html">Designer Layout</a>
+  <a href="07-three-modes.html">Three Designer Modes</a>
+  <a href="08-saving.html" class="active">Saving Your Work</a>
+  <a href="09-keyboard-shortcuts.html">Keyboard Shortcuts</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Saving Your Work</h1>
+    <p class="lead">Flow Studio uses explicit saving for workflow graphs — changes are not automatically pushed to the server. The system tracks unsaved changes with a dirty indicator and warns you before navigating away. Understanding the save model prevents accidental data loss.</p>
+  </div>
+
+  <h2>How Saving Works</h2>
+  <p>When you make changes to the workflow graph (add a node, connect nodes, change a configuration value), the <code>workflowStore</code> marks the workflow as <strong>dirty</strong> (<code>isDirty: true</code>). The dirty state is visible as a dot in the toolbar next to the process name.</p>
+
+  <p>Saving serialises the full graph — all nodes, their positions, their configurations, and all edges — and sends it as a single JSON payload to the backend:</p>
+
+  <pre><code>PUT /api/v1/flow-studio/threads/{threadId}/graph
+Content-Type: application/json
+
+{
+  "nodes": [...],
+  "edges": [...],
+  "groups": [...],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}</code></pre>
+
+  <h2>How to Save</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>Keyboard shortcut</td><td>Ctrl+S (Windows/Linux) or Cmd+S (Mac)</td></tr>
+      <tr><td>Toolbar button</td><td>Click the save icon in the Top Toolbar (only visible when isDirty)</td></tr>
+      <tr><td>Mode switch prompt</td><td>When switching to Execution Mode with unsaved changes, a prompt asks to save first</td></tr>
+      <tr><td>Exit prompt</td><td>When navigating to the dashboard, a dialog asks to save and unlock</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The isDirty Indicator</h2>
+  <p>The dirty indicator is a small orange dot that appears next to the process name in the Top Toolbar. It disappears immediately when the save API call returns success. If the save fails, the dot remains and a toast notification explains the error.</p>
+
+  <h2>What Happens After Saving</h2>
+  <ul>
+    <li>The server persists the full graph to the database</li>
+    <li><code>isDirty</code> resets to <code>false</code></li>
+    <li>The <strong>undo/redo history is cleared</strong> — you cannot undo past a save point</li>
+    <li>The thread's <code>lastModified</code> timestamp is updated</li>
+    <li>If another browser tab has this thread open in read-only mode, it receives a real-time notification to reload the graph</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Undo History Clears on Save</strong>
+    This is an important constraint. After saving, you cannot undo changes made before the save. If you need to experiment with significant changes, consider creating a duplicate thread to preserve the current state.
+  </div>
+
+  <h2>Node Configuration Auto-Save</h2>
+  <p>While the <em>graph</em> requires explicit saving, node configuration form values (in the right panel) are written back to the in-memory <code>workflowStore</code> node config as you type. This does not hit the server — it just updates the in-memory state, which will be included in the next full graph save.</p>
+
+  <h2>Save Conflicts</h2>
+  <p>Because only one user can hold the edit lock, save conflicts are rare. However, if your lock expires and another user acquires it, your next save attempt returns <code>409 Conflict</code>. Flow Studio will:</p>
+  <ol>
+    <li>Show a conflict dialog explaining that the lock has changed</li>
+    <li>Offer to download your current unsaved changes as a JSON file</li>
+    <li>Reload the canvas with the current server state</li>
+  </ol>
+
+  <div class="page-nav">
+    <a href="07-three-modes.html">&#8592; Three Designer Modes</a>
+    <a href="09-keyboard-shortcuts.html">Next: Keyboard Shortcuts &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

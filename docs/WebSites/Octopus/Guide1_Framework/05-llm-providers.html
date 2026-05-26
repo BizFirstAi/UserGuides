@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Provider Integrations — Octopus Framework | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Octopus Framework</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-three-composites.html">Three Composite Objects</a>
+  <a href="02-agent-composite.html">AgentComposite</a>
+  <a href="03-conversation-composite.html">ConversationComposite</a>
+  <a href="04-user-composite.html">UserComposite</a>
+  <a href="05-llm-providers.html" class="active">LLM Provider Integrations</a>
+  <a href="06-flow-studio-link.html">Flow Studio Integration</a>
+  <a href="07-micro-frontends.html">Octopus Micro-Frontends</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>LLM Provider Integrations</h1>
+    <p class="lead">Octopus abstracts all LLM calls behind the <code>ILLMProvider</code> interface. Supported providers include Anthropic Claude (primary), OpenAI, Azure OpenAI, and local models via Ollama — each configured per agent.</p>
+  </div>
+
+  <h2>ILLMProvider Interface</h2>
+  <p>Every LLM integration implements this contract:</p>
+  <pre><code>public interface ILLMProvider
+{
+    string ProviderName { get; }   // "Anthropic", "OpenAI", etc.
+
+    Task&lt;LLMResponse&gt; CompleteAsync(
+        IReadOnlyList&lt;LLMMessage&gt; messages,
+        IReadOnlyList&lt;ToolDefinition&gt;? tools,
+        LLMOptions options,
+        CancellationToken ct = default);
+
+    Task StreamAsync(
+        IReadOnlyList&lt;LLMMessage&gt; messages,
+        IReadOnlyList&lt;ToolDefinition&gt;? tools,
+        LLMOptions options,
+        Func&lt;LLMStreamChunk, Task&gt; onChunk,
+        CancellationToken ct = default);
+
+    Task&lt;int&gt; CountTokensAsync(
+        IReadOnlyList&lt;LLMMessage&gt; messages,
+        CancellationToken ct = default);
+}</code></pre>
+
+  <h2>Supported Providers</h2>
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>Models</th><th>Tool Calling</th><th>Streaming</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Anthropic Claude</strong></td><td>claude-sonnet-4-6, claude-opus-4</td><td>Yes</td><td>SSE</td><td>Primary — longest context window</td></tr>
+      <tr><td><strong>OpenAI</strong></td><td>gpt-4o, gpt-4-turbo</td><td>Yes</td><td>SSE</td><td>Via direct API or SemanticKernel</td></tr>
+      <tr><td><strong>Azure OpenAI</strong></td><td>gpt-4o (deployed)</td><td>Yes</td><td>SSE</td><td>Requires endpoint + deployment name</td></tr>
+      <tr><td><strong>Ollama (local)</strong></td><td>llama3, mistral, etc.</td><td>Partial</td><td>Yes</td><td>For air-gapped / on-prem deployments</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Anthropic Claude (Primary)</h2>
+  <p>Anthropic Claude is the primary LLM for Octopus. It is configured directly without the Semantic Kernel plugin:</p>
+  <pre><code>// appsettings.json (no raw keys — CredentialId references the vault)
+{
+  "Octopus": {
+    "DefaultLLM": {
+      "Provider": "Anthropic",
+      "Model": "claude-sonnet-4-6",
+      "CredentialId": 42,
+      "MaxContextTokens": 200000,
+      "MaxOutputTokens": 8192,
+      "Temperature": 0.3
+    }
+  }
+}</code></pre>
+  <pre><code>// AnthropicLLMProvider implementation
+public class AnthropicLLMProvider : ILLMProvider
+{
+    public async Task&lt;LLMResponse&gt; CompleteAsync(
+        IReadOnlyList&lt;LLMMessage&gt; messages,
+        IReadOnlyList&lt;ToolDefinition&gt;? tools,
+        LLMOptions options, CancellationToken ct)
+    {
+        var apiKey = await _credentialResolver.GetPasswordAsync(options.CredentialId);
+        var request = BuildAnthropicRequest(messages, tools, options);
+        var response = await _httpClient.PostAsync("/v1/messages", request, ct);
+        return ParseAnthropicResponse(await response.Content.ReadAsStringAsync(ct));
+    }
+}</code></pre>
+
+  <h2>Azure OpenAI Configuration</h2>
+  <pre><code>// Per-agent LLM config for Azure OpenAI
+{
+  "Provider": "AzureOpenAI",
+  "Model": "gpt-4o",
+  "CredentialId": 55,          // API key in vault
+  "Endpoint": "https://mycompany.openai.azure.com/",
+  "DeploymentName": "gpt-4o-prod",
+  "MaxContextTokens": 128000,
+  "Temperature": 0.2
+}</code></pre>
+
+  <h2>Local Models via Ollama</h2>
+  <p>For air-gapped deployments or cost-sensitive workloads, Octopus supports local LLMs via Ollama. Note that tool calling support varies by model:</p>
+  <pre><code>{
+  "Provider": "Ollama",
+  "Model": "llama3:70b",
+  "Endpoint": "http://ollama-server:11434",
+  "MaxContextTokens": 8192,
+  "Temperature": 0.4
+  // CredentialId: not required for local Ollama without auth
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Tool Calling with Local Models</strong>
+    <p>Not all Ollama models support structured tool calling. Models that do not natively support function calling will fall back to prompt-based tool invocation, which is less reliable. Use <strong>llama3</strong> or <strong>mistral-nemo</strong> for best tool calling support with Ollama.</p>
+  </div>
+
+  <h2>LLMResponse Structure</h2>
+  <pre><code>public class LLMResponse
+{
+    public string Content { get; set; }         // the text response
+    public List&lt;ToolCallDirective&gt; ToolCalls { get; set; } // structured tool calls
+    public LLMUsage Usage { get; set; }          // input/output token counts
+    public string StopReason { get; set; }       // "end_turn", "tool_use", "max_tokens"
+}
+
+public class ToolCallDirective
+{
+    public string ToolName { get; set; }
+    public JsonDocument Arguments { get; set; }
+    public string CallId { get; set; }           // for correlating results
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="04-user-composite.html">&#8592; UserComposite</a>
+    <a href="06-flow-studio-link.html">Next: Flow Studio Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interaction Timeout — Interaction Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-interaction-request.html">InteractionRequest</a>
+  <a href="02-targeting.html">Targeting</a>
+  <a href="03-display.html">Display Stage</a>
+  <a href="04-user-response.html">User Response</a>
+  <a href="05-response-routing.html">Response Routing</a>
+  <a href="06-acknowledgement.html">Acknowledgement</a>
+  <a href="07-timeout.html" class="active">Interaction Timeout</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Interaction Timeout</h1>
+    <p class="lead">Every interaction has a deadline. If the user does not respond within <code>timeoutMs</code>, the pipeline fires an <code>InteractionTimeout</code>. Handling timeouts correctly is critical for building reliable workflows — never assume a response will arrive.</p>
+  </div>
+
+  <h2>Timeout Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">T</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Timer Fires</h4>
+        <p>The server-side timer for this interaction expires. The pipeline attempts to atomically lock the interaction. If a response arrived in the same millisecond (race condition), the response wins — the timeout is discarded.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">P</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Publish InteractionTimeout</h4>
+        <p>The pipeline publishes an <code>InteractionTimeout</code> message to the callback topic <code>interactions.callback.{interactionId}</code>. The server's <code>PublishAndWaitAsync()</code> Task receives this and throws <code>InteractionTimeoutException</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">D</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Dismiss Client UI</h4>
+        <p>The pipeline publishes a dismissal signal to <code>interactions.dismiss.{userId}</code>. The client receives this, removes the interaction from the queue, and marks it as "Expired" in the history.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">A</div></div>
+      <div class="body">
+        <h4>Audit Log</h4>
+        <p>The audit hook logs the timeout event with the <code>interactionId</code>, timestamp, and "no response received" outcome. This creates a compliance record even for unanswered interactions.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>InteractionTimeout Message</h2>
+  <pre><code>interface InteractionTimeout {
+  interactionId: string;
+  outcome: 'timeout';
+  timedOutAt: string; // ISO 8601
+  timeoutMs: number;  // The original timeout setting
+}
+</code></pre>
+
+  <h2>Handling Timeout on the Server</h2>
+  <pre><code>// C# — handling timeout in a workflow node
+public async Task ExecuteAsync(NodeExecutionContext context)
+{
+    try
+    {
+        var response = await _interactionPublisher.PublishAndWaitAsync(request);
+
+        // Handle the user's response
+        if (response.Outcome == "approved")
+        {
+            context.SetOutput("decision", "approved");
+        }
+        else if (response.Outcome == "rejected")
+        {
+            context.SetOutput("decision", "rejected");
+            context.SetOutput("rejectionComment", response.Data?["comment"]);
+        }
+    }
+    catch (InteractionTimeoutException ex)
+    {
+        // No response received within timeoutMs
+        // Route to timeout branch in the workflow
+        context.SetOutput("decision", "timeout");
+        context.SetOutput("timedOutAt", ex.TimedOutAt.ToString("O"));
+
+        // Optionally escalate — send to a manager, trigger an alert, etc.
+        await _escalationService.EscalateAsync(ex.InteractionId);
+    }
+}
+</code></pre>
+
+  <h2>Timeout Strategies</h2>
+  <table>
+    <thead><tr><th>Strategy</th><th>Description</th><th>When to Use</th></tr></thead>
+    <tbody>
+      <tr><td>Escalate</td><td>On timeout, send the same interaction to a higher-authority user or role</td><td>Approval chains — manager escalation</td></tr>
+      <tr><td>Auto-approve</td><td>On timeout, treat as approved (with audit log note)</td><td>Non-critical confirmations with SLA pressure</td></tr>
+      <tr><td>Auto-reject</td><td>On timeout, treat as rejected</td><td>Security-sensitive approvals — err on the side of caution</td></tr>
+      <tr><td>Fail the workflow</td><td>On timeout, terminate the workflow branch with an error</td><td>When no response means the process cannot continue</td></tr>
+      <tr><td>Retry</td><td>On timeout, re-publish the same interaction (new interactionId)</td><td>Reminders — "you missed this, please respond"</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recommended Timeout Values</h2>
+  <table>
+    <thead><tr><th>Interaction Type</th><th>Recommended Timeout</th><th>Rationale</th></tr></thead>
+    <tbody>
+      <tr><td>Approval (manager)</td><td>24–48 hours</td><td>Managers may be unavailable for a full business day</td></tr>
+      <tr><td>Approval (real-time)</td><td>30–60 minutes</td><td>User is online but may step away briefly</td></tr>
+      <tr><td>Confirmation (user action)</td><td>5–15 minutes</td><td>User initiated the action and is likely present</td></tr>
+      <tr><td>Form collection</td><td>30 minutes</td><td>Allow time to fill in the form without rushing</td></tr>
+      <tr><td>Picker</td><td>10–30 minutes</td><td>Simple selection — should not take long</td></tr>
+      <tr><td>Notification (acknowledge)</td><td>7 days</td><td>Compliance notifications — user must acknowledge but can do it later</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Never Set Infinite Timeouts</strong>
+    Do not set <code>timeoutMs</code> to an arbitrarily large value to avoid handling timeouts. This leaves pipeline resources (state store entries, callback subscriptions) open indefinitely. Always set a finite timeout and handle it explicitly.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-acknowledgement.html">&#8592; Acknowledgement</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

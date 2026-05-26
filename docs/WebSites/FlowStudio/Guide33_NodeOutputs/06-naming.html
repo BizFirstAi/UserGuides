@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NodeId Naming — Guide33_NodeOutputs | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Outputs</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-output-object.html"><i class="fa-solid fa-box"></i> The Output Object</a>
+  <a href="02-accessing-output.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Accessing Output</a>
+  <a href="03-output-ports.html"><i class="fa-solid fa-plug"></i> Output Ports</a>
+  <a href="04-conditional-ports.html"><i class="fa-solid fa-code-branch"></i> Conditional Ports</a>
+  <a href="05-multi-output.html"><i class="fa-solid fa-share-nodes"></i> Parallel Outputs</a>
+  <a href="06-naming.html" class="active"><i class="fa-solid fa-tag"></i> NodeId Naming</a>
+  <a href="07-no-output.html"><i class="fa-solid fa-ban"></i> Nodes With No Output</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>NodeId Naming</h1>
+    <p class="lead">How the canvas assigns and manages node IDs, why naming matters for expressions, and best practices for renaming nodes in production workflows.</p>
+  </div>
+
+  <h2>What Is the NodeId?</h2>
+  <p>Every node on the canvas has a unique <code>nodeId</code> — this is the key used in <code>$output.{nodeId}</code> expressions. The ID is also stored in <code>ExecutionMemory.nodeOutputs</code> as the dictionary key.</p>
+  <p>The nodeId is distinct from the node's <em>display label</em>. The label is a human-readable name shown on the canvas tile; the ID is the programmatic key used in all expression references.</p>
+
+  <h2>Auto-Generated IDs</h2>
+  <p>When you drag a node onto the canvas, the designer auto-generates a unique ID using a UUID-based scheme:</p>
+  <pre><code class="language-typescript">// Simplified from WorkflowStore
+function addNode(nodeType: string): WorkflowNode {
+  return {
+    id: `${nodeType}-${nanoid(8)}`,   // e.g., "httpRequest-aB3kX9qR"
+    type: nodeType,
+    label: nodeType,
+    // ...
+  };
+}</code></pre>
+  <p>The default ID is not human-friendly. Renaming nodes early in design is strongly recommended.</p>
+
+  <h2>Renaming a Node</h2>
+  <p>In the Node Inspector panel (right sidebar), set the <strong>Node ID</strong> field to a meaningful camelCase or snake_case identifier. The designer enforces:</p>
+  <ul>
+    <li>Unique within the workflow</li>
+    <li>Alphanumeric + underscore + hyphen only</li>
+    <li>No spaces (use <code>fetchCustomer</code> not <code>fetch customer</code>)</li>
+    <li>Not a reserved keyword (<code>main</code>, <code>error</code>, <code>timeout</code>)</li>
+  </ul>
+
+  <h2>Impact of Renaming on Expressions</h2>
+  <div class="callout callout-warning">
+    <strong>Breaking change:</strong> Renaming a node ID after other nodes have already referenced it in expressions will break those expressions. The designer shows a warning when renaming a node that is referenced elsewhere. Always use Find References before renaming.
+  </div>
+
+  <pre><code class="language-typescript">// Designer rename validation
+function renameNode(oldId: string, newId: string): ValidationResult {
+  const references = findExpressionReferences(oldId);
+  if (references.length > 0) {
+    return {
+      valid: false,
+      warning: `${references.length} expressions reference $output.${oldId}. Update them after rename.`,
+      affectedNodes: references.map(r => r.nodeId)
+    };
+  }
+  return { valid: true };
+}</code></pre>
+
+  <h2>Naming Conventions</h2>
+  <table>
+    <thead><tr><th>Pattern</th><th>Example</th><th>When to Use</th></tr></thead>
+    <tbody>
+      <tr><td>camelCase verb+noun</td><td><code>fetchEmployee</code></td><td>Action nodes — HTTP calls, service calls</td></tr>
+      <tr><td>camelCase noun+verb</td><td><code>invoiceCreated</code></td><td>Event/trigger nodes</td></tr>
+      <tr><td>camelCase descriptive</td><td><code>creditCheckResult</code></td><td>Decision/evaluation nodes</td></tr>
+      <tr><td>snake_case with step prefix</td><td><code>step1_validateInput</code></td><td>Sequential linear workflows</td></tr>
+    </tbody>
+  </table>
+
+  <h2>NodeId in Execution Memory</h2>
+  <p>After execution, the node ID is the key in the persisted execution memory. If you look at a historical execution in the observer panel, you'll see the nodeId as the key for each output entry. This is why stable, meaningful IDs matter for debugging:</p>
+  <pre><code class="language-json">{
+  "nodeOutputs": {
+    "fetchEmployee": { "employeeId": "emp-001", "name": "Alice" },
+    "creditCheck": { "score": 740, "tier": "standard" },
+    "sendApprovalEmail": { "messageId": "msg-xyz" }
+  }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="05-multi-output.html">&#8592; Parallel Outputs</a>
+    <a href="07-no-output.html">Next: Nodes With No Output &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

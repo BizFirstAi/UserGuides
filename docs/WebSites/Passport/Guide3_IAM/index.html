@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IAM Overview — IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">IAM Overview</a>
+  <a href="01-roles.html">Roles</a>
+  <a href="02-permissions.html">Permissions</a>
+  <a href="03-policy-evaluation.html">Policy Evaluation</a>
+  <a href="04-resource-policies.html">Resource-Level Policies</a>
+  <a href="05-groups.html">User Groups</a>
+  <a href="06-runtime-checks.html">Runtime Permission Checks</a>
+  <a href="07-capability-integration.html">Integration with Node Capabilities</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>IAM Overview</h1>
+    <p class="lead">Passport IAM provides a three-layer access control model — Roles, Permission Sets, and Permissions — with support for both built-in providers (Passport, Azure AD, Okta, AWS Cognito) and custom extensions.</p>
+  </div>
+
+  <h2>The Three-Layer Model</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4><i class="fa-solid fa-crown" style="color:#6c8cff;margin-right:6px;"></i>Layer 1 — Roles</h4>
+      <p>Named collections of permissions. Users are assigned roles. Roles can be system-defined (Admin, Manager, User, Viewer) or tenant-custom. Role membership is resolved by <code>IMembershipProvider</code>.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-layer-group" style="color:#a78bfa;margin-right:6px;"></i>Layer 2 — Permission Sets</h4>
+      <p>Logical groupings of permission strings associated with a role. For example, the <code>manager</code> role includes the <code>workflow</code> permission set: <code>workflow.design</code>, <code>workflow.initiate</code>, <code>workflow.view</code>.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-key" style="color:#34d399;margin-right:6px;"></i>Layer 3 — Permissions</h4>
+      <p>Atomic capability strings in dot-notation format (<code>resource.action</code>). Resolved by <code>IPermissionProvider</code>. These are the actual values checked at runtime by services and nodes.</p>
+    </div>
+  </div>
+
+  <h2>IAM Provider Architecture</h2>
+  <p>The IAM system is provider-agnostic. All identity providers implement the same six interfaces, allowing seamless operation whether Passport, Azure AD, Okta, or AWS Cognito backs the identity store.</p>
+  <pre><code>// The 6 provider interfaces — all IAM providers implement these
+namespace BizFirst.Ai.ProcessSecurity.Extended.Domain.Interfaces;
+
+public interface IIdentityProvider      // JWT → IdentityClaims
+public interface IMembershipProvider    // userId → group/role IDs
+public interface IUserDirectoryProvider // search/get users
+public interface IRoleDirectoryProvider // search/get roles
+public interface IPermissionProvider    // userId → permission strings
+public interface IAccessDecisionProvider// userId + nodeId → allow?</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>Identity Source</th><th>Role Source</th><th>Permission Source</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>BizFirst Passport</td><td>JWT "sub" claim</td><td>SQL IAM_UserRoles</td><td>JWT "permissions" claim or SQL</td></tr>
+      <tr><td>Azure AD / Entra ID</td><td>JWT "oid" claim</td><td>JWT "groups" or Graph API</td><td>App roles in JWT</td></tr>
+      <tr><td>Okta</td><td>JWT "sub" claim</td><td>JWT "groups" claim</td><td>Okta groups or JWT custom claims</td></tr>
+      <tr><td>AWS Cognito</td><td>JWT "sub" claim</td><td>JWT "cognito:groups"</td><td>JWT custom attributes</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Policy Evaluation Engine</h2>
+  <p>Every permission check flows through <code>IIAMPolicyEngine</code>. The engine evaluates in this order:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Resolve Identity</h4>
+        <p><code>IIdentityProvider.ResolveIdentityAsync(token)</code> — extract <code>UserId</code>, <code>TenantId</code>, <code>Email</code> from the JWT without signature re-validation (upstream middleware already validated it).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Resolve Roles</h4>
+        <p><code>IMembershipProvider.GetUserGroupsAsync()</code> — returns the user's role IDs. For Passport: SQL query on <code>IAM_UserRoles</code>. For Azure AD: JWT "groups" claim or Microsoft Graph API call.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Resolve Permissions</h4>
+        <p><code>IPermissionProvider.GetUserPermissionsAsync()</code> — returns explicit permission strings. For most providers, these come from the JWT "permissions" claim.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Evaluate Policy</h4>
+        <p>For each role: look up the permission set. Check if the requested permission string is in the set. Apply resource-level policy overrides. Deny by default — explicit allow required.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Access Decision</h4>
+        <p><code>IAccessDecisionProvider.CanUserAccessAsync()</code> — optional final gate. Returns <code>null</code> (no opinion), <code>true</code> (allow), or <code>false</code> (deny). A <code>false</code> overrides all previous allows.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Built-In Roles Summary</h2>
+  <table>
+    <thead>
+      <tr><th>Role</th><th>Level</th><th>Typical Permissions</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>admin</code></td><td>System</td><td>All permissions — full tenant management, IAM administration</td></tr>
+      <tr><td><code>manager</code></td><td>System</td><td>Workflow design and execution, form management, team user management</td></tr>
+      <tr><td><code>user</code></td><td>System</td><td>Workflow initiation, form submission, read-only access to assigned resources</td></tr>
+      <tr><td><code>viewer</code></td><td>System</td><td>Read-only access to workflows and forms — no execution or modification</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>IAM Is Provider-Independent</strong>
+    <p>The BizFirstGO IAM model works identically whether you are using Passport's native identity, Azure AD, Okta, or a custom provider. The permission evaluation logic lives in <code>IIAMPolicyEngine</code> — not in the identity provider. External roles are mapped to BizFirstGO's permission model at the provider level.</p>
+  </div>
+
+  <div class="page-nav">
+    <span class="spacer"></span>
+    <a href="01-roles.html">Next: Roles &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

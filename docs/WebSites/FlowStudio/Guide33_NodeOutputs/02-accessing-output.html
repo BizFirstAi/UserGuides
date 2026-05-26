@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Accessing Output Downstream — Guide33_NodeOutputs | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Outputs</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-output-object.html"><i class="fa-solid fa-box"></i> The Output Object</a>
+  <a href="02-accessing-output.html" class="active"><i class="fa-solid fa-arrow-right-to-bracket"></i> Accessing Output</a>
+  <a href="03-output-ports.html"><i class="fa-solid fa-plug"></i> Output Ports</a>
+  <a href="04-conditional-ports.html"><i class="fa-solid fa-code-branch"></i> Conditional Ports</a>
+  <a href="05-multi-output.html"><i class="fa-solid fa-share-nodes"></i> Parallel Outputs</a>
+  <a href="06-naming.html"><i class="fa-solid fa-tag"></i> NodeId Naming</a>
+  <a href="07-no-output.html"><i class="fa-solid fa-ban"></i> Nodes With No Output</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Accessing Output Downstream</h1>
+    <p class="lead">Using <code>$output.{nodeId}</code> in expressions to read a previous node's data — property paths, array indexing, and expression engine evaluation.</p>
+  </div>
+
+  <h2>The $output Variable</h2>
+  <p>Inside any expression field in a node's config (input mapping, conditions, message body, etc.), <code>$output</code> is a dictionary of all previously executed node outputs keyed by <code>nodeId</code>.</p>
+  <pre><code>$output.{nodeId}           // full output object
+$output.{nodeId}.field     // top-level field
+$output.{nodeId}.nested.field   // nested field
+$output.{nodeId}.items[0].name  // array element field</code></pre>
+
+  <h2>Concrete Examples</h2>
+  <pre><code class="language-javascript">// Node "fetchUser" returned: { userId: "u-123", email: "alice@acme.com", roles: ["admin"] }
+
+$output.fetchUser.userId          // → "u-123"
+$output.fetchUser.email           // → "alice@acme.com"
+$output.fetchUser.roles[0]        // → "admin"
+$output.fetchUser.roles.length    // → 1
+
+// Node "queryInvoices" returned: { items: [{id: "inv-1", amount: 500}], rowCount: 1 }
+$output.queryInvoices.items[0].amount   // → 500
+$output.queryInvoices.rowCount          // → 1</code></pre>
+
+  <h2>When Is Output Available?</h2>
+  <p>A node's output becomes available in <code>$output</code> as soon as that node completes — whether it was in the same execution branch or a parallel branch. The engine always writes to <code>ExecutionMemory</code> before scheduling downstream nodes, so any node that executes <em>after</em> a given node can safely read its output.</p>
+
+  <div class="callout callout-warning">
+    <strong>Parallel branches:</strong> If NodeA and NodeB run in parallel (fan-out from a parent), NodeA cannot read <code>$output.nodeB</code> because NodeB hasn't completed yet. Only nodes that run after both complete (e.g., after a join/merge gateway) can safely read both outputs.
+  </div>
+
+  <h2>Null-Safe Access</h2>
+  <p>If a node has not yet executed (or was skipped), <code>$output.{nodeId}</code> returns <code>null</code>. Use null-coalescing in expressions to guard against this:</p>
+  <pre><code class="language-javascript">// Safe access with fallback
+$output.optionalNode?.amount ?? 0
+
+// Check before use
+$output.lookupNode != null ? $output.lookupNode.userId : $context.actorId</code></pre>
+
+  <h2>Full Expression Context</h2>
+  <p>The expression engine provides several root variables alongside <code>$output</code>:</p>
+  <table>
+    <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>$output</code></td><td>Map of all completed node outputs by nodeId</td></tr>
+      <tr><td><code>$json</code></td><td>The workflow's trigger input data</td></tr>
+      <tr><td><code>$context</code></td><td>Execution context (actorId, tenantId, executionId, timestamp)</td></tr>
+      <tr><td><code>$env</code></td><td>Environment variables and platform config values</td></tr>
+    </tbody>
+  </table>
+
+  <h2>TypeScript — Accessing Output in the Designer</h2>
+  <p>In the React designer, the expression autocomplete is aware of node output schemas. When you type <code>$output.</code>, the editor suggests available node IDs. This is powered by the <code>WorkflowNodeOutputSchema</code> type registered for each node type:</p>
+  <pre><code class="language-typescript">// packages/flow-studio-designer/src/stores/expressionContext.ts
+export function buildExpressionContext(
+  nodes: WorkflowNode[],
+  memory: ExecutionMemorySnapshot
+): ExpressionContext {
+  const output: Record&lt;string, unknown&gt; = {};
+  for (const node of nodes) {
+    if (memory.nodeOutputs[node.id] !== undefined) {
+      output[node.id] = memory.nodeOutputs[node.id];
+    }
+  }
+  return { $output: output, $json: memory.triggerData, $context: memory.context };
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="01-output-object.html">&#8592; The Output Object</a>
+    <a href="03-output-ports.html">Next: Output Ports &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

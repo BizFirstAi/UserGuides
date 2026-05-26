@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Model — Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interaction-model.html">The Interaction Model</a>
+  <a href="02-vs-edgestream.html">EdgeInteract vs. EdgeStream</a>
+  <a href="03-use-cases.html">Use Cases</a>
+  <a href="04-package-structure.html">Package Structure</a>
+  <a href="05-bizfirstgo-integration.html">BizFirstGO Integration</a>
+  <a href="06-getting-started.html">Getting Started</a>
+  <a href="07-security.html" class="active">Security Model</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Security Model</h1>
+    <p class="lead">EdgeInteract handles sensitive Human-in-the-Loop operations — approval decisions, data access authorizations, and user confirmations. Security is built into the interaction lifecycle at every stage.</p>
+  </div>
+
+  <h2>Interaction Targeting — Who Sees What</h2>
+  <p>Every <code>InteractionRequest</code> has a <code>targetUserId</code>. The EdgeInteract server guarantees that only the targeted user (or users with the targeted role) receives the interaction on their session. The topic <code>interactions.{userId}</code> is per-user and access-controlled at the EdgeStream layer.</p>
+
+  <h3>Single-User Targeting</h3>
+  <p>When <code>targetUserId</code> is a specific user ID, the interaction is published exclusively to that user's EdgeStream topic. No other user can subscribe to or receive the message.</p>
+
+  <h3>Role Targeting</h3>
+  <p>When <code>targetUserId</code> is a role key (e.g., <code>"role:finance-managers"</code>), EdgeInteract resolves the role to a list of user IDs server-side and publishes to each user's individual topic. Users receive the interaction only if they have the role at the time of publication.</p>
+
+  <div class="callout warning">
+    <strong>Role Resolution Is Eager</strong>
+    Role membership is resolved at publish time, not at response time. If a user gains or loses the role after the interaction is published, it does not change who receives it.
+  </div>
+
+  <h2>Response Authorization — Who Can Respond</h2>
+  <p>The server validates the respondent's identity when an <code>InteractionResponse</code> arrives on the callback topic. Specifically:</p>
+  <ul>
+    <li>The <code>respondedBy</code> field in the response must match a user who was legitimately targeted by the original request</li>
+    <li>The session ID is verified against the authenticated EdgeStream session</li>
+    <li>Unsigned or spoofed responses are rejected — the WebSocket connection requires authentication</li>
+    <li>A response can only be submitted once per <code>interactionId</code> — duplicate responses are discarded</li>
+  </ul>
+
+  <h2>Topic-Level Access Control</h2>
+  <p>EdgeStream enforces access control at the topic level. The EdgeInteract topics follow this pattern:</p>
+  <table>
+    <thead><tr><th>Topic</th><th>Who Can Subscribe</th><th>Who Can Publish</th></tr></thead>
+    <tbody>
+      <tr><td><code>interactions.{userId}</code></td><td>Authenticated sessions for that user only</td><td>EdgeInteract server (never the client)</td></tr>
+      <tr><td><code>interactions.callback.{interactionId}</code></td><td>EdgeInteract server only</td><td>Authenticated session of the respondent</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Client Cannot Publish to interactions.{userId}</strong>
+    The interaction request topic is server-to-client only. The client cannot publish arbitrary interaction requests to other users by subscribing to their topic. EdgeStream's access control enforces this boundary.
+  </div>
+
+  <h2>Payload Security</h2>
+  <p>The interaction payload travels over the WebSocket connection, which is always TLS-encrypted. However, because the payload may contain sensitive business context (invoice amounts, personal data), follow these rules:</p>
+  <ul>
+    <li><strong>Do not include raw credentials or secrets</strong> in the interaction payload — use reference IDs</li>
+    <li><strong>Minimize payload size</strong> — include only what the user needs to make the decision</li>
+    <li>Sensitive field values should use display-safe representations (e.g., <code>"****1234"</code> for account numbers)</li>
+    <li>The audit log records the full payload — ensure it does not contain data that should not be retained</li>
+  </ul>
+
+  <h2>Rate Limiting</h2>
+  <p>The built-in <code>RateLimitInteractionHook</code> prevents flooding a user with too many interactions per time window. This protects both the user experience and the system from abuse:</p>
+  <pre><code>// Configuration
+{
+  "EdgeInteract": {
+    "RateLimiting": {
+      "MaxPerMinutePerUser": 5,
+      "MaxConcurrentPerUser": 10,
+      "BurstAllowance": 2
+    }
+  }
+}
+</code></pre>
+  <p>Interactions that exceed the rate limit are rejected with an <code>InteractionRateLimitException</code> on the server before they reach the transport layer.</p>
+
+  <h2>Audit Trail</h2>
+  <p>Every interaction generates an audit record with:</p>
+  <ul>
+    <li>The full <code>InteractionRequest</code> (requestor, target, type, payload, timestamp)</li>
+    <li>The full <code>InteractionResponse</code> (respondent, outcome, data, timestamp)</li>
+    <li>Or the <code>InteractionTimeout</code> if no response arrived</li>
+    <li>The EdgeStream session ID of the responding session</li>
+    <li>IP address and user agent of the responding session (via EdgeStream session metadata)</li>
+  </ul>
+  <p>Audit records are retained for the configured retention period (default 90 days) and are immutable — they cannot be deleted via the normal API.</p>
+
+  <h2>Security Checklist</h2>
+  <table>
+    <thead><tr><th>Requirement</th><th>How EdgeInteract Satisfies It</th></tr></thead>
+    <tbody>
+      <tr><td>Only the right user sees the interaction</td><td>Per-user topics, access-controlled at EdgeStream layer</td></tr>
+      <tr><td>Only authorized users can respond</td><td>Session authentication, respondent validation, single-response enforcement</td></tr>
+      <tr><td>Responses cannot be spoofed</td><td>WebSocket connection requires authentication; session ID validated</td></tr>
+      <tr><td>Users cannot be flooded</td><td>Rate limit hook enforces max interactions per minute per user</td></tr>
+      <tr><td>Full audit trail for compliance</td><td>Audit hook logs every request/response pair with metadata</td></tr>
+      <tr><td>Payload is encrypted in transit</td><td>EdgeStream requires TLS; all WebSocket traffic is encrypted</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-getting-started.html">&#8592; Getting Started</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

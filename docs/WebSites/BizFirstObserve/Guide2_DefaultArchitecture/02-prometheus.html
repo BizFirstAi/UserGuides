@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prometheus — Default Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Default Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Default Stack Overview</a>
+  <a href="01-loki.html">Grafana Loki</a>
+  <a href="02-prometheus.html" class="active">Prometheus</a>
+  <a href="03-tempo.html">Grafana Tempo</a>
+  <a href="04-grafana.html">Grafana</a>
+  <a href="05-correlation.html">Cross-Signal Correlation</a>
+  <a href="06-compose.html">Docker Compose Deployment</a>
+  <a href="07-helm.html">Kubernetes Helm Deployment</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Prometheus</h1>
+    <p class="lead">Prometheus is the metrics collection and storage component of the default stack. It uses a pull model — scraping <code>/metrics</code> endpoints every 15 seconds — and stores time series in its embedded TSDB. PromQL enables rich aggregation and alerting queries.</p>
+  </div>
+
+  <h2>The Pull Model</h2>
+  <p>Unlike Loki and Tempo which receive pushed telemetry from the OTel Collector, Prometheus actively pulls metrics from its targets. Each BizFirstGO service exposes a <code>/metrics</code> endpoint in Prometheus text format (or OpenMetrics format), and Prometheus scrapes it on a configurable interval.</p>
+  <p>This pull model has important properties:</p>
+  <ul>
+    <li>Prometheus controls the scrape rate — no service can overload it with metric pushes</li>
+    <li>If a service goes down, Prometheus immediately detects it (the scrape fails)</li>
+    <li>Service discovery is flexible — Prometheus can discover targets from Kubernetes, Consul, DNS, or static config</li>
+  </ul>
+
+  <h2>BizFirstGO Metric Types</h2>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Description</th><th>BizFirstGO Example</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Counter</strong></td><td>Always increases; resets on restart</td><td><code>bizfirst_workflow_executions_total</code></td><td>Rate calculations: <code>rate()[5m]</code></td></tr>
+      <tr><td><strong>Gauge</strong></td><td>Can go up or down</td><td><code>bizfirst_hil_pending_count</code></td><td>Current state: backlogs, connection counts</td></tr>
+      <tr><td><strong>Histogram</strong></td><td>Distribution with configurable buckets</td><td><code>bizfirst_node_execution_duration_seconds</code></td><td>Latency percentiles: <code>histogram_quantile(0.99, ...)</code></td></tr>
+      <tr><td><strong>Summary</strong></td><td>Pre-calculated percentiles (client-side)</td><td>Rarely used in BizFirstGO</td><td>When percentiles must be exact</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Key BizFirstGO Metrics</h2>
+  <pre><code># Workflow executions (counter, labeled by tenant and outcome)
+bizfirst_workflow_executions_total{tenant_id="t123", status="success"}
+bizfirst_workflow_executions_total{tenant_id="t123", status="failed"}
+bizfirst_workflow_executions_total{tenant_id="t123", status="timeout"}
+
+# Node execution latency histogram
+bizfirst_node_execution_duration_seconds_bucket{node_type="ApprovalNode", tenant_id="t123", le="0.1"}
+bizfirst_node_execution_duration_seconds_bucket{node_type="ApprovalNode", tenant_id="t123", le="1.0"}
+bizfirst_node_execution_duration_seconds_bucket{node_type="ApprovalNode", tenant_id="t123", le="5.0"}
+bizfirst_node_execution_duration_seconds_count{node_type="ApprovalNode", tenant_id="t123"}
+bizfirst_node_execution_duration_seconds_sum{node_type="ApprovalNode", tenant_id="t123"}
+
+# HIL metrics
+bizfirst_hil_pending_count{tenant_id="t123"}          # Current backlog
+bizfirst_hil_suspension_duration_seconds_bucket{...}  # Wait time distribution
+
+# EdgeStream throughput
+bizfirst_edgestream_messages_total{topic="workflow.events", tenant_id="t123"}
+
+# Active connections
+bizfirst_active_connections{service="flow-studio-signalr"}</code></pre>
+
+  <h2>PromQL Quick Reference</h2>
+  <pre><code># Error rate over 5 minutes (ratio of errors to total)
+rate(bizfirst_workflow_executions_total{status="failed"}[5m])
+  /
+rate(bizfirst_workflow_executions_total[5m])
+
+# P99 node execution latency by node type
+histogram_quantile(0.99,
+  sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+)
+
+# HIL backlog across all tenants
+sum(bizfirst_hil_pending_count)
+
+# EdgeStream throughput (messages per second)
+rate(bizfirst_edgestream_messages_total[1m])</code></pre>
+
+  <div class="callout info">
+    <strong>Deep Dive Available</strong>
+    <p>For the complete Prometheus reference — scrape configuration, recording rules, Alertmanager setup, and the full BizFirstGO metrics catalog — see <a href="../Guide4_Prometheus/index.html">Guide4: Prometheus</a>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-loki.html">&#8592; Grafana Loki</a>
+    <a href="03-tempo.html">Next: Grafana Tempo &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

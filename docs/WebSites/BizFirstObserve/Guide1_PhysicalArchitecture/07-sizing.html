@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sizing Guidelines — Physical Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Physical Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Architecture Overview</a>
+  <a href="01-instrumentation.html">Instrumentation Layer</a>
+  <a href="02-collection.html">Collection Layer</a>
+  <a href="03-storage.html">Storage Layer</a>
+  <a href="04-visualization.html">Visualization Layer</a>
+  <a href="05-data-flow.html">Data Flow</a>
+  <a href="06-network-topology.html">Network Topology</a>
+  <a href="07-sizing.html" class="active">Sizing Guidelines</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Sizing Guidelines</h1>
+    <p class="lead">Storage, CPU, and memory estimates for BizFirst Observe deployments. Use these as starting points — actual consumption depends on workflow complexity, log verbosity level, trace sampling rate, and metric cardinality.</p>
+  </div>
+
+  <h2>Log Volume Estimation (Loki)</h2>
+  <p>Log volume is the dominant storage cost in most BizFirstGO deployments. The primary driver is the number of node executions per day, since each node produces structured log entries at start, end, and on any exception.</p>
+
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Executions/Day</th><th>Avg Nodes/Workflow</th><th>Log Volume/Day</th><th>30-Day Storage</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Development</td><td>100</td><td>5</td><td>~500 MB</td><td>~15 GB</td></tr>
+      <tr><td>Small production</td><td>1,000</td><td>8</td><td>~4 GB</td><td>~120 GB</td></tr>
+      <tr><td>Medium production</td><td>10,000</td><td>10</td><td>~40 GB</td><td>~1.2 TB</td></tr>
+      <tr><td>Large production</td><td>100,000</td><td>12</td><td>~400 GB</td><td>~12 TB</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Loki Compression Factor</strong>
+    <p>Loki compresses log chunks with Snappy compression. JSON-structured logs from BizFirstGO typically achieve 5–8x compression. The storage figures above are <em>after</em> compression. Raw log volume before compression is approximately 5–8x higher.</p>
+  </div>
+
+  <h2>Metric Storage Estimation (Prometheus)</h2>
+  <p>Prometheus storage is driven by metric cardinality — the total number of unique time series (metric name + label combinations). BizFirstGO's default metric set is moderate cardinality.</p>
+
+  <table>
+    <thead>
+      <tr><th>Metric Family</th><th>Series Count (estimate)</th><th>Note</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>bizfirst_workflow_executions_total</code></td><td>N_tenants × 3 statuses</td><td>3 per tenant</td></tr>
+      <tr><td><code>bizfirst_node_execution_duration_seconds</code></td><td>N_tenants × N_node_types × 12 histogram buckets</td><td>~120 per tenant with 10 node types</td></tr>
+      <tr><td><code>bizfirst_hil_pending_count</code></td><td>N_tenants</td><td>1 per tenant</td></tr>
+      <tr><td>Infrastructure (Node Exporter)</td><td>~800 per host</td><td>Fixed overhead</td></tr>
+      <tr><td>Infrastructure (cAdvisor)</td><td>~200 per container</td><td>Scales with container count</td></tr>
+    </tbody>
+  </table>
+
+  <p>Prometheus requires approximately <strong>2 bytes per sample</strong> on disk. At 15-second scrape interval, each series generates 5,760 samples/day. For 10,000 series and 90-day retention:</p>
+  <pre><code>10,000 series × 5,760 samples/day × 90 days × 2 bytes = ~10 GB</code></pre>
+
+  <h2>Trace Storage Estimation (Tempo)</h2>
+  <p>Trace storage is driven by trace volume and average span size. Tempo compresses trace data efficiently using Parquet format.</p>
+
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Traces/Day</th><th>Avg Spans/Trace</th><th>Trace Storage/Day</th><th>7-Day Storage</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Development</td><td>1,000</td><td>10</td><td>~50 MB</td><td>~350 MB</td></tr>
+      <tr><td>Small production</td><td>10,000</td><td>15</td><td>~750 MB</td><td>~5 GB</td></tr>
+      <tr><td>Medium production</td><td>100,000</td><td>20</td><td>~10 GB</td><td>~70 GB</td></tr>
+      <tr><td>Large production</td><td>1,000,000</td><td>20</td><td>~100 GB</td><td>~700 GB</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Component Resource Requirements</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Dev CPU</th><th>Dev RAM</th><th>Prod CPU</th><th>Prod RAM</th><th>Prod Disk</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>OTel Collector</td><td>0.5 vCPU</td><td>256 MB</td><td>2–4 vCPU</td><td>1–2 GB</td><td>None (stateless)</td></tr>
+      <tr><td>Loki</td><td>0.5 vCPU</td><td>512 MB</td><td>4–8 vCPU</td><td>8–16 GB</td><td>Local WAL only; data in S3</td></tr>
+      <tr><td>Prometheus</td><td>0.5 vCPU</td><td>512 MB</td><td>2–4 vCPU</td><td>8–16 GB</td><td>50–500 GB SSD</td></tr>
+      <tr><td>Tempo</td><td>0.5 vCPU</td><td>512 MB</td><td>4–8 vCPU</td><td>8–16 GB</td><td>Local WAL only; data in S3</td></tr>
+      <tr><td>Grafana</td><td>0.25 vCPU</td><td>256 MB</td><td>1–2 vCPU</td><td>1–2 GB</td><td>10 GB (SQLite/PostgreSQL)</td></tr>
+      <tr><td>Alertmanager</td><td>0.1 vCPU</td><td>64 MB</td><td>0.5 vCPU</td><td>256 MB</td><td>1 GB</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Cost Reduction Strategies</h2>
+  <ul>
+    <li><strong>Log level filtering</strong> — set production log level to <code>Information</code> or <code>Warning</code>; reduce <code>Debug</code> noise. A single log-level change from Debug to Information typically reduces log volume by 60–80%.</li>
+    <li><strong>Trace sampling</strong> — in production, sample 100% of error traces and 5–10% of success traces. This reduces trace storage by ~90% with minimal loss of diagnostic value.</li>
+    <li><strong>Metric cardinality control</strong> — avoid per-user or per-execution labels in metrics. Keep tenant count reasonable (thousands, not millions).</li>
+    <li><strong>Object storage lifecycle rules</strong> — configure S3 lifecycle to transition Loki chunks to S3 Intelligent-Tiering after 30 days, and Glacier after 90 days. Cost reduction of 60–80% for archival data.</li>
+    <li><strong>Prometheus remote write to Thanos</strong> — once local Prometheus retention exceeds 90 days, use Thanos for long-term storage at object storage cost rather than SSD cost.</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="06-network-topology.html">&#8592; Network Topology</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

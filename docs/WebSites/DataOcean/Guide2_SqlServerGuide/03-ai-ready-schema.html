@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI-Ready Schema Design — SQL Server Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>SQL Server Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-setup.html">SQL Server Setup</a>
+  <a href="02-datasource-registration.html">Datasource Registration</a>
+  <a href="03-ai-ready-schema.html" class="active">AI-Ready Schema Design</a>
+  <a href="04-sql-nodes.html">Access from Flow Studio</a>
+  <a href="05-form-generation.html">AI Form Generation</a>
+  <a href="06-security.html">Security and Credentials</a>
+  <a href="07-performance.html">Performance Patterns</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>AI-Ready Schema Design</h1>
+    <p class="lead">How to design SQL Server tables in Data Ocean that are AI-ready from day one — standard metadata columns, vector-ready patterns, naming conventions, and the column set that enables AI enrichment workflows without schema changes later.</p>
+  </div>
+
+  <h2>Why Schema Design Matters for AI</h2>
+  <p>An AI-ready schema is not just a well-normalized relational schema — it includes a set of standard columns that enable AI enrichment workflows to write classification labels, summaries, embeddings, and audit trails alongside the core business data. Designing these columns in from the start means AI features can be added to any table without breaking schema migrations later.</p>
+  <p>The Data Ocean schema standard defines two categories of columns:</p>
+  <ul>
+    <li><strong>Required metadata columns</strong> — present on every table; enable multi-tenancy, auditing, and soft delete</li>
+    <li><strong>Optional AI enhancement columns</strong> — added to tables that will be AI-enriched; enable semantic search, classification, and summarization</li>
+  </ul>
+
+  <h2>Required Metadata Columns</h2>
+  <p>Every table in a Data Ocean SQL Server database must include these columns:</p>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Default</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>TenantId</code></td><td>int NOT NULL</td><td>Required in INSERT</td><td>Multi-tenancy discriminator. First column in every WHERE clause.</td></tr>
+      <tr><td><code>CreatedAt</code></td><td>datetime2 NOT NULL</td><td>GETUTCDATE()</td><td>UTC creation timestamp. Set once on INSERT, never updated.</td></tr>
+      <tr><td><code>UpdatedAt</code></td><td>datetime2 NOT NULL</td><td>GETUTCDATE()</td><td>UTC last-modified timestamp. Updated by the application on every UPDATE.</td></tr>
+      <tr><td><code>CreatedBy</code></td><td>nvarchar(200) NULL</td><td>NULL</td><td>UserId or system identifier of the record creator. Null for system-generated records.</td></tr>
+      <tr><td><code>IsDeleted</code></td><td>bit NOT NULL</td><td>0</td><td>Soft delete flag. Records are never physically deleted — set <code>IsDeleted = 1</code> and <code>DeletedAt</code> instead.</td></tr>
+      <tr><td><code>DeletedAt</code></td><td>datetime2 NULL</td><td>NULL</td><td>UTC timestamp when the record was soft-deleted. Null for active records.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Optional AI Enhancement Columns</h2>
+  <p>Add these columns to any table that will be processed by AI enrichment workflows:</p>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SummaryText</code></td><td>nvarchar(max) NULL</td><td>AI-generated summary of the record — written by an Octopus summarization node</td></tr>
+      <tr><td><code>ClassificationLabel</code></td><td>nvarchar(200) NULL</td><td>AI-assigned classification (e.g., "High Priority", "Churn Risk", "Positive Sentiment")</td></tr>
+      <tr><td><code>SentimentScore</code></td><td>decimal(5,4) NULL</td><td>Numeric sentiment score between -1.0 (negative) and 1.0 (positive)</td></tr>
+      <tr><td><code>EmbeddingRef</code></td><td>nvarchar(500) NULL</td><td>ID in the vector store for the embedding of this record's content — enables semantic search</td></tr>
+      <tr><td><code>AiProcessedAt</code></td><td>datetime2 NULL</td><td>UTC timestamp of the last AI enrichment run. Used to identify stale enrichment.</td></tr>
+      <tr><td><code>AiModelVersion</code></td><td>nvarchar(100) NULL</td><td>The model that produced the enrichment (e.g., "gpt-4o-2024-08-06"). Supports model rollover auditing.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Complete Example: Customer Table</h2>
+  <pre><code>CREATE TABLE Customer (
+    -- Primary Key
+    CustomerId      uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+
+    -- Required metadata columns
+    TenantId        int              NOT NULL,
+    CreatedAt       datetime2        NOT NULL DEFAULT GETUTCDATE(),
+    UpdatedAt       datetime2        NOT NULL DEFAULT GETUTCDATE(),
+    CreatedBy       nvarchar(200)    NULL,
+    IsDeleted       bit              NOT NULL DEFAULT 0,
+    DeletedAt       datetime2        NULL,
+
+    -- Business columns
+    Name            nvarchar(300)    NOT NULL,
+    Email           nvarchar(300)    NOT NULL,
+    Phone           nvarchar(50)     NULL,
+    Industry        nvarchar(200)    NULL,
+    AnnualRevenue   decimal(18,2)    NULL,
+    Status          nvarchar(50)     NOT NULL DEFAULT 'Active',
+
+    -- AI enhancement columns
+    SummaryText         nvarchar(max)    NULL,
+    ClassificationLabel nvarchar(200)    NULL,
+    SentimentScore      decimal(5,4)     NULL,
+    EmbeddingRef        nvarchar(500)    NULL,
+    AiProcessedAt       datetime2        NULL,
+    AiModelVersion      nvarchar(100)    NULL,
+
+    -- Constraints
+    CONSTRAINT PK_Customer PRIMARY KEY CLUSTERED (CustomerId),
+    CONSTRAINT UQ_Customer_TenantEmail UNIQUE (TenantId, Email)
+);
+
+-- Required indexes
+CREATE INDEX IX_Customer_TenantId_Status
+    ON Customer (TenantId, Status)
+    WHERE IsDeleted = 0;
+
+CREATE INDEX IX_Customer_TenantId_EmbeddingRef
+    ON Customer (TenantId, EmbeddingRef)
+    WHERE EmbeddingRef IS NOT NULL;
+
+CREATE INDEX IX_Customer_TenantId_AiProcessedAt
+    ON Customer (TenantId, AiProcessedAt)
+    WHERE AiProcessedAt IS NULL;  -- Finds un-enriched records efficiently</code></pre>
+
+  <h2>Naming Conventions</h2>
+  <table>
+    <thead>
+      <tr><th>Element</th><th>Convention</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Table names</td><td>PascalCase, singular</td><td><code>Customer</code>, <code>Invoice</code>, <code>SupportTicket</code></td></tr>
+      <tr><td>Column names</td><td>PascalCase</td><td><code>CustomerId</code>, <code>CreatedAt</code></td></tr>
+      <tr><td>Primary key</td><td><code>[Table]Id</code></td><td><code>CustomerId</code>, <code>InvoiceId</code></td></tr>
+      <tr><td>Foreign keys</td><td><code>[ReferencedTable]Id</code></td><td><code>CustomerId</code> on Invoice table</td></tr>
+      <tr><td>Boolean columns</td><td><code>Is[State]</code> or <code>Has[Property]</code></td><td><code>IsDeleted</code>, <code>IsVerified</code>, <code>HasAttachments</code></td></tr>
+      <tr><td>Timestamp columns</td><td><code>[Event]At</code></td><td><code>CreatedAt</code>, <code>ProcessedAt</code>, <code>ExpiresAt</code></td></tr>
+      <tr><td>JSON columns</td><td><code>[Content]Json</code> or descriptive name</td><td><code>MetadataJson</code>, <code>Config</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Always Filter on IsDeleted</strong>
+    <p>All production queries must include <code>WHERE IsDeleted = 0</code> (or filter in a view). Create a filtered index on <code>(TenantId, IsDeleted)</code> to make this efficient. Consider creating tenant-scoped views that pre-apply the soft-delete filter so that workflow SQL nodes do not need to remember to add it.</p>
+  </div>
+
+  <h2>Schema Evolution with EF Core Migrations</h2>
+  <p>When using EF Core Code-First to manage your Data Ocean schema, add AI enhancement columns as nullable additions — never as breaking changes:</p>
+  <pre><code>// EF Core migration — adding AI columns to existing table
+public partial class AddAiColumnsToCustomer : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.AddColumn&lt;string&gt;(
+            name: "SummaryText",
+            table: "Customer",
+            type: "nvarchar(max)",
+            nullable: true);
+
+        migrationBuilder.AddColumn&lt;string&gt;(
+            name: "ClassificationLabel",
+            table: "Customer",
+            type: "nvarchar(200)",
+            nullable: true);
+
+        migrationBuilder.AddColumn&lt;string&gt;(
+            name: "EmbeddingRef",
+            table: "Customer",
+            type: "nvarchar(500)",
+            nullable: true);
+
+        migrationBuilder.AddColumn&lt;DateTime&gt;(
+            name: "AiProcessedAt",
+            table: "Customer",
+            type: "datetime2",
+            nullable: true);
+    }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="02-datasource-registration.html">&#8592; Datasource Registration</a>
+    <a href="04-sql-nodes.html">Next: Access from Flow Studio &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

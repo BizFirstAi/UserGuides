@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INodeEventSubscriber — Node Event Subscriptions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Event Subscriptions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interface.html" class="active">INodeEventSubscriber</a>
+  <a href="02-event-args.html">NodeExecutionEventArgs</a>
+  <a href="03-before-execute.html">OnBeforeExecuteAsync</a>
+  <a href="04-after-execute.html">OnAfterExecuteAsync</a>
+  <a href="05-error-event.html">OnErrorAsync</a>
+  <a href="06-skip-event.html">OnSkippedAsync</a>
+  <a href="07-registration.html">Registering a Subscriber</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>INodeEventSubscriber</h1>
+    <p class="lead">The full interface contract — four async methods, one for each stage of the node execution lifecycle. Implement all four; leave no-op bodies for events you don't need.</p>
+  </div>
+
+  <h2>Interface Definition</h2>
+  <p>The interface lives in <code>ProcessEngine/Events/INodeEventSubscriber.cs</code>. All four methods are required — the interface has no default implementations. For events you don't care about, return <code>Task.CompletedTask</code>.</p>
+
+  <pre><code>namespace BizFirst.Ai.ProcessEngine.Events;
+
+/// &lt;summary&gt;
+/// Observer for node-level lifecycle events. Implementations are discovered
+/// via DI and called by NodeEventDispatcher during every node execution.
+/// Context passed to methods is a snapshot — mutations have no effect.
+/// &lt;/summary&gt;
+public interface INodeEventSubscriber
+{
+    /// &lt;summary&gt;Called before the executor runs. Throwing cancels execution.&lt;/summary&gt;
+    Task OnBeforeExecuteAsync(NodeExecutionEventArgs args, CancellationToken ct);
+
+    /// &lt;summary&gt;Called after a successful result is returned.&lt;/summary&gt;
+    Task OnAfterExecuteAsync(NodeExecutionEventArgs args, CancellationToken ct);
+
+    /// &lt;summary&gt;Called when the executor throws. Exception is available on args.&lt;/summary&gt;
+    Task OnErrorAsync(NodeExecutionEventArgs args, CancellationToken ct);
+
+    /// &lt;summary&gt;Called when the engine skips this node (conditional routing).&lt;/summary&gt;
+    Task OnSkippedAsync(NodeExecutionEventArgs args, CancellationToken ct);
+}</code></pre>
+
+  <h2>Method Signatures Explained</h2>
+  <table>
+    <thead><tr><th>Method</th><th>When Called</th><th>Key Args Available</th><th>Can Cancel?</th></tr></thead>
+    <tbody>
+      <tr><td><code>OnBeforeExecuteAsync</code></td><td>After engine resolves the executor, before <code>ExecuteInternalAsync</code></td><td>Context snapshot, input data</td><td>Yes — throw</td></tr>
+      <tr><td><code>OnAfterExecuteAsync</code></td><td>After executor returns a Success result</td><td>Context snapshot, NodeExecutionResult</td><td>No</td></tr>
+      <tr><td><code>OnErrorAsync</code></td><td>When executor throws any exception</td><td>Context snapshot, Exception, retry count</td><td>No</td></tr>
+      <tr><td><code>OnSkippedAsync</code></td><td>When the router decides to skip this node</td><td>Context snapshot, SkipReason enum</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Minimal Implementation</h2>
+  <p>A subscriber that only cares about errors — all other methods are no-ops:</p>
+  <pre><code>public class ErrorAlertSubscriber : INodeEventSubscriber
+{
+    private readonly IAlertService _alerts;
+
+    public ErrorAlertSubscriber(IAlertService alerts) => _alerts = alerts;
+
+    public Task OnBeforeExecuteAsync(NodeExecutionEventArgs args, CancellationToken ct)
+        => Task.CompletedTask;
+
+    public Task OnAfterExecuteAsync(NodeExecutionEventArgs args, CancellationToken ct)
+        => Task.CompletedTask;
+
+    public async Task OnErrorAsync(NodeExecutionEventArgs args, CancellationToken ct)
+    {
+        await _alerts.SendAsync(new Alert
+        {
+            Title    = $"Node {args.NodeId} failed",
+            Message  = args.Exception!.Message,
+            Severity = AlertSeverity.High
+        }, ct);
+    }
+
+    public Task OnSkippedAsync(NodeExecutionEventArgs args, CancellationToken ct)
+        => Task.CompletedTask;
+}</code></pre>
+
+  <h2>Full Audit Subscriber Example</h2>
+  <p>A subscriber that writes a row to an audit table at every lifecycle stage:</p>
+  <pre><code>public class AuditNodeSubscriber : INodeEventSubscriber
+{
+    private readonly IAuditRepository _audit;
+
+    public AuditNodeSubscriber(IAuditRepository audit) => _audit = audit;
+
+    public async Task OnBeforeExecuteAsync(NodeExecutionEventArgs args, CancellationToken ct)
+    {
+        await _audit.WriteAsync(new NodeAuditEntry
+        {
+            ExecutionId = args.ExecutionId,
+            NodeId      = args.NodeId,
+            NodeType    = args.NodeType,
+            Event       = AuditEvent.Started,
+            Timestamp   = DateTimeOffset.UtcNow
+        }, ct);
+    }
+
+    public async Task OnAfterExecuteAsync(NodeExecutionEventArgs args, CancellationToken ct)
+    {
+        await _audit.WriteAsync(new NodeAuditEntry
+        {
+            ExecutionId  = args.ExecutionId,
+            NodeId       = args.NodeId,
+            Event        = AuditEvent.Completed,
+            DurationMs   = args.DurationMs,
+            Timestamp    = DateTimeOffset.UtcNow
+        }, ct);
+    }
+
+    public async Task OnErrorAsync(NodeExecutionEventArgs args, CancellationToken ct)
+    {
+        await _audit.WriteAsync(new NodeAuditEntry
+        {
+            ExecutionId = args.ExecutionId,
+            NodeId      = args.NodeId,
+            Event       = AuditEvent.Failed,
+            ErrorMessage= args.Exception!.Message,
+            RetryCount  = args.RetryCount,
+            Timestamp   = DateTimeOffset.UtcNow
+        }, ct);
+    }
+
+    public async Task OnSkippedAsync(NodeExecutionEventArgs args, CancellationToken ct)
+    {
+        await _audit.WriteAsync(new NodeAuditEntry
+        {
+            ExecutionId = args.ExecutionId,
+            NodeId      = args.NodeId,
+            Event       = AuditEvent.Skipped,
+            SkipReason  = args.SkipReason.ToString(),
+            Timestamp   = DateTimeOffset.UtcNow
+        }, ct);
+    }
+}</code></pre>
+
+  <h2>Dispatcher Behaviour</h2>
+  <p>The <code>NodeEventDispatcher</code> (internal engine class) handles the orchestration:</p>
+  <ul>
+    <li>Resolves all <code>INodeEventSubscriber</code> instances from the DI scope.</li>
+    <li>Calls them in registration order.</li>
+    <li>If a subscriber's method throws, the exception is caught, logged at Warning level, and the next subscriber is still called.</li>
+    <li>The dispatcher never lets subscriber exceptions propagate to the execution engine — a broken subscriber does not fail the workflow.</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Exception in OnBeforeExecuteAsync:</strong> The rule above applies to all events <em>except</em> <code>OnBeforeExecuteAsync</code>. If a subscriber throws there, the engine treats it as a node failure. This is intentional but dangerous — design OnBefore subscribers to be extremely robust.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-event-args.html">Next: NodeExecutionEventArgs &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

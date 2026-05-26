@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roles — IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">IAM Overview</a>
+  <a href="01-roles.html" class="active">Roles</a>
+  <a href="02-permissions.html">Permissions</a>
+  <a href="03-policy-evaluation.html">Policy Evaluation</a>
+  <a href="04-resource-policies.html">Resource-Level Policies</a>
+  <a href="05-groups.html">User Groups</a>
+  <a href="06-runtime-checks.html">Runtime Permission Checks</a>
+  <a href="07-capability-integration.html">Integration with Node Capabilities</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Roles</h1>
+    <p class="lead">Roles are named collections of permissions — system roles provide sensible defaults, tenant roles enable domain-specific access control, and custom roles extend the hierarchy as needed.</p>
+  </div>
+
+  <h2>Role Types</h2>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Scope</th><th>Editable?</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>System Role</td><td>Cross-tenant</td><td>No</td><td>Built-in roles (Admin, Manager, User, Viewer) — permissions are fixed by Passport</td></tr>
+      <tr><td>Tenant Role</td><td>Single tenant</td><td>Yes</td><td>Custom roles created by tenant admins — can reference system permissions or define new ones</td></tr>
+      <tr><td>Group-Derived Role</td><td>Single tenant</td><td>Via group</td><td>Users inherit roles through group membership — role assigned to the group, not the user directly</td></tr>
+    </tbody>
+  </table>
+
+  <h2>System Roles — Permission Detail</h2>
+  <h3>admin</h3>
+  <pre><code>// admin — full system access within the tenant
+permissions: [
+  "tenant.*",         // all tenant management operations
+  "workflow.*",       // all workflow operations
+  "form.*",           // all form operations
+  "iam.*",            // user management, role assignment, policy management
+  "audit.*",          // full audit log access
+  "security.*",       // security policy management
+  "managed-identity.*"// managed identity lifecycle
+]</code></pre>
+
+  <h3>manager</h3>
+  <pre><code>// manager — team and process management
+permissions: [
+  "workflow.design",
+  "workflow.initiate",
+  "workflow.view",
+  "workflow.cancel",
+  "form.create",
+  "form.edit",
+  "form.publish",
+  "form.view",
+  "user.view",         // can see team members but not manage them
+  "audit.read"         // read-only audit access
+]</code></pre>
+
+  <h3>user</h3>
+  <pre><code>// user — standard operational access
+permissions: [
+  "workflow.initiate",
+  "workflow.view",      // own workflows only
+  "form.submit",
+  "form.view",          // forms assigned to them
+  "task.complete"       // complete assigned HIL tasks
+]</code></pre>
+
+  <h3>viewer</h3>
+  <pre><code>// viewer — read-only access
+permissions: [
+  "workflow.view",      // read-only workflow status
+  "form.view"           // read-only form data (assigned resources)
+]</code></pre>
+
+  <h2>RoleEntry Model</h2>
+  <pre><code>// IRoleDirectoryProvider returns RoleEntry objects
+public class RoleEntry
+{
+    public required string RoleId       { get; init; }  // unique ID (int cast to string for Passport)
+    public required string DisplayName  { get; init; }  // human-readable name
+    public string? Description          { get; init; }  // optional description
+}
+
+// Example: search roles in a tenant
+var roles = await roleDirectory.SearchRolesAsync(
+    tenantId:   "tenant-abc",
+    searchTerm: "finance",
+    ct:         cancellationToken);
+
+// Returns: [
+//   { RoleId: "42", DisplayName: "Finance Manager", Description: "..." },
+//   { RoleId: "43", DisplayName: "Finance Viewer",  Description: "..." }
+// ]</code></pre>
+
+  <h2>Creating Tenant Roles (Admin API)</h2>
+  <pre><code>POST /passport/admin/roles
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "roleName": "finance-manager",
+  "displayName": "Finance Manager",
+  "description": "Access to payroll workflows and financial reports",
+  "tenantId": "tenant-abc",
+  "permissions": [
+    "workflow.initiate",
+    "workflow.view",
+    "form.view",
+    "report.finance.read",
+    "report.payroll.read"
+  ],
+  "inheritsFrom": "manager"  // inherit all manager permissions + add these
+}
+
+// Response
+{
+  "roleId": "role-guid",
+  "roleName": "finance-manager",
+  "effectivePermissions": [
+    "workflow.initiate", "workflow.view", "workflow.design",
+    "form.view", "form.create", "form.edit", "form.publish",
+    "report.finance.read", "report.payroll.read",
+    "user.view", "audit.read"
+  ]
+}</code></pre>
+
+  <h2>Assigning Roles to Users</h2>
+  <pre><code>POST /passport/admin/users/{userId}/roles
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "roleIds": ["role-guid-finance-manager"],
+  "tenantId": "tenant-abc",
+  "assignedBy": "admin-user-guid",
+  "expiresAt": null  // null = no expiry; set to ISO 8601 for time-limited assignment
+}
+
+// Revoke a role
+DELETE /passport/admin/users/{userId}/roles/{roleId}
+Authorization: Bearer {admin-token}</code></pre>
+
+  <h2>Role Hierarchy and Inheritance</h2>
+  <p>Tenant roles can inherit from system roles using <code>inheritsFrom</code>. Effective permissions are the union of the parent's permissions and the child's additional permissions. There is no permission negation — a role cannot remove permissions inherited from a parent.</p>
+
+  <div class="callout warning">
+    <strong>Principle of Least Privilege</strong>
+    <p>Assign users the minimum role required for their function. Use the <code>viewer</code> role for read-only access and avoid assigning <code>admin</code> to operational accounts. Admin access should be reserved for IT administrators and audited regularly via the audit log.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; IAM Overview</a>
+    <a href="02-permissions.html">Next: Permissions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registering a Subscriber — Node Event Subscriptions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Event Subscriptions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interface.html">INodeEventSubscriber</a>
+  <a href="02-event-args.html">NodeExecutionEventArgs</a>
+  <a href="03-before-execute.html">OnBeforeExecuteAsync</a>
+  <a href="04-after-execute.html">OnAfterExecuteAsync</a>
+  <a href="05-error-event.html">OnErrorAsync</a>
+  <a href="06-skip-event.html">OnSkippedAsync</a>
+  <a href="07-registration.html" class="active">Registering a Subscriber</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Registering a Subscriber</h1>
+    <p class="lead">Register subscribers in ASP.NET Core DI — typically as Transient or Scoped. Multiple subscribers are all called, in registration order, for every node event.</p>
+  </div>
+
+  <h2>Basic Registration</h2>
+  <pre><code>// In Program.cs or a dedicated extension method
+builder.Services.AddTransient&lt;INodeEventSubscriber, AuditNodeSubscriber&gt;();
+builder.Services.AddTransient&lt;INodeEventSubscriber, MetricsNodeSubscriber&gt;();
+builder.Services.AddTransient&lt;INodeEventSubscriber, ErrorAlertSubscriber&gt;();</code></pre>
+
+  <h2>Lifetime Considerations</h2>
+  <table>
+    <thead><tr><th>Lifetime</th><th>When to Use</th><th>Gotcha</th></tr></thead>
+    <tbody>
+      <tr><td><code>Transient</code></td><td>Stateless subscribers (write to repo, increment metric)</td><td>A new instance per node event — no shared state between events</td></tr>
+      <tr><td><code>Scoped</code></td><td>Subscribers that need a scoped service (e.g., EF DbContext)</td><td>Scope is the execution scope, not the HTTP request scope</td></tr>
+      <tr><td><code>Singleton</code></td><td>Subscribers with in-memory state across executions (e.g., circuit breaker)</td><td>Must be thread-safe; all executions share the instance</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Registration Order = Execution Order</h2>
+  <p>Subscribers are called in the exact order they are registered. Register more critical subscribers first (e.g., audit logging before alerting) so that even if alerting fails, the audit record is still written.</p>
+  <pre><code>// Recommended order: audit first, then metrics, then alerting
+services.AddTransient&lt;INodeEventSubscriber, AuditNodeSubscriber&gt;();
+services.AddTransient&lt;INodeEventSubscriber, MetricsNodeSubscriber&gt;();
+services.AddTransient&lt;INodeEventSubscriber, SlackAlertSubscriber&gt;();</code></pre>
+
+  <h2>Extension Method Pattern (Recommended)</h2>
+  <p>For subscribers shipped in a library or module, expose a registration extension:</p>
+  <pre><code>// In your library's ServiceCollectionExtensions.cs
+public static class NodeObservabilityExtensions
+{
+    public static IServiceCollection AddNodeObservability(
+        this IServiceCollection services,
+        Action&lt;NodeObservabilityOptions&gt;? configure = null)
+    {
+        var options = new NodeObservabilityOptions();
+        configure?.Invoke(options);
+
+        services.AddSingleton(options);
+        services.AddTransient&lt;INodeEventSubscriber, AuditNodeSubscriber&gt;();
+
+        if (options.EnableMetrics)
+            services.AddTransient&lt;INodeEventSubscriber, MetricsNodeSubscriber&gt;();
+
+        if (options.EnableAlerts)
+            services.AddTransient&lt;INodeEventSubscriber, ErrorAlertSubscriber&gt;();
+
+        return services;
+    }
+}
+
+// Usage in Program.cs
+builder.Services.AddNodeObservability(opts =>
+{
+    opts.EnableMetrics = true;
+    opts.EnableAlerts  = true;
+});</code></pre>
+
+  <h2>Conditional Registration (Feature Flags)</h2>
+  <pre><code>var config = builder.Configuration;
+
+if (config.GetValue&lt;bool&gt;("Features:NodeAuditLog"))
+    builder.Services.AddTransient&lt;INodeEventSubscriber, AuditNodeSubscriber&gt;();
+
+if (config.GetValue&lt;bool&gt;("Features:NodeMetrics"))
+    builder.Services.AddTransient&lt;INodeEventSubscriber, MetricsNodeSubscriber&gt;();</code></pre>
+
+  <h2>Testing a Subscriber</h2>
+  <pre><code>[Fact]
+public async Task AuditSubscriber_WritesRecord_OnBeforeExecute()
+{
+    // Arrange
+    var repo = new FakeAuditRepository();
+    var subscriber = new AuditNodeSubscriber(repo);
+    var args = new NodeExecutionEventArgs
+    {
+        NodeId      = "node-1",
+        NodeType    = "HttpRequest",
+        ExecutionId = "exec-123",
+        ProcessId   = "proc-456",
+        TenantId    = "tenant-789",
+        StartedAt   = DateTimeOffset.UtcNow,
+        Context     = FakeNodeContext.Create()
+    };
+
+    // Act
+    await subscriber.OnBeforeExecuteAsync(args, CancellationToken.None);
+
+    // Assert
+    Assert.Single(repo.Entries);
+    Assert.Equal(AuditStatus.InProgress, repo.Entries[0].Status);
+    Assert.Equal("node-1", repo.Entries[0].NodeId);
+}</code></pre>
+
+  <div class="callout info">
+    <strong>No attribute scanning:</strong> Subscribers are not discovered by attribute — they must be explicitly registered in DI. This is intentional: it ensures you always know exactly which subscribers are active in a given deployment.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-skip-event.html">&#8592; OnSkippedAsync</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

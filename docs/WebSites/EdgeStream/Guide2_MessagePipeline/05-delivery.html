@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Delivery Stage — Message Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-normalization.html">Normalization Stage</a>
+  <a href="02-pre-pipeline.html">Pre-Pipeline Stage</a>
+  <a href="03-processing.html">Processing Stage</a>
+  <a href="04-post-pipeline.html">Post-Pipeline Stage</a>
+  <a href="05-delivery.html" class="active">Delivery Stage</a>
+  <a href="06-error-handling.html">Error Handling</a>
+  <a href="07-short-circuit.html">Short-Circuit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Delivery Stage</h1>
+    <p class="lead">After all hooks pass, the SubscriptionManager delivers the final envelope to every matching subscriber. Delivery is concurrent, isolated, and fully observable.</p>
+  </div>
+
+  <h2>How Delivery Works</h2>
+  <p>When the pipeline completes without abortion, <code>SubscriptionManager.publish(topic, envelope)</code> is called. It iterates over all registered subscribers, evaluates each against the topic pattern, and invokes matching callbacks.</p>
+
+  <pre><code>// SubscriptionManager.publish — actual source
+async publish&lt;TBody&gt;(topic: string, envelope: IEnvelope&lt;TBody&gt;): Promise&lt;void&gt; {
+  const promises: Promise&lt;void&gt;[] = [];
+
+  for (const entry of this.subscribers.values()) {
+    if (this.topicMatches(entry.topic, topic)) {
+      const start = Date.now();
+      // Fire queued event — for SubscribersMonitor
+      this.observer?.onSubscriberQueued({ messageId, subscriberId: entry.id, ... });
+
+      try {
+        const result = entry.callback(envelope);
+        if (result instanceof Promise) {
+          // Async subscribers are collected and awaited together
+          promises.push(result.then(() =&gt; {
+            this.observer?.onSubscriberDelivered({ ... });
+          }).catch(err =&gt; {
+            this.observer?.onSubscriberFailed({ ... });
+            // Error is logged but does NOT stop other subscribers
+          }));
+        }
+      } catch (syncError) {
+        // Sync errors are also isolated — other subscribers continue
+        this.observer?.onSubscriberFailed({ ... });
+      }
+    }
+  }
+
+  await Promise.all(promises); // wait for all async subscribers
+}</code></pre>
+
+  <h2>Topic Matching at Delivery</h2>
+  <p>The <code>topicMatches(pattern, actual)</code> method evaluates each registered subscription pattern against the incoming envelope's topic:</p>
+
+  <pre><code>private topicMatches(pattern: string, actual: string): boolean {
+  // Exact match
+  if (pattern === actual) return true;
+
+  // Wildcard: 'workflow.*' matches 'workflow.started'
+  if (pattern.endsWith('.*')) {
+    const prefix = pattern.slice(0, -2);
+    return actual.startsWith(`${prefix}.`) &amp;&amp; actual.length &gt; prefix.length + 1;
+  }
+
+  return false;
+}
+
+// Examples:
+// pattern='workflow.*'    topic='workflow.started'   → true
+// pattern='workflow.*'    topic='workflow.node.done'  → false (multi-level)
+// pattern='workflow.*'    topic='other.started'       → false</code></pre>
+
+  <h2>Subscriber Isolation</h2>
+  <p>Subscriber failures are isolated — one subscriber throwing an error never affects others. The SubscriptionManager catches both sync and async errors per-subscriber:</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>Error Isolation</h4>
+      <p>Subscriber A throws → Subscriber B still receives the message. Error is logged to observer but not rethrown.</p>
+    </div>
+    <div class="card">
+      <h4>Concurrent Delivery</h4>
+      <p>All matching subscribers are invoked concurrently via <code>Promise.all</code>. No subscriber waits for another.</p>
+    </div>
+    <div class="card">
+      <h4>Observability Events</h4>
+      <p>Each delivery emits <code>onSubscriberQueued</code>, <code>onSubscriberDelivered</code>, or <code>onSubscriberFailed</code> to the observer.</p>
+    </div>
+  </div>
+
+  <h2>Delivery Observability Events</h2>
+  <table>
+    <thead>
+      <tr><th>Event</th><th>When</th><th>Contains</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>onSubscriberQueued</code></td><td>Before callback is invoked</td><td>messageId, subscriberId, topic, envelopeSnapshot</td></tr>
+      <tr><td><code>onSubscriberDelivered</code></td><td>After callback completes successfully</td><td>messageId, subscriberId, topic, processingTime, callbackName</td></tr>
+      <tr><td><code>onSubscriberFailed</code></td><td>After callback throws</td><td>messageId, subscriberId, topic, error, processingTime</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Subscription Handle</h2>
+  <p>Every call to <code>subscribe()</code> returns an <code>ISubscription</code> handle with a unique generated ID:</p>
+  <pre><code>export interface ISubscription {
+  readonly id: string;    // e.g., 'sub-a1b2c3d4'
+  readonly active: boolean;
+  unsubscribe(): void;
+}
+
+// Usage
+const sub = edgeStream.subscribe('bas', 'workflow.*', handler);
+console.log(sub.id);     // 'sub-xxxx'
+console.log(sub.active); // true
+
+sub.unsubscribe();
+console.log(sub.active); // false — removed from SubscriptionManager</code></pre>
+
+  <div class="page-nav">
+    <a href="04-post-pipeline.html">&#8592; Post-Pipeline Stage</a>
+    <a href="06-error-handling.html">Next: Error Handling &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Overview — Message Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Pipeline Overview</a>
+  <a href="01-normalization.html">Normalization Stage</a>
+  <a href="02-pre-pipeline.html">Pre-Pipeline Stage</a>
+  <a href="03-processing.html">Processing Stage</a>
+  <a href="04-post-pipeline.html">Post-Pipeline Stage</a>
+  <a href="05-delivery.html">Delivery Stage</a>
+  <a href="06-error-handling.html">Error Handling</a>
+  <a href="07-short-circuit.html">Short-Circuit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Message Pipeline</h1>
+    <p class="lead">Every EdgeStream message passes through an ordered sequence of stages — from raw bytes at the transport to typed envelope delivery to subscribers. Understanding the pipeline is the foundation of effective EdgeStream development.</p>
+  </div>
+
+  <h2>The Pipeline at a Glance</h2>
+  <p>The EdgeStream pipeline is linear and deterministic. A message enters at the transport and exits (or is aborted) before reaching subscribers. Each stage is composed of one or more hooks that execute in priority order.</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">T</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Transport Receipt</h4>
+        <p>Raw bytes arrive over SignalR, WebSocket, SSE, or HTTP polling. The transport emits a raw message event to the server.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">N</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Normalization Stage</h4>
+        <p><code>NormalizationHook</code> (priority 110) converts raw bytes into a standardized <code>IEnvelope</code> with CloudEvents metadata. Runs after decryption (90) and verification (95).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">P</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Incoming Pipeline Hooks</h4>
+        <p>All registered incoming hooks execute in priority order. Each hook receives the <code>IPipelineContext</code> and can read/modify <code>body</code>, set <code>metadata</code>, or abort the pipeline.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">D</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Subscriber Delivery</h4>
+        <p><code>SubscriptionManager.publish()</code> matches the envelope topic against all registered subscriber patterns and invokes matching callbacks concurrently.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot info">O</div></div>
+      <div class="body">
+        <h4>Observability Events</h4>
+        <p>Each stage emits events to <code>IPipelineObserver</code> — feeding HooksMonitor and SubscribersMonitor in real time.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Incoming vs. Outgoing Pipeline</h2>
+  <p>Each <code>IServer</code> instance maintains two independent pipelines:</p>
+  <table>
+    <thead>
+      <tr><th>Pipeline</th><th>Direction</th><th>Triggered By</th><th>Terminates At</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>IncomingPipeline</code></td><td>Transport → App</td><td>Message received from transport</td><td>Subscriber callbacks</td></tr>
+      <tr><td><code>OutgoingPipeline</code></td><td>App → Transport</td><td><code>server.send()</code> call</td><td>Transport <code>send()</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pipeline Context</h2>
+  <p>Every hook receives the same <code>IPipelineContext</code> object for the duration of one message's journey through the pipeline. The context is mutable — hooks communicate via <code>body</code> and <code>metadata</code>.</p>
+
+  <pre><code>export interface IPipelineContext&lt;TBody = unknown&gt; {
+  readonly envelope: IEnvelope&lt;TBody&gt;; // immutable reference to the envelope
+  readonly serverId: string;
+  body: TBody;                          // mutable — hooks transform this
+  metadata: Record&lt;string, unknown&gt;;   // shared scratch space between hooks
+  abort(reason?: string): void;         // abort the pipeline
+  readonly isAborted: boolean;
+  pause(request: IUserInputRequest): IPipelinePause; // pause for user input
+  readonly isPaused: boolean;
+  readonly activityLog: readonly string[];
+  addActivity(message: string): void;
+}</code></pre>
+
+  <h2>Hook Priority Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Priority</th><th>Hook</th><th>Stage</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>5</td><td><code>HookActivityLogger</code></td><td>Both</td><td>Captures timing before any other hook runs</td></tr>
+      <tr><td>30</td><td>Custom auth hooks</td><td>Incoming</td><td>Token validation, tenant verification</td></tr>
+      <tr><td>50</td><td>Custom filter hooks</td><td>Both</td><td>Message filtering, deduplication</td></tr>
+      <tr><td>90</td><td><code>DecryptHook</code></td><td>Incoming</td><td>Decrypts encrypted body</td></tr>
+      <tr><td>95</td><td><code>VerifySignatureHook</code></td><td>Incoming</td><td>Verifies HMAC/JWT signature</td></tr>
+      <tr><td>100</td><td><code>ValidationHook</code></td><td>Incoming</td><td>Schema validation</td></tr>
+      <tr><td>110</td><td><code>NormalizationHook</code></td><td>Incoming</td><td>CloudEvents normalization</td></tr>
+      <tr><td>200+</td><td>Custom enrichment hooks</td><td>Both</td><td>Business data enrichment</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pipeline Lifecycle Events</h2>
+  <p>The EdgeStream facade emits events for key pipeline moments:</p>
+  <pre><code>edgeStream.on('message:received', (event) =&gt; {
+  // fired when transport delivers a raw message
+  console.log('Message from server:', event.serverId);
+});
+
+edgeStream.on('pipeline:paused', (event) =&gt; {
+  // fired when a hook calls context.pause()
+  console.log('Pipeline paused, waiting for user input');
+});
+
+edgeStream.on('pipeline:resumed', (event) =&gt; {
+  // fired when the paused pipeline is resumed
+  console.log('Pipeline resumed, continuing delivery');
+});</code></pre>
+
+  <div class="callout info">
+    <strong>Pipeline is Linear</strong>
+    Messages cannot skip stages. If the normalization hook is missing, raw bytes reach subscriber callbacks — which typically causes errors. Always register <code>NormalizationHook</code> on incoming pipelines that receive JSON messages.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-normalization.html">Next: Normalization Stage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

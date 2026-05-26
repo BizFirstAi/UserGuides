@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Three Composite Objects — Octopus Framework | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Octopus Framework</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-three-composites.html" class="active">Three Composite Objects</a>
+  <a href="02-agent-composite.html">AgentComposite</a>
+  <a href="03-conversation-composite.html">ConversationComposite</a>
+  <a href="04-user-composite.html">UserComposite</a>
+  <a href="05-llm-providers.html">LLM Provider Integrations</a>
+  <a href="06-flow-studio-link.html">Flow Studio Integration</a>
+  <a href="07-micro-frontends.html">Octopus Micro-Frontends</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Three Composite Objects</h1>
+    <p class="lead">Octopus models the AI agent ecosystem with three graph-structured composite objects: <strong>AgentComposite</strong>, <strong>ConversationComposite</strong>, and <strong>UserComposite</strong>. Each is a rich domain object that aggregates all data needed for a specific concern.</p>
+  </div>
+
+  <h2>The Graph-Structured Model</h2>
+  <p>Octopus uses a composite object pattern — each composite aggregates a cluster of related domain objects into a single, cohesive entity. This avoids the N+1 query problem and ensures that all agent logic receives a fully-hydrated object, not a shallow database row.</p>
+  <p>The three composites form a graph:</p>
+  <ul>
+    <li><strong>AgentComposite</strong> is the hub — it references LLM config, tool registry, memory config, plugins, and persona.</li>
+    <li><strong>ConversationComposite</strong> references one AgentComposite and one UserComposite — it is the "session" connecting a user to an agent.</li>
+    <li><strong>UserComposite</strong> contains a list of accessible agents and a list of past ConversationComposite IDs.</li>
+  </ul>
+
+  <h2>AgentComposite</h2>
+  <p>The <code>AgentComposite</code> is the complete definition of an AI agent. It is created by a platform administrator or AI engineer in the <code>agents-app</code> micro-frontend and persisted to the <code>Octopus_Agents</code> SQL table.</p>
+  <pre><code>public class AgentComposite
+{
+    public Guid Id { get; init; }
+    public string Name { get; set; }
+    public string TenantId { get; init; }
+
+    // LLM Configuration
+    public LLMConfig LLMConfig { get; set; }          // provider, model, temperature
+    public ILLMProvider LLMProvider { get; set; }      // resolved at runtime
+
+    // Memory
+    public MemoryConfig MemoryConfig { get; set; }     // which types enabled, TTLs
+    public MemoryOrchestrator MemoryOrchestrator { get; set; } // wired at startup
+
+    // Tools and Plugins
+    public ToolRegistry ToolRegistry { get; set; }     // all MCP tools available
+    public IReadOnlyList&lt;IOctopusPlugin&gt; Plugins { get; set; }
+
+    // Behavior
+    public AgentPersona Persona { get; set; }          // name, tone, language
+    public string SystemPrompt { get; set; }           // assembled by SystemPromptBuilder
+    public AgentGoal Goal { get; set; }                // structured goal definition
+    public BehavioralConstraints Constraints { get; set; } // what the agent must not do
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Hydration at Startup</strong>
+    <p>AgentComposites are loaded and hydrated at application startup (or on first use) and cached in <code>IAgentRepository</code>. LLM providers and plugin instances are resolved once from DI — not on every request.</p>
+  </div>
+
+  <h2>ConversationComposite</h2>
+  <p>The <code>ConversationComposite</code> represents one active conversation session — from the first user message to the session end. It is the unit of episodic memory capture.</p>
+  <pre><code>public class ConversationComposite
+{
+    public Guid Id { get; init; }            // = sessionId
+    public Guid AgentId { get; init; }
+    public Guid UserId { get; init; }
+    public string TenantId { get; init; }
+
+    // Message History (working memory)
+    public List&lt;LLMMessage&gt; Messages { get; set; }
+
+    // Tool Call History
+    public List&lt;ToolCallRecord&gt; ToolCalls { get; set; }
+
+    // Session Metadata
+    public DateTimeOffset StartedAt { get; init; }
+    public DateTimeOffset? EndedAt { get; set; }
+    public ConversationStatus Status { get; set; }  // Active, Closed, Expired
+
+    // Injected Context (assembled per turn by WorkingMemoryManager)
+    public WorkingMemoryContext CurrentContext { get; set; }
+}</code></pre>
+
+  <h2>UserComposite</h2>
+  <p>The <code>UserComposite</code> represents the human (or system) interacting with agents. It tracks which agents a user can access and links to their conversation history.</p>
+  <pre><code>public class UserComposite
+{
+    public Guid Id { get; init; }
+    public string ExternalUserId { get; set; }    // from auth provider
+    public string TenantId { get; init; }
+    public string DisplayName { get; set; }
+    public UserPreferences Preferences { get; set; }  // language, timezone
+
+    // Agent Access
+    public IReadOnlyList&lt;Guid&gt; AccessibleAgentIds { get; set; }
+
+    // Conversation History (references only — not loaded unless needed)
+    public IReadOnlyList&lt;Guid&gt; ConversationIds { get; set; }
+}</code></pre>
+
+  <h2>Composite Relationships</h2>
+  <table>
+    <thead>
+      <tr><th>Relationship</th><th>Cardinality</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>User → Agents</td><td>Many-to-many</td><td>Access controlled via <code>UserComposite.AccessibleAgentIds</code></td></tr>
+      <tr><td>User → Conversations</td><td>One-to-many</td><td>Each session creates a new ConversationComposite</td></tr>
+      <tr><td>Agent → Conversations</td><td>One-to-many</td><td>Many users can talk to the same agent simultaneously</td></tr>
+      <tr><td>Conversation → Agent</td><td>Many-to-one</td><td>A conversation is always with exactly one agent</td></tr>
+      <tr><td>Conversation → User</td><td>Many-to-one</td><td>A conversation is always with exactly one user</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Composite Loading Pattern</h2>
+  <p>Composites are loaded via repository interfaces — never via direct DbContext access from application code:</p>
+  <pre><code>// Loading an agent for a conversation
+var agent = await _agentRepository.GetCompositeAsync(agentId, tenantId);
+
+// Loading a conversation (creates if new session)
+var conversation = await _conversationRepository
+    .GetOrCreateAsync(sessionId, agentId, userId, tenantId);
+
+// Loading a user's accessible agents
+var user = await _userRepository.GetCompositeAsync(userId, tenantId);
+var accessibleAgents = user.AccessibleAgentIds;</code></pre>
+
+  <div class="callout warning">
+    <strong>Tenant Isolation is Enforced at Composite Level</strong>
+    <p>Every repository method requires a <code>tenantId</code> parameter. The underlying queries always add a <code>WHERE TenantId = @tenantId</code> filter. Cross-tenant composite access is not possible through the standard repository layer.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-agent-composite.html">Next: AgentComposite &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

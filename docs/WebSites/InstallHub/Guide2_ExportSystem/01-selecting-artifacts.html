@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Selecting Artifacts — Export System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Export System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-selecting-artifacts.html" class="active">Selecting Artifacts</a>
+  <a href="02-dependency-resolution.html">Dependency Resolution</a>
+  <a href="03-manifest-generation.html">Manifest Generation</a>
+  <a href="04-bundle-creation.html">Bundle Creation</a>
+  <a href="05-export-api.html">Export API</a>
+  <a href="06-export-history.html">Export History</a>
+  <a href="07-validation.html">Pre-Export Validation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Selecting Artifacts</h1>
+    <p class="lead">You specify the root artifacts to package — everything else is resolved automatically. Understanding which artifacts to select and how to discover their IDs is the first step in creating a package.</p>
+  </div>
+
+  <h2>Root vs. Dependency Artifacts</h2>
+  <p>When creating a package, you only need to specify the <strong>root artifacts</strong> — the top-level items you want the package consumer to receive. The <code>DependencyResolver</code> automatically discovers and includes all artifacts that those roots depend on.</p>
+
+  <table>
+    <thead>
+      <tr><th>Category</th><th>Typically a Root</th><th>Typically a Dependency</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Process Definition</td><td>Yes</td><td>Rarely — only if a package contains only a sub-workflow</td></tr>
+      <tr><td>Thread Definition</td><td>No</td><td>Yes — pulled in from its parent process</td></tr>
+      <tr><td>Atlas Form</td><td>Sometimes — for form-only packages</td><td>Yes — pulled from workflows</td></tr>
+      <tr><td>Rule Set</td><td>Rarely</td><td>Yes — pulled from forms and workflows</td></tr>
+      <tr><td>Entity Schema</td><td>No</td><td>Yes — pulled from entity-type nodes</td></tr>
+      <tr><td>App Definition</td><td>Yes — for app packages</td><td>Rarely</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Finding Artifact IDs</h2>
+
+  <h3>Via the API</h3>
+  <pre><code>// List all process definitions in a tenant
+GET /api/processes?tenantId={tenantId}&amp;pageSize=100
+Authorization: Bearer {token}
+
+// List all Atlas Forms
+GET /api/forms?tenantId={tenantId}&amp;pageSize=100
+Authorization: Bearer {token}
+
+// List all App Studio apps
+GET /api/apps?tenantId={tenantId}&amp;pageSize=100
+Authorization: Bearer {token}</code></pre>
+
+  <h3>Via Flow Studio</h3>
+  <p>In Flow Studio, open the workflow you want to export. The artifact ID is shown in the browser URL and in the workflow's Properties panel (bottom right). Copy the <code>processId</code> value.</p>
+
+  <h3>Via Atlas Forms Studio</h3>
+  <p>In the Atlas Forms Studio, open the form and look at the URL or the form's settings panel for the <code>formId</code>. This is the ID to pass to the export API.</p>
+
+  <h2>Single-Artifact Export</h2>
+  <p>Export a single workflow — all its dependencies are automatically included:</p>
+  <pre><code>POST /api/installhub/packages/export
+{
+  "packageName": "Leave Approval",
+  "packageType": "workflow-package",
+  "version":     "1.0.0",
+  "artifactIds": ["proc-1002"]
+}
+
+// DependencyResolver will include:
+// - proc-1002 (root)
+// - any ThreadDefinitions referenced by proc-1002
+// - any AtlasForms used by form-display nodes in proc-1002
+// - any RuleSets evaluated by rule nodes in proc-1002</code></pre>
+
+  <h2>Multi-Artifact Export</h2>
+  <p>Export multiple root artifacts in a single package — useful for a suite of related workflows:</p>
+  <pre><code>POST /api/installhub/packages/export
+{
+  "packageName": "HR Automation Suite",
+  "packageType": "workflow-package",
+  "version":     "3.0.0",
+  "description": "Complete HR workflow suite — onboarding, leave, and payroll",
+  "artifactIds": [
+    "proc-1001",
+    "proc-1002",
+    "proc-1003"
+  ]
+}</code></pre>
+  <p>The resolver merges the dependency graphs of all root artifacts, deduplicating shared dependencies (e.g., if two workflows use the same form, that form appears only once in the bundle).</p>
+
+  <h2>Form-Only Package</h2>
+  <p>Export a collection of Atlas Forms without any workflows:</p>
+  <pre><code>POST /api/installhub/packages/export
+{
+  "packageName": "Employee Form Library",
+  "packageType": "form-package",
+  "version":     "2.0.0",
+  "artifactIds": [
+    "form-2005",
+    "form-2006",
+    "form-2007"
+  ]
+}</code></pre>
+
+  <h2>Previewing What Will Be Exported</h2>
+  <p>Before committing to an export, you can preview the full dependency graph using the dependency preview endpoint:</p>
+  <pre><code>POST /api/installhub/packages/preview
+{
+  "tenantId":    "{tenantId}",
+  "artifactIds": ["proc-1001"]
+}
+
+// Response:
+{
+  "rootArtifacts":       [{ "type": "ProcessDefinition", "id": "proc-1001", "name": "EmployeeOnboarding" }],
+  "resolvedDependencies": [
+    { "type": "ThreadDefinition", "id": "thread-2002", "name": "ApprovalSubflow",  "resolvedFrom": "proc-1001" },
+    { "type": "AtlasForm",        "id": "form-2005",   "name": "EmployeeForm",     "resolvedFrom": "proc-1001" },
+    { "type": "RuleSet",          "id": "rule-305",    "name": "ApprovalRules",    "resolvedFrom": "proc-1001" },
+    { "type": "EntitySchema",     "id": "ent-44",      "name": "EmployeeSchema",   "resolvedFrom": "proc-1001" }
+  ],
+  "totalArtifacts": 5
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Preview is Non-Destructive</strong>
+    The preview endpoint runs the full dependency resolution but does not create a bundle. Use it to confirm what will be included before running the export.
+  </div>
+
+  <h2>Artifact ID Format</h2>
+  <p>InstallHub artifact IDs follow the convention <code>{type-prefix}-{numeric-id}</code>:</p>
+  <table>
+    <thead>
+      <tr><th>Prefix</th><th>Artifact Type</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>proc-</code></td><td>ProcessDefinition</td><td><code>proc-1001</code></td></tr>
+      <tr><td><code>thread-</code></td><td>ThreadDefinition</td><td><code>thread-2002</code></td></tr>
+      <tr><td><code>form-</code></td><td>AtlasForm</td><td><code>form-2005</code></td></tr>
+      <tr><td><code>rule-</code></td><td>RuleSet</td><td><code>rule-305</code></td></tr>
+      <tr><td><code>ent-</code></td><td>EntitySchema</td><td><code>ent-44</code></td></tr>
+      <tr><td><code>app-</code></td><td>AppDefinition</td><td><code>app-88</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-dependency-resolution.html">Next: Dependency Resolution &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

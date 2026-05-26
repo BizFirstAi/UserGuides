@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architecture — EdgeStream Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-architecture.html" class="active">Architecture</a>
+  <a href="02-packages.html">Package Structure</a>
+  <a href="03-core-concepts.html">Core Concepts</a>
+  <a href="04-use-cases.html">Use Cases</a>
+  <a href="05-getting-started.html">Getting Started</a>
+  <a href="06-bizfirstgo-integration.html">BizFirstGO Integration</a>
+  <a href="07-typescript.html">TypeScript-First Design</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Architecture</h1>
+    <p class="lead">How EdgeStream's components assemble — transport layer, pipeline engine, hook system, subscription manager, and the facade that coordinates them all.</p>
+  </div>
+
+  <h2>Architectural Layers</h2>
+  <p>EdgeStream is organized into five distinct layers. Each layer has a single responsibility and communicates with adjacent layers through TypeScript interfaces — making every layer independently testable and replaceable.</p>
+
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Components</th><th>Responsibility</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Facade</strong></td><td><code>EdgeStream</code>, <code>IEdgeStream</code></td><td>Orchestrates all servers, exposes the top-level API</td></tr>
+      <tr><td><strong>Server</strong></td><td><code>Server</code>, <code>IServer</code></td><td>Single connection context — transport + pipelines + subscriptions</td></tr>
+      <tr><td><strong>Pipeline</strong></td><td><code>IncomingPipeline</code>, <code>OutgoingPipeline</code></td><td>Ordered hook execution with abort/pause support</td></tr>
+      <tr><td><strong>Hooks</strong></td><td><code>IHook</code>, built-in hooks</td><td>Composable message transformers and interceptors</td></tr>
+      <tr><td><strong>Transport</strong></td><td><code>SignalRTransport</code>, <code>SseTransport</code>, <code>RawWebSocketTransport</code></td><td>Low-level network I/O — raw bytes in and out</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The EdgeStream Facade</h2>
+  <p>The <code>EdgeStream</code> class is the entry point. It owns a <code>Map&lt;string, IServer&gt;</code> of registered servers and delegates all operations to the appropriate server instance.</p>
+
+  <pre><code>// EdgeStream facade — top-level orchestrator
+export class EdgeStream implements IEdgeStream {
+  readonly servers: Map&lt;string, IServer&gt; = new Map();
+  status: EdgeStreamStatus = 'idle';
+
+  // Starts all registered servers concurrently
+  async start(): Promise&lt;void&gt; {
+    const startPromises = Array.from(this.servers.values()).map(s =&gt; s.start());
+    await Promise.all(startPromises);
+    this.status = 'running';
+    this.emit('stream:started', { timestamp: new Date() });
+  }
+
+  // Register a new server with transport config
+  registerServer(registration: IServerRegistration): void {
+    const transport = createTransport(registration.transportConfig);
+    const server = new Server(registration, transport);
+    this.servers.set(registration.id, server);
+  }
+}</code></pre>
+
+  <h2>Server: The Central Broker</h2>
+  <p>Each <code>IServer</code> instance is an isolated message domain. It holds:</p>
+  <ul>
+    <li><strong>One transport</strong> — the network connection (<code>ITransport</code>)</li>
+    <li><strong>One incoming pipeline</strong> — processes messages arriving from the transport</li>
+    <li><strong>One outgoing pipeline</strong> — processes messages being sent to the transport</li>
+    <li><strong>One subscription manager</strong> — routes processed messages to matching subscriber callbacks</li>
+  </ul>
+
+  <p>Server types are typed as <code>'bas'</code> (BizFirstGO Application Server) or <code>'chat'</code>, allowing different pipeline configurations per domain.</p>
+
+  <h2>Pipeline Engine</h2>
+  <p>The pipeline is the ordered execution engine. <code>IncomingPipeline</code> handles messages from the transport; <code>OutgoingPipeline</code> handles messages being sent. Both share the same hook execution model:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Create Pipeline Context</h4>
+        <p>A new <code>IPipelineContext</code> is created for each message containing the envelope, metadata map, and abort/pause controls.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Sort Hooks by Priority</h4>
+        <p>Hooks are sorted by their <code>priority</code> number (lower runs first). <code>HookActivityLogger</code> uses priority 5 to run before all others.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Execute Each Hook</h4>
+        <p>Each hook receives the context and returns a <code>HookResult</code>. If <code>continue: false</code>, the pipeline aborts and no further hooks run.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>Publish to Subscribers</h4>
+        <p>After all hooks pass, the <code>SubscriptionManager.publish()</code> delivers the envelope to all matching subscribers.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Hook System</h2>
+  <p>Hooks are the extension point of EdgeStream. Every hook implements <code>IHook</code>:</p>
+  <pre><code>export interface IHook&lt;TContext extends IPipelineContext = IPipelineContext&gt; {
+  readonly name: string;
+  readonly priority: number;   // lower number = runs first
+  execute(context: TContext): Promise&lt;HookResult&gt;;
+}
+
+export interface HookResult {
+  continue: boolean;   // false = abort pipeline (message dropped)
+  paused?: boolean;    // true = pipeline paused awaiting user input
+  error?: string;      // optional error message for logging
+}</code></pre>
+
+  <p>The pipeline context allows hooks to transform the message body, set metadata, add attributes, or abort/pause processing:</p>
+  <pre><code>export interface IPipelineContext&lt;TBody = unknown&gt; {
+  readonly envelope: IEnvelope&lt;TBody&gt;;
+  readonly serverId: string;
+  body: TBody;                              // hooks mutate this
+  metadata: Record&lt;string, unknown&gt;;       // shared between hooks
+  abort(reason?: string): void;
+  readonly isAborted: boolean;
+  pause(request: IUserInputRequest): IPipelinePause;
+  readonly isPaused: boolean;
+}</code></pre>
+
+  <h2>Transport Abstraction</h2>
+  <p>All transports implement <code>ITransport</code> — a uniform interface for connect/disconnect/send/receive regardless of the underlying protocol:</p>
+
+  <table>
+    <thead>
+      <tr><th>Transport</th><th>Type Key</th><th>Duplex</th><th>Auto-Reconnect</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SignalRTransport</code></td><td><code>'signalr'</code></td><td>Yes</td><td>Yes (built-in)</td><td>Browser apps, recommended default</td></tr>
+      <tr><td><code>RawWebSocketTransport</code></td><td><code>'websocket'</code></td><td>Yes</td><td>Manual</td><td>Performance-critical, non-browser</td></tr>
+      <tr><td><code>SseTransport</code></td><td><code>'sse'</code></td><td>Server-only</td><td>Yes (EventSource)</td><td>Read-only event streams, firewall fallback</td></tr>
+      <tr><td><code>HttpPollingTransport</code></td><td><code>'http-polling'</code></td><td>Emulated</td><td>Yes</td><td>Restricted environments, no WS support</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Event System</h2>
+  <p>The <code>EdgeStream</code> facade emits typed lifecycle events that applications can subscribe to:</p>
+  <pre><code>const stream = createEdgeStream();
+
+stream.on('stream:started', (event) =&gt; console.log('Started', event.timestamp));
+stream.on('server:connected', (event) =&gt; console.log('Server connected', event.serverId));
+stream.on('server:error', (event) =&gt; console.error('Server error', event.data?.error));
+stream.on('pipeline:paused', (event) =&gt; console.log('Waiting for user input'));
+stream.on('message:received', (event) =&gt; updateMessageCount());</code></pre>
+
+  <p>Available events: <code>stream:started</code>, <code>stream:stopped</code>, <code>stream:error</code>, <code>server:connected</code>, <code>server:disconnected</code>, <code>server:error</code>, <code>pipeline:paused</code>, <code>pipeline:resumed</code>, <code>message:received</code>, <code>message:sent</code></p>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-packages.html">Next: Package Structure &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

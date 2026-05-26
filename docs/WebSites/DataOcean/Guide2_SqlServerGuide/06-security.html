@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security and Credentials — SQL Server Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>SQL Server Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-setup.html">SQL Server Setup</a>
+  <a href="02-datasource-registration.html">Datasource Registration</a>
+  <a href="03-ai-ready-schema.html">AI-Ready Schema Design</a>
+  <a href="04-sql-nodes.html">Access from Flow Studio</a>
+  <a href="05-form-generation.html">AI Form Generation</a>
+  <a href="06-security.html" class="active">Security and Credentials</a>
+  <a href="07-performance.html">Performance Patterns</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Security and Credentials</h1>
+    <p class="lead">How BizFirstGO secures Data Ocean SQL connections — the credential pattern, tenant row isolation, column-level masking for PII, and connection audit trails.</p>
+  </div>
+
+  <h2>The Credential Pattern (Mandatory)</h2>
+  <p>BizFirstGO enforces a strict credential pattern for all database connections. Connection strings are <strong>never</strong> stored in workflow definitions, SQL node configurations, or application settings files. They are always stored in the <strong>Credential Store</strong> and accessed via <code>ICredentialResolver</code> at runtime.</p>
+
+  <pre><code>// ICredentialResolver contract
+public interface ICredentialResolver
+{
+    Task&lt;string&gt; GetPasswordAsync(int credentialId, CancellationToken ct = default);
+    Task&lt;string&gt; GetConnectionStringAsync(int credentialId, CancellationToken ct = default);
+}
+
+// Usage in IDatasourceConnectionFactory — internal implementation
+public async Task&lt;SqlConnection&gt; GetConnectionAsync(string datasourceId, int tenantId, CancellationToken ct)
+{
+    var datasource = await _datasourceRegistry.GetAsync(datasourceId, tenantId, ct);
+    var connectionString = await _credentialResolver.GetConnectionStringAsync(datasource.CredentialId, ct);
+    var connection = new SqlConnection(connectionString);
+    await connection.OpenAsync(ct);
+    return connection;
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Credential Pattern Is Mandatory</strong>
+    <p>Never store raw connection strings in SQL node configurations, workflow JSON, appsettings files, or environment variables. All credentials must go through the Credential Store. Violation of this rule is a security finding that will block deployment.</p>
+  </div>
+
+  <h2>Credential Store Integration</h2>
+  <p>The Credential Store supports multiple backends depending on your deployment:</p>
+  <table>
+    <thead>
+      <tr><th>Backend</th><th>Environment</th><th>Configuration</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Azure Key Vault</strong></td><td>Cloud / Azure production</td><td>Managed Identity auth — no secrets in config</td></tr>
+      <tr><td><strong>HashiCorp Vault</strong></td><td>On-premises / multi-cloud</td><td>AppRole auth with token rotation</td></tr>
+      <tr><td><strong>Encrypted database column</strong></td><td>Development / smaller deployments</td><td>AES-256 encrypted in BizFirstGO system DB</td></tr>
+      <tr><td><strong>Environment variables</strong></td><td>CI/CD pipelines only</td><td>Temporary — never for long-running services</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Tenant Row Isolation</h2>
+  <p>Multi-tenancy in Data Ocean SQL Server is enforced at the application layer by the SQL node execution engine. Every query executed by a SQL node automatically receives a <code>tenantId</code> parameter sourced from the workflow execution context (<code>workflow.tenantId</code>).</p>
+  <p>The framework validates that every SQL query passed to a SqlQueryNode or SqlUpdateNode includes <code>@tenantId</code> as a parameter. Queries missing this parameter are rejected at design-time validation:</p>
+  <pre><code>// This query will FAIL validation — missing @tenantId filter
+SELECT * FROM Customer WHERE CustomerId = @customerId
+
+// This query will PASS validation
+SELECT * FROM Customer WHERE TenantId = @tenantId AND CustomerId = @customerId AND IsDeleted = 0</code></pre>
+
+  <div class="callout warning">
+    <strong>Tenant Filter Enforcement Is Design-Time, Not SQL-Engine-Level</strong>
+    <p>The tenant filter check is performed by the Flow Studio design-time validator — it is not a SQL Server Row-Level Security (RLS) policy. For sensitive deployments, consider implementing SQL Server RLS as an additional defense layer. See the SQL Server RLS documentation for the <code>CREATE SECURITY POLICY</code> syntax.</p>
+  </div>
+
+  <h2>Column-Level PII Masking</h2>
+  <p>For tables containing Personally Identifiable Information (PII), SQL Server's <strong>Dynamic Data Masking</strong> provides column-level masking for database users without data access rights:</p>
+  <pre><code>-- Apply masking to PII columns
+ALTER TABLE Customer
+    ALTER COLUMN Email ADD MASKED WITH (FUNCTION = 'email()');
+
+ALTER TABLE Customer
+    ALTER COLUMN Phone ADD MASKED WITH (FUNCTION = 'partial(0,"XXX-XXX-",4)');
+
+-- The BizFirstApp login must be GRANTED UNMASK to see real values
+-- Remove this grant for reporting/analytics accounts that should see masked data
+GRANT UNMASK TO BizFirstApp;
+
+-- For a reporting-only login, do NOT grant UNMASK
+-- CREATE LOGIN BizFirstReports WITH PASSWORD = '...';
+-- (No UNMASK grant — this login sees masked values)</code></pre>
+
+  <h2>Connection Security Checklist</h2>
+  <table>
+    <thead>
+      <tr><th>Control</th><th>Implementation</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Encrypted transport</td><td><code>Encrypt=True</code> in connection string</td><td>Required</td></tr>
+      <tr><td>Certificate validation</td><td><code>TrustServerCertificate=False</code> in production</td><td>Required for production</td></tr>
+      <tr><td>Principle of least privilege</td><td>db_datareader + db_datawriter only (not db_owner)</td><td>Required</td></tr>
+      <tr><td>Credential rotation</td><td>Rotate SQL Server passwords via Credential Store — no redeploys needed</td><td>Recommended quarterly</td></tr>
+      <tr><td>Network isolation</td><td>SQL Server on private network or VNet — no public endpoint</td><td>Recommended for production</td></tr>
+      <tr><td>Audit logging</td><td>Enable SQL Server Audit for all DML operations on sensitive tables</td><td>Required for compliance</td></tr>
+      <tr><td>Failed login monitoring</td><td>Alert on repeated authentication failures (brute force indicator)</td><td>Recommended</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-form-generation.html">&#8592; AI Form Generation</a>
+    <a href="07-performance.html">Next: Performance Patterns &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

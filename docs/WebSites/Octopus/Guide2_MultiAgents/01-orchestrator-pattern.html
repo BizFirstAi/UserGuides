@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orchestrator Agent Pattern — Multi-Agent System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Multi-Agent System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Multi-Agent Overview</a>
+  <a href="01-orchestrator-pattern.html" class="active">Orchestrator Agent Pattern</a>
+  <a href="02-handoff.html">Agent Handoff</a>
+  <a href="03-specialist-agents.html">Specialist Agents</a>
+  <a href="04-shared-conversation.html">Shared Conversation Context</a>
+  <a href="05-parallel-agents.html">Parallel Agent Execution</a>
+  <a href="06-agent-teams.html">Defining Agent Teams</a>
+  <a href="07-monitoring.html">Monitoring Multi-Agent Flows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Orchestrator Agent Pattern</h1>
+    <p class="lead">The orchestrator agent is the entry point for a multi-agent team. It reads the user's intent and routes to the appropriate specialist — using keyword rules, embedding similarity, or its own LLM reasoning to make the routing decision.</p>
+  </div>
+
+  <h2>What Makes an Agent an Orchestrator?</h2>
+  <p>Any Octopus agent can act as an orchestrator. What distinguishes it is:</p>
+  <ul>
+    <li>Its system prompt focuses on intent classification, not domain answering</li>
+    <li>Its tool registry includes the <code>route_to_agent</code> and <code>handoff_to_agent</code> tools (registered by the multi-agent plugin)</li>
+    <li>It has a <code>TeamConfig</code> that lists the specialist agents it can route to</li>
+    <li>Its LLM may be a smaller/cheaper model since it only routes — not a heavy reasoning model</li>
+  </ul>
+
+  <h2>AgentRouter</h2>
+  <p>The <code>AgentRouter</code> is the component that makes the routing decision. It is configured with a routing strategy:</p>
+  <pre><code>public class AgentRouter
+{
+    public async Task&lt;AgentRoutingResult&gt; RouteAsync(
+        string userMessage,
+        AgentTeam team,
+        CancellationToken ct = default)
+    {
+        return _config.Strategy switch
+        {
+            RoutingStrategy.Keyword   =&gt; await KeywordRouteAsync(userMessage, team),
+            RoutingStrategy.Embedding =&gt; await EmbeddingRouteAsync(userMessage, team),
+            RoutingStrategy.LLM       =&gt; await LLMRouteAsync(userMessage, team),
+            _ =&gt; AgentRoutingResult.Default(team.DefaultAgentId)
+        };
+    }
+
+    private async Task&lt;AgentRoutingResult&gt; EmbeddingRouteAsync(
+        string message, AgentTeam team)
+    {
+        var queryEmbedding = await _embeddingProvider.EmbedAsync(message);
+
+        var scores = team.Members.Select(member => new
+        {
+            AgentId = member.AgentId,
+            Score = CosineSimilarity(queryEmbedding, member.IntentEmbedding)
+        });
+
+        var best = scores.MaxBy(s =&gt; s.Score);
+        return new AgentRoutingResult(best!.AgentId, best.Score, RoutingStrategy.Embedding);
+    }
+}</code></pre>
+
+  <h2>Orchestrator System Prompt Template</h2>
+  <p>The orchestrator's system prompt is focused entirely on routing:</p>
+  <pre><code>You are a routing assistant for the BizFirstGO enterprise support team.
+Your job is to determine which specialist agent should handle the user's request.
+
+Available specialists:
+- HR Agent: leave requests, payroll questions, benefits, onboarding
+- Finance Agent: expense reports, budget queries, invoice approval
+- IT Support Agent: software issues, access requests, hardware problems
+- Legal Agent: contract review, compliance questions, policy interpretation
+
+Rules:
+1. Route to exactly one agent per user message.
+2. If the request spans multiple domains, route to the primary one.
+3. If you cannot determine the domain, route to the default agent.
+4. Do NOT answer the user's question yourself — only route.
+
+Use the route_to_agent tool to route.</code></pre>
+
+  <h2>Routing Decision with LLM Strategy</h2>
+  <pre><code>// The orchestrator LLM is given the route_to_agent tool:
+{
+  "name": "route_to_agent",
+  "description": "Route the user's request to the appropriate specialist agent.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "agentId": { "type": "string", "description": "The ID of the target specialist agent" },
+      "reason": { "type": "string", "description": "Why this agent was selected" },
+      "confidence": { "type": "number", "description": "0.0 to 1.0 routing confidence" }
+    },
+    "required": ["agentId", "reason"]
+  }
+}</code></pre>
+
+  <h2>Routing Configuration in agents-app</h2>
+  <p>In the agents-app, the team's routing policy is configured in the Team Config panel:</p>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Value</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Routing Strategy</td><td>Embedding / Keyword / LLM</td><td>How routing decisions are made</td></tr>
+      <tr><td>Default Agent</td><td>Agent ID</td><td>Fallback when no agent matches</td></tr>
+      <tr><td>Confidence Threshold</td><td>0.0 – 1.0</td><td>Min score to route; below this goes to default</td></tr>
+      <tr><td>Intent Examples</td><td>List of phrases per agent</td><td>Used for embedding-based routing index</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Orchestrator is Not a Gateway Bottleneck</strong>
+    <p>If routing latency is a concern, use keyword or embedding routing rather than LLM routing. LLM routing adds a full LLM call to every user message before the specialist even starts. Embedding routing typically adds less than 20ms.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Multi-Agent Overview</a>
+    <a href="02-handoff.html">Next: Agent Handoff &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

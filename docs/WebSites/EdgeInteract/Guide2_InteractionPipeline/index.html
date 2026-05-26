@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interaction Pipeline Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Pipeline Overview</a>
+  <a href="01-interaction-request.html">InteractionRequest</a>
+  <a href="02-targeting.html">Targeting</a>
+  <a href="03-display.html">Display Stage</a>
+  <a href="04-user-response.html">User Response</a>
+  <a href="05-response-routing.html">Response Routing</a>
+  <a href="06-acknowledgement.html">Acknowledgement</a>
+  <a href="07-timeout.html">Interaction Timeout</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Interaction Pipeline Overview</h1>
+    <p class="lead">The EdgeInteract interaction pipeline has five distinct stages. Each stage has defined inputs, outputs, and failure modes. Understanding the pipeline in full is essential for building reliable Human-in-the-Loop features.</p>
+  </div>
+
+  <h2>The Five Pipeline Stages</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Request Creation &amp; Publish</h4>
+        <p>Server constructs an <code>InteractionRequest</code>, validates it, runs pre-send hooks, and calls <code>IInteractionPublisher.PublishAsync()</code>. The interaction is registered in the pipeline state store with <code>status: "pending"</code>.</p>
+        <p><strong>Output:</strong> <code>interactionId</code>, interaction registered in state store</p>
+        <p><strong>Failure:</strong> Hook rejection, validation error, rate limit exceeded → <code>InteractionPublishException</code></p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>EdgeStream Delivery</h4>
+        <p>EdgeInteract publishes the serialized request to <code>interactions.{targetUserId}</code> via EdgeStream. The message fans out to all active WebSocket sessions for the targeted user. The timeout timer starts.</p>
+        <p><strong>Output:</strong> Message delivered to 0..N client sessions, <code>status: "delivered"</code></p>
+        <p><strong>Failure:</strong> No active sessions → message is queued or dropped depending on configuration</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot info">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>UI Display</h4>
+        <p>Client's <code>InteractionSubscriber</code> receives the message. <code>InteractionContainer</code> routes it to the correct component based on <code>type</code>. The component renders and waits for user input. Status: <code>"displayed"</code>.</p>
+        <p><strong>Output:</strong> Interaction visible in the user's browser/app</p>
+        <p><strong>Failure:</strong> Unknown type → fallback renderer or error boundary</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>User Response</h4>
+        <p>User takes action. Component calls <code>respond(outcome, data)</code>. <code>InteractionResponsePublisher</code> publishes an <code>InteractionResponse</code> to <code>interactions.callback.{interactionId}</code>. Post-receive hooks run on the server.</p>
+        <p><strong>Output:</strong> <code>InteractionResponse</code> on callback topic, <code>status: "responded"</code></p>
+        <p><strong>Failure:</strong> Response validation failure → hook rejects response, UI shows error</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body">
+        <h4>Acknowledgement</h4>
+        <p>Server processes the response, runs post-receive hooks, and publishes <code>InteractionAck</code> to the user's session. The client receives the ack and dismisses the UI component. <code>status: "acknowledged"</code>. The awaiting <code>Task</code> resolves.</p>
+        <p><strong>Output:</strong> Cycle complete, workflow resumes with response data</p>
+        <p><strong>Failure:</strong> Server processing error → error response to client</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Timeout Path</h2>
+  <p>If the timeout fires before Stage 4 completes:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">T</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Timeout Fires</h4>
+        <p>The pipeline timer expires. EdgeInteract publishes <code>InteractionTimeout</code> to the callback topic with <code>outcome: "timeout"</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">D</div></div>
+      <div class="body">
+        <h4>Client Dismissal</h4>
+        <p>The client receives a timeout dismissal signal. The UI component is removed from the inbox. The interaction is marked as expired.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Pipeline Status Transitions</h2>
+  <table>
+    <thead><tr><th>Status</th><th>Meaning</th><th>Next Status</th></tr></thead>
+    <tbody>
+      <tr><td><code>pending</code></td><td>Request created, not yet delivered</td><td><code>delivered</code> or <code>failed</code></td></tr>
+      <tr><td><code>delivered</code></td><td>Published to EdgeStream topic</td><td><code>displayed</code> or <code>timed_out</code></td></tr>
+      <tr><td><code>displayed</code></td><td>Rendered in client UI</td><td><code>responded</code> or <code>timed_out</code></td></tr>
+      <tr><td><code>responded</code></td><td>User submitted a response</td><td><code>acknowledged</code> or <code>failed</code></td></tr>
+      <tr><td><code>acknowledged</code></td><td>Server processed, cycle complete</td><td>(terminal)</td></tr>
+      <tr><td><code>timed_out</code></td><td>No response within timeoutMs</td><td>(terminal)</td></tr>
+      <tr><td><code>failed</code></td><td>Error in hook, validation, or server processing</td><td>(terminal)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Topic Map</h2>
+  <table>
+    <thead><tr><th>Topic</th><th>Direction</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td><code>interactions.{userId}</code></td><td>Server → Client</td><td><code>InteractionRequest</code></td></tr>
+      <tr><td><code>interactions.callback.{interactionId}</code></td><td>Client → Server</td><td><code>InteractionResponse</code></td></tr>
+      <tr><td><code>interactions.ack.{interactionId}</code></td><td>Server → Client</td><td><code>InteractionAck</code></td></tr>
+      <tr><td><code>interactions.dismiss.{userId}</code></td><td>Server → Client</td><td>Timeout/dismissal signal</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Explore Each Stage</strong>
+    The pages in this guide cover each stage in detail. Start with <a href="01-interaction-request.html">InteractionRequest</a> to understand the full request schema, then follow the stages in order.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-interaction-request.html">Next: InteractionRequest &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

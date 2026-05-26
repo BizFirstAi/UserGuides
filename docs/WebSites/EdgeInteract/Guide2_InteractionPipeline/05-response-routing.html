@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Response Routing — Interaction Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-interaction-request.html">InteractionRequest</a>
+  <a href="02-targeting.html">Targeting</a>
+  <a href="03-display.html">Display Stage</a>
+  <a href="04-user-response.html">User Response</a>
+  <a href="05-response-routing.html" class="active">Response Routing</a>
+  <a href="06-acknowledgement.html">Acknowledgement</a>
+  <a href="07-timeout.html">Interaction Timeout</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Response Routing</h1>
+    <p class="lead">When the <code>InteractionResponse</code> arrives at the server on the callback topic, it must be validated, routed to the waiting requester, and trigger post-receive hooks. This page explains exactly how that routing works.</p>
+  </div>
+
+  <h2>Callback Topic Architecture</h2>
+  <p>Each interaction has a unique callback topic: <code>interactions.callback.{interactionId}</code>. When the server publishes a request, it simultaneously subscribes to this topic via EdgeStream. The subscription persists until one of these events occurs:</p>
+  <ul>
+    <li>A valid <code>InteractionResponse</code> arrives</li>
+    <li>An <code>InteractionTimeout</code> fires</li>
+    <li>The server shuts down (subscription is re-registered on restart)</li>
+  </ul>
+
+  <h2>Server-Side Response Reception</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>EdgeStream Delivers the Response</h4>
+        <p>The <code>InteractionResponse</code> arrives on <code>interactions.callback.{interactionId}</code>. The <code>InteractionPipeline</code>'s EdgeStream subscription handler fires.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Respondent Validation</h4>
+        <p>The pipeline verifies that <code>respondedBy</code> is a legitimate recipient of the original request (was the target user, or a member of the targeted role at publish time). Invalid respondents are rejected.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Response Validation Hook</h4>
+        <p>The <code>ResponseValidationHook</code> checks that the <code>outcome</code> is valid for the interaction type and that the <code>data</code> matches the expected schema. Invalid responses return an error to the client.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Post-Receive Hooks Run</h4>
+        <p>All registered <code>IInteractionHook.OnAfterRespond()</code> implementations run: audit logging, metrics emission, business-specific side effects.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body">
+        <h4>TaskCompletionSource Resolves</h4>
+        <p>The <code>PublishAndWaitAsync()</code> call's internal <code>TaskCompletionSource&lt;InteractionResponse&gt;</code> is resolved with the response. The awaiting server code resumes with the full response object.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Custom Callback Topics</h2>
+  <p>In most cases, the default callback topic <code>interactions.callback.{interactionId}</code> is the right choice. Custom callback topics are useful when:</p>
+  <ul>
+    <li>You have an existing EdgeStream subscription infrastructure and want responses to arrive there</li>
+    <li>You are building a custom response aggregator (e.g., for multi-approval scenarios)</li>
+    <li>You want to route the response to a different service than the one that sent the request</li>
+  </ul>
+  <pre><code>// Custom callback topic
+const request: InteractionRequest = {
+  type: 'approval',
+  targetUserId: 'usr_abc',
+  title: '...',
+  payload: { ... },
+  timeoutMs: 86_400_000,
+  // Route response to a custom aggregator service
+  callbackTopic: 'my-service/approval-responses'
+};
+</code></pre>
+
+  <h2>Multi-Service Scenarios</h2>
+  <p>If your server is distributed (multiple service instances), the <code>InteractionPipeline</code> handles response routing across instances using the EdgeStream broker:</p>
+  <ul>
+    <li>The callback topic subscription is registered at the EdgeStream broker level — not tied to a specific server instance</li>
+    <li>The response will be delivered to whichever server instance is subscribed, regardless of which instance originally sent the request</li>
+    <li>For <code>PublishAndWaitAsync()</code> to work correctly across instances, the pipeline uses a distributed <code>TaskCompletionSource</code> backed by the EdgeStream broker's in-memory pub/sub</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Callback Topic Cleanup</strong>
+    After the response (or timeout) is received, the callback topic subscription is automatically cleaned up. Do not leave callback topic subscriptions dangling — the pipeline handles this internally.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-user-response.html">&#8592; User Response</a>
+    <a href="06-acknowledgement.html">Next: Acknowledgement &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRUD Workflow Patterns — Application Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Application Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema-design.html">Designing the Data Schema</a>
+  <a href="02-ai-form-generation.html">AI-Generated Forms</a>
+  <a href="03-crud-workflows.html" class="active">CRUD Workflow Patterns</a>
+  <a href="04-data-api.html">Exposing Data as an API</a>
+  <a href="05-data-visualization.html">Data Visualization</a>
+  <a href="06-access-control.html">Access Control</a>
+  <a href="07-example.html">End-to-End Example</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>CRUD Workflow Patterns</h1>
+    <p class="lead">The four standard workflow patterns for creating, reading, updating, and deleting Data Ocean SQL records — each workflow handles one operation, triggered by REST or a form action, executed by SQL nodes.</p>
+  </div>
+
+  <h2>Overview: One Workflow Per Operation</h2>
+  <p>The Application Data pattern uses <strong>four dedicated workflows</strong> — one per CRUD operation. This separation of concerns means each workflow is small, focused, and independently modifiable. Shared validation logic is extracted into a sub-workflow referenced by the create and update workflows.</p>
+
+  <table>
+    <thead>
+      <tr><th>Workflow</th><th>Trigger</th><th>SQL Node</th><th>Returns</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>lead-create</code></td><td>REST POST</td><td>SqlUpdateNode (INSERT)</td><td>JSON: { leadId, success }</td></tr>
+      <tr><td><code>lead-read</code></td><td>REST GET</td><td>SqlQueryNode (SELECT)</td><td>JSON: lead object or list</td></tr>
+      <tr><td><code>lead-update</code></td><td>REST PUT</td><td>SqlUpdateNode (UPDATE)</td><td>JSON: { success, rowsAffected }</td></tr>
+      <tr><td><code>lead-delete</code></td><td>REST DELETE</td><td>SqlUpdateNode (soft DELETE)</td><td>JSON: { success }</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Create Workflow Pattern</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>REST Trigger (POST)</h4>
+        <p>Trigger: <code>POST /api/workflows/lead-create/trigger</code>. Input body contains the form data (fullName, email, etc.).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Input Validation (Sub-workflow)</h4>
+        <p>Call <code>lead-validate</code> sub-workflow. Checks required fields, email format, value ranges. Returns validation errors or passes through.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>SqlUpdateNode (INSERT)</h4>
+        <p>Execute parameterized INSERT into Lead table. Node binds all input variables to SQL parameters. Returns <code>rowsAffected = 1</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>AI Enrichment Trigger (Optional)</h4>
+        <p>Optionally trigger <code>lead-enrich</code> workflow asynchronously. Does not block the response — enrichment runs in background.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body">
+        <h4>Return Response</h4>
+        <p>Return <code>{ "leadId": "...", "success": true }</code> to the caller (form or API consumer).</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>Create Workflow — SQL Node Config</h3>
+  <pre><code>{
+  "nodeType": "SqlUpdateNode",
+  "nodeId": "insert-lead",
+  "datasourceId": "sales-data-db",
+  "command": "INSERT INTO Lead (LeadId, TenantId, FullName, CompanyName, Email, Phone, Source, Status, AssignedToUserId, EstimatedValue, Notes, FollowUpDate, CreatedBy, CreatedAt, UpdatedAt) VALUES (NEWID(), @tenantId, @fullName, @companyName, @email, @phone, @source, @status, @assignedToUserId, @estimatedValue, @notes, @followUpDate, @createdBy, GETUTCDATE(), GETUTCDATE())",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "fullName": "{{input.fullName}}",
+    "companyName": "{{input.companyName}}",
+    "email": "{{input.email}}",
+    "phone": "{{input.phone}}",
+    "source": "{{input.source}}",
+    "status": "{{input.status}}",
+    "assignedToUserId": "{{input.assignedToUserId}}",
+    "estimatedValue": "{{input.estimatedValue}}",
+    "notes": "{{input.notes}}",
+    "followUpDate": "{{input.followUpDate}}",
+    "createdBy": "{{workflow.userId}}"
+  },
+  "outputVariable": "insertResult"
+}</code></pre>
+
+  <h2>Read Workflow Patterns</h2>
+  <p>The Read operation has two variants — single record and list:</p>
+
+  <h3>Single Record Read</h3>
+  <pre><code>{
+  "nodeType": "SqlQueryNode",
+  "nodeId": "read-lead",
+  "datasourceId": "sales-data-db",
+  "query": "SELECT LeadId, FullName, CompanyName, Email, Phone, Source, Status, AssignedToUserId, EstimatedValue, Notes, FollowUpDate, CreatedAt, UpdatedAt, ClassificationLabel FROM Lead WHERE TenantId = @tenantId AND LeadId = @leadId AND IsDeleted = 0",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "leadId": "{{input.leadId}}"
+  },
+  "firstRowOnly": true,
+  "outputVariable": "lead"
+}</code></pre>
+
+  <h3>Paginated List Read</h3>
+  <pre><code>{
+  "nodeType": "SqlQueryNode",
+  "nodeId": "list-leads",
+  "datasourceId": "sales-data-db",
+  "query": "SELECT LeadId, FullName, CompanyName, Email, Status, AssignedToUserId, EstimatedValue, CreatedAt FROM Lead WHERE TenantId = @tenantId AND (@status IS NULL OR Status = @status) AND (@assignedTo IS NULL OR AssignedToUserId = @assignedTo) AND IsDeleted = 0 ORDER BY UpdatedAt DESC OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "status": "{{input.statusFilter}}",
+    "assignedTo": "{{input.assignedToFilter}}",
+    "offset": "{{input.offset}}",
+    "pageSize": "{{input.pageSize}}"
+  },
+  "outputVariable": "leads"
+}</code></pre>
+
+  <h2>Update Workflow Pattern</h2>
+  <pre><code>{
+  "nodeType": "SqlUpdateNode",
+  "nodeId": "update-lead",
+  "datasourceId": "sales-data-db",
+  "command": "UPDATE Lead SET FullName = @fullName, CompanyName = @companyName, Email = @email, Phone = @phone, Source = @source, Status = @status, AssignedToUserId = @assignedToUserId, EstimatedValue = @estimatedValue, Notes = @notes, FollowUpDate = @followUpDate, UpdatedAt = GETUTCDATE() WHERE TenantId = @tenantId AND LeadId = @leadId AND IsDeleted = 0",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "leadId": "{{input.leadId}}",
+    "fullName": "{{input.fullName}}",
+    "email": "{{input.email}}",
+    "status": "{{input.status}}"
+    // ... other fields
+  },
+  "outputVariable": "updateResult"
+}</code></pre>
+
+  <h2>Delete Workflow Pattern (Soft Delete)</h2>
+  <pre><code>{
+  "nodeType": "SqlUpdateNode",
+  "nodeId": "soft-delete-lead",
+  "datasourceId": "sales-data-db",
+  "command": "UPDATE Lead SET IsDeleted = 1, DeletedAt = GETUTCDATE(), UpdatedAt = GETUTCDATE() WHERE TenantId = @tenantId AND LeadId = @leadId AND IsDeleted = 0",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "leadId": "{{input.leadId}}"
+  },
+  "outputVariable": "deleteResult"
+}
+// Follow with a condition node:
+// If deleteResult.rowsAffected == 0 → return 404 Not Found
+// If deleteResult.rowsAffected == 1 → return 200 Success</code></pre>
+
+  <div class="callout warning">
+    <strong>Concurrency Conflict Handling</strong>
+    <p>If two users simultaneously update the same lead, the second UPDATE will overwrite the first without warning. For concurrency-sensitive data, add an <code>RowVersion</code> column (timestamp/rowversion type in SQL Server) and include <code>WHERE RowVersion = @expectedVersion</code> in the UPDATE command. If <code>rowsAffected = 0</code>, the record was modified by another user — return a 409 Conflict response.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-ai-form-generation.html">&#8592; AI-Generated Forms</a>
+    <a href="04-data-api.html">Next: Exposing Data as an API &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

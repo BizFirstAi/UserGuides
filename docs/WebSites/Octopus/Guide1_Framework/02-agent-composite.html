@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentComposite — Octopus Framework | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Octopus Framework</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-three-composites.html">Three Composite Objects</a>
+  <a href="02-agent-composite.html" class="active">AgentComposite</a>
+  <a href="03-conversation-composite.html">ConversationComposite</a>
+  <a href="04-user-composite.html">UserComposite</a>
+  <a href="05-llm-providers.html">LLM Provider Integrations</a>
+  <a href="06-flow-studio-link.html">Flow Studio Integration</a>
+  <a href="07-micro-frontends.html">Octopus Micro-Frontends</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>AgentComposite</h1>
+    <p class="lead">The <code>AgentComposite</code> is the complete definition of an Octopus AI agent — its LLM configuration, memory settings, tool registry, plugin list, system prompt, persona, and behavioral constraints. It is the blueprint from which every conversation is initiated.</p>
+  </div>
+
+  <h2>LLM Configuration</h2>
+  <p>Each agent is bound to an LLM configuration that specifies which model to use, the temperature, and the maximum context window size. This is stored as a <code>LLMConfig</code> value object:</p>
+  <pre><code>public class LLMConfig
+{
+    public string Provider { get; set; }       // "Anthropic", "OpenAI", "AzureOpenAI", "Ollama"
+    public string Model { get; set; }          // "claude-sonnet-4-6", "gpt-4o", etc.
+    public int CredentialId { get; set; }      // resolved via ICredentialResolver
+    public float Temperature { get; set; }     // 0.0 = deterministic, 1.0 = creative
+    public int MaxContextTokens { get; set; }  // e.g. 200000 for Claude
+    public int MaxOutputTokens { get; set; }   // max tokens in one response
+    public string? Endpoint { get; set; }      // for Azure OpenAI or local models
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Credential Pattern</strong>
+    <p>API keys are NEVER stored in plain configuration. The <code>CredentialId</code> field is an integer reference to a securely stored secret in the credential vault. At runtime, <code>ICredentialResolver.GetPasswordAsync(credentialId)</code> retrieves the key.</p>
+  </div>
+
+  <h2>Memory Configuration</h2>
+  <p>The <code>MemoryConfig</code> on the agent controls which memory types are active and their retention settings:</p>
+  <pre><code>public class MemoryConfig
+{
+    public bool EpisodicEnabled { get; set; }      // default: true
+    public bool SemanticEnabled { get; set; }      // default: true (if vector store configured)
+    public bool ProceduralEnabled { get; set; }    // default: false
+    public int EpisodicTtlDays { get; set; }       // 0 = never expire
+    public int MaxWorkingMemoryTokens { get; set; } // context window budget
+    public WorkingMemoryPruningStrategy PruningStrategy { get; set; } // FIFO, Summarize, SlidingWindow
+    public int SemanticTopK { get; set; }          // how many chunks to inject per turn
+}</code></pre>
+
+  <h2>Tool Registry</h2>
+  <p>The <code>ToolRegistry</code> holds all MCP tool definitions that this agent can call. Tools are discovered at agent startup by querying each registered MCP server's <code>GET /tools</code> endpoint:</p>
+  <pre><code>public class ToolRegistry
+{
+    private readonly Dictionary&lt;string, ToolDefinition&gt; _tools = new();
+
+    public void Register(ToolDefinition tool) =&gt; _tools[tool.Name] = tool;
+
+    public IReadOnlyList&lt;ToolDefinition&gt; GetAll() =&gt; _tools.Values.ToList();
+
+    public ToolDefinition? Get(string name) =&gt;
+        _tools.TryGetValue(name, out var t) ? t : null;
+}
+
+public class ToolDefinition
+{
+    public string Name { get; set; }
+    public string Description { get; set; }        // LLM reads this to decide when to call
+    public JsonSchema InputSchema { get; set; }    // JSON Schema for tool parameters
+    public JsonSchema? OutputSchema { get; set; }
+    public string McpServerUrl { get; set; }       // which server handles this tool
+}</code></pre>
+
+  <h2>Persona</h2>
+  <p>The agent persona defines the user-facing identity:</p>
+  <pre><code>public class AgentPersona
+{
+    public string DisplayName { get; set; }     // shown in chat UI
+    public string AvatarUrl { get; set; }
+    public string Tone { get; set; }            // "formal", "casual", "technical"
+    public string Language { get; set; }        // "en", "es", "fr", etc.
+    public bool EmojiAllowed { get; set; }
+    public string DomainExpertise { get; set; } // "HR", "Finance", "IT Support"
+}</code></pre>
+
+  <h2>Goal Definition</h2>
+  <p>Goals are structured (not free-form) and feed into the system prompt via template variables:</p>
+  <pre><code>public class AgentGoal
+{
+    public string Purpose { get; set; }          // "Help employees with HR questions"
+    public List&lt;string&gt; Capabilities { get; set; }  // what the agent can do
+    public List&lt;string&gt; OutOfScope { get; set; }    // what it should decline
+    public List&lt;string&gt; EscalationCriteria { get; set; } // when to escalate to human
+}
+
+// In the system prompt template:
+// {{goal.Purpose}}
+// Capabilities: {{goal.Capabilities | join ', '}}
+// Do not assist with: {{goal.OutOfScope | join ', '}}</code></pre>
+
+  <h2>Agent Lifecycle in Code</h2>
+  <p>Creating and registering an agent in Octopus:</p>
+  <pre><code>// Registration at startup (agents loaded from database)
+services.AddOctopus(options =>
+{
+    options.UsePlugin&lt;SqlServerStoragePlugin&gt;();
+    options.UsePlugin&lt;SemanticKernelPlugin&gt;();
+});
+
+// Creating an agent via the service layer
+var agent = new AgentComposite
+{
+    Name = "HR Assistant",
+    TenantId = tenantId,
+    LLMConfig = new LLMConfig
+    {
+        Provider = "Anthropic",
+        Model = "claude-sonnet-4-6",
+        CredentialId = 42,    // stored in credential vault
+        MaxContextTokens = 200_000,
+        Temperature = 0.3f
+    },
+    Persona = new AgentPersona
+    {
+        DisplayName = "Aria",
+        Tone = "formal",
+        Language = "en"
+    }
+};
+
+await _agentService.CreateAsync(agent);</code></pre>
+
+  <div class="callout success">
+    <strong>Agent Caching</strong>
+    <p>Once an AgentComposite is loaded from the database, it is cached in memory. The LLM provider and tool discovery results are cached until the agent configuration is explicitly updated. This avoids the overhead of re-reading config on every conversation turn.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-three-composites.html">&#8592; Three Composite Objects</a>
+    <a href="03-conversation-composite.html">Next: ConversationComposite &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

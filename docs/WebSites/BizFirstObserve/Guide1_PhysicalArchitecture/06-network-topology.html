@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Network Topology — Physical Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Physical Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Architecture Overview</a>
+  <a href="01-instrumentation.html">Instrumentation Layer</a>
+  <a href="02-collection.html">Collection Layer</a>
+  <a href="03-storage.html">Storage Layer</a>
+  <a href="04-visualization.html">Visualization Layer</a>
+  <a href="05-data-flow.html">Data Flow</a>
+  <a href="06-network-topology.html" class="active">Network Topology</a>
+  <a href="07-sizing.html">Sizing Guidelines</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Network Topology</h1>
+    <p class="lead">A complete port reference, protocol guide, and network zone design for BizFirst Observe. Only Grafana and the OTel Collector receiver ports should be accessible from outside the observability network zone.</p>
+  </div>
+
+  <h2>Port Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Port</th><th>Protocol</th><th>Direction</th><th>Zone</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>OTel Collector (gRPC)</td><td>4317</td><td>OTLP/gRPC</td><td>Inbound from services</td><td>Internal</td></tr>
+      <tr><td>OTel Collector (HTTP)</td><td>4318</td><td>OTLP/HTTP</td><td>Inbound from services</td><td>Internal</td></tr>
+      <tr><td>OTel Collector (metrics)</td><td>8888</td><td>HTTP (Prometheus)</td><td>Scraped by Prometheus</td><td>Internal</td></tr>
+      <tr><td>Loki</td><td>3100</td><td>HTTP</td><td>From Collector + Grafana</td><td>Internal</td></tr>
+      <tr><td>Prometheus</td><td>9090</td><td>HTTP</td><td>From Collector + Grafana</td><td>Internal</td></tr>
+      <tr><td>Prometheus (remote write)</td><td>9090</td><td>HTTP (remote_write)</td><td>From Collector</td><td>Internal</td></tr>
+      <tr><td>Tempo (HTTP API)</td><td>3200</td><td>HTTP</td><td>From Grafana</td><td>Internal</td></tr>
+      <tr><td>Tempo (OTLP)</td><td>4317</td><td>OTLP/gRPC</td><td>From Collector</td><td>Internal</td></tr>
+      <tr><td>Grafana</td><td>3000</td><td>HTTP</td><td>From users (browser)</td><td>External (load balanced)</td></tr>
+      <tr><td>Alertmanager</td><td>9093</td><td>HTTP</td><td>From Prometheus + Grafana</td><td>Internal</td></tr>
+      <tr><td>Node Exporter</td><td>9100</td><td>HTTP</td><td>Scraped by Prometheus</td><td>Internal</td></tr>
+      <tr><td>cAdvisor</td><td>8080</td><td>HTTP</td><td>Scraped by Prometheus</td><td>Internal</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Network Zone Design</h2>
+  <p>BizFirst Observe components should be isolated in a dedicated observability network zone. This prevents accidental access to storage backends and limits the blast radius of a compromised service:</p>
+
+  <h3>Zone: Application Network</h3>
+  <p>BizFirstGO services (ProcessEngine, EdgeStream, Octopus, etc.) reside here. They communicate outbound to the OTel Collector's OTLP ports (4317/4318). No observability storage backend should be directly reachable from this zone.</p>
+
+  <h3>Zone: Observability Network (Internal)</h3>
+  <p>The OTel Collector, Loki, Prometheus, Tempo, Alertmanager, Node Exporter, and cAdvisor reside here. This zone is not accessible from the public internet. Grafana queries these backends from within this zone.</p>
+
+  <h3>Zone: Management Network (External via Reverse Proxy)</h3>
+  <p>Only Grafana (port 3000) is exposed externally, typically behind a reverse proxy (nginx/Traefik) that enforces TLS and authentication. The reverse proxy forwards requests to Grafana in the observability network.</p>
+
+  <pre><code># Docker Compose network configuration
+networks:
+  app-network:          # BizFirstGO services
+    driver: bridge
+  observe-network:      # Observability components (internal)
+    driver: bridge
+    internal: true      # No outbound internet access
+  mgmt-network:         # Grafana external access
+    driver: bridge
+
+services:
+  otel-collector:
+    networks:
+      - app-network     # Receives from services
+      - observe-network # Exports to backends
+
+  loki:
+    networks: [observe-network]
+
+  prometheus:
+    networks: [observe-network]
+
+  tempo:
+    networks: [observe-network]
+
+  grafana:
+    networks:
+      - observe-network # Queries backends
+      - mgmt-network    # Accessible from outside
+    ports:
+      - "3000:3000"</code></pre>
+
+  <h2>Protocol Details</h2>
+  <h3>OTLP/gRPC (Preferred)</h3>
+  <p>The preferred protocol for telemetry export. OTLP/gRPC uses HTTP/2 multiplexing, which means a single TCP connection can carry multiple concurrent export streams. This is more efficient than HTTP/1.1 for high-throughput telemetry. The connection is long-lived — the SDK maintains a persistent gRPC channel to the Collector.</p>
+
+  <h3>OTLP/HTTP (Fallback)</h3>
+  <p>Used when gRPC is not available (e.g., browser-side telemetry, environments where HTTP/2 is blocked by a proxy). OTLP/HTTP uses binary Protobuf encoding over HTTP/1.1 POST requests. It is slightly less efficient but functionally equivalent.</p>
+
+  <h2>TLS Configuration</h2>
+  <div class="callout warning">
+    <strong>Enable TLS in Production</strong>
+    <p>All OTLP connections in production environments must use TLS. The default configuration in development uses <code>tls.insecure: true</code> for simplicity. Before deploying to production, configure certificates for the Collector's gRPC endpoints and all backend connections. Use a certificate manager (cert-manager in Kubernetes, or Let's Encrypt for standalone deployments).</p>
+  </div>
+  <pre><code># otel-collector-config.yaml — TLS for production
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        tls:
+          cert_file: /certs/collector.crt
+          key_file: /certs/collector.key
+          client_ca_file: /certs/ca.crt  # mTLS: require client cert
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: false
+      ca_file: /certs/ca.crt</code></pre>
+
+  <div class="page-nav">
+    <a href="05-data-flow.html">&#8592; Data Flow</a>
+    <a href="07-sizing.html">Next: Sizing Guidelines &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

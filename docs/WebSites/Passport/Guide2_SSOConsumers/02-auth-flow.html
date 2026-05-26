@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Authorization Code Flow — SSO Consumers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Consumers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-oidc-client.html">OIDC Client Setup</a>
+  <a href="02-auth-flow.html" class="active">Authorization Code Flow</a>
+  <a href="03-token-validation.html">Token Validation</a>
+  <a href="04-claims-mapping.html">Claims to User Context</a>
+  <a href="05-token-refresh.html">Token Refresh</a>
+  <a href="06-logout.html">Logout</a>
+  <a href="07-sdk.html">BizFirstGO SSO SDK</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Authorization Code Flow</h1>
+    <p class="lead">Step-by-step walkthrough of the OIDC authorization code flow with PKCE — from browser redirect to access token, with code examples for each stage.</p>
+  </div>
+
+  <h2>Complete Flow Diagram</h2>
+  <pre><code>Browser/App               Your Backend              Passport
+     │                         │                        │
+     │  User clicks Sign In     │                        │
+     ├──── generate PKCE ──────&gt;│                        │
+     │                         │ build authorization URL │
+     │&lt;──── redirect ──────────┤                        │
+     │                         │                        │
+     │──── GET /passport/authorize ──────────────────────&gt;│
+     │     ?client_id=...       │                        │
+     │     &code_challenge=...  │                        │
+     │     &state=...           │                        │
+     │                         │                        │
+     │                   [Passport login UI]             │
+     │                   [User authenticates]            │
+     │                         │                        │
+     │&lt;────────────────────── redirect to callback ──────┤
+     │     ?code=...           │                        │
+     │     &state=...           │                        │
+     │                         │                        │
+     ├──── POST /callback ─────&gt;│                        │
+     │                         │ verify state           │
+     │                         ├── POST /passport/token ─&gt;│
+     │                         │   grant_type=authorization_code
+     │                         │   code=...             │
+     │                         │   code_verifier=...    │
+     │                         │&lt;── access_token ────────┤
+     │                         │    id_token            │
+     │                         │    refresh_token       │
+     │&lt;──── session + tokens ──┤                        │</code></pre>
+
+  <h2>Step 1 — Generate PKCE Parameters</h2>
+  <pre><code>// TypeScript/JavaScript (SPA)
+function generatePkce(): { verifier: string; challenge: string } {
+  const verifier = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(64))))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+  const challengeBuffer = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(verifier)
+  );
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(challengeBuffer)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+  return { verifier, challenge };
+}
+
+// C# (server-side)
+using System.Security.Cryptography;
+
+string GenerateCodeVerifier() {
+  var bytes = RandomNumberGenerator.GetBytes(64);
+  return Convert.ToBase64String(bytes)
+    .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+}
+
+string GenerateCodeChallenge(string verifier) {
+  var hash = SHA256.HashData(Encoding.ASCII.GetBytes(verifier));
+  return Convert.ToBase64String(hash)
+    .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+}</code></pre>
+
+  <h2>Step 2 — Build the Authorization URL</h2>
+  <pre><code>// Parameters for the authorization request
+var state = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+
+// Store in session for CSRF validation
+Session["oauth_state"] = state;
+Session["pkce_verifier"] = codeVerifier;
+Session["return_url"] = Request.Query["returnUrl"];
+
+var authUrl = new UriBuilder("https://passport.bizfirst.ai/passport/authorize");
+authUrl.Query = QueryString.Create([
+  ("response_type", "code"),
+  ("client_id",     "workflow-api-prod"),
+  ("redirect_uri",  "https://myapp.example.com/auth/callback"),
+  ("scope",         "openid profile email roles tenant"),
+  ("state",         state),
+  ("code_challenge",      codeChallenge),
+  ("code_challenge_method", "S256"),
+  ("nonce",         Guid.NewGuid().ToString("N"))  // for id_token validation
+]).ToString();
+
+return Redirect(authUrl.ToString());</code></pre>
+
+  <h2>Step 3 — Handle the Callback</h2>
+  <pre><code>[HttpGet("/auth/callback")]
+public async Task&lt;IActionResult&gt; Callback(
+    string code,
+    string state,
+    string? error = null,
+    string? errorDescription = null)
+{
+    // Handle errors from Passport (e.g., user denied access)
+    if (error != null)
+        return BadRequest($"SSO error: {error} — {errorDescription}");
+
+    // Validate state (CSRF protection)
+    var expectedState = Session["oauth_state"] as string;
+    if (state != expectedState)
+        return BadRequest("Invalid state — possible CSRF attack");
+
+    var codeVerifier = Session["pkce_verifier"] as string;
+
+    // Exchange code for tokens
+    var tokens = await _passportClient.ExchangeCodeAsync(new CodeExchangeRequest
+    {
+        Code         = code,
+        CodeVerifier = codeVerifier,
+        RedirectUri  = "https://myapp.example.com/auth/callback"
+    });
+
+    // Establish application session
+    await _sessionService.CreateSessionAsync(HttpContext, tokens);
+
+    var returnUrl = Session["return_url"] as string ?? "/";
+    return Redirect(returnUrl);
+}</code></pre>
+
+  <h2>Step 4 — Token Exchange</h2>
+  <pre><code>// ISsoOrchestrationService internally calls Passport token endpoint
+// Direct HTTP example:
+POST /passport/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic base64("workflow-api-prod:client-secret")
+
+grant_type=authorization_code
+&code=short-lived-authorization-code
+&redirect_uri=https://myapp.example.com/auth/callback
+&code_verifier=original-code-verifier-not-hashed
+
+// Successful Response (200 OK)
+{
+  "access_token":  "eyJhbGciOiJSUzI1NiIsImtpZCI6...",
+  "id_token":      "eyJhbGciOiJSUzI1NiIsImtpZCI6...",
+  "refresh_token": "opaque-refresh-token-value",
+  "token_type":    "Bearer",
+  "expires_in":    900,
+  "scope":         "openid profile email roles tenant"
+}
+
+// Error Response (400 Bad Request)
+{
+  "error": "invalid_grant",
+  "error_description": "The authorization code is invalid or expired."
+}</code></pre>
+
+  <h2>State Parameter Security</h2>
+  <p>The <code>ISsoStateManager</code> in Passport signs the state parameter using HMAC-SHA256 to prevent tampering. Your application should:</p>
+  <ul>
+    <li>Generate a cryptographically random state (at least 32 bytes) for each authorization request</li>
+    <li>Store the state in the user's session (not in a cookie or URL)</li>
+    <li>Verify the returned state exactly matches before processing the callback</li>
+    <li>Reject and log any callback where state validation fails</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Authorization Code Is Single-Use</strong>
+    <p>The authorization code is valid for 60 seconds and can only be exchanged once. If you receive an <code>invalid_grant</code> error during exchange, the code has already been used (replay attack) or has expired. Restart the authorization flow.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-oidc-client.html">&#8592; OIDC Client Setup</a>
+    <a href="03-token-validation.html">Next: Token Validation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

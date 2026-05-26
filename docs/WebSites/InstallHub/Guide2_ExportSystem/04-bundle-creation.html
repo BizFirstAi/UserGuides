@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bundle Creation — Export System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Export System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-selecting-artifacts.html">Selecting Artifacts</a>
+  <a href="02-dependency-resolution.html">Dependency Resolution</a>
+  <a href="03-manifest-generation.html">Manifest Generation</a>
+  <a href="04-bundle-creation.html" class="active">Bundle Creation</a>
+  <a href="05-export-api.html">Export API</a>
+  <a href="06-export-history.html">Export History</a>
+  <a href="07-validation.html">Pre-Export Validation</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Bundle Creation</h1>
+    <p class="lead">The BundleWriter assembles all serialized artifacts, the manifest, and README into a ZIP archive — producing the final deliverable of the export pipeline.</p>
+  </div>
+
+  <h2>Bundle Assembly Sequence</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Serialize Each Artifact</h4>
+        <p>The <code>PackageSerializer</code> converts each artifact entity from the database into its JSON representation. Each artifact type has a dedicated serializer that produces stable, deterministic output (keys sorted alphabetically to ensure consistent checksums).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Compute Per-Artifact Hashes</h4>
+        <p>SHA-256 is computed over the UTF-8 bytes of each artifact JSON file. These per-artifact hashes are stored in the manifest and used by the import engine to verify individual files.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Compute Bundle Checksum</h4>
+        <p>The overall bundle checksum is SHA-256 of all artifact bytes concatenated in install order. This single checksum covers the entire content of the bundle.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Generate manifest.json</h4>
+        <p>The manifest is generated with all artifact entries, hashes, and the bundle checksum. The manifest is then serialized to JSON.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Generate README.md</h4>
+        <p>An auto-generated README is created listing the package name, version, artifacts, and installation prerequisites.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">6</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Write ZIP</h4>
+        <p><code>BundleWriter</code> creates the ZIP archive using <code>System.IO.Compression.ZipArchive</code> in memory. All artifact files are written under <code>artifacts/{type}/</code>; the manifest and README are written at the root.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">7</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Store and Return</h4>
+        <p>The ZIP bytes are stored in blob storage and a download URL is generated. The API response returns the download URL, package ID, and manifest summary.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Artifact Serialization Per Type</h2>
+
+  <h3>ProcessDefinition Serialization</h3>
+  <pre><code>// artifacts/workflows/proc-1001.json
+{
+  "_type":      "ProcessDefinition",
+  "_version":   "2.1.0",
+  "_exportedAt": "2026-05-25T09:00:00Z",
+  "id":          "proc-1001",
+  "name":        "EmployeeOnboarding",
+  "description": "Multi-step employee onboarding with approval",
+  "nodes": [
+    {
+      "nodeId":   "n1",
+      "nodeType": "StartNode",
+      "config":   {}
+    },
+    {
+      "nodeId":   "n2",
+      "nodeType": "FormDisplayNode",
+      "config":   { "formId": "form-2005" }
+    },
+    {
+      "nodeId":   "n3",
+      "nodeType": "RuleEvaluationNode",
+      "config":   { "ruleSetId": "rule-305" }
+    }
+  ],
+  "connections": [
+    { "from": "n1", "to": "n2" },
+    { "from": "n2", "to": "n3" }
+  ]
+}</code></pre>
+
+  <h3>AtlasForm Serialization</h3>
+  <pre><code>// artifacts/forms/form-2005.json
+{
+  "_type":      "AtlasForm",
+  "_version":   "1.3.0",
+  "_exportedAt": "2026-05-25T09:00:00Z",
+  "id":     "form-2005",
+  "name":   "EmployeeForm",
+  "fields": [
+    {
+      "fieldId":    "f1",
+      "fieldType":  "TextInput",
+      "label":      "First Name",
+      "required":   true,
+      "validation": { "maxLength": 100 }
+    },
+    {
+      "fieldId":    "f2",
+      "fieldType":  "Dropdown",
+      "label":      "Department",
+      "dataSource": { "type": "EntityQuery", "entityId": "ent-44", "field": "departments" }
+    }
+  ],
+  "actions": [
+    { "actionId": "submit", "type": "FormSubmit", "label": "Submit" }
+  ]
+}</code></pre>
+
+  <h2>ZIP Structure</h2>
+  <pre><code>employee-onboarding-2.1.0.zip
+├── manifest.json                          (root)
+├── README.md                              (root)
+└── artifacts/
+    ├── workflows/
+    │   ├── proc-1001.json
+    │   └── thread-2002.json
+    ├── forms/
+    │   └── form-2005.json
+    ├── rules/
+    │   └── rule-305.json
+    └── entities/
+        └── ent-44.json</code></pre>
+
+  <h2>ZIP Compression Settings</h2>
+  <p>The bundle uses <code>CompressionLevel.Optimal</code> for artifact JSON files (high text compressibility). The manifest is stored uncompressed (<code>CompressionLevel.NoCompression</code>) to allow fast extraction without decompressing the entire archive.</p>
+
+  <h2>BundleWriter Implementation</h2>
+  <pre><code>public class BundleWriter
+{
+    public async Task&lt;byte[]&gt; WriteAsync(
+        IEnumerable&lt;SerializedArtifact&gt; artifacts,
+        PackageManifest                  manifest,
+        CancellationToken                ct = default)
+    {
+        using var ms  = new MemoryStream();
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true);
+
+        // Write artifact files
+        foreach (var artifact in artifacts)
+        {
+            var entry = zip.CreateEntry(artifact.FilePath, CompressionLevel.Optimal);
+            await using var stream = entry.Open();
+            await stream.WriteAsync(artifact.Bytes, ct);
+        }
+
+        // Write manifest (no compression — fast to read)
+        var manifestEntry = zip.CreateEntry("manifest.json", CompressionLevel.NoCompression);
+        await using var manifestStream = manifestEntry.Open();
+        await JsonSerializer.SerializeAsync(manifestStream, manifest, _jsonOptions, ct);
+
+        // Write README
+        var readmeEntry = zip.CreateEntry("README.md", CompressionLevel.Optimal);
+        await using var readmeStream = readmeEntry.Open();
+        await readmeStream.WriteAsync(GenerateReadme(manifest), ct);
+
+        zip.Dispose();
+        return ms.ToArray();
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>In-Memory Assembly</strong>
+    The ZIP is assembled entirely in memory and stored as a single write to blob storage. This avoids temporary files on disk and ensures the bundle is atomic — either the complete ZIP is stored, or nothing is.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-manifest-generation.html">&#8592; Manifest Generation</a>
+    <a href="05-export-api.html">Next: Export API &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

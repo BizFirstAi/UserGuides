@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Collection Layer — Physical Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Physical Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Architecture Overview</a>
+  <a href="01-instrumentation.html">Instrumentation Layer</a>
+  <a href="02-collection.html" class="active">Collection Layer</a>
+  <a href="03-storage.html">Storage Layer</a>
+  <a href="04-visualization.html">Visualization Layer</a>
+  <a href="05-data-flow.html">Data Flow</a>
+  <a href="06-network-topology.html">Network Topology</a>
+  <a href="07-sizing.html">Sizing Guidelines</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Collection Layer</h1>
+    <p class="lead">The OpenTelemetry Collector is the nerve center of BizFirst Observe. It receives telemetry from every BizFirstGO service, processes and enriches it, and fans it out to the appropriate storage backends.</p>
+  </div>
+
+  <h2>Why a Collector?</h2>
+  <p>Without a Collector, every service would need its own configuration for each backend destination (Loki, Prometheus, Tempo). The Collector decouples services from backends: services always send to the Collector via OTLP, and the Collector handles routing, enrichment, and protocol translation. This also means you can add a new backend (e.g., Datadog) by changing only the Collector configuration — no code changes in services.</p>
+
+  <h2>Collector Pipeline Architecture</h2>
+  <p>The OTel Collector processes telemetry through a three-stage pipeline: <strong>Receivers → Processors → Exporters</strong>. Each signal type (logs, metrics, traces) has its own named pipeline.</p>
+
+  <pre><code># otel-collector-config.yaml — BizFirstGO reference configuration
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317      # Receives from all BizFirstGO services
+      http:
+        endpoint: 0.0.0.0:4318      # HTTP fallback (used by browser telemetry)
+
+  # Host metrics from Node Exporter (scrape-based)
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'node-exporter'
+          static_configs:
+            - targets: ['node-exporter:9100']
+        - job_name: 'cadvisor'
+          static_configs:
+            - targets: ['cadvisor:8080']
+
+processors:
+  # Batch telemetry for efficient export
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+  # Add deployment metadata to all telemetry
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "${DEPLOYMENT_ENV}"
+        action: upsert
+      - key: cluster.name
+        value: "${CLUSTER_NAME}"
+        action: upsert
+
+  # Memory limiter — prevent OOM under high load
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # PII redaction (see Guide9 for full config)
+  transform/redact:
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(attributes["http.request.body"], "password=[^&]+", "password=[REDACTED]")
+          - replace_pattern(attributes["http.request.body"], "token=[^&]+", "token=[REDACTED]")
+
+exporters:
+  # Logs → Loki
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    default_labels_enabled:
+      exporter: false
+      job: true
+      instance: true
+      level: true
+
+  # Metrics → Prometheus (remote write)
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+
+  # Traces → Tempo
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, transform/redact, batch]
+      exporters: [loki]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite]
+
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/tempo]</code></pre>
+
+  <h2>Processor Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Processor</th><th>Purpose</th><th>Applied To</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>memory_limiter</code></td><td>Drops telemetry if memory exceeds limit — prevents OOM crashes</td><td>All pipelines</td></tr>
+      <tr><td><code>batch</code></td><td>Groups telemetry into batches for efficient export</td><td>All pipelines</td></tr>
+      <tr><td><code>resource</code></td><td>Adds/modifies resource attributes (environment, cluster name)</td><td>All pipelines</td></tr>
+      <tr><td><code>transform/redact</code></td><td>Applies regex-based PII masking to log and span attributes</td><td>Logs + Traces</td></tr>
+      <tr><td><code>probabilistic_sampler</code></td><td>Drops a configurable percentage of traces (production cost control)</td><td>Traces</td></tr>
+      <tr><td><code>tail_sampling</code></td><td>Sample 100% of error traces, N% of success traces</td><td>Traces</td></tr>
+      <tr><td><code>filter</code></td><td>Drops telemetry matching specific conditions (e.g., health check noise)</td><td>All pipelines</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Health Check Noise Filtering</h2>
+  <p>Health check endpoints (<code>/health</code>, <code>/ready</code>, <code>/live</code>) are called every few seconds by load balancers and Kubernetes probes. Without filtering, they generate thousands of low-value trace spans per hour. Filter them out in the Collector:</p>
+  <pre><code>processors:
+  filter/drop_health:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.route"] == "/health"'
+        - 'attributes["http.route"] == "/ready"'
+        - 'attributes["http.route"] == "/live"'</code></pre>
+
+  <h2>Collector Sizing</h2>
+  <table>
+    <thead>
+      <tr><th>Deployment Scale</th><th>Services</th><th>Collector CPU</th><th>Collector RAM</th><th>Replicas</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Development</td><td>1–5</td><td>0.5 vCPU</td><td>256 MB</td><td>1</td></tr>
+      <tr><td>Small production</td><td>5–20</td><td>1 vCPU</td><td>512 MB</td><td>1–2</td></tr>
+      <tr><td>Medium production</td><td>20–100</td><td>2–4 vCPU</td><td>1–2 GB</td><td>2–4</td></tr>
+      <tr><td>Large production</td><td>100+</td><td>4–8 vCPU</td><td>2–4 GB</td><td>4–8 (with load balancer)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Always Configure memory_limiter First</strong>
+    <p>Place <code>memory_limiter</code> as the first processor in every pipeline. If the Collector runs out of memory and crashes, all telemetry from all services is lost until it restarts. The memory limiter gracefully drops telemetry when under pressure rather than crashing — a much better outcome.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-instrumentation.html">&#8592; Instrumentation Layer</a>
+    <a href="03-storage.html">Next: Storage Layer &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

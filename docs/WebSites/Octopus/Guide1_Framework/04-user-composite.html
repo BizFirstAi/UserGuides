@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UserComposite — Octopus Framework | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Octopus Framework</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-three-composites.html">Three Composite Objects</a>
+  <a href="02-agent-composite.html">AgentComposite</a>
+  <a href="03-conversation-composite.html">ConversationComposite</a>
+  <a href="04-user-composite.html" class="active">UserComposite</a>
+  <a href="05-llm-providers.html">LLM Provider Integrations</a>
+  <a href="06-flow-studio-link.html">Flow Studio Integration</a>
+  <a href="07-micro-frontends.html">Octopus Micro-Frontends</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>UserComposite</h1>
+    <p class="lead">The <code>UserComposite</code> represents a human (or system) interacting with Octopus agents. It controls which agents a user can access, carries user preferences, and links to their conversation history — all scoped to their tenant.</p>
+  </div>
+
+  <h2>User Identity</h2>
+  <p>Octopus users are identified via their tenant authentication system. The <code>ExternalUserId</code> is the identity claim from the auth provider (BizFirstGO SSO, Azure AD, etc.). Octopus does not manage passwords — it trusts the external identity provider:</p>
+  <pre><code>public class UserComposite
+{
+    public Guid Id { get; init; }               // Octopus internal ID
+    public string ExternalUserId { get; set; }  // from auth token (sub claim)
+    public string TenantId { get; init; }
+    public string DisplayName { get; set; }
+    public string Email { get; set; }
+    public UserPreferences Preferences { get; set; }
+    public IReadOnlyList&lt;Guid&gt; AccessibleAgentIds { get; set; }
+    public IReadOnlyList&lt;Guid&gt; ConversationIds { get; set; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset LastActiveAt { get; set; }
+}</code></pre>
+
+  <h2>Agent Access Control</h2>
+  <p>A user can only interact with agents that appear in their <code>AccessibleAgentIds</code> list. This list is managed by tenant administrators via the <code>agents-app</code>. Agent access can be granted at three levels:</p>
+  <table>
+    <thead>
+      <tr><th>Level</th><th>Scope</th><th>How to Set</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Individual</strong></td><td>One user, one agent</td><td>User record in agents-app</td></tr>
+      <tr><td><strong>Role-based</strong></td><td>All users with a given role</td><td>Agent access policy in agents-app</td></tr>
+      <tr><td><strong>Tenant-wide</strong></td><td>All users in the tenant</td><td>Agent marked as public within tenant</td></tr>
+    </tbody>
+  </table>
+
+  <h2>User Preferences</h2>
+  <pre><code>public class UserPreferences
+{
+    public string PreferredLanguage { get; set; }   // "en", "es", "fr"
+    public string Timezone { get; set; }             // "America/New_York"
+    public bool StreamingEnabled { get; set; }       // SSE streaming vs. full response
+    public bool ShowToolCallDetails { get; set; }    // show tool call steps in UI
+    public Guid? DefaultAgentId { get; set; }        // agent to open by default
+}</code></pre>
+
+  <h2>Multi-Tenant Scoping</h2>
+  <p>The <code>TenantId</code> on the UserComposite is the hard boundary. A user from Tenant A can never access agents, conversations, or memory belonging to Tenant B. The repository layer enforces this:</p>
+  <pre><code>// All user queries are scoped to the tenant
+public async Task&lt;UserComposite?&gt; GetByExternalIdAsync(
+    string externalUserId, string tenantId)
+{
+    return await _db.OctopusUsers
+        .Where(u => u.ExternalUserId == externalUserId
+                 && u.TenantId == tenantId)
+        .Select(u => MapToComposite(u))
+        .FirstOrDefaultAsync();
+}</code></pre>
+
+  <h2>Auto-Provisioning</h2>
+  <p>When a user first accesses the Octopus chat for a tenant, a UserComposite is auto-provisioned from the auth token claims if it does not exist. The default accessible agents are set from the tenant's default agent access policy:</p>
+  <pre><code>// In the chat API controller, before routing to agent:
+var user = await _userRepository.GetOrProvisionAsync(
+    externalUserId: HttpContext.User.FindFirst("sub")!.Value,
+    tenantId: tenantId,
+    displayName: HttpContext.User.FindFirst("name")?.Value ?? "User",
+    email: HttpContext.User.FindFirst("email")?.Value);
+
+if (!user.AccessibleAgentIds.Contains(agentId))
+    return Forbid("User does not have access to this agent");</code></pre>
+
+  <div class="callout info">
+    <strong>System Users</strong>
+    <p>Octopus supports system users — non-human identities used by other services to interact with agents programmatically. For example, a Flow Studio workflow can act as a system user to call an agent's reasoning capability. System users have their own UserComposite with service-specific preferences.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-conversation-composite.html">&#8592; ConversationComposite</a>
+    <a href="05-llm-providers.html">Next: LLM Provider Integrations &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

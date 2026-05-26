@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSO Session Management — SSO Providers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Providers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-saml.html">SAML 2.0 Provider</a>
+  <a href="02-oidc.html">OIDC Provider</a>
+  <a href="03-application-trust.html">Application Trust</a>
+  <a href="04-attribute-mapping.html">Attribute Mapping</a>
+  <a href="05-session-management.html" class="active">SSO Session Management</a>
+  <a href="06-mfa.html">MFA in SSO Flows</a>
+  <a href="07-testing.html">Testing SSO Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>SSO Session Management</h1>
+    <p class="lead">Understand Passport's session model — how SSO sessions are established, how lifetime and idle timeout policies work, and how Single Logout propagates across all connected applications.</p>
+  </div>
+
+  <h2>Session Architecture</h2>
+  <p>Passport maintains two distinct session layers:</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Passport Session</h4>
+      <p>The master session at the IdP level. Established once when the user first authenticates. Lives in the <code>IAM_Sessions</code> table. Controls how long the user can access connected applications without re-authenticating to Passport.</p>
+    </div>
+    <div class="card">
+      <h4>SP/Client Session</h4>
+      <p>The local session maintained by each application after it receives a valid assertion. Managed entirely by the SP. Passport has no visibility into SP session state — only the SAML SessionIndex or OIDC refresh token links them.</p>
+    </div>
+  </div>
+
+  <h2>Session Lifetime Policies</h2>
+  <table>
+    <thead>
+      <tr><th>Policy</th><th>Default</th><th>Configurable</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Absolute session lifetime</td><td>8 hours</td><td>Per tenant</td><td>Maximum time a Passport session is valid regardless of activity</td></tr>
+      <tr><td>Idle timeout</td><td>2 hours</td><td>Per tenant</td><td>Session expires if no SSO activity within this window</td></tr>
+      <tr><td>Remember-me duration</td><td>30 days</td><td>Per tenant</td><td>Extended session when user selects "remember this device"</td></tr>
+      <tr><td>SAML assertion window</td><td>5 min</td><td>Per consumer</td><td><code>NotOnOrAfter</code> in assertion — SP must process within this window</td></tr>
+      <tr><td>OIDC access token</td><td>15 min</td><td>Per client</td><td>Access token validity — refresh token extends the session</td></tr>
+      <tr><td>OIDC refresh token</td><td>7 days</td><td>Per client</td><td>Refresh token validity — rotated on each use</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Session Establishment Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>First SSO Request</h4>
+        <p>No Passport session cookie exists. Passport presents the login form. User authenticates with username + password (and MFA if configured).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Session Created</h4>
+        <p>Passport creates an entry in <code>IAM_Sessions</code> with a cryptographically signed session token. A <code>HttpOnly; Secure; SameSite=None</code> cookie is set on the Passport domain.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Assertion Issued</h4>
+        <p>Passport issues the SAML assertion or OIDC token to the requesting application. The SAML assertion includes the <code>SessionIndex</code> which links the SP session to the Passport session for SLO purposes.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Subsequent SSO Requests</h4>
+        <p>When the user visits a second application, the Passport session cookie is present. Passport validates the session and issues a new assertion immediately — no login prompt. This is the SSO experience.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot muted">5</div></div>
+      <div class="body">
+        <h4>Session Expiry</h4>
+        <p>When the session exceeds the absolute lifetime or idle timeout, the session is invalidated. The next SSO request triggers a fresh authentication prompt.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Single Logout (SLO)</h2>
+  <p>SAML Single Logout ensures that when a user logs out from one application, all other SSO-connected applications are also notified and can terminate their local sessions.</p>
+
+  <h3>SLO Flow</h3>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Initiating SP sends LogoutRequest</h4>
+        <pre><code>POST /passport/saml/slo
+SAMLRequest=base64-encoded-LogoutRequest
+&amp;SigAlg=http://www.w3.org/2001/04/xmldsig-more#rsa-sha256
+&amp;Signature=...</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Passport validates the request</h4>
+        <p>Validates the LogoutRequest signature, extracts the <code>NameID</code> and <code>SessionIndex</code>, and locates the corresponding Passport session.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Fan-out LogoutRequests to all SPs</h4>
+        <p>Passport sends an SLO LogoutRequest to every SP that participated in the session (identified by <code>SessionIndex</code>). These are sent in parallel with a configurable timeout.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Session Destroyed + LogoutResponse</h4>
+        <p>Passport destroys the session regardless of SP response status. Returns a <code>LogoutResponse</code> to the initiating SP with success status.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <strong>Best-Effort SLO</strong>
+    <p>Passport sends SLO requests to all SPs but does not retry on failure. If an SP is unavailable during SLO, its local session may remain active until it naturally expires. This is standard SAML SLO behavior — not a Passport limitation. Design SP session lifetimes accordingly.</p>
+  </div>
+
+  <h2>Session Admin Operations</h2>
+  <pre><code>// List all active sessions for a user
+GET /passport/admin/users/{userId}/sessions
+Authorization: Bearer {admin-token}
+
+// Forcibly terminate a specific session
+DELETE /passport/admin/sessions/{sessionId}
+Authorization: Bearer {admin-token}
+
+// Terminate all sessions for a user (account lockout scenario)
+DELETE /passport/admin/users/{userId}/sessions
+Authorization: Bearer {admin-token}
+{ "reason": "security-incident", "notifyUser": true }</code></pre>
+
+  <div class="page-nav">
+    <a href="04-attribute-mapping.html">&#8592; Attribute Mapping</a>
+    <a href="06-mfa.html">Next: MFA in SSO Flows &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Widget Placement — Widget System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Widget System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Widget System Overview</a>
+  <a href="01-widget-definition.html">Widget Definition</a>
+  <a href="02-widget-placement.html" class="active">Widget Placement</a>
+  <a href="03-system-widgets.html">System Widgets</a>
+  <a href="04-form-widget.html">Form Widget</a>
+  <a href="05-custom-widget.html">Custom Widget</a>
+  <a href="06-configuration-cascade.html">Configuration Cascade</a>
+  <a href="07-widget-registry.html">Widget Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Widget Placement</h1>
+    <p class="lead">A Widget Placement is an instance of a Widget Definition in a specific Pane, with app-specific configuration, layout position, actions, and visibility rules.</p>
+  </div>
+
+  <h2>Widget Placement Structure</h2>
+  <pre><code>// TypeScript — WidgetPlacement interface
+interface WidgetPlacement {
+  // Identity
+  widgetId: string;          // Unique within the app (e.g., "leads-grid")
+  widgetTypeId: string;      // References WidgetDefinition (e.g., "DataGrid")
+
+  // Configuration — overrides the WidgetDefinition defaults
+  config: Record&lt;string, unknown&gt;;   // Supports {{ token }} expressions in values
+
+  // Layout position within the parent Pane's grid
+  layout: {
+    colStart: number;        // 1-12
+    colSpan: number;         // 1-12
+    rowStart?: number;       // auto if omitted
+    rowSpan?: number;        // default 1
+  };
+
+  // Per-breakpoint layout overrides
+  layoutBreakpoints?: {
+    tablet?: Partial&lt;WidgetLayout&gt;;
+    mobile?: Partial&lt;WidgetLayout&gt;;
+  };
+
+  // Actions — event to action bindings
+  actions: Record&lt;string, ActionConfig | ActionConfig[]&gt;;
+  // e.g., { onClick: { type: "navigate", target: "/leads/{{ row.id }}" } }
+
+  // Visibility
+  visibleTo?: string[];         // Role list, empty = all
+  visibilityExpression?: string; // Token expression: "{{ context.roles.includes('admin') }}"
+
+  // Custom JS (optional)
+  customJs?: string;           // Sandboxed JS for this widget
+}
+</code></pre>
+
+  <h2>Placement vs. Definition Config</h2>
+  <p>The <code>config</code> in a Widget Placement is a <em>partial override</em> of the Widget Definition's <code>defaultConfig</code>. Properties not specified in the placement config fall back to the definition's defaults via the configuration cascade.</p>
+  <pre><code>// Widget Definition defaultConfig for DataGrid:
+{
+  "pageSize": 20,
+  "selectable": false,
+  "sortable": true
+}
+
+// Widget Placement config (placement overrides only):
+{
+  "dataSource": "GetLeads",
+  "columns": [ ... ],
+  "pageSize": 50       // overrides the default of 20
+  // selectable and sortable inherit from definition defaults
+}
+
+// Effective config at runtime (merged):
+{
+  "dataSource": "GetLeads",
+  "columns": [ ... ],
+  "pageSize": 50,      // from placement
+  "selectable": false, // from definition default
+  "sortable": true     // from definition default
+}
+</code></pre>
+
+  <h2>Actions on a Placement</h2>
+  <p>Actions are defined per-placement and per-event. The same widget type in different apps can have completely different actions configured — a DataGrid's <code>onRowSelect</code> in the Leads app navigates to a lead detail page, while in the Contacts app it opens a modal.</p>
+  <pre><code>// Widget Placement actions example
+"actions": {
+  "onRowSelect": {
+    "type": "navigate",
+    "target": "/leads/{{ row.id }}"
+  },
+  "onMount": [
+    {
+      "type": "set-variable",
+      "variable": "currentPage",
+      "value": "leads-list"
+    }
+  ]
+}
+</code></pre>
+
+  <h2>Visibility Rules</h2>
+  <p>Two complementary visibility mechanisms are available on every placement:</p>
+  <ul>
+    <li><strong><code>visibleTo</code></strong>: a list of role names. The widget renders only if the current user has at least one of these roles. Checked at render time — evaluated client-side.</li>
+    <li><strong><code>visibilityExpression</code></strong>: a token expression that must evaluate to <code>true</code> for the widget to render. More powerful — can incorporate variables, route params, or service results.</li>
+  </ul>
+  <pre><code>// Simple role list
+"visibleTo": ["admin", "manager"]
+
+// Token expression — visibility based on a variable
+"visibilityExpression": "{{ variables.showAdvancedControls }}"
+
+// Combined — both must be satisfied (AND logic)
+"visibleTo": ["admin"],
+"visibilityExpression": "{{ route.id !== undefined }}"
+</code></pre>
+
+  <div class="callout warning">
+    <strong>Client-Side vs. Server-Side Enforcement</strong>
+    <p>Widget visibility rules are enforced client-side — a user with the wrong role simply does not see the widget rendered. However, the underlying data API calls are always protected server-side by AIExtension.Service. A hidden widget cannot be "un-hidden" to reveal unauthorized data.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-widget-definition.html">&#8592; Widget Definition</a>
+    <a href="03-system-widgets.html">Next: System Widgets &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

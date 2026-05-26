@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conditional Output Ports — Guide33_NodeOutputs | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Outputs</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-output-object.html"><i class="fa-solid fa-box"></i> The Output Object</a>
+  <a href="02-accessing-output.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Accessing Output</a>
+  <a href="03-output-ports.html"><i class="fa-solid fa-plug"></i> Output Ports</a>
+  <a href="04-conditional-ports.html" class="active"><i class="fa-solid fa-code-branch"></i> Conditional Ports</a>
+  <a href="05-multi-output.html"><i class="fa-solid fa-share-nodes"></i> Parallel Outputs</a>
+  <a href="06-naming.html"><i class="fa-solid fa-tag"></i> NodeId Naming</a>
+  <a href="07-no-output.html"><i class="fa-solid fa-ban"></i> Nodes With No Output</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Conditional Output Ports</h1>
+    <p class="lead">How nodes use custom <code>portKey</code> values to branch execution, and how the edge router evaluates edge conditions to determine which downstream paths activate.</p>
+  </div>
+
+  <h2>Two Mechanisms for Branching</h2>
+  <p>Flow Studio provides two complementary mechanisms for branching from a single node:</p>
+  <table>
+    <thead><tr><th>Mechanism</th><th>Who decides</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Port-based routing</strong></td><td>The executor (C#)</td><td>Return different <code>portKey</code> values from <code>Success()</code></td></tr>
+      <tr><td><strong>Edge conditions</strong></td><td>The designer (expressions)</td><td>Condition expression on edge evaluated by the router</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Port-Based Routing in C#</h2>
+  <p>The executor examines its input/business logic and returns a named port key. All edges connected to that port on the canvas are followed:</p>
+  <pre><code class="language-csharp">public class CreditCheckExecutor : BaseNodeExecutor
+{
+    public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(NodeExecutionContext ctx)
+    {
+        var applicantId = ctx.GetInput&lt;string&gt;("applicantId");
+        var score = await _creditService.GetScoreAsync(applicantId);
+
+        if (score >= 750)
+            return NodeExecutionResult.Success(new { score, tier = "premium" }, portKey: "approved");
+        if (score >= 600)
+            return NodeExecutionResult.Success(new { score, tier = "standard" }, portKey: "review");
+        return NodeExecutionResult.Success(new { score, tier = "declined" }, portKey: "rejected");
+    }
+}</code></pre>
+
+  <h2>Edge Conditions (Expression-Based)</h2>
+  <p>Even on the <code>main</code> port, an edge can have a condition expression. Only edges whose condition evaluates to <code>true</code> are followed. This allows multiple downstream branches from the same port with different routing logic:</p>
+  <pre><code class="language-typescript">// WorkflowEdge type — condition field
+interface WorkflowEdge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  sourcePortKey: string;      // which port this edge originates from
+  condition?: string;         // optional expression — must evaluate to boolean
+}</code></pre>
+
+  <pre><code class="language-javascript">// Example edge conditions (set in the Flow Studio edge inspector)
+$output.checkNode.amount > 10000            // high-value path
+$output.checkNode.status === "active"       // active-only path
+$output.checkNode.roles.includes("admin")   // role-gated path</code></pre>
+
+  <h2>Evaluation Order</h2>
+  <ol>
+    <li>Node executor returns <code>NodeExecutionResult.Success(data, portKey: "approved")</code></li>
+    <li>Edge router finds all edges where <code>sourceNodeId == thisNode && sourcePortKey == "approved"</code></li>
+    <li>For each such edge, the router evaluates <code>edge.condition</code> (if set)</li>
+    <li>Edges where condition is absent or evaluates to <code>true</code> are followed</li>
+    <li>All followed edges trigger their target nodes in parallel</li>
+  </ol>
+
+  <h2>Decision Pattern Without a Gateway Node</h2>
+  <p>Because port keys encode the decision, you often don't need a separate gateway node. The CreditCheck node above directly routes to three different branches via its return value. This keeps the canvas clean and co-locates the decision logic with the data that drives it.</p>
+
+  <pre><code>
+  ┌──────────────────┐
+  │  CreditCheckNode │
+  └──────────────────┘
+       │        │        │
+  "approved" "review" "rejected"
+       │        │        │
+  ┌────▼──┐ ┌──▼───┐ ┌──▼────┐
+  │Premium│ │Manual│ │Decline│
+  │ Offer │ │Review│ │ Node  │
+  └───────┘ └──────┘ └───────┘
+</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Design tip:</strong> Use port-based routing (C# portKey) when the decision logic is complex or involves service calls. Use edge conditions when the branching is simple and driven purely by a field value in the output.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-output-ports.html">&#8592; Output Ports</a>
+    <a href="05-multi-output.html">Next: Parallel Outputs &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

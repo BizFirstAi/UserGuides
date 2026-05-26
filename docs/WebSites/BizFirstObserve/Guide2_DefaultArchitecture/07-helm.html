@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kubernetes Helm Deployment — Default Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Default Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Default Stack Overview</a>
+  <a href="01-loki.html">Grafana Loki</a>
+  <a href="02-prometheus.html">Prometheus</a>
+  <a href="03-tempo.html">Grafana Tempo</a>
+  <a href="04-grafana.html">Grafana</a>
+  <a href="05-correlation.html">Cross-Signal Correlation</a>
+  <a href="06-compose.html">Docker Compose Deployment</a>
+  <a href="07-helm.html" class="active">Kubernetes Helm Deployment</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Kubernetes Helm Deployment</h1>
+    <p class="lead">For Kubernetes deployments, BizFirst Observe uses the Grafana Helm chart ecosystem. The <code>loki-stack</code> Helm chart installs Loki, Promtail, and optionally Grafana in one command. Prometheus is installed separately via <code>kube-prometheus-stack</code>.</p>
+  </div>
+
+  <h2>Required Helm Repositories</h2>
+  <pre><code># Add Grafana and Prometheus Helm repositories
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update</code></pre>
+
+  <h2>Install kube-prometheus-stack (Prometheus + Grafana)</h2>
+  <pre><code># Install Prometheus + Grafana in bizfirst-observe namespace
+helm install kube-prom prometheus-community/kube-prometheus-stack \
+  --namespace bizfirst-observe \
+  --create-namespace \
+  --values prometheus-values.yaml</code></pre>
+
+  <h3>prometheus-values.yaml (BizFirstGO customization)</h3>
+  <pre><code>grafana:
+  enabled: true
+  adminPassword: "your-secure-password"
+  persistence:
+    enabled: true
+    size: 10Gi
+  grafana.ini:
+    feature_toggles:
+      enable: traceqlEditor traceToMetrics
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki:3100
+      access: proxy
+    - name: Tempo
+      type: tempo
+      url: http://tempo:3200
+      access: proxy
+      uid: tempo-uid
+
+prometheus:
+  prometheusSpec:
+    retention: 90d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: standard-ssd
+          resources:
+            requests:
+              storage: 100Gi
+    additionalScrapeConfigs:
+      - job_name: 'bizfirst-services'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          resources:
+            requests:
+              storage: 5Gi</code></pre>
+
+  <h2>Install Loki Stack</h2>
+  <pre><code>helm install loki grafana/loki-stack \
+  --namespace bizfirst-observe \
+  --values loki-values.yaml</code></pre>
+
+  <h3>loki-values.yaml</h3>
+  <pre><code>loki:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 50Gi
+  config:
+    limits_config:
+      retention_period: 720h  # 30 days
+    compactor:
+      retention_enabled: true
+    storage_config:
+      aws:
+        s3: s3://your-bucket/loki
+        region: us-east-1
+      bos_config:
+        auth_enabled: false
+
+promtail:
+  enabled: true  # Kubernetes pod log collection
+  config:
+    clients:
+      - url: http://loki:3100/loki/api/v1/push</code></pre>
+
+  <h2>Install Tempo</h2>
+  <pre><code>helm install tempo grafana/tempo \
+  --namespace bizfirst-observe \
+  --values tempo-values.yaml</code></pre>
+
+  <h3>tempo-values.yaml</h3>
+  <pre><code>tempo:
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: your-tempo-bucket
+        endpoint: s3.us-east-1.amazonaws.com
+        region: us-east-1
+  retention: 168h  # 7 days
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi</code></pre>
+
+  <h2>Verify the Deployment</h2>
+  <pre><code># Check all pods are running
+kubectl get pods -n bizfirst-observe
+
+# Expected output includes:
+# alertmanager-kube-prom-alertmanager-0      Running
+# kube-prom-grafana-xxxxx                    Running
+# kube-prom-prometheus-0                    Running
+# loki-0                                    Running
+# tempo-0                                   Running
+
+# Port-forward Grafana for initial setup
+kubectl port-forward -n bizfirst-observe \
+  svc/kube-prom-grafana 3000:80
+
+# Access at http://localhost:3000</code></pre>
+
+  <div class="callout info">
+    <strong>Kubernetes Auto-Discovery</strong>
+    <p>The <code>kube-prometheus-stack</code> includes ServiceMonitor and PodMonitor custom resources. Add the annotation <code>prometheus.io/scrape: "true"</code> and <code>prometheus.io/port: "8080"</code> to any BizFirstGO pod spec to have Prometheus automatically discover and scrape it — no static scrape config required.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-compose.html">&#8592; Docker Compose Deployment</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

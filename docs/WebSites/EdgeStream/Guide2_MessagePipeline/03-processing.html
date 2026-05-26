@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Processing Stage — Message Pipeline | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Pipeline Overview</a>
+  <a href="01-normalization.html">Normalization Stage</a>
+  <a href="02-pre-pipeline.html">Pre-Pipeline Stage</a>
+  <a href="03-processing.html" class="active">Processing Stage</a>
+  <a href="04-post-pipeline.html">Post-Pipeline Stage</a>
+  <a href="05-delivery.html">Delivery Stage</a>
+  <a href="06-error-handling.html">Error Handling</a>
+  <a href="07-short-circuit.html">Short-Circuit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Processing Stage</h1>
+    <p class="lead">The processing stage is where domain-specific message transformation happens — content mapping, format conversion, business rule application, and interactive user input collection.</p>
+  </div>
+
+  <h2>Processing Stage Position</h2>
+  <p>Processing hooks run after the pre-pipeline stage (120–199) and before post-pipeline hooks (300+). This is where the "business logic" of message handling lives — transforming the normalized envelope into a form that subscribers expect.</p>
+
+  <table>
+    <thead>
+      <tr><th>Priority Range</th><th>Stage</th><th>Typical Operations</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>5</td><td>Observability</td><td>HookActivityLogger</td></tr>
+      <tr><td>90–110</td><td>Security + Normalization</td><td>Decrypt, Verify, Normalize</td></tr>
+      <tr><td>120–199</td><td>Pre-pipeline</td><td>Enrichment, Rate limiting, Dedup</td></tr>
+      <tr><td>200–299</td><td>Processing</td><td>Transformation, Business logic, HIL</td></tr>
+      <tr><td>300+</td><td>Post-pipeline</td><td>Audit, Metrics, Side effects</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Message Transformation Hook</h2>
+  <p>Processing hooks can reshape the message body to match what subscribers need. The transformed body replaces <code>context.body</code>:</p>
+
+  <pre><code>export class WorkflowEventMapperHook extends BaseHook {
+  readonly name = 'WorkflowEventMapperHook';
+  readonly priority = 200;
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const raw = context.body as any;
+
+    // Map from CloudEvents body to domain-specific shape
+    if (raw?.data?.data?.eventType?.startsWith('workflow.')) {
+      const mapped: WorkflowDomainEvent = {
+        nodeId: raw.data.data.nodeId,
+        workflowId: raw.data.metadata?.workflowId || context.envelope.meta.correlationId,
+        eventType: raw.data.data.eventType,
+        status: raw.data.data.status,
+        output: raw.data.data.output,
+        duration: raw.data.data.durationMs,
+        timestamp: new Date(raw.time || raw.data.data.timestamp),
+      };
+
+      context.body = mapped;
+      context.envelope.body = mapped;
+    }
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Interactive Processing — HIL Pause</h2>
+  <p>The processing stage is where Human-in-the-Loop (HIL) interruption happens. A hook can pause the pipeline and wait for user input before continuing. When a pipeline is paused, the envelope is held in memory and the pipeline resumes asynchronously when the user responds.</p>
+
+  <pre><code>export class HilFormHook extends BaseHook {
+  readonly name = 'HilFormHook';
+  readonly priority = 250;
+  canPause = true;
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const body = context.body as any;
+
+    // Only intercept HIL form requests
+    if (body?.eventType !== 'hil.form.request') {
+      return { continue: true };
+    }
+
+    // Pause the pipeline and wait for user response
+    const pause = context.pause({
+      id: crypto.randomUUID(),
+      type: 'form',
+      message: body.prompt || 'Please complete this form to continue',
+      payload: { formSchema: body.formSchema },
+      timeoutMs: body.timeoutMs || 300_000, // 5 minutes default
+    });
+
+    // The pipeline is now paused — this hook's execute() returns
+    // When resume() is called, the next hook executes
+    return { continue: true, paused: true };
+  }
+}</code></pre>
+
+  <h2>Content-Type Routing Hook</h2>
+  <pre><code>// Routes messages to topic-specific processing paths
+export class ContentRoutingHook extends BaseHook {
+  readonly name = 'ContentRoutingHook';
+  readonly priority = 210;
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const topic = context.envelope.meta.topic || '';
+
+    // Tag envelope with routing decision — subscribers can filter
+    if (topic.startsWith('agent.chat')) {
+      context.envelope.attributes = {
+        ...context.envelope.attributes,
+        domain: 'agent',
+        requiresStreaming: true,
+      };
+    } else if (topic.startsWith('workflow.')) {
+      context.envelope.attributes = {
+        ...context.envelope.attributes,
+        domain: 'workflow',
+        requiresStreaming: false,
+      };
+    }
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Async Processing with External Services</h2>
+  <p>Processing hooks can perform async work — database lookups, API calls, cache reads:</p>
+  <pre><code>export class FormSchemaResolverHook extends BaseHook {
+  readonly name = 'FormSchemaResolverHook';
+  readonly priority = 220;
+
+  constructor(private formService: FormService) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const body = context.body as any;
+
+    if (!body?.formId) return { continue: true };
+
+    // Async lookup — hook awaits resolution before pipeline continues
+    const schema = await this.formService.getSchema(body.formId);
+    if (!schema) {
+      context.abort(`Form schema not found: ${body.formId}`);
+      return { continue: false };
+    }
+
+    // Attach schema to metadata for downstream hooks
+    context.metadata.formSchema = schema;
+    return { continue: true };
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Processing Hooks Are Async</strong>
+    All hook <code>execute()</code> methods are async. The pipeline awaits each hook before proceeding to the next. Long-running async operations in hooks will delay message delivery to subscribers.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-pre-pipeline.html">&#8592; Pre-Pipeline Stage</a>
+    <a href="04-post-pipeline.html">Next: Post-Pipeline Stage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

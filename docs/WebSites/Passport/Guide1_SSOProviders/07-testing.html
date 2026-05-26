@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Testing SSO Configuration — SSO Providers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Providers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-saml.html">SAML 2.0 Provider</a>
+  <a href="02-oidc.html">OIDC Provider</a>
+  <a href="03-application-trust.html">Application Trust</a>
+  <a href="04-attribute-mapping.html">Attribute Mapping</a>
+  <a href="05-session-management.html">SSO Session Management</a>
+  <a href="06-mfa.html">MFA in SSO Flows</a>
+  <a href="07-testing.html" class="active">Testing SSO Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Testing SSO Configuration</h1>
+    <p class="lead">Validate your SSO setup using Passport's built-in test tools, browser extensions, and the Passport diagnostic API — catch configuration errors before rolling out to users.</p>
+  </div>
+
+  <h2>Built-In SSO Test Endpoint</h2>
+  <p>Passport provides a test endpoint that simulates the full SSO flow for a consumer without requiring the actual SP to be available. Use this to verify your consumer registration before setting up the real SP.</p>
+  <pre><code>POST /passport/admin/consumers/{consumerKey}/test
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "testUserId": "user-guid-to-impersonate",
+  "validateSignature": true,
+  "protocol": "SAML2"
+}
+
+// Response — full decoded assertion
+{
+  "success": true,
+  "protocol": "SAML2",
+  "nameId": "user@example.com",
+  "sessionIndex": "_abc123",
+  "attributes": {
+    "email": "user@example.com",
+    "firstName": "Jane",
+    "lastName": "Smith",
+    "roles": ["manager", "finance-user"]
+  },
+  "assertionXml": "&lt;saml:Assertion ...&gt;...",
+  "signatureValid": true,
+  "warnings": []
+}</code></pre>
+
+  <h2>SAML Tracer (Browser Extension)</h2>
+  <p>The <strong>SAML Tracer</strong> browser extension (available for Chrome and Firefox) intercepts and decodes SAML messages in real time. Use it to inspect assertions during live SSO flows.</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Install SAML Tracer</h4>
+        <p>Install from the Chrome Web Store or Firefox Add-ons. The extension adds a toolbar button that turns orange when SAML messages are detected.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Open SAML Tracer Panel</h4>
+        <p>Click the SAML Tracer button to open the panel. Keep it open during the SSO flow. All HTTP requests are listed — SAML messages are highlighted in orange.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Initiate SSO</h4>
+        <p>Navigate to your SP's login page and click the "Sign in with BizFirstAI" button. The SAML AuthnRequest and SAMLResponse will both appear in the tracer.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Inspect the SAMLResponse</h4>
+        <p>Click the POST to the ACS URL. In the SAML tab, you will see the decoded assertion XML. Verify: NameID value, attribute names, role values, <code>NotOnOrAfter</code> timestamp, and signature status.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>OIDC Debugger</h2>
+  <p>For OIDC testing, use the OIDC Debugger (oidcdebugger.com) or Passport's own introspection endpoint to validate tokens.</p>
+  <pre><code>// Introspect an access token
+POST /passport/token/introspect
+Authorization: Basic base64(clientId:clientSecret)
+Content-Type: application/x-www-form-urlencoded
+
+token=eyJhbGciOiJSUzI1NiJ9...
+
+// Response
+{
+  "active": true,
+  "sub": "user-guid",
+  "client_id": "myapp-prod",
+  "scope": "openid profile email roles tenant",
+  "exp": 1748120400,
+  "iat": 1748119500,
+  "iss": "https://passport.bizfirst.ai",
+  "email": "user@example.com",
+  "roles": ["manager"],
+  "tenant_id": "tenant-abc"
+}
+
+// Check JWKS for signature verification
+GET /passport/.well-known/jwks.json
+// Returns public keys — use jwt.io or a local verifier to validate signature</code></pre>
+
+  <h2>Common Configuration Errors</h2>
+  <table>
+    <thead>
+      <tr><th>Error</th><th>Likely Cause</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Assertion rejected — invalid signature</td><td>SP has old signing certificate</td><td>Re-import Passport metadata or update the certificate on the SP</td></tr>
+      <tr><td>Assertion rejected — expired</td><td>Clock skew &gt; 60s between Passport and SP</td><td>Sync NTP on Passport and SP servers; or increase <code>assertionLifetimeSeconds</code></td></tr>
+      <tr><td>Invalid redirect URI</td><td>URI in request doesn't exactly match registered URIs</td><td>Add the exact URI to consumer registration; check trailing slashes</td></tr>
+      <tr><td>Unknown consumer key</td><td><code>consumerKey</code> not found or cache not cleared</td><td>Verify the key exists; call <code>/purge-cache</code> if recently created</td></tr>
+      <tr><td>Attribute missing in assertion</td><td>Attribute mapping references undefined user field</td><td>Check user profile has the field; verify mapping config uses correct source path</td></tr>
+      <tr><td>MFA required but user has no MFA enrolled</td><td>Consumer requires MFA; user hasn't set it up</td><td>Enroll MFA in user profile, or adjust consumer policy for gradual rollout</td></tr>
+      <tr><td>PKCE verification failed</td><td><code>code_verifier</code> doesn't match <code>code_challenge</code></td><td>Ensure code_verifier is the original value, not re-hashed; use SHA-256 base64url</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Diagnostic API</h2>
+  <pre><code>// Get SSO event history for a consumer
+GET /passport/admin/consumers/{consumerKey}/events
+  ?limit=50&from=2026-05-25T00:00:00Z
+Authorization: Bearer {admin-token}
+
+// Response
+{
+  "events": [
+    {
+      "eventId": "evt-abc",
+      "timestamp": "2026-05-25T10:00:00Z",
+      "type": "SSOSuccess",
+      "userId": "user-guid",
+      "consumerKey": "salesforce-prod",
+      "protocol": "SAML2",
+      "durationMs": 45
+    },
+    {
+      "eventId": "evt-def",
+      "timestamp": "2026-05-25T10:01:00Z",
+      "type": "SSOFailure",
+      "reason": "AssertionExpired",
+      "consumerKey": "salesforce-prod",
+      "protocol": "SAML2"
+    }
+  ]
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Checklist Before Go-Live</strong>
+    <ul>
+      <li>Run the admin test endpoint and verify all attributes are present and correctly mapped</li>
+      <li>Use SAML Tracer / OIDC Debugger to verify the live flow in a staging environment</li>
+      <li>Confirm clock synchronization between Passport and the SP</li>
+      <li>Test Single Logout from both directions (SP-initiated and IdP-initiated)</li>
+      <li>Test MFA step-up if configured</li>
+      <li>Verify the consumer cache purge works as expected</li>
+      <li>Review the diagnostic event log for any errors after initial test logins</li>
+    </ul>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-mfa.html">&#8592; MFA in SSO Flows</a>
+    <span class="spacer"></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

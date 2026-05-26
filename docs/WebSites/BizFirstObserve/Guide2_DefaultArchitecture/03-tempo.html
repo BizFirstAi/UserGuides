@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grafana Tempo — Default Architecture | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Default Architecture</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Default Stack Overview</a>
+  <a href="01-loki.html">Grafana Loki</a>
+  <a href="02-prometheus.html">Prometheus</a>
+  <a href="03-tempo.html" class="active">Grafana Tempo</a>
+  <a href="04-grafana.html">Grafana</a>
+  <a href="05-correlation.html">Cross-Signal Correlation</a>
+  <a href="06-compose.html">Docker Compose Deployment</a>
+  <a href="07-helm.html">Kubernetes Helm Deployment</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Grafana Tempo</h1>
+    <p class="lead">Grafana Tempo is the distributed tracing component of the default stack. It ingests traces from the OTel Collector via OTLP, stores them in object storage, and provides trace search and correlation with logs and metrics — all with minimal resource requirements.</p>
+  </div>
+
+  <h2>What Distributed Tracing Provides</h2>
+  <p>A distributed trace is a complete record of a single request as it travels through multiple services. For BizFirstGO, one workflow execution produces one trace — with child spans for each node executed, each external service call, and each HIL suspension/resume cycle.</p>
+  <p>Traces answer questions that logs and metrics cannot easily answer:</p>
+  <ul>
+    <li>Which specific service call is causing a workflow to be slow?</li>
+    <li>In a multi-service execution, which node spent the most time waiting on external I/O?</li>
+    <li>What was the exact sequence of events in a failed workflow execution?</li>
+    <li>How much time was spent in each executor node vs. framework overhead?</li>
+  </ul>
+
+  <h2>BizFirstGO Trace Structure</h2>
+  <p>Every workflow execution produces a structured distributed trace with a predictable span hierarchy:</p>
+  <pre><code>workflow.execute [root span — entire execution duration]
+  ├── node.execute [StartNode]
+  │     duration: 5ms
+  │     node_type: StartNode
+  ├── node.execute [DataFetchNode]
+  │     duration: 320ms
+  │     node_type: DataFetchNode
+  │     └── http.client [GET https://api.example.com/data]
+  │           duration: 315ms  ← the slow call
+  ├── node.execute [ApprovalNode]
+  │     duration: 4h 23m       ← HIL suspension
+  │     ├── hil.suspend [event]
+  │     └── hil.resume [event]
+  └── node.execute [EndNode]
+        duration: 2ms</code></pre>
+
+  <h2>Span Attributes on BizFirstGO Spans</h2>
+  <table>
+    <thead>
+      <tr><th>Attribute</th><th>Present On</th><th>Value Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>workflow.id</code></td><td>Root span</td><td><code>wf-8a4c2f91</code></td></tr>
+      <tr><td><code>execution.id</code></td><td>All BizFirstGO spans</td><td><code>exec-d1e2f3a4</code></td></tr>
+      <tr><td><code>tenant.id</code></td><td>All BizFirstGO spans</td><td><code>tenant-abc-123</code></td></tr>
+      <tr><td><code>node.key</code></td><td>node.execute spans</td><td><code>approval-node-01</code></td></tr>
+      <tr><td><code>node.type</code></td><td>node.execute spans</td><td><code>ApprovalNode</code></td></tr>
+      <tr><td><code>hil.actor</code></td><td>hil.suspend spans</td><td><code>user-xyz</code></td></tr>
+      <tr><td><code>hil.outcome</code></td><td>hil.resume spans</td><td><code>approved</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>TraceQL Quick Reference</h2>
+  <pre><code># Find all spans for a specific execution
+{ span.execution_id = "exec-d1e2f3a4" }
+
+# Find slow node executions (over 5 seconds)
+{ name = "node.execute" && duration > 5s }
+
+# Find failed workflow spans
+{ rootName = "workflow.execute" && status = error }
+
+# Find HIL suspensions over 24 hours
+{ name = "node.execute" && span.hil.outcome = "timeout" && duration > 24h }</code></pre>
+
+  <div class="callout info">
+    <strong>Deep Dive Available</strong>
+    <p>For the complete Tempo reference — deployment, storage configuration, advanced TraceQL, and exemplar setup — see <a href="../Guide5_Tempo/index.html">Guide5: Tempo</a>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-prometheus.html">&#8592; Prometheus</a>
+    <a href="04-grafana.html">Next: Grafana &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

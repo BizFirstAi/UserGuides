@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Event Subscriptions Overview — Node Event Subscriptions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Event Subscriptions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-interface.html">INodeEventSubscriber</a>
+  <a href="02-event-args.html">NodeExecutionEventArgs</a>
+  <a href="03-before-execute.html">OnBeforeExecuteAsync</a>
+  <a href="04-after-execute.html">OnAfterExecuteAsync</a>
+  <a href="05-error-event.html">OnErrorAsync</a>
+  <a href="06-skip-event.html">OnSkippedAsync</a>
+  <a href="07-registration.html">Registering a Subscriber</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Node Event Subscriptions Overview</h1>
+    <p class="lead">Add cross-cutting behaviour to every node execution — audit logging, metrics collection, notifications — without touching executor code. INodeEventSubscriber is the observer pattern for the execution pipeline.</p>
+  </div>
+
+  <h2>Why Subscribers Exist</h2>
+  <p>When you need the same behaviour applied to every node execution — write an audit record, increment a counter, send a Slack alert on failure — the wrong place to implement it is inside each executor. That spreads identical logic across dozens of classes and makes it impossible to change consistently.</p>
+  <p><code>INodeEventSubscriber</code> solves this with the observer pattern. Subscribers are registered once in DI and the engine calls them automatically at four points in the lifecycle of every node execution, regardless of which executor is running.</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4><i class="fa-solid fa-bell" style="color:var(--accent)"></i> Before Execution</h4>
+      <p>Called before the executor runs. Use for audit start records, pre-execution validation checks, or request enrichment.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-check-circle" style="color:var(--accent2)"></i> After Execution</h4>
+      <p>Called after a successful result. Full output is available. Use for metrics recording, downstream notifications, SLA tracking.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-triangle-exclamation" style="color:var(--accent3)"></i> On Error</h4>
+      <p>Called when the executor throws. The exception and retry context are available. Use for alerting, error catalogue logging.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-forward" style="color:var(--accent4)"></i> On Skipped</h4>
+      <p>Called when a node is skipped (conditional routing). Use for completeness auditing — every node's outcome is recorded.</p>
+    </div>
+  </div>
+
+  <h2>Subscriber vs. GuardRail Engine</h2>
+  <p>A common question: when do I use a subscriber vs. a GuardRail engine? The distinction is clear:</p>
+  <table>
+    <thead><tr><th>Concern</th><th>Use Subscriber</th><th>Use GuardRail Engine</th></tr></thead>
+    <tbody>
+      <tr><td>Audit logging</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Metrics / telemetry</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Block execution based on policy</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Rate limiting</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Post-execution notifications</td><td>Yes</td><td>No</td></tr>
+      <tr><td>PII content filtering</td><td>No</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warning">
+    <strong>Important:</strong> Subscribers are not designed to block execution. While throwing in <code>OnBeforeExecuteAsync</code> will abort the node, that pattern is reserved for GuardRail engines. Use subscribers for observation, not enforcement.
+  </div>
+
+  <h2>The Four Lifecycle Events</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>OnBeforeExecuteAsync</h4><p>Engine is about to call the executor. Context snapshot and input data are available.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">2</div><div class="line"></div></div>
+      <div class="body"><h4>OnAfterExecuteAsync</h4><p>Executor returned successfully. Full NodeExecutionResult including output is available.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot" style="background:var(--accent3)">3</div><div class="line"></div></div>
+      <div class="body"><h4>OnErrorAsync</h4><p>Executor threw an exception. The exception, retry count, and context are available.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot" style="background:var(--accent4)">4</div><div class="line"></div></div>
+      <div class="body"><h4>OnSkippedAsync</h4><p>Node was skipped by the router (conditional branching). Skip reason is provided.</p></div>
+    </div>
+  </div>
+
+  <h2>Execution Order</h2>
+  <p>When multiple subscribers are registered, all are called for each event in the order they were registered in DI. There is no short-circuit — if subscriber A throws during <code>OnAfterExecuteAsync</code>, subscriber B is still called. Subscriber exceptions are caught and logged but do not affect workflow execution.</p>
+
+  <div class="callout info">
+    <strong>Performance note:</strong> Subscriber methods run on the same thread as the executor and add to total node execution time. Keep subscriber logic light. For heavy operations (writing to a remote audit store), use fire-and-forget inside the subscriber rather than awaiting network calls synchronously.
+  </div>
+
+  <h2>Common Use Cases</h2>
+  <table>
+    <thead><tr><th>Use Case</th><th>Events Used</th><th>Typical Implementation</th></tr></thead>
+    <tbody>
+      <tr><td>Centralised audit log</td><td>Before + After + Error + Skipped</td><td>Write one row per lifecycle event to <code>audit_node_executions</code></td></tr>
+      <tr><td>Duration metrics</td><td>Before (record start) + After (compute delta)</td><td>Store start time in a dictionary keyed by executionId+nodeId</td></tr>
+      <tr><td>Failure alerting</td><td>OnError</td><td>Enqueue a message to the alerting queue</td></tr>
+      <tr><td>Execution tracing</td><td>All four</td><td>Attach structured log entries to the OpenTelemetry span</td></tr>
+      <tr><td>SLA tracking</td><td>Before + After</td><td>Compare elapsed time against node SLA configuration</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-interface.html">Next: INodeEventSubscriber &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

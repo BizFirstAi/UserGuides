@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Event Bus Overview — Workflow Event Bus | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Event Bus</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-interface.html">IWorkflowEventBus</a>
+  <a href="02-built-in-events.html">Built-In Workflow Events</a>
+  <a href="03-event-schema.html">WorkflowEvent Schema</a>
+  <a href="04-publishing.html">Publishing from a Node</a>
+  <a href="05-subscribing.html">Subscribing to Events</a>
+  <a href="06-custom-events.html">Defining Custom Events</a>
+  <a href="07-delivery-guarantees.html">Delivery Guarantees</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Workflow Event Bus — Overview</h1>
+    <p class="lead">The workflow event bus provides a decoupled publish/subscribe channel for workflow lifecycle events. Build integrations, webhooks, and audit systems that react to workflow state changes without coupling to the engine internals.</p>
+  </div>
+
+  <h2>What Is the Workflow Event Bus?</h2>
+  <p>The event bus is an in-process publish/subscribe mechanism scoped to the ProcessEngine. It carries two categories of events:</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4><i class="fa-solid fa-gear" style="color:var(--accent)"></i> Built-In Lifecycle Events</h4>
+      <p>Published automatically by the engine — WorkflowStarted, WorkflowCompleted, WorkflowFailed, WorkflowPaused, WorkflowResumed. You do not publish these; you subscribe to them.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-star" style="color:var(--accent2)"></i> Custom Domain Events</h4>
+      <p>Published by your node executors — e.g., OrderApproved, DocumentProcessed. Define a class extending WorkflowEvent, inject IWorkflowEventBus, and call PublishAsync.</p>
+    </div>
+  </div>
+
+  <h2>Event Bus vs. Node Event Subscribers</h2>
+  <table>
+    <thead><tr><th>Aspect</th><th>IWorkflowEventBus</th><th>INodeEventSubscriber</th></tr></thead>
+    <tbody>
+      <tr><td>Granularity</td><td>Workflow-level (started, paused, completed)</td><td>Node-level (before/after each node)</td></tr>
+      <tr><td>Who publishes</td><td>Engine (built-ins) + node executors (custom)</td><td>Engine always (automatic)</td></tr>
+      <tr><td>Custom events</td><td>Yes — define and publish any WorkflowEvent</td><td>No — only lifecycle hooks</td></tr>
+      <tr><td>Subscriber interface</td><td>IWorkflowEventHandler&lt;TEvent&gt;</td><td>INodeEventSubscriber</td></tr>
+      <tr><td>Use for audit logging</td><td>Workflow-level audit</td><td>Per-node audit</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Key Constraints</h2>
+  <div class="callout warning">
+    <strong>In-process only:</strong> The event bus lives in the ASP.NET Core process. Events do not survive a process restart. If you need durable event delivery (e.g., to trigger an external system reliably), write an event handler that pushes to a message broker (Azure Service Bus, RabbitMQ) from inside the handler.
+  </div>
+
+  <h2>Architecture Diagram</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Engine publishes WorkflowStarted</h4><p>ProcessEngine.StartAsync() calls IWorkflowEventBus.PublishAsync(new WorkflowStarted(...))</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Dispatcher resolves handlers</h4><p>WorkflowEventDispatcher finds all IWorkflowEventHandler&lt;WorkflowStarted&gt; from DI</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div><div class="line"></div></div>
+      <div class="body"><h4>Handlers execute synchronously</h4><p>Each handler's HandleAsync() is awaited in registration order. Exceptions are isolated per handler.</p></div>
+    </div>
+  </div>
+
+  <h2>Common Use Cases</h2>
+  <table>
+    <thead><tr><th>Use Case</th><th>Event(s) Consumed</th><th>Handler Action</th></tr></thead>
+    <tbody>
+      <tr><td>Webhook delivery</td><td>WorkflowCompleted, WorkflowFailed</td><td>POST to configured webhook URL</td></tr>
+      <tr><td>Workflow-level audit</td><td>All built-in events</td><td>Write audit record to DB</td></tr>
+      <tr><td>Billing / usage metering</td><td>WorkflowStarted, WorkflowCompleted</td><td>Increment tenant execution counter</td></tr>
+      <tr><td>Dashboard live update</td><td>WorkflowStarted, WorkflowCompleted</td><td>Push SignalR notification to UI</td></tr>
+      <tr><td>Domain notifications</td><td>Custom event: OrderApproved</td><td>Send email / Slack message</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-interface.html">Next: IWorkflowEventBus &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

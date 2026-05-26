@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Form Tasks — HIL Inbox | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>HIL Inbox</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Inbox Overview</a>
+  <a href="01-inbox-list.html">Task List</a>
+  <a href="02-filters.html">Filtering the Inbox</a>
+  <a href="03-claiming.html">Claiming a Task</a>
+  <a href="04-acting-approval.html">Approval Tasks</a>
+  <a href="05-acting-form.html" class="active">Form Tasks</a>
+  <a href="06-acting-review.html">Review Tasks</a>
+  <a href="07-history.html">Completed Tasks</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Form Tasks</h1>
+    <p class="lead">Form tasks render an Atlas Form inline inside the WorkDesk task card. The employee fills out structured fields and submits — the form data is passed as output to the next workflow node, enabling rich data collection at any workflow stage.</p>
+  </div>
+
+  <h2>How Form Tasks Work</h2>
+  <p>When a Flow Studio workflow reaches a HIL node configured with type <code>form</code>, it stores the <code>formId</code> (referencing an Atlas Form) and any <code>initialValues</code> (pre-populated from the workflow data context) in the task record. WorkDesk retrieves this and uses the Atlas Forms <code>FormRenderer</code> component to render the form inline.</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Workflow Suspends at HIL Form Node</h4>
+        <p>Process Engine writes task record with <code>type: "form"</code>, <code>formId: "form-xyz"</code>, and <code>initialValues</code> extracted from workflow data.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>WorkDesk Fetches Form Definition</h4>
+        <p>Task detail page loads the task. WorkDesk calls <code>GET /api/forms/{formId}</code> to get the Atlas Form definition (field types, validation rules, layout).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>FormRenderer Renders the Form</h4>
+        <p><code>FormRenderer</code> from <code>@bizfirstai/player-components-react</code> renders the form with the provided <code>initialValues</code>. Fields appear pre-populated where workflow data was available.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>Employee Submits</h4>
+        <p>FormRenderer validates the form. On valid submission, <code>onSubmit</code> callback fires. WorkDesk POSTs the form data to <code>/resume</code>. Workflow continues with form data as node output.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>FormRenderer Integration</h2>
+  <pre><code>import { FormRenderer } from '@bizfirstai/player-components-react';
+
+function FormTaskCard({ task }: { task: HilTask }) {
+  const resumeExecution = useResumeExecution();
+
+  const handleSubmit = async (formData: Record&lt;string, unknown&gt;) =&gt; {
+    await resumeExecution({
+      executionId: task.executionId,
+      taskId: task.taskId,
+      response: {
+        type: 'form',
+        formData,
+        submittedAt: new Date().toISOString(),
+      },
+    });
+  };
+
+  return (
+    &lt;div className="form-task-card"&gt;
+      &lt;h2&gt;{task.title}&lt;/h2&gt;
+      &lt;p className="description"&gt;{task.description}&lt;/p&gt;
+      &lt;FormRenderer
+        formId={task.formId!}
+        initialValues={task.initialValues ?? {}}
+        onSubmit={handleSubmit}
+        submitLabel="Submit and Continue Workflow"
+        theme="workdesk"
+      /&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Initial Values (Pre-Population)</h2>
+  <p>The Flow Studio HIL node configuration specifies which workflow data fields should pre-populate which form fields. For example, an onboarding form task can pre-populate the employee's name and department from the upstream "New Employee" node output — the employee only fills in the additional fields specific to this step.</p>
+
+  <pre><code>// Flow Studio HIL node configuration (workflow designer sets this)
+{
+  "type": "hil",
+  "taskType": "form",
+  "formId": "form-onboarding-step2",
+  "initialValues": {
+    "employeeName": "{{data.newEmployee.fullName}}",
+    "department": "{{data.newEmployee.department}}",
+    "startDate": "{{data.newEmployee.startDate}}"
+  },
+  "assignedTo": { "type": "actor", "actorId": "{{data.hrManagerId}}" }
+}</code></pre>
+
+  <h2>Form Validation</h2>
+  <p>Validation rules are defined in the Atlas Form definition — they are not duplicated in WorkDesk. The <code>FormRenderer</code> enforces all validation client-side (required fields, type constraints, regex patterns, cross-field rules). The Submit button is disabled until all validation passes.</p>
+
+  <h2>Resume API — Form Submission</h2>
+  <pre><code>POST /api/executions/{executionId}/resume
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "taskId": "...",
+  "response": {
+    "type": "form",
+    "formData": {
+      "employeeName": "John Doe",
+      "department": "Engineering",
+      "startDate": "2026-06-01",
+      "equipmentRequired": ["Laptop", "Monitor", "Keyboard"],
+      "officeLocation": "NYC-Floor-3",
+      "additionalNotes": "Remote on Fridays"
+    },
+    "submittedAt": "2026-05-25T12:00:00Z"
+  }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Form Data as Workflow Output</strong>
+    <p>The submitted <code>formData</code> object becomes the output data of the HIL form node. Downstream nodes can reference any field using workflow expression syntax — e.g., <code>{{nodes.hilFormStep.output.officeLocation}}</code>.</p>
+  </div>
+
+  <div class="callout info">
+    <strong>Save Draft (Work in Progress)</strong>
+    <p>If a form task is long and the employee cannot complete it in one sitting, WorkDesk auto-saves form state to localStorage every 30 seconds. When they return to the task, the saved draft is restored. The task remains in Pending state until formally submitted.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-acting-approval.html">&#8592; Approval Tasks</a>
+    <a href="06-acting-review.html">Next: Review Tasks &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

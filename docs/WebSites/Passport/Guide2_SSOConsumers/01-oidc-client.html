@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OIDC Client Setup — SSO Consumers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>SSO Consumers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-oidc-client.html" class="active">OIDC Client Setup</a>
+  <a href="02-auth-flow.html">Authorization Code Flow</a>
+  <a href="03-token-validation.html">Token Validation</a>
+  <a href="04-claims-mapping.html">Claims to User Context</a>
+  <a href="05-token-refresh.html">Token Refresh</a>
+  <a href="06-logout.html">Logout</a>
+  <a href="07-sdk.html">BizFirstGO SSO SDK</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>OIDC Client Setup</h1>
+    <p class="lead">Register your application as an OIDC client in Passport — configure the client ID, client secret, redirect URIs, scopes, and token lifetime settings.</p>
+  </div>
+
+  <h2>Client Types</h2>
+  <p>Passport distinguishes between two client types, each with different security requirements:</p>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Description</th><th>Secret Storage</th><th>PKCE Required</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Confidential</strong></td><td>Server-side apps (ASP.NET, Node.js backend) that can securely store a client secret</td><td>Server environment variable or secrets manager</td><td>Recommended</td></tr>
+      <tr><td><strong>Public</strong></td><td>SPAs (React, Angular), mobile apps — cannot securely store a secret</td><td>N/A — no client secret</td><td>Required</td></tr>
+    </tbody>
+  </table>
+
+  <h2>OIDCClientConfiguration Model</h2>
+  <pre><code>// The configuration model for an OIDC consumer registration
+public class OIDCClientConfiguration
+{
+    public required string ClientId               { get; init; }
+    public string? ClientSecret                   { get; init; }  // null for public clients
+    public required string[] RedirectUris         { get; init; }
+    public string[] PostLogoutRedirectUris        { get; init; } = [];
+    public required string[] AllowedScopes        { get; init; }
+    public required string[] GrantTypes           { get; init; }
+    public bool RequirePkce                       { get; init; } = true;
+    public bool RequireMfa                        { get; init; } = false;
+    public int AccessTokenLifetimeSeconds         { get; init; } = 900;
+    public int RefreshTokenLifetimeSeconds        { get; init; } = 604800;
+    public bool AllowRefreshToken                 { get; init; } = true;
+    public bool RefreshTokenRotation              { get; init; } = true;
+    public string TenantId                        { get; init; } = string.Empty;
+    public string DisplayName                     { get; init; } = string.Empty;
+}</code></pre>
+
+  <h2>Registering a Confidential Client (ASP.NET Backend)</h2>
+  <pre><code>POST /passport/admin/clients
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "clientId": "workflow-api-prod",
+  "clientType": "confidential",
+  "clientSecret": "generate",
+  "displayName": "Workflow API (Production)",
+  "redirectUris": [
+    "https://api.bizfirst.example.com/auth/callback"
+  ],
+  "postLogoutRedirectUris": [
+    "https://api.bizfirst.example.com/"
+  ],
+  "allowedScopes": ["openid", "profile", "email", "roles", "tenant"],
+  "grantTypes": ["authorization_code", "refresh_token", "client_credentials"],
+  "requirePkce": true,
+  "accessTokenLifetimeSeconds": 900,
+  "refreshTokenLifetimeSeconds": 604800,
+  "tenantId": "tenant-abc"
+}
+
+// Response
+{
+  "clientId": "workflow-api-prod",
+  "clientSecret": "clt_sk_xxxxxxxxxxxxxxxxxxxxxxxx",  // store this securely
+  "createdAt": "2026-05-25T10:00:00Z"
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Store Client Secrets Securely</strong>
+    <p>The client secret is shown only once in the creation response. Store it in a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) — never in source code or configuration files. If the secret is lost, generate a new one via the Admin API.</p>
+  </div>
+
+  <h2>Registering a Public Client (React SPA)</h2>
+  <pre><code>POST /passport/admin/clients
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "clientId": "flow-studio-spa",
+  "clientType": "public",
+  "displayName": "Flow Studio (SPA)",
+  "redirectUris": [
+    "https://studio.bizfirst.example.com/auth/callback",
+    "https://studio.bizfirst.example.com/auth/silent-renew"
+  ],
+  "postLogoutRedirectUris": [
+    "https://studio.bizfirst.example.com/"
+  ],
+  "allowedScopes": ["openid", "profile", "email", "roles", "tenant"],
+  "grantTypes": ["authorization_code", "refresh_token"],
+  "requirePkce": true,
+  "accessTokenLifetimeSeconds": 900,
+  "refreshTokenLifetimeSeconds": 86400,
+  "tenantId": "tenant-abc"
+}
+// No clientSecret — public clients use PKCE instead</code></pre>
+
+  <h2>appsettings.json Integration</h2>
+  <p>For ASP.NET Core applications using Go.Essentials, configure the OIDC client in <code>appsettings.json</code>:</p>
+  <pre><code>{
+  "Passport": {
+    "Authority": "https://passport.bizfirst.ai",
+    "ClientId": "workflow-api-prod",
+    "ClientSecret": "${PASSPORT_CLIENT_SECRET}",
+    "Scopes": ["openid", "profile", "email", "roles", "tenant"],
+    "RequirePkce": true,
+    "ValidateIssuer": true,
+    "ValidateAudience": true,
+    "ValidIssuers": ["https://passport.bizfirst.ai"],
+    "TokenValidationParameters": {
+      "ClockSkewSeconds": 60,
+      "RequireExpirationTime": true,
+      "RequireSignedTokens": true
+    }
+  }
+}</code></pre>
+
+  <h2>Scope Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Scope</th><th>Required?</th><th>Claims Added</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>openid</code></td><td>Yes</td><td><code>sub</code>, <code>iss</code>, <code>aud</code>, <code>exp</code></td><td>Always request this</td></tr>
+      <tr><td><code>profile</code></td><td>Recommended</td><td><code>name</code>, <code>given_name</code>, <code>family_name</code></td><td>Display name for UI</td></tr>
+      <tr><td><code>email</code></td><td>Recommended</td><td><code>email</code>, <code>email_verified</code></td><td>User identification</td></tr>
+      <tr><td><code>roles</code></td><td>For RBAC</td><td><code>roles[]</code></td><td>Required for permission checks</td></tr>
+      <tr><td><code>tenant</code></td><td>For multi-tenant</td><td><code>tenant_id</code>, <code>tenant_name</code></td><td>Required for tenant-scoped APIs</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-auth-flow.html">Next: Authorization Code Flow &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
