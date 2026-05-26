@@ -30,6 +30,42 @@ jobs:
         run: |
           find docs -name "*.html" -exec sed -i 's|<nav |<nav data-pagefind-ignore |g' {} \;
 
+      - name: Fetch and index blog posts
+        run: |
+          python3 - <<'PYEOF'
+          import urllib.request, xml.etree.ElementTree as ET, json, re
+          try:
+              req = urllib.request.Request(
+                  'https://blog.bizfirstai.com/feed',
+                  headers={'User-Agent': 'Mozilla/5.0 (BizFirstAI docs build)'}
+              )
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  xml_data = r.read()
+              root = ET.fromstring(xml_data)
+              items = []
+              for item in root.findall('.//item'):
+                  link = (item.findtext('link') or '').strip()
+                  guid = (item.findtext('guid') or '').strip()
+                  url  = link or guid
+                  url  = re.sub(r'https?://localhost:\d+', 'https://blog.bizfirstai.com', url)
+                  desc = (item.findtext('description') or '')
+                  desc = re.sub(r'<[^>]+>', '', desc).strip()[:300]
+                  pub  = (item.findtext('pubDate') or '').strip()
+                  items.append({
+                      'title': (item.findtext('title') or '').strip(),
+                      'url':   url,
+                      'description': desc,
+                      'date': pub
+                  })
+              with open('docs/blog-search.json', 'w') as f:
+                  json.dump(items, f)
+              print(f'Indexed {len(items)} blog posts')
+          except Exception as e:
+              print(f'Blog fetch skipped: {e}')
+              with open('docs/blog-search.json', 'w') as f:
+                  json.dump([], f)
+          PYEOF
+
       - name: Build Pagefind search index
         run: npx pagefind@latest --site docs
 

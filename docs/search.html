@@ -196,6 +196,14 @@ body {
   box-shadow: 0 0 0 1px var(--accent2), 0 4px 16px rgba(167,139,250,.08);
 }
 .comm-meta { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+
+/* ── blog section ── */
+.badge-blog { background: rgba(251,191,36,.12); color: #f59e0b; }
+.blog-card .sr-breadcrumb { color: #f59e0b; }
+.blog-card:hover, .blog-card:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 1px #f59e0b, 0 4px 16px rgba(245,158,11,.08);
+}
 </style>
 </head>
 <body>
@@ -259,12 +267,21 @@ body {
     </div>
   </div>
 
-  <div id="community-section" style="display:none; padding:24px 24px 40px;">
+  <div id="community-section" style="display:none; padding:24px 24px 0;">
     <div style="max-width:860px;margin:0 auto;">
       <div class="section-divider">
         <i class="fa-solid fa-people-group"></i> Community Discussions
       </div>
       <div id="community-results"></div>
+    </div>
+  </div>
+
+  <div id="blog-section" style="display:none; padding:24px 24px 40px;">
+    <div style="max-width:860px;margin:0 auto;">
+      <div class="section-divider">
+        <i class="fa-solid fa-rss"></i> Blog Posts
+      </div>
+      <div id="blog-results"></div>
     </div>
   </div>
 </div>
@@ -288,6 +305,9 @@ body {
   var loadingEl       = document.getElementById('search-loading');
   var communityEl     = document.getElementById('community-section');
   var communityResEl  = document.getElementById('community-results');
+  var blogEl          = document.getElementById('blog-section');
+  var blogResEl       = document.getElementById('blog-results');
+  var blogPosts       = null; // cached after first load
 
   /* ── Pagefind loader ── */
   function loadPagefind() {
@@ -312,7 +332,7 @@ body {
   clearBtn.addEventListener('click', function () {
     inputEl.value = ''; clearBtn.classList.remove('visible');
     countEl.textContent = ''; currentQuery = '';
-    reset(); clearCommunity(); inputEl.focus();
+    reset(); clearCommunity(); clearBlog(); inputEl.focus();
     history.replaceState(null, '', location.pathname);
   });
   inputEl.addEventListener('keydown', function (e) {
@@ -330,7 +350,7 @@ body {
     clearTimeout(debounceTimer);
     if (!q) { countEl.textContent = ''; reset(); history.replaceState(null, '', location.pathname); return; }
     history.replaceState(null, '', '?q=' + encodeURIComponent(q));
-    debounceTimer = setTimeout(function () { runSearch(q); runCommunitySearch(q); }, 220);
+    debounceTimer = setTimeout(function () { runSearch(q); runCommunitySearch(q); runBlogSearch(q); }, 220);
   }
 
   /* ── search ── */
@@ -454,6 +474,50 @@ body {
     communityResEl.innerHTML = '';
   }
 
+  /* ── blog search ── */
+  function loadBlogPosts() {
+    if (blogPosts !== null) return Promise.resolve(blogPosts);
+    return fetch('/blog-search.json')
+      .then(function (r) { return r.json(); })
+      .then(function (data) { blogPosts = data; return data; })
+      .catch(function () { blogPosts = []; return []; });
+  }
+  function runBlogSearch(q) {
+    clearBlog();
+    if (!q) return;
+    var terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    loadBlogPosts().then(function (posts) {
+      var matches = posts.filter(function (p) {
+        var hay = ((p.title || '') + ' ' + (p.description || '')).toLowerCase();
+        return terms.every(function (t) { return hay.indexOf(t) !== -1; });
+      });
+      if (!matches.length) return;
+      blogEl.style.display = '';
+      matches.slice(0, 8).forEach(function (p) {
+        var date = '';
+        if (p.date) {
+          try { date = new Date(p.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+          catch (e) {}
+        }
+        var a = document.createElement('a');
+        a.className = 'sr-card blog-card';
+        a.href = p.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.innerHTML =
+          '<div class="sr-breadcrumb">blog.bizfirstai.com</div>' +
+          '<div class="sr-title">' + escHtml(p.title) + '</div>' +
+          (p.description ? '<div class="sr-excerpt">' + escHtml(p.description) + '</div>' : '') +
+          (date ? '<div class="comm-meta">' + date + '</div>' : '');
+        blogResEl.appendChild(a);
+      });
+    });
+  }
+  function clearBlog() {
+    blogEl.style.display = 'none';
+    blogResEl.innerHTML = '';
+  }
+
   function reset() {
     hintEl.style.display = ''; emptyEl.style.display = 'none';
     clearCards(); loadedData = []; shown = 0;
@@ -477,8 +541,10 @@ body {
     clearBtn.classList.add('visible');
     runSearch(initQ);
     runCommunitySearch(initQ);
+    runBlogSearch(initQ);
   }
-  loadPagefind(); // warm up eagerly
+  loadPagefind();   // warm up eagerly
+  loadBlogPosts();  // pre-cache blog index
 })();
 </script>
 </body>
