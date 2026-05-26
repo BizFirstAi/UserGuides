@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SignalR Transport — Transports | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Transports</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Transport Overview</a>
+  <a href="01-signalr.html" class="active">SignalR Transport</a>
+  <a href="02-websocket.html">WebSocket Transport</a>
+  <a href="03-sse.html">SSE Transport</a>
+  <a href="04-choosing.html">Choosing a Transport</a>
+  <a href="05-connection-lifecycle.html">Connection Lifecycle</a>
+  <a href="06-custom-transport.html">Custom Transport</a>
+  <a href="07-multiple-transports.html">Multiple Transports</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>SignalR Transport</h1>
+    <p class="lead"><code>SignalRTransport</code> wraps <code>@microsoft/signalr</code> to connect to ASP.NET Core SignalR hubs. It handles WebSocket negotiation, automatic reconnection with exponential backoff, and auth token injection.</p>
+  </div>
+
+  <h2>Configuration</h2>
+  <pre><code>stream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  url: '/hubs/edge-stream',
+  transportConfig: {
+    type: 'signalr',
+    url: '/hubs/edge-stream',
+
+    // Auth token (optional) — injected via accessTokenFactory
+    accessToken: authStore.getToken(),
+
+    // Custom headers (optional)
+    headers: { 'X-Client-Version': '2.0' },
+
+    // Reconnect configuration (optional)
+    reconnect: {
+      maxAttempts: 0,         // 0 = unlimited
+      initialDelayMs: 1000,
+      maxDelayMs: 30000,
+      backoffMultiplier: 2,
+    },
+  }
+});</code></pre>
+
+  <h2>Hub Methods</h2>
+  <p>The SignalRTransport uses these hub method names by convention:</p>
+  <table>
+    <thead>
+      <tr><th>Direction</th><th>Method</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Inbound (server → client)</td><td><code>ReceiveMessage</code></td><td>Hub calls this when pushing a message to the client</td></tr>
+      <tr><td>Outbound (client → server)</td><td><code>SendMessage</code></td><td>Client invokes this to send a message to the hub</td></tr>
+    </tbody>
+  </table>
+
+  <h2>How It Works</h2>
+  <pre><code>// Internal implementation (simplified)
+class SignalRTransport extends BaseTransport {
+  private messageMethodName = 'ReceiveMessage';
+
+  async connect(): Promise&lt;void&gt; {
+    const builder = new SignalR.HubConnectionBuilder()
+      .withUrl(this.config.url, this.config.accessToken
+        ? { accessTokenFactory: () => this.config.accessToken! }
+        : {})
+      .withAutomaticReconnect(); // exponential backoff built-in
+
+    this.connection = builder.build();
+
+    // Register inbound handler
+    this.connection.on('ReceiveMessage', (raw: string | ArrayBuffer) =&gt; {
+      this.emitMessage(raw); // feeds EdgeStream pipeline
+    });
+
+    // Reconnection lifecycle
+    this.connection.onreconnecting(() =&gt; this.setStatus('reconnecting'));
+    this.connection.onreconnected(() =&gt; this.setStatus('connected'));
+    this.connection.onclose(() =&gt; this.setStatus('disconnected'));
+
+    await this.connection.start();
+    this.setStatus('connected');
+  }
+
+  async send(data: string | ArrayBuffer): Promise&lt;void&gt; {
+    const message = typeof data === 'string' ? data : new TextDecoder().decode(new Uint8Array(data));
+    await this.connection!.invoke('SendMessage', message);
+  }
+}</code></pre>
+
+  <h2>ASP.NET Core Hub Setup</h2>
+  <p>Your hub must handle the matching method names:</p>
+  <pre><code>// C# — ASP.NET Core SignalR hub (server-side)
+public class EdgeStreamHub : Hub
+{
+    // Client sends → hub receives
+    public async Task SendMessage(string message)
+    {
+        // Process and optionally broadcast back
+        await Clients.All.SendAsync("ReceiveMessage", message);
+    }
+}</code></pre>
+
+  <h2>Automatic Reconnection</h2>
+  <p><code>withAutomaticReconnect()</code> is always enabled in SignalRTransport. SignalR manages the reconnect delays internally. The transport emits status events during the cycle:</p>
+  <pre><code>const server = stream.server('bas')!;
+
+server.transport.onStatusChange((status) =&gt; {
+  switch (status) {
+    case 'reconnecting':
+      ui.showBanner('Connection lost — reconnecting...');
+      break;
+    case 'connected':
+      ui.hideBanner();
+      break;
+    case 'error':
+      ui.showError('Connection failed');
+      break;
+  }
+});</code></pre>
+
+  <div class="callout success">
+    <strong>Recommended for BizFirstGO Apps</strong>
+    SignalR is the recommended transport for all browser-based BizFirstGO clients. It negotiates the best available protocol (WebSocket preferred, SSE fallback, long-polling last resort) without any extra configuration.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Transport Overview</a>
+    <a href="02-websocket.html">Next: WebSocket Transport &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

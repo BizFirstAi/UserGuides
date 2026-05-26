@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Failure Modes — HIL Suspension & Resume | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Suspension &amp; Resume</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-suspending.html">Triggering Suspension</a>
+  <a href="02-state-persistence.html">Persisting Execution State</a>
+  <a href="03-correlation-token.html">Correlation Tokens</a>
+  <a href="04-resume-api.html">Resume API</a>
+  <a href="05-resume-data.html">Injecting Resume Data</a>
+  <a href="06-continuation.html">Resuming the Engine</a>
+  <a href="07-failure-modes.html" class="active">Failure Modes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Failure Modes</h1>
+    <p class="lead">Common failure scenarios in the HIL suspension/resume cycle, their causes, and how to detect and recover from them.</p>
+  </div>
+
+  <h2>Failure Scenarios</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Symptom</th><th>Detection</th><th>Recovery</th></tr></thead>
+    <tbody>
+      <tr><td>Double-resume</td><td>409 Conflict on second resume call</td><td>ResumedAt is already set</td><td>No action needed — first resume succeeded</td></tr>
+      <tr><td>Token expired</td><td>410 Gone on resume call</td><td>ExpiresAt in the past</td><td>If configured, timeout job auto-handles. Otherwise, admin must manually resolve.</td></tr>
+      <tr><td>Orphaned suspension</td><td>Task never completed, no timeout</td><td>Scan for suspensions with no ExpiresAt and Status=Pending older than N days</td><td>Admin calls <code>POST /api/hil/admin/force-resume</code> with a manual decision</td></tr>
+      <tr><td>Suspension persisted, continuation failed</td><td>ResumedAt is set but workflow is not Running</td><td>Execution status shows Suspended even after ResumedAt is set</td><td>HILResumeService logs the continuation error — retry via admin API</td></tr>
+      <tr><td>Non-serialisable output in memory</td><td>Suspension fails with SerializationException</td><td>Engine logs the error before writing to DB</td><td>Fix the executor's output type — use serialisable DTOs</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Admin Force-Resume API</h2>
+  <pre><code">// For use by tenant admins to unblock stuck suspensions
+POST /api/hil/admin/executions/{executionResId}/force-resume
+Authorization: Bearer {adminToken}
+
+{
+  "decision": "Approved",   // or the appropriate response data
+  "adminNote": "Force-resolved by admin due to actor unavailability"
+}</code></pre>
+
+  <h2>Cleanup Job for Orphaned Suspensions</h2>
+  <pre><code">// HILCleanupJob — runs on a configurable schedule
+public async Task RunAsync(CancellationToken ct)
+{
+    var orphanThreshold = DateTimeOffset.UtcNow.AddDays(-_options.OrphanThresholdDays);
+    var orphaned = await _repo.GetOrphanedAsync(orphanThreshold, ct);
+
+    foreach (var suspension in orphaned)
+    {
+        await _alertService.NotifyAdminAsync(new OrphanedSuspensionAlert
+        {
+            ExecutionResId = suspension.ExecutionResId,
+            SuspendedAt    = suspension.SuspendedAt,
+            ProcessId      = suspension.ProcessId
+        }, ct);
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Design for resilience:</strong> Always set a timeout on HIL nodes in production workflows. An unset timeout is a potential orphan waiting to happen. The HILCleanupJob will alert — but alert fatigue is real. Use timeouts to auto-resolve, not alerts to manually fix.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-continuation.html">&#8592; Resuming the Engine</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trace Ingestion — Distributed Traces | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Distributed Traces</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Tempo Overview</a>
+  <a href="01-deployment.html">Deploying Tempo</a>
+  <a href="02-trace-ingestion.html" class="active">Trace Ingestion</a>
+  <a href="03-trace-structure.html">BizFirstGO Trace Structure</a>
+  <a href="04-trace-search.html">Searching Traces</a>
+  <a href="05-traceql.html">TraceQL Basics</a>
+  <a href="06-log-correlation.html">Trace-to-Log Correlation</a>
+  <a href="07-exemplars.html">Metrics Exemplars</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Trace Ingestion</h1>
+    <p class="lead">BizFirstGO services emit traces via the OTel SDK. The OTel Collector receives them via OTLP, applies optional processing (tail sampling, PII filtering), and exports to Tempo via OTLP/gRPC. Trace context is propagated between services via HTTP headers.</p>
+  </div>
+
+  <h2>Ingestion Path</h2>
+  <pre><code># Ingestion flow:
+BizFirstGO Service
+  → OTel SDK (ActivitySource, auto-instrumentation)
+    → OTLP/gRPC export to OTel Collector (port 4317)
+      → OTel Collector processors (sampling, PII redaction)
+        → OTLP/gRPC export to Tempo (port 4317)
+          → Tempo WAL → Tempo object storage (S3)</code></pre>
+
+  <h2>OTel Collector — Tempo Exporter</h2>
+  <pre><code># otel-collector-config.yaml — traces pipeline
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # Tail sampling: always sample errors, sample 10% of success traces
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000
+    policies:
+      - name: "always-sample-errors"
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      - name: "sample-10pct-success"
+        type: probabilistic
+        probabilistic: {sampling_percentage: 10}
+
+  # Drop sensitive span attributes
+  transform/trace-redact:
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "user.password")
+          - delete_key(attributes, "http.request.body")
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true               # Use TLS in production
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling, transform/trace-redact, batch]
+      exporters: [otlp/tempo]</code></pre>
+
+  <h2>Trace Context Propagation</h2>
+  <p>The OTel SDK automatically propagates trace context when BizFirstGO services make HTTP calls to each other. The W3C TraceContext format is used via the <code>traceparent</code> header:</p>
+  <pre><code># W3C traceparent header format:
+# traceparent: {version}-{traceId}-{parentSpanId}-{flags}
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+
+# Breakdown:
+# version: 00
+# traceId: 4bf92f3577b34da6a3ce929d0e0e4736  (same across all services in a request)
+# parentSpanId: 00f067aa0ba902b7               (the calling span's ID)
+# flags: 01 (sampled)</code></pre>
+
+  <p>The OTel SDK in each BizFirstGO service automatically:</p>
+  <ul>
+    <li>Reads the <code>traceparent</code> header on inbound requests and continues the trace</li>
+    <li>Writes the <code>traceparent</code> header on outbound <code>HttpClient</code> requests (auto-instrumented)</li>
+    <li>Creates child spans that are properly linked to the parent</li>
+  </ul>
+
+  <h2>Sampling Strategy</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Sample Rate</th><th>Rationale</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Development</td><td>100%</td><td>All traces needed for debugging</td></tr>
+      <tr><td>Production — error traces</td><td>100%</td><td>Never lose an error trace</td></tr>
+      <tr><td>Production — slow traces (&gt;2s)</td><td>100%</td><td>Always capture performance issues</td></tr>
+      <tr><td>Production — success traces</td><td>5–10%</td><td>Sufficient for representative analysis</td></tr>
+      <tr><td>Production — health checks</td><td>0%</td><td>No value; filter out completely</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Use Tail Sampling, Not Head Sampling</strong>
+    <p>Head sampling decides at the start of a request whether to sample it. This means you might sample a request that turns out to fail — or skip one that turns out to be slow. Tail sampling (via the OTel Collector) collects all spans, waits for the trace to complete (10-second decision window), then decides whether to keep it based on the final outcome. This ensures 100% of error and slow traces are retained even at low sample rates.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-deployment.html">&#8592; Deploying Tempo</a>
+    <a href="03-trace-structure.html">Next: BizFirstGO Trace Structure &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bring Your Own IAM Overview — Bring Your Own IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Bring Your Own IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-external-token-validation.html">External Token Validation</a>
+  <a href="02-okta.html">Okta Integration</a>
+  <a href="03-azure-ad.html">Azure AD Integration</a>
+  <a href="04-auth0.html">Auth0 Integration</a>
+  <a href="05-keycloak.html">Keycloak Integration</a>
+  <a href="06-claims-mapping.html">Claims Mapping</a>
+  <a href="07-hybrid-mode.html">Hybrid Mode</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Bring Your Own IAM</h1>
+    <p class="lead">Federate BizFirstGO with your existing enterprise identity provider — Okta, Azure AD / Entra ID, Auth0, or Keycloak — without migrating users to Passport.</p>
+  </div>
+
+  <h2>Federation vs. Replacement</h2>
+  <p>Bring Your Own IAM (BYOIAM) is a <strong>federation</strong> model, not a full replacement. Your external IdP handles authentication and issues tokens. BizFirstGO accepts and validates those tokens. BizFirstGO's own permission system, resource policies, and node capability policies remain fully active — they operate on the mapped identity.</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4>External IdP Provides</h4>
+      <ul>
+        <li>User authentication (login)</li>
+        <li>MFA enforcement</li>
+        <li>Session management</li>
+        <li>Group/role memberships</li>
+        <li>JWT tokens with claims</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>BizFirstGO Keeps</h4>
+      <ul>
+        <li>Permission string evaluation</li>
+        <li>Resource-level policies</li>
+        <li>Node capability policies</li>
+        <li>Workflow execution authorization</li>
+        <li>Audit logging</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>IExternalTokenProvider</h2>
+  <pre><code>namespace BizFirst.Essentials.Passport.Federation;
+
+public interface IExternalTokenProvider
+{
+    /// &lt;summary&gt;
+    /// The issuer URI this provider handles. Matched against the "iss" claim in incoming tokens.
+    /// &lt;/summary&gt;
+    string Issuer { get; }
+
+    /// &lt;summary&gt;
+    /// Validate the token and return identity claims.
+    /// Returns null if the token is invalid.
+    /// &lt;/summary&gt;
+    Task&lt;ExternalIdentityClaims?&gt; ValidateTokenAsync(
+        string token,
+        CancellationToken ct = default);
+}
+
+public class ExternalIdentityClaims
+{
+    public required string UserId      { get; init; }
+    public required string TenantId    { get; init; }
+    public required string Email       { get; init; }
+    public string? DisplayName         { get; init; }
+    public IReadOnlyList&lt;string&gt; Groups{ get; init; } = [];  // external groups/roles
+    public IReadOnlyDictionary&lt;string, string&gt; RawClaims { get; init; } = new Dictionary&lt;string, string&gt;();
+}</code></pre>
+
+  <h2>How Token Validation Works with External IdPs</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Token Arrives at BizFirstGO API</h4>
+        <p>A BizFirstGO API receives a request with a Bearer token in the Authorization header. The token was issued by an external IdP (e.g., Okta, Azure AD).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Identify the Provider</h4>
+        <p>Passport extracts the <code>iss</code> (issuer) claim from the token header. The issuer is matched against registered <code>IExternalTokenProvider</code> instances to find the correct validator.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Validate the Token</h4>
+        <p>The matched provider validates the token signature against the IdP's JWKS endpoint, checks expiry, issuer, and audience. Returns <code>ExternalIdentityClaims</code> on success.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Map Claims to IDInfo</h4>
+        <p><code>ExternalClaimsMapper</code> translates external claims (<code>sub</code>, <code>groups</code>, etc.) to BizFirstGO's <code>IDInfo</code> and role names. Group names from the external IdP are mapped to BizFirstGO role names.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body">
+        <h4>Normal BizFirstGO Authorization</h4>
+        <p>With IDInfo populated, normal BizFirstGO permission evaluation runs — resource policies, node capability policies, and all IAM checks work identically whether the token came from Passport or an external IdP.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Supported Providers</h2>
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>Protocol</th><th>Group/Role Source</th><th>Guide Page</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Okta</td><td>OIDC</td><td><code>groups</code> claim in JWT</td><td><a href="02-okta.html">Okta Integration</a></td></tr>
+      <tr><td>Azure AD / Entra ID</td><td>OIDC</td><td><code>groups</code> claim (GUIDs) or Microsoft Graph</td><td><a href="03-azure-ad.html">Azure AD Integration</a></td></tr>
+      <tr><td>Auth0</td><td>OIDC</td><td>Custom namespace claim</td><td><a href="04-auth0.html">Auth0 Integration</a></td></tr>
+      <tr><td>Keycloak</td><td>OIDC</td><td>Realm roles in JWT</td><td><a href="05-keycloak.html">Keycloak Integration</a></td></tr>
+      <tr><td>Custom</td><td>OIDC/JWT</td><td>Configurable</td><td>Implement <code>IExternalTokenProvider</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span class="spacer"></span>
+    <a href="01-external-token-validation.html">Next: External Token Validation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

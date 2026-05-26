@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virtual Scrolling — Logs Tab | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Logs Tab</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Logs Tab Overview</a>
+  <a href="01-log-entry.html">Log Entry Anatomy</a>
+  <a href="02-level-filter.html">Filtering by Level</a>
+  <a href="03-node-filter.html">Filtering by Node</a>
+  <a href="04-text-search.html">Text Search</a>
+  <a href="05-virtualization.html" class="active">Virtual Scrolling</a>
+  <a href="06-sanitization.html">Log Sanitization</a>
+  <a href="07-expand-detail.html">Expanding a Log Entry</a>
+  <a href="08-trace-id.html">OpenTelemetry Trace ID</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Virtual Scrolling</h1>
+    <p class="lead">The Logs tab uses virtual scrolling (windowing) to render only the rows currently visible in the viewport. This allows the tab to display thousands of log entries without DOM bloat or jank, even during rapid log streaming.</p>
+  </div>
+
+  <h2>Why Virtualization Is Needed</h2>
+  <p>Without virtualization, a log buffer of 10,000 entries would create 10,000 DOM nodes. Rendering and updating 10,000 nodes causes significant scroll lag and React reconciliation cost. With virtualization, the DOM contains at most ~30–50 rows at any time regardless of the buffer size.</p>
+
+  <h2>How It Works</h2>
+  <p>The Logs tab uses <code>react-window</code> (<code>FixedSizeList</code>) for virtualization. Each row has a fixed height (32px) so the total scrollable height can be computed without rendering all rows:</p>
+  <pre><code>import { FixedSizeList } from 'react-window';
+
+&lt;FixedSizeList
+  height={panelContentHeight}    // available height in the panel
+  itemCount={visibleLogs.length} // filtered log count
+  itemSize={32}                  // pixels per row
+  width="100%"
+  overscanCount={5}              // render 5 extra rows above/below viewport
+&gt;
+  {({ index, style }) =&gt; (
+    &lt;LogRow
+      log={visibleLogs[index]}
+      style={style}              // absolute position set by react-window
+      searchTerm={searchTerm}
+      onExpand={handleExpand}
+    /&gt;
+  )}
+&lt;/FixedSizeList&gt;</code></pre>
+
+  <h2>Auto-Scroll to Bottom</h2>
+  <p>While the execution is running, the list auto-scrolls to the bottom as new entries arrive — similar to a terminal. If the user scrolls up to read earlier entries, auto-scroll pauses. It resumes when the user scrolls back to within 50px of the bottom:</p>
+  <pre><code>const isAtBottom = scrollOffset &gt;= (totalHeight - viewportHeight - 50);
+
+useEffect(() =&gt; {
+  if (isAtBottom &amp;&amp; isRunning) {
+    listRef.current?.scrollToItem(visibleLogs.length - 1, 'end');
+  }
+}, [visibleLogs.length, isAtBottom, isRunning]);</code></pre>
+
+  <h2>Performance Numbers</h2>
+  <table>
+    <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Row height</td><td>32px (fixed)</td></tr>
+      <tr><td>Rendered DOM rows</td><td>~30–50 (visible + overscan)</td></tr>
+      <tr><td>Max buffer size</td><td>10,000 entries</td></tr>
+      <tr><td>Auto-scroll resume threshold</td><td>50px from bottom</td></tr>
+      <tr><td>Overscan rows</td><td>5 above + 5 below viewport</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-text-search.html">&#8592; Text Search</a>
+    <a href="06-sanitization.html">Next: Log Sanitization &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

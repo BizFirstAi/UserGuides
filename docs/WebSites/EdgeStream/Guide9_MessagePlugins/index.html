@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Message Plugins Overview — Message Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Plugins</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Message Plugins Overview</a>
+  <a href="01-workflow-event-plugin.html">Workflow Event Plugin</a>
+  <a href="02-agent-message-plugin.html">Agent Message Plugin</a>
+  <a href="03-ui-action-plugin.html">UI Action Plugin</a>
+  <a href="04-system-event-plugin.html">System Event Plugin</a>
+  <a href="05-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="06-plugin-registry.html">Plugin Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Message Plugins Overview</h1>
+    <p class="lead">Message plugins are domain-specific packages that define the message types, TypeScript interfaces, validation rules, and default hook behavior for a topic namespace. A plugin "owns" a prefix like <code>workflow</code> or <code>agent</code> and provides everything subscribers need to work with those messages.</p>
+  </div>
+
+  <h2>Plugin vs Hook</h2>
+  <table>
+    <thead>
+      <tr><th></th><th>Hook</th><th>Message Plugin</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>What it is</td><td>Pipeline stage that transforms/filters one message</td><td>A package that bundles message types + validation + hooks for a topic domain</td></tr>
+      <tr><td>Granularity</td><td>Single responsibility (decrypt, validate, normalize...)</td><td>Domain-level (all workflow messages, all agent messages)</td></tr>
+      <tr><td>What it provides</td><td><code>execute(context)</code></td><td>TypeScript interfaces, topic namespace, validator, default hooks</td></tr>
+      <tr><td>Examples</td><td><code>NormalizationHook</code>, <code>TenantFilterHook</code></td><td><code>WorkflowEventPlugin</code>, <code>AgentMessagePlugin</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Plugin Categories</h2>
+  <table>
+    <thead>
+      <tr><th>Plugin</th><th>Topic Namespace</th><th>Powers</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>WorkflowEventPlugin</code></td><td><code>workflow.*</code></td><td>Flow Studio Observer Panel — execution events, node completions, failures</td></tr>
+      <tr><td><code>AgentMessagePlugin</code></td><td><code>agent.*</code></td><td>Octopus chat — streaming tokens, tool calls, turn completions</td></tr>
+      <tr><td><code>UiActionPlugin</code></td><td><code>ui.*</code></td><td>UI interactions — button clicks, form submits, navigation events</td></tr>
+      <tr><td><code>SystemEventPlugin</code></td><td><code>system.*</code></td><td>Platform events — health checks, deployments, config changes</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What a Plugin Provides</h2>
+  <pre><code>interface IMessagePlugin {
+  /** Topic namespace this plugin owns */
+  readonly topicNamespace: string;         // e.g., 'workflow'
+
+  /** All message type names this plugin handles */
+  readonly messageTypes: readonly string[]; // e.g., ['workflow.started', 'workflow.nodeCompleted']
+
+  /** TypeScript interfaces for each message type (documentation only) */
+  readonly messageSchemas: Record&lt;string, unknown&gt;;
+
+  /** Validate an envelope — returns true if this plugin should handle it */
+  canHandle(envelope: IEnvelope): boolean;
+
+  /** Validate message body against the expected schema */
+  validate(envelope: IEnvelope): ValidationResult;
+
+  /** Default hooks to register for this plugin's topic namespace */
+  createDefaultHooks(): IHook[];
+}</code></pre>
+
+  <h2>Using a Plugin</h2>
+  <pre><code>import { WorkflowEventPlugin } from '@edge-stream/workflow-plugin';
+
+const plugin = new WorkflowEventPlugin();
+const server = stream.server('bas')!;
+
+// Register the plugin's default hooks into the pipeline
+plugin.createDefaultHooks().forEach(hook =&gt; {
+  server.incomingPipeline.addHook(hook);
+});
+
+// Subscribe using the plugin's known topic namespace
+stream.subscribe('bas', 'workflow.*', (envelope) =&gt; {
+  if (!plugin.canHandle(envelope)) return;
+
+  const validation = plugin.validate(envelope);
+  if (!validation.valid) {
+    console.warn('Invalid workflow message:', validation.errors);
+    return;
+  }
+
+  // envelope.body is now typed as WorkflowEvent
+  console.log('Workflow event:', envelope.body);
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="../Guide8_ReactBindings/07-examples.html">&#8592; Previous Guide: React Bindings</a>
+    <a href="01-workflow-event-plugin.html">Next: Workflow Event Plugin &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Role Provider — Custom IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Custom IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom IAM Overview</a>
+  <a href="01-custom-resolver.html">Custom Permission Resolver</a>
+  <a href="02-custom-role-provider.html" class="active">Custom Role Provider</a>
+  <a href="03-attribute-conditions.html">Attribute-Based Conditions</a>
+  <a href="04-combining.html">Combining with Built-In IAM</a>
+  <a href="05-registration.html">Registering Custom Extensions</a>
+  <a href="06-testing.html">Testing Custom IAM</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Custom Role Provider</h1>
+    <p class="lead">Implement <code>ICustomRoleProvider</code> to inject additional roles at evaluation time — derived from external systems, project assignments, or real-time organizational state.</p>
+  </div>
+
+  <h2>ICustomRoleProvider</h2>
+  <pre><code>namespace BizFirst.Essentials.Passport.IAM;
+
+public interface ICustomRoleProvider
+{
+    /// &lt;summary&gt;
+    /// Returns additional role names for the user at the time of evaluation.
+    /// These roles are merged with Passport's built-in role resolution.
+    /// The returned role names must exist in Passport's role registry to have any effect
+    /// (they expand into permissions based on the role's permission set).
+    ///
+    /// Return empty list if no additional roles apply.
+    /// Never throw — log and return empty list on failure.
+    /// &lt;/summary&gt;
+    Task&lt;IReadOnlyList&lt;string&gt;&gt; GetRolesAsync(
+        string userId,
+        string tenantId,
+        CancellationToken ct = default);
+}</code></pre>
+
+  <h2>Project-Based Role Provider</h2>
+  <pre><code">/// &lt;summary&gt;
+/// Dynamically assigns roles based on the user's active project assignments in the ERP.
+/// A user who is a project manager for any active project gets the "project-manager" role.
+/// A user who is assigned to a project gets the "project-member" role.
+/// &lt;/summary&gt;
+public sealed class ProjectRoleProvider : ICustomRoleProvider
+{
+    private readonly IProjectRepository _projects;
+    private readonly IMemoryCache _cache;
+    private readonly ILogger&lt;ProjectRoleProvider&gt; _logger;
+
+    public async Task&lt;IReadOnlyList&lt;string&gt;&gt; GetRolesAsync(
+        string userId, string tenantId, CancellationToken ct)
+    {
+        var cacheKey = $"project-roles:{userId}:{tenantId}";
+
+        return await _cache.GetOrCreateAsync(cacheKey, async entry =&gt;
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2);
+
+            try
+            {
+                var assignments = await _projects.GetUserAssignmentsAsync(userId, tenantId, ct);
+                var roles = new List&lt;string&gt;();
+
+                if (assignments.Any(a =&gt; a.Role == "ProjectManager" &amp;&amp; a.IsActive))
+                    roles.Add("project-manager");
+
+                if (assignments.Any(a =&gt; a.IsActive))
+                    roles.Add("project-member");
+
+                return (IReadOnlyList&lt;string&gt;)roles;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to resolve project roles for user {UserId}", userId);
+                return Array.Empty&lt;string&gt;();
+            }
+        }) ?? [];
+    }
+}</code></pre>
+
+  <h2>On-Call Provider</h2>
+  <pre><code">/// &lt;summary&gt;
+/// Grants the "on-call-responder" role to users who are currently on-call
+/// according to the PagerDuty/ops schedule.
+/// &lt;/summary&gt;
+public sealed class OnCallRoleProvider : ICustomRoleProvider
+{
+    private readonly IOnCallScheduleService _schedule;
+
+    public async Task&lt;IReadOnlyList&lt;string&gt;&gt; GetRolesAsync(
+        string userId, string tenantId, CancellationToken ct)
+    {
+        bool isOnCall = await _schedule.IsUserOnCallAsync(userId, ct);
+        return isOnCall
+            ? (IReadOnlyList&lt;string&gt;)["on-call-responder"]
+            : Array.Empty&lt;string&gt;();
+    }
+}</code></pre>
+
+  <h2>Important Constraints</h2>
+  <ul>
+    <li>Returned role names must be registered in Passport's role registry. Unknown role names are silently ignored — they produce no permissions.</li>
+    <li>Custom roles are ephemeral — they are resolved fresh on every permission check. They are not persisted to the JWT or the session.</li>
+    <li>Multiple <code>ICustomRoleProvider</code>s are registered and all results are merged (unlike <code>ICustomPermissionResolver</code> which short-circuits).</li>
+    <li>Custom role resolution runs before permission expansion — the custom roles' permission sets are included in the effective permission calculation.</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Cache External Calls</strong>
+    <p>If your role provider calls an external API (ERP, project tracker, on-call system), cache the result per user per tenant for at least 1 minute. Without caching, a single page load can trigger dozens of calls to the external system — one per permission check. Use <code>IMemoryCache</code> with a short TTL rather than no cache.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-custom-resolver.html">&#8592; Custom Permission Resolver</a>
+    <a href="03-attribute-conditions.html">Next: Attribute-Based Conditions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

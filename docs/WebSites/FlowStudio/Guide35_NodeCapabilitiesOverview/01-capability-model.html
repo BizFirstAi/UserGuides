@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Capability Model — Guide35_NodeCapabilitiesOverview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Capabilities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-capability-model.html" class="active"><i class="fa-solid fa-cubes"></i> Capability Model</a>
+  <a href="02-declaring.html"><i class="fa-solid fa-code"></i> Declaring Capabilities</a>
+  <a href="03-capability-registry.html"><i class="fa-solid fa-list-check"></i> CapabilityRegistry</a>
+  <a href="04-palette-integration.html"><i class="fa-solid fa-palette"></i> Palette Integration</a>
+  <a href="05-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <a href="06-capability-map.html"><i class="fa-solid fa-map"></i> Capability Type Map</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>The Capability Model</h1>
+    <p class="lead">The <code>INodeCapability</code> interface, <code>CapabilityType</code> enum definition, and <code>CapabilityMetadata</code> — the full type system behind node capabilities.</p>
+  </div>
+
+  <h2>INodeCapability Interface</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Capabilities/INodeCapability.cs
+public interface INodeCapability
+{
+    CapabilityType Type { get; }
+    CapabilityMetadata Metadata { get; }
+    void ConfigureServices(IServiceCollection services);
+}
+
+public record CapabilityMetadata
+{
+    public string DisplayName { get; init; }
+    public string Description { get; init; }
+    public string IconClass { get; init; }    // Font Awesome class
+    public string PaletteCategory { get; init; }
+    public bool RequiresCredential { get; init; }
+}</code></pre>
+
+  <h2>CapabilityType Enum</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Capabilities/CapabilityType.cs
+public enum CapabilityType
+{
+    Webhook          = 1,
+    BusinessService  = 2,
+    Form             = 3,
+    Widget           = 4,
+    Messaging        = 5,
+    Identity         = 6,
+    Entity           = 7,
+    Datasource       = 8,
+    Rule             = 9,
+    Process          = 10,
+    DIDComm          = 11,
+    MCP              = 12
+}</code></pre>
+
+  <h2>NodeCapabilityAttribute</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Capabilities/NodeCapabilityAttribute.cs
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
+public sealed class NodeCapabilityAttribute : Attribute
+{
+    public CapabilityType Type { get; }
+    public NodeCapabilityAttribute(CapabilityType type) => Type = type;
+}</code></pre>
+
+  <h2>Example: A Messaging Capability Implementation</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Capabilities/Implementations/MessagingCapability.cs
+public class MessagingCapability : INodeCapability
+{
+    public CapabilityType Type => CapabilityType.Messaging;
+
+    public CapabilityMetadata Metadata => new()
+    {
+        DisplayName = "Messaging",
+        Description = "Send messages via Slack, Email, SMS, and Push",
+        IconClass = "fa-solid fa-envelope",
+        PaletteCategory = "Communication",
+        RequiresCredential = true
+    };
+
+    public void ConfigureServices(IServiceCollection services)
+    {
+        services.AddScoped&lt;IMessagingChannelRegistry, MessagingChannelRegistry&gt;();
+        services.AddScoped&lt;SlackChannelAdapter&gt;();
+        services.AddScoped&lt;EmailChannelAdapter&gt;();
+        services.AddScoped&lt;SMSChannelAdapter&gt;();
+        services.AddScoped&lt;PushChannelAdapter&gt;();
+    }
+}</code></pre>
+
+  <h2>Registration Pattern</h2>
+  <p>Each capability implementation is registered in DI as <code>INodeCapability</code>. The engine collects all registrations at startup:</p>
+  <pre><code class="language-csharp">// Program.cs / Startup extension
+services.AddSingleton&lt;INodeCapability, WebhookCapability&gt;();
+services.AddSingleton&lt;INodeCapability, BusinessServiceCapability&gt;();
+services.AddSingleton&lt;INodeCapability, MessagingCapability&gt;();
+// ... all 12 capabilities
+
+// Engine calls ConfigureServices on each capability during startup
+foreach (var capability in capabilities)
+{
+    capability.ConfigureServices(services);
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-declaring.html">Next: Declaring Capabilities &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

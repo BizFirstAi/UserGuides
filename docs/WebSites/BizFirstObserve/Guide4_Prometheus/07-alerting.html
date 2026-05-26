@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prometheus Alert Rules — Prometheus Metrics | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Prometheus Metrics</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Prometheus Overview</a>
+  <a href="01-deployment.html">Deploying Prometheus</a>
+  <a href="02-scrape-config.html">Scrape Configuration</a>
+  <a href="03-bizfirst-metrics.html">BizFirst Metrics Reference</a>
+  <a href="04-promql-basics.html">PromQL Basics</a>
+  <a href="05-promql-examples.html">PromQL for BizFirstGO</a>
+  <a href="06-recording-rules.html">Recording Rules</a>
+  <a href="07-alerting.html" class="active">Prometheus Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Prometheus Alert Rules</h1>
+    <p class="lead">Prometheus evaluates alert rules against its TSDB every 15 seconds. When a rule's expression evaluates to true for longer than the specified <code>for</code> duration, it fires an alert to Alertmanager which routes it to the appropriate notification channel.</p>
+  </div>
+
+  <h2>BizFirstGO Alert Rules</h2>
+  <pre><code"># alert-rules.yml
+groups:
+  - name: bizfirst.workflow.alerts
+    rules:
+
+      # Workflow error rate > 1% for 5 minutes
+      - alert: BizFirstWorkflowErrorRate
+        expr: |
+          (
+            sum(rate(bizfirst_workflow_executions_total{status="failed"}[5m])) by (tenant_id)
+            /
+            sum(rate(bizfirst_workflow_executions_total[5m])) by (tenant_id)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          product: flow-studio
+        annotations:
+          summary: "Workflow error rate high for tenant {{ $labels.tenant_id }}"
+          description: "Error rate is {{ printf \"%.2f\" ($value * 100) }}% (threshold: 1%)"
+          runbook: "https://docs.bizfirstai.com/runbooks/workflow-error-rate"
+
+      # P99 node latency > 5s for 5 minutes
+      - alert: BizFirstNodeHighLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          product: flow-studio
+        annotations:
+          summary: "High P99 latency for node type {{ $labels.node_type }}"
+          description: "P99 latency is {{ printf \"%.1f\" $value }}s (threshold: 5s)"
+
+      # HIL backlog > 100 tasks
+      - alert: BizFirstHILBacklogHigh
+        expr: sum(bizfirst_hil_pending_count) by (tenant_id) > 100
+        for: 10m
+        labels:
+          severity: warning
+          team: operations
+        annotations:
+          summary: "HIL backlog high for tenant {{ $labels.tenant_id }}"
+          description: "{{ $value }} tasks awaiting human action"
+
+      # HIL overdue tasks (SLA breach)
+      - alert: BizFirstHILSLABreach
+        expr: sum(bizfirst_hil_overdue_count) by (tenant_id) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: operations
+        annotations:
+          summary: "HIL SLA breached for tenant {{ $labels.tenant_id }}"
+
+      # Service down
+      - alert: BizFirstServiceDown
+        expr: up{job=~"processengine|edgestream|octopus|api-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "{{ $labels.job }} is DOWN"
+
+      # Disk running low on Prometheus
+      - alert: PrometheusStorageLow
+        expr: |
+          predict_linear(prometheus_tsdb_blocks_loaded[1h], 4*3600) > 0.9
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Prometheus disk usage projected to exceed 90% in 4 hours"</code></pre>
+
+  <h2>Alert Severity Levels</h2>
+  <table>
+    <thead>
+      <tr><th>Severity</th><th>Meaning</th><th>Notification Channel</th><th>Response SLA</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>info</strong></td><td>Informational — no action required immediately</td><td>Slack #platform-info</td><td>Next business day</td></tr>
+      <tr><td><strong>warning</strong></td><td>Degraded performance or approaching thresholds</td><td>Slack #platform-alerts</td><td>Within 4 hours</td></tr>
+      <tr><td><strong>critical</strong></td><td>Service impacted, SLA at risk</td><td>PagerDuty + Slack #incidents</td><td>Within 30 minutes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>The <code>for</code> Duration Prevents Flapping</strong>
+    <p>The <code>for: 5m</code> clause means the alert condition must be continuously true for 5 minutes before the alert fires. Without this, a momentary spike causes an alert that immediately resolves — generating unnecessary notifications ("flapping"). For production alerts, use <code>for: 3m</code> minimum. For critical infrastructure (service down), use <code>for: 1m</code> or even <code>for: 0m</code> for immediate notification.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-recording-rules.html">&#8592; Recording Rules</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

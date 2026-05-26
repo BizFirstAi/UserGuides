@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Results — MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">MCP Tools Overview</a>
+  <a href="01-tool-schema.html">Tool Schema</a>
+  <a href="02-tool-registration.html">Tool Registration</a>
+  <a href="03-tool-call-loop.html">Tool Call Loop</a>
+  <a href="04-tool-results.html" class="active">Tool Results</a>
+  <a href="05-built-in-tools.html">Built-In Tools</a>
+  <a href="06-custom-tools.html">Custom Tools</a>
+  <a href="07-tool-security.html">Tool Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Tool Results</h1>
+    <p class="lead">Tool handlers return a JSON string that is injected into the LLM context as a tool result message. The format, size, and structure of this result directly affects how well the LLM can use it. This page covers result format guidelines, error handling, and result truncation.</p>
+  </div>
+
+  <h2>Result Format</h2>
+  <p>Tool handlers must return a JSON string. The LLM reads this string and uses the data in its next response. Return only what the LLM needs — not full database records:</p>
+  <pre><code>// Good: minimal, focused result
+return JsonSerializer.Serialize(new
+{
+    employeeId    = "EMP-1042",
+    remainingDays = 12,
+    usedDays      = 8,
+    totalDays     = 20,
+    year          = 2025
+});
+// → {"employeeId":"EMP-1042","remainingDays":12,"usedDays":8,"totalDays":20,"year":2025}
+
+// Bad: full database record with irrelevant fields
+return JsonSerializer.Serialize(employeeEntity);
+// → Includes internal IDs, audit timestamps, FK references, encrypted fields...</code></pre>
+
+  <h2>Error Results</h2>
+  <p>When a tool fails, return a structured error result rather than throwing an exception. The LLM can then decide how to handle the failure:</p>
+  <pre><code>// Structured error result (LLM can reason about this)
+public async Task&lt;string&gt; GetLeaveBalanceAsync(JsonElement input, ConversationContext ctx, CancellationToken ct)
+{
+    try
+    {
+        string empId = input.GetProperty("employeeId").GetString()
+            ?? throw new ArgumentException("employeeId is required");
+
+        int days = await _leaveService.GetBalanceAsync(empId, ctx.TenantId, ct);
+        return JsonSerializer.Serialize(new { employeeId = empId, remainingDays = days });
+    }
+    catch (EmployeeNotFoundException)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            error   = "not_found",
+            message = $"Employee '{input.GetProperty("employeeId").GetString()}' not found.",
+            hint    = "Ask the user to verify their employee ID."
+        });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Tool execution failed");
+        return JsonSerializer.Serialize(new
+        {
+            error   = "internal_error",
+            message = "An internal error occurred. Please try again."
+        });
+    }
+}</code></pre>
+
+  <h2>Result Truncation</h2>
+  <p>Large tool results — such as database queries returning many rows — must be truncated before they enter the LLM context. The <code>ToolResultTruncator</code> enforces a maximum token limit:</p>
+  <pre><code>public class ToolResultTruncator
+{
+    private readonly ITokenCounter _counter;
+
+    public string Truncate(string toolResult, int maxTokens = 2000)
+    {
+        int tokens = _counter.Count(toolResult);
+        if (tokens &lt;= maxTokens)
+            return toolResult;  // No truncation needed
+
+        // Approximate: 4 chars per token
+        int keepChars = maxTokens * 4;
+        string truncated = toolResult[..keepChars];
+
+        return truncated + $"\n[... result truncated — {tokens - maxTokens} tokens omitted ...]";
+    }
+}
+
+// Applied automatically in MCPToolRegistry.ExecuteAsync:
+string rawResult = await tool.Handler(request.Input, context, ct);
+string safeResult = _truncator.Truncate(rawResult, maxTokens: 2000);</code></pre>
+
+  <h2>Result Design Guidelines</h2>
+  <table>
+    <thead>
+      <tr><th>Guideline</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Return JSON (not plain text)</td><td>Structured data is easier for the LLM to parse and reference precisely</td></tr>
+      <tr><td>Include context in the result</td><td>Repeat key parameters (e.g. employeeId) so the LLM knows which request this answers</td></tr>
+      <tr><td>Cap list results to 10–20 items</td><td>Longer lists waste tokens; the LLM rarely needs more than 10 results</td></tr>
+      <tr><td>Use human-readable field names</td><td>The LLM uses field names to understand the data — avoid abbreviations</td></tr>
+      <tr><td>Include units in numeric fields</td><td>"remainingDays": 12 not "remaining": 12 — ambiguous</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Tool Results Are Stored in Episodic Memory</strong>
+    <p>Tool results appear in the message history that is summarised into episodic memory at session end. Avoid including sensitive data (SSNs, salaries, passwords) in tool results — they will be persisted in episodic memory and may be recalled in future sessions.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-tool-call-loop.html">&#8592; Tool Call Loop</a>
+    <a href="05-built-in-tools.html">Next: Built-In Tools &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

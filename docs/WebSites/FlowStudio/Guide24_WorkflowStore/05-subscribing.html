@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscribing to Slices — Workflow Store | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Store</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-state-shape.html">Store State Shape</a>
+  <a href="02-node-actions.html">Node Actions</a>
+  <a href="03-edge-actions.html">Edge Actions</a>
+  <a href="04-viewport-actions.html">Viewport Actions</a>
+  <a href="05-subscribing.html" class="active">Subscribing to Slices</a>
+  <a href="06-persistence.html">Persistence</a>
+  <a href="07-react-flow-sync.html">React Flow Sync</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Subscribing to Slices</h1>
+    <p class="lead">Components subscribe to workflowStore slices using selector functions. Narrow selectors and shallow equality prevent unnecessary re-renders when unrelated parts of the store change.</p>
+  </div>
+
+  <h2>Basic Selector Pattern</h2>
+  <pre><code">import { useWorkflowStore } from '@flow-studio/services';
+
+// Subscribe to just the nodes array
+function NodeCountBadge() {
+    const nodeCount = useWorkflowStore(state => state.nodes.length);
+    return &lt;span&gt;{nodeCount} nodes&lt;/span&gt;;
+    // Re-renders only when nodes.length changes
+}
+
+// Subscribe to multiple fields — use shallow equality
+import { shallow } from 'zustand/shallow';
+
+function CanvasToolbar() {
+    const { zoomIn, zoomOut, fitView } = useWorkflowStore(
+        state => ({ zoomIn: state.zoomIn, zoomOut: state.zoomOut, fitView: state.fitView }),
+        shallow
+    );
+    // Re-renders only when these action references change (they don't — stable)
+}</code></pre>
+
+  <h2>Selecting a Single Node</h2>
+  <pre><code">// Subscribe to a specific node by ID
+function NodeConfigPanel({ nodeId }: { nodeId: string }) {
+    const node = useWorkflowStore(
+        state => state.nodes.find(n => n.id === nodeId)
+    );
+    // Re-renders when ANY node changes — but find is cheap
+
+    if (!node) return null;
+    return &lt;ConfigForm node={node} /&gt;;
+}
+
+// Better for performance: memoize the selector
+import { useMemo } from 'react';
+
+function NodeConfigPanel({ nodeId }: { nodeId: string }) {
+    const selector = useMemo(
+        () => (state: WorkflowState) => state.nodes.find(n => n.id === nodeId),
+        [nodeId]
+    );
+    const node = useWorkflowStore(selector);
+    // ...
+}</code></pre>
+
+  <h2>Subscribing to Actions Only</h2>
+  <pre><code">// Actions are stable references — no equality check needed
+function NodePalette() {
+    const addNode = useWorkflowStore(state => state.addNode);
+    // addNode is stable — this component never re-renders due to store changes
+
+    function handleDrop(nodeType: string, position: XYPosition) {
+        addNode({ id: crypto.randomUUID(), type: nodeType, position, data: getDefaultData(nodeType) });
+    }
+
+    return &lt;PaletteList onDrop={handleDrop} /&gt;;
+}</code></pre>
+
+  <h2>Anti-Patterns</h2>
+  <table>
+    <thead><tr><th>Anti-Pattern</th><th>Problem</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><code>useWorkflowStore()</code> with no selector</td><td>Re-renders on every store change</td><td>Always provide a selector</td></tr>
+      <tr><td><code>state => ({ nodes: state.nodes, edges: state.edges })</code> without shallow</td><td>New object reference every render</td><td>Add <code>shallow</code> as second arg</td></tr>
+      <tr><td><code>getState().nodes.push(...)</code></td><td>Mutates state directly — bypasses reactivity</td><td>Use <code>addNode</code> action</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Outside React — Vanilla Subscriptions</h2>
+  <pre><code">// Subscribe from outside a component (e.g., in a service or event handler)
+const unsubscribe = useWorkflowStore.subscribe(
+    state => state.nodes,
+    (nodes) => {
+        console.log('Nodes changed:', nodes.length);
+    },
+    { equalityFn: shallow }
+);
+
+// Clean up
+unsubscribe();</code></pre>
+
+  <div class="page-nav">
+    <a href="04-viewport-actions.html">&#8592; Viewport Actions</a>
+    <a href="06-persistence.html">Next: Persistence &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

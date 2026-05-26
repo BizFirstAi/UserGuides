@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hooks Panel — DevTools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>DevTools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Dev Tools Overview</a>
+  <a href="01-node-explorer.html">Node Explorer</a>
+  <a href="02-action-invoker.html">Action Invoker</a>
+  <a href="03-ancp-view.html">ANCP Protocol View</a>
+  <a href="04-hooks-panel.html" class="active">Hooks Panel</a>
+  <a href="05-subscribers-panel.html">Subscribers Panel</a>
+  <a href="06-mobile-dashboard.html">Mobile Dashboard</a>
+  <a href="07-running.html">Running Dev Tools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Hooks Panel</h1>
+    <p class="lead">The Hook Execution panel at <code>/hooks</code> shows a real-time log of every hook invocation in the EdgeStream pipeline. It is a thin wrapper around <code>HooksMonitor</code> from <code>@edge-stream/observability-react</code>.</p>
+  </div>
+
+  <h2>Route and Component</h2>
+  <pre><code>// Route in App.tsx
+&lt;Route path="/hooks" element={&lt;HooksPage /&gt;} /&gt;
+
+// HooksPage source: packages/app-pages-react/src/HooksPage.tsx
+export function HooksPage(): React.ReactElement {
+  return &lt;HooksMonitor
+    className="page-container"
+    showSettings={true}
+    pollInterval={500}
+    maxLogs={100}
+  /&gt;
+}
+
+// HooksMonitor from: @edge-stream/observability-react</code></pre>
+
+  <h2>HooksMonitor — How It Works</h2>
+  <pre><code>// HooksMonitor polls LoggingService every 500ms:
+useEffect(() =&gt; {
+  const interval = setInterval(() =&gt; {
+    const logs = loggingService.getRecentLogs(maxLogs);  // maxLogs = 100
+    setLogs(logs);
+  }, pollInterval);  // pollInterval = 500ms
+
+  return () =&gt; clearInterval(interval);
+}, [maxLogs, pollInterval]);
+
+// Flattens hook logs from all message activity logs:
+const allHookLogs = logs.flatMap((msg) =&gt; msg.hookLogs || []);
+
+// Stats computed from allHookLogs:
+const stats = {
+  total:   allHookLogs.length,
+  success: allHookLogs.filter((h) =&gt; h.success).length,
+  failed:  allHookLogs.filter((h) =&gt; !h.success).length,
+};</code></pre>
+
+  <h2>HookLog Entry Fields</h2>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>hookName</td><td>string</td><td>Name of the hook class (e.g. <code>HookActivityLogger</code>, <code>ValidationHook</code>)</td></tr>
+      <tr><td>priority</td><td>number</td><td>Execution priority — lower number runs first</td></tr>
+      <tr><td>success</td><td>boolean</td><td>Whether the hook returned <code>HookResult.Continue</code> or threw</td></tr>
+      <tr><td>durationMs</td><td>number</td><td>Hook execution time in milliseconds</td></tr>
+      <tr><td>result</td><td>HookResult</td><td><code>Continue</code>, <code>Stop</code>, <code>StopAndRespond</code>, <code>Pause</code></td></tr>
+      <tr><td>error</td><td>string?</td><td>Error message if the hook threw or returned a failure result</td></tr>
+      <tr><td>topic</td><td>string</td><td>The message topic that triggered this hook invocation</td></tr>
+      <tr><td>messageId</td><td>string</td><td>Correlates this hook log to a specific envelope via IEnvelope.meta.id</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Filter by Hook Name</h2>
+  <pre><code>// The filter input performs case-insensitive substring match on hookName:
+const filtered = allHookLogs.filter((log) =&gt;
+  log.hookName.toLowerCase().includes(filterText.toLowerCase())
+);
+
+// Example filters:
+// "validation"      → shows only ValidationHook invocations
+// "decrypt"         → shows only DecryptHook invocations
+// "logger"          → shows only HookActivityLogger invocations
+// ""                → shows all (no filter)</code></pre>
+
+  <h2>Settings Panel</h2>
+  <p>When <code>showSettings={true}</code>, a settings panel allows adjusting poll interval and max log count without reloading:</p>
+  <pre><code>// Settings exposed when showSettings is true:
+// Poll Interval (ms) — default 500
+// Max Logs           — default 100
+
+// Changing these updates the useEffect interval and the getRecentLogs() call limit.
+// Setting max logs to 0 shows all logs in the ring buffer (may be slow on high-traffic servers).</code></pre>
+
+  <h2>Standard Hook Priority Order</h2>
+  <p>The Hooks Panel clearly shows the priority order in which hooks execute. In a standard EdgeStream pipeline:</p>
+  <table>
+    <thead>
+      <tr><th>Priority</th><th>Hook</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>5</td><td>HookActivityLogger</td><td>Records message activity — must run first to capture all hook results</td></tr>
+      <tr><td>90</td><td>DecryptHook</td><td>Decrypts encrypted envelope body</td></tr>
+      <tr><td>95</td><td>VerifySignatureHook</td><td>Validates message signature</td></tr>
+      <tr><td>100</td><td>ValidationHook</td><td>Schema validation against registered message types</td></tr>
+      <tr><td>110</td><td>NormalizationHook</td><td>Normalizes envelope structure and topic casing</td></tr>
+      <tr><td>120–199</td><td>Pre-processing hooks</td><td>Custom hooks: rate limiting, authentication enrichment, deduplication</td></tr>
+      <tr><td>200–299</td><td>Processing hooks</td><td>Domain hooks: WorkflowEventPlugin, AgentMessagePlugin, UiActionPlugin</td></tr>
+      <tr><td>300+</td><td>Post-processing hooks</td><td>Audit, forwarding, external platform hooks (Splunk, Datadog)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Hooks Reference Panel</h2>
+  <p>The Hooks Reference at <code>/hooks-reference</code> shows all registered hook classes with documentation. This is read-only; it lists every hook available in the hook library with its priority, description, and configuration options:</p>
+  <pre><code>// Route in App.tsx
+&lt;Route path="/hooks-reference" element={&lt;HooksReferencePage /&gt;} /&gt;
+
+// HooksReferencePage: packages/app-pages-react/src/HooksReferencePage.tsx
+// Sidebar label in App.tsx: "Available Hooks"
+
+// Also available at /help/hooks:
+&lt;Route path="/help/hooks" element={&lt;HooksLibraryPage /&gt;} /&gt;
+// HooksLibraryPage: packages/app-pages-react/src/HooksLibraryPage.tsx</code></pre>
+
+  <h2>Enabling Hook Logging in Your App</h2>
+  <p>To populate the Hooks Panel (and Activity Stream), you must add <code>HookActivityLogger</code> to your pipeline. Without it, no hook logs are written to the in-memory ring buffer.</p>
+  <pre><code>import { HookActivityLogger } from 'edge-stream-js';
+
+// Add as the first hook (priority 5) so it captures all subsequent hook results:
+server.incomingPipeline.addHook(new HookActivityLogger());
+
+// HookActivityLogger is included automatically in EdgeStream DevTools.
+// In your own app: add it manually during development, remove for production
+// (or replace with an external observability hook from observability-hooks-js).</code></pre>
+
+  <div class="callout warning">
+    <strong>Production Consideration</strong>
+    <code>HookActivityLogger</code> keeps an in-memory ring buffer of message activity. On high-throughput servers, this can consume memory. Set a reasonable buffer size or disable it in production and use an external platform hook (<code>DatadogHook</code>, <code>SplunkLogHook</code>, etc.) instead.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-ancp-view.html">&#8592; ANCP Protocol View</a>
+    <a href="05-subscribers-panel.html">Next: Subscribers Panel &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

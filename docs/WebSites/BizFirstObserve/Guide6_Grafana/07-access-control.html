@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grafana Access Control — Grafana Dashboards | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Grafana Dashboards</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Grafana Overview</a>
+  <a href="01-data-sources.html">Connecting Data Sources</a>
+  <a href="02-pre-built.html">Pre-Built BizFirstGO Dashboards</a>
+  <a href="03-importing.html">Importing Dashboards</a>
+  <a href="04-building.html">Building Custom Dashboards</a>
+  <a href="05-explore.html">Grafana Explore</a>
+  <a href="06-alerts.html">Alert Management</a>
+  <a href="07-access-control.html" class="active">Grafana Access Control</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Grafana Access Control</h1>
+    <p class="lead">Grafana controls access through Organizations, Teams, and Roles. In a BizFirstGO deployment, access control determines which engineers can view dashboards, which can edit them, and which data sources each team can query — preventing cross-tenant data exposure.</p>
+  </div>
+
+  <h2>Grafana Roles</h2>
+  <table>
+    <thead>
+      <tr><th>Role</th><th>Permissions</th><th>Typical Assignment</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Viewer</strong></td><td>View dashboards and panels; cannot edit or create; can use Explore (if granted)</td><td>Business stakeholders, tenant admins viewing their own data</td></tr>
+      <tr><td><strong>Editor</strong></td><td>All Viewer permissions + create/edit dashboards, panels, alerts; cannot manage users or data sources</td><td>Operations engineers, on-call engineers</td></tr>
+      <tr><td><strong>Admin</strong></td><td>All Editor permissions + manage users, teams, data sources, plugins, and organization settings</td><td>Platform engineering team lead</td></tr>
+      <tr><td><strong>Server Admin</strong></td><td>Super-admin: manages Organizations, global settings, and all users</td><td>Grafana infrastructure owner (one or two people)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Organizations</h2>
+  <p>Grafana Organizations are fully isolated namespaces — separate dashboards, data sources, users, and alert rules. A BizFirstGO deployment may use Organizations to separate environments:</p>
+  <pre><code># Recommended Organization structure for BizFirstGO
+
+Organization 1: Production
+  - Data sources: Loki-prod, Prometheus-prod, Tempo-prod
+  - Dashboards: All pre-built BizFirstGO dashboards (read-only provisioned)
+  - Users: Platform team (Admin/Editor), Operations (Viewer), On-Call (Editor)
+
+Organization 2: Staging
+  - Data sources: Loki-staging, Prometheus-staging, Tempo-staging
+  - Dashboards: Same dashboards, pointing to staging data sources
+  - Users: All engineers (Editor), QA team (Viewer)
+
+Organization 3: Development
+  - Data sources: Loki-dev, Prometheus-dev, Tempo-dev
+  - Users: All developers (Editor)
+  - Note: More permissive — developers can create experimental dashboards</code></pre>
+
+  <div class="callout info">
+    <strong>One User, Multiple Organizations</strong>
+    <p>A Grafana user can be a member of multiple Organizations with different roles in each. An engineer may be an Editor in the Development org but a Viewer-only in Production. Switch between Organizations using the top-left Organization switcher in Grafana.</p>
+  </div>
+
+  <h2>Teams and Dashboard Folder Permissions</h2>
+  <p>Within an Organization, Teams control access to specific dashboard folders:</p>
+  <pre><code># Grafana team-based access configuration
+# (via API or provisioning)
+
+Teams in Production Org:
+  - platform-team: Editor on all folders
+  - operations-team: Viewer on /BizFirstGO/, Editor on /Runbooks/
+  - tenant-ops: Viewer on /Tenant-Health/ only
+
+# Dashboard folders with permissions:
+/BizFirstGO/                → All teams: Viewer
+  /BizFirstGO/PreBuilt/     → platform-team: Editor, others: Viewer
+  /BizFirstGO/Runbooks/     → operations-team: Editor
+  /BizFirstGO/Tenant-Health/ → tenant-ops: Viewer (their data only)</code></pre>
+
+  <h2>Data Source Permissions</h2>
+  <p>Data source permissions control which users and teams can query a data source directly (via Explore) — not just through dashboards. By default, all Editors can query all data sources. Restrict if tenants should not cross-query each other's data:</p>
+  <pre><code># Grafana data source permissions (Grafana Enterprise feature)
+# Or use Loki's built-in multi-tenancy enforcement
+
+# Default (OSS Grafana):
+# All Editors can query all data sources
+# Viewers can only view dashboards — cannot use Explore
+
+# With data source permissions (Enterprise):
+Loki-prod:
+  - platform-team: Query + Admin
+  - operations-team: Query only
+  - tenant-ops: No direct access (dashboards only)
+
+# Tenant isolation at the Loki level (works with OSS):
+# Pass X-Scope-OrgID header per tenant
+# Grafana forwards the user's org ID automatically</code></pre>
+
+  <h2>Provisioning Users and Teams via Configuration</h2>
+  <pre><code># grafana-provisioning/access-control/teams.yaml
+# Note: Team provisioning requires Grafana Enterprise
+# For OSS, manage teams via the Grafana API or UI
+
+# Create teams via Grafana API:
+curl -X POST http://admin:admin@grafana:3000/api/teams \
+  -H "Content-Type: application/json" \
+  -d '{"name": "operations-team", "orgId": 1}'
+
+# Add members to team:
+curl -X POST http://admin:admin@grafana:3000/api/teams/1/members \
+  -H "Content-Type: application/json" \
+  -d '{"userId": 5}'</code></pre>
+
+  <h2>LDAP / SSO Integration</h2>
+  <p>For enterprise BizFirstGO deployments, integrate Grafana with corporate identity providers to avoid managing separate user accounts:</p>
+  <pre><code># grafana.ini — LDAP integration
+[auth.ldap]
+enabled = true
+config_file = /etc/grafana/ldap.toml
+allow_sign_up = true
+
+# ldap.toml — Map LDAP groups to Grafana roles
+[[servers]]
+host = "ldap.bizfirstai.internal"
+port = 389
+bind_dn = "cn=grafana-svc,ou=service-accounts,dc=bizfirstai,dc=com"
+bind_password = "${LDAP_BIND_PASSWORD}"
+search_base_dns = ["ou=users,dc=bizfirstai,dc=com"]
+search_filter = "(sAMAccountName=%s)"
+
+[[servers.group_mappings]]
+group_dn = "cn=platform-engineering,ou=groups,dc=bizfirstai,dc=com"
+org_role = "Admin"
+
+[[servers.group_mappings]]
+group_dn = "cn=operations,ou=groups,dc=bizfirstai,dc=com"
+org_role = "Editor"
+
+[[servers.group_mappings]]
+group_dn = "cn=business-users,ou=groups,dc=bizfirstai,dc=com"
+org_role = "Viewer"</code></pre>
+
+  <pre><code># grafana.ini — OAuth 2.0 / OIDC (e.g., Azure AD, Okta)
+[auth.generic_oauth]
+enabled = true
+name = BizFirstAI SSO
+client_id = ${OAUTH_CLIENT_ID}
+client_secret = ${OAUTH_CLIENT_SECRET}
+scopes = openid email profile groups
+auth_url = https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/authorize
+token_url = https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token
+api_url = https://graph.microsoft.com/oidc/userinfo
+role_attribute_path = contains(groups[*], 'platform-engineering') && 'Admin' || contains(groups[*], 'operations') && 'Editor' || 'Viewer'</code></pre>
+
+  <h2>BizFirstGO Recommended Access Control Setup</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Create three Organizations: Production, Staging, Development</h4>
+        <p>Fully isolate production dashboards and data sources from non-production environments.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Create teams: platform-team, operations-team, tenant-ops</h4>
+        <p>Assign team-level folder permissions so each team sees only the dashboards relevant to them.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Integrate SSO (LDAP or OIDC)</h4>
+        <p>Map corporate directory groups to Grafana roles. Avoid managing passwords in Grafana — SSO provides central revocation.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Restrict Explore for Viewers</h4>
+        <p>In <code>grafana.ini</code>, set <code>viewers_can_edit = false</code> and ensure Explore is only accessible to Editor-and-above to prevent ad-hoc data access by business users.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Use Loki multi-tenancy for tenant isolation</h4>
+        <p>Enforce tenant data boundaries at the Loki level (X-Scope-OrgID header), not just at the dashboard level — this prevents a misconfigured dashboard from leaking cross-tenant logs.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <strong>Dashboard Permissions Are Not Data Source Permissions</strong>
+    <p>A user who can view a dashboard can only see the data rendered in that dashboard's panels. But if they have Editor role, they can also use Grafana Explore to query any data source directly — including querying across tenants if Loki multi-tenancy is not configured. Always configure Loki's <code>auth_enabled: true</code> for production deployments to enforce tenant isolation at the storage layer.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-alerts.html">&#8592; Alert Management</a>
+    <a href="../Guide7_SetupGuide/index.html">Next Guide: Setup Guide &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

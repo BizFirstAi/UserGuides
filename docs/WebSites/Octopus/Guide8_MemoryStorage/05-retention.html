@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Retention — Memory Storage | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Storage</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory Storage Overview</a>
+  <a href="01-sql-tables.html">SQL Tables</a>
+  <a href="02-vector-storage.html">Vector Storage</a>
+  <a href="03-working-storage.html">Working Memory Storage</a>
+  <a href="04-tenant-isolation.html">Tenant Isolation</a>
+  <a href="05-retention.html" class="active">Data Retention</a>
+  <a href="06-backup.html">Backup and Restore</a>
+  <a href="07-migration.html">Migration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Data Retention</h1>
+    <p class="lead">Octopus implements a two-stage retention lifecycle for episodic memory — soft delete followed by hard purge — with configurable TTL per agent. Semantic and procedural memory are persistent until explicitly deleted. This page covers retention policies, background jobs, and the user erasure endpoint.</p>
+  </div>
+
+  <h2>Episodic Memory Retention</h2>
+  <p>Episodic memory is the only memory type with automatic time-based expiry. The retention lifecycle has three stages:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Active</strong>
+        <span>Episode is current. <code>IsDeleted = 0</code>. Recalled by MemoryOrchestrator on each turn.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Soft Deleted</strong>
+        <span>Episode age exceeds <code>EpisodicRetentionDays</code>. <code>IsDeleted = 1</code>, <code>DeletedAt = now()</code>. Hidden from all queries by global filter.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Hard Purged</strong>
+        <span>Soft-deleted row is older than the grace period (default 7 days). Deleted permanently from SQL by the retention background job.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Retention Background Job</h2>
+  <pre><code>public class EpisodicRetentionJob : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await RunRetentionPassAsync(ct);
+            await Task.Delay(TimeSpan.FromHours(1), ct);  // Run hourly
+        }
+    }
+
+    private async Task RunRetentionPassAsync(CancellationToken ct)
+    {
+        using var scope = _services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService&lt;OctopusDbContext&gt;();
+
+        // Stage 1: Soft-delete expired episodes
+        // (uses IgnoreQueryFilters to operate across all tenants)
+        var expiredEpisodes = await db.Episodes
+            .IgnoreQueryFilters()
+            .Where(e => !e.IsDeleted
+                && e.EndedAt &lt; DateTime.UtcNow.AddDays(-e.RetentionDays))
+            .ToListAsync(ct);
+
+        foreach (var ep in expiredEpisodes)
+        {
+            ep.IsDeleted = true;
+            ep.DeletedAt = DateTime.UtcNow;
+        }
+
+        // Stage 2: Hard-purge grace-period-elapsed soft-deleted episodes
+        var toPurge = await db.Episodes
+            .IgnoreQueryFilters()
+            .Where(e => e.IsDeleted
+                && e.DeletedAt &lt; DateTime.UtcNow.AddDays(-7))  // 7-day grace
+            .ToListAsync(ct);
+
+        db.Episodes.RemoveRange(toPurge);
+        await db.SaveChangesAsync(ct);
+    }
+}</code></pre>
+
+  <h2>User Data Erasure (GDPR Right to Erasure)</h2>
+  <p>The erasure endpoint immediately hard-deletes all episodic data for a specific user — bypassing TTL and the soft-delete grace period:</p>
+  <pre><code>// DELETE /api/octopus/users/{userId}/memory?agentId={agentId}
+public async Task EraseUserDataAsync(string userId, Guid agentId, Guid tenantId, CancellationToken ct)
+{
+    using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+    // Hard delete episode messages
+    var messageIds = await _db.EpisodeMessages
+        .IgnoreQueryFilters()
+        .Where(m => m.Episode.UserId == userId
+                 && m.Episode.AgentId == agentId
+                 && m.TenantId == tenantId)
+        .Select(m => m.MessageId)
+        .ToListAsync(ct);
+
+    await _db.Database.ExecuteSqlRawAsync(
+        "DELETE FROM Octopus_EpisodeMessages WHERE MessageId IN ({0})",
+        string.Join(",", messageIds.Select(id => $"'{id}'")));
+
+    // Hard delete episodes
+    await _db.Database.ExecuteSqlRawAsync(
+        "DELETE FROM Octopus_Episodes WHERE UserId = {0} AND AgentId = {1} AND TenantId = {2}",
+        userId, agentId, tenantId);
+
+    await tx.CommitAsync(ct);
+}</code></pre>
+
+  <h2>Retention Policy Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Memory Type</th><th>Default Retention</th><th>Configurable</th><th>Auto-Expiry</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Working</td><td>Request duration only</td><td>No</td><td>N/A</td></tr>
+      <tr><td>Episodic</td><td>90 days (soft delete) + 7 days grace (hard purge)</td><td>Yes — per agent</td><td>Yes — background job</td></tr>
+      <tr><td>Semantic</td><td>Permanent</td><td>No (manual delete only)</td><td>No</td></tr>
+      <tr><td>Procedural</td><td>Permanent (soft deactivate)</td><td>No</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Grace Period Allows Recovery</strong>
+    <p>The 7-day grace period between soft delete and hard purge allows administrators to recover accidentally expired episodes before they are permanently lost. Episodes in the grace period can be restored by setting <code>IsDeleted = 0</code> and <code>DeletedAt = NULL</code> directly in SQL — a manual operation for extraordinary cases only.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-tenant-isolation.html">&#8592; Tenant Isolation</a>
+    <a href="06-backup.html">Next: Backup and Restore &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

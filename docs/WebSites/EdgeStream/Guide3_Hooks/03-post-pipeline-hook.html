@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Post-Pipeline Hook — Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-normalization-hook.html">NormalizationHook</a>
+  <a href="02-pre-pipeline-hook.html">Pre-Pipeline Hook</a>
+  <a href="03-post-pipeline-hook.html" class="active">Post-Pipeline Hook</a>
+  <a href="04-incoming-hook.html">Incoming Hook</a>
+  <a href="05-outgoing-hook.html">Outgoing Hook</a>
+  <a href="06-activity-logger.html">HookActivityLogger</a>
+  <a href="07-custom-hook.html">Implementing a Custom Hook</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Post-Pipeline Hook</h1>
+    <p class="lead">Post-pipeline hooks run after core processing and before subscriber delivery. They are for side effects — audit logging, metrics, acknowledgment — that must happen after processing but before the message reaches subscribers.</p>
+  </div>
+
+  <h2>Priority Range: 300+</h2>
+  <p>Post-pipeline hooks use priorities of 300 and above. They see the final, fully-processed envelope and have access to all metadata accumulated during pre-pipeline and processing stages.</p>
+
+  <h2>Audit Hook Pattern</h2>
+  <pre><code>export class MessageAuditHook extends BaseHook {
+  readonly name = 'MessageAuditHook';
+  readonly priority = 300;
+
+  constructor(private auditStore: AuditStore) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    // Non-blocking audit — fire and forget
+    this.auditStore.record({
+      messageId: context.envelope.meta.id,
+      topic: context.envelope.meta.topic,
+      serverId: context.envelope.meta.serverId,
+      userId: context.metadata.userId as string,
+      tenantId: context.metadata.tenantId as string,
+      receivedAt: context.envelope.meta.receivedAt.toISOString(),
+      bodyHash: await this.hashBody(context.body),
+    }).catch(err =&gt;
+      console.warn('[MessageAuditHook] Audit write failed (non-critical):', err)
+    );
+
+    return { continue: true }; // always continue — audit is non-blocking
+  }
+
+  private async hashBody(body: unknown): Promise&lt;string&gt; {
+    const json = JSON.stringify(body);
+    const buffer = new TextEncoder().encode(json);
+    const hash = await crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(hash))
+      .map(b =&gt; b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+}</code></pre>
+
+  <h2>Prometheus Metrics Hook</h2>
+  <pre><code>export class PrometheusMetricsHook extends BaseHook {
+  readonly name = 'PrometheusMetricsHook';
+  readonly priority = 310;
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const labels = {
+      topic: (context.envelope.meta.topic || 'unknown').split('.')[0],
+      transport: context.envelope.meta.transport,
+      server: context.envelope.meta.serverId,
+    };
+
+    metrics.counter('edge_stream_messages_total', labels).inc();
+    metrics.histogram('edge_stream_message_body_bytes', labels)
+      .observe(JSON.stringify(context.body).length);
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Don't Block Delivery</strong>
+    Post-pipeline hooks run synchronously before subscriber delivery. Use <code>fire-and-forget</code> (non-awaited promises) for I/O operations that should not delay subscribers. Always catch errors internally so a failed side-effect does not drop the message.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-pre-pipeline-hook.html">&#8592; Pre-Pipeline Hook</a>
+    <a href="04-incoming-hook.html">Next: Incoming Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

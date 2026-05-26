@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Interaction Hooks — Interaction Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-pre-send.html">Pre-Send Hook</a>
+  <a href="02-post-receive.html">Post-Receive Hook</a>
+  <a href="03-response-validation.html">Response Validation Hook</a>
+  <a href="04-audit-hook.html">Audit Hook</a>
+  <a href="05-rate-limit-hook.html">Rate Limit Hook</a>
+  <a href="06-custom.html" class="active">Custom Interaction Hooks</a>
+  <a href="07-order.html">Hook Execution Order</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Custom Interaction Hooks</h1>
+    <p class="lead">Implement <code>IInteractionHook</code> to add your own cross-cutting behavior to the interaction lifecycle. Custom hooks follow the same contract as built-in hooks — they run in registration order and can inspect, modify, enrich, or block interactions.</p>
+  </div>
+
+  <h2>Implementing IInteractionHook</h2>
+  <pre><code>// Full custom hook implementation
+public class BusinessComplianceHook : IInteractionHook
+{
+    private readonly IComplianceService _compliance;
+    private readonly ILogger&lt;BusinessComplianceHook&gt; _logger;
+
+    public BusinessComplianceHook(
+        IComplianceService compliance,
+        ILogger&lt;BusinessComplianceHook&gt; logger)
+    {
+        _compliance = compliance;
+        _logger = logger;
+    }
+
+    /// Pre-send: runs before delivery to EdgeStream
+    public async Task OnBeforePublish(
+        InteractionRequest request,
+        CancellationToken ct)
+    {
+        // Only apply to approval interactions
+        if (request.Type != InteractionTypes.Approval)
+            return;
+
+        // Verify requester is authorized to send approvals
+        var canSend = await _compliance.CanSendApprovalAsync(
+            requesterId: request.Metadata.GetValueOrDefault("requestedBy"),
+            targetId: request.TargetUserId,
+            ct: ct);
+
+        if (!canSend)
+        {
+            throw new InteractionBlockedException(
+                "Requester is not authorized to send approval interactions to this user.");
+        }
+
+        // Enrich with compliance metadata
+        request.Metadata["complianceCheckPassed"] = "true";
+        request.Metadata["complianceCheckedAt"] = DateTimeOffset.UtcNow.ToString("O");
+    }
+
+    /// Post-receive: runs after a valid response
+    public async Task OnAfterRespond(
+        InteractionRequest request,
+        InteractionResponse response,
+        CancellationToken ct)
+    {
+        // Record the approval decision in the compliance system
+        try
+        {
+            await _compliance.RecordApprovalDecisionAsync(new ApprovalDecisionRecord
+            {
+                InteractionId = request.InteractionId,
+                CorrelationId = request.CorrelationId,
+                Decision = response.Outcome,
+                DecidedBy = response.RespondedBy,
+                DecidedAt = response.Timestamp
+            }, ct);
+        }
+        catch (Exception ex)
+        {
+            // Log but do not rethrow — the response cycle must complete
+            _logger.LogError(ex, "Failed to record approval decision for {InteractionId}",
+                request.InteractionId);
+        }
+    }
+}
+</code></pre>
+
+  <h2>Registration</h2>
+  <pre><code">// Program.cs — register with full DI support
+builder.Services.AddInteractionHook&lt;BusinessComplianceHook&gt;();
+
+// With options (if your hook needs configuration)
+builder.Services.Configure&lt;BusinessComplianceHookOptions&gt;(
+    builder.Configuration.GetSection("EdgeInteract:ComplianceHook"));
+</code></pre>
+
+  <h2>Hook Checklist</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Implement both methods</h4>
+        <p>Both <code>OnBeforePublish</code> and <code>OnAfterRespond</code> must be implemented. Return <code>Task.CompletedTask</code> if your hook only uses one of the two.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Filter by type early</h4>
+        <p>Use a type check at the top of each method and early-return for types you don't handle. This keeps hooks fast and reduces unnecessary processing.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Never throw in OnAfterRespond</h4>
+        <p>Exceptions in <code>OnAfterRespond</code> are caught by the pipeline and logged, but the cycle continues. However, to avoid silent failures, catch exceptions internally and log them explicitly.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Respect CancellationToken</h4>
+        <p>Always pass the <code>CancellationToken</code> to async operations. The pipeline cancels the token on server shutdown.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Keep it fast</h4>
+        <p>Target under 50ms for <code>OnBeforePublish</code> (it's on the publish critical path). For slow operations in <code>OnAfterRespond</code>, queue a background job instead.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-rate-limit-hook.html">&#8592; Rate Limit Hook</a>
+    <a href="07-order.html">Next: Hook Execution Order &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

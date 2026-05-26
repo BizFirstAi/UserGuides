@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Setting Variables — Custom JavaScript | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Custom JavaScript</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom JS Overview</a>
+  <a href="01-editor.html">Custom JS Editor</a>
+  <a href="02-available-apis.html">Available APIs</a>
+  <a href="03-widget-data.html">Reading Widget Data</a>
+  <a href="04-setting-variables.html" class="active">Setting Variables</a>
+  <a href="05-triggering-actions.html">Triggering Actions</a>
+  <a href="06-sandbox.html">Execution Sandbox</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Setting Variables</h1>
+    <p class="lead"><code>variables.set('name', value)</code> is the primary way Custom JS communicates with the rest of the app. Setting a variable triggers a reactive update — every widget that binds to that variable re-evaluates its token expressions and re-renders if the value changed.</p>
+  </div>
+
+  <h2>Basic Usage</h2>
+  <pre><code>// Set a computed total from DataGrid data
+function onDataChange(widget, variables, actions, context) {
+  const rows = widget.data?.rows ?? [];
+  const total = rows.reduce((sum, r) => sum + (r.dealValue ?? 0), 0);
+
+  variables.set('totalDealValue', total);
+  // → All widgets using {{ variables.totalDealValue }} re-render with the new value
+}
+</code></pre>
+
+  <h2>Variables Must Be Declared First</h2>
+  <p>Before setting a variable from Custom JS, it must be declared in the App Variables panel (App Settings → Variables). Setting an undeclared variable is a no-op — it will not create a new variable at runtime:</p>
+  <pre><code>// App Variables declaration (in App Studio App Settings → Variables):
+{
+  "name": "totalDealValue",
+  "type": "number",
+  "defaultValue": 0
+}
+
+// Then in Custom JS:
+variables.set('totalDealValue', 42500);  // Works — variable is declared
+
+variables.set('undeclaredVar', 99);      // Ignored — not declared
+</code></pre>
+
+  <h2>Supported Value Types</h2>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Example</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>number</td><td><code>variables.set('count', 42)</code></td><td>Integers and floats</td></tr>
+      <tr><td>string</td><td><code>variables.set('label', 'Active')</code></td><td>Any string value</td></tr>
+      <tr><td>boolean</td><td><code>variables.set('isLoaded', true)</code></td><td>Used for visibility toggle patterns</td></tr>
+      <tr><td>object</td><td><code>variables.set('summary', { count: 5, total: 1200 })</code></td><td>Object variables; use dot notation in tokens: <code>{{ variables.summary.total }}</code></td></tr>
+      <tr><td>array</td><td><code>variables.set('selectedIds', ['id-1', 'id-2'])</code></td><td>Useful for multi-select state</td></tr>
+      <tr><td>null</td><td><code>variables.set('activeRecord', null)</code></td><td>Clears the variable to its null state</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Reading Before Writing</h2>
+  <pre><code>// Read the current filter state, toggle it, write it back
+function onUserAction(widget, variables, actions, context) {
+  const currentFilter = variables.get('showOnlyActive');  // boolean
+
+  variables.set('showOnlyActive', !currentFilter);        // toggle
+}
+</code></pre>
+
+  <h2>Batch Setting Multiple Variables</h2>
+  <p>Set multiple variables in sequence within a single script execution. All changes are applied as a batch — the reactive system processes them together, avoiding multiple intermediate re-renders:</p>
+  <pre><code>function onDataChange(widget, variables, actions, context) {
+  const rows = widget.data?.rows ?? [];
+
+  const activeRows = rows.filter(r => r.status === 'active');
+  const closedRows = rows.filter(r => r.status === 'closed');
+
+  variables.set('activeCount', activeRows.length);
+  variables.set('closedCount', closedRows.length);
+  variables.set('totalValue', rows.reduce((s, r) => s + (r.value ?? 0), 0));
+  variables.set('avgValue', rows.length > 0 ? total / rows.length : 0);
+  // All four updates processed together — single re-render pass
+}
+</code></pre>
+
+  <div class="callout callout-warning">
+    <strong>Avoid infinite loops</strong>
+    If Widget A sets a variable on <code>onDataChange</code>, and that variable is a data source param for Widget A itself, setting it will trigger Widget A to reload, which fires <code>onDataChange</code> again. Guard against this with a previous-value check or by using a separate derived variable that Widget A does not bind its own data source to.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-widget-data.html">&#8592; Reading Widget Data</a>
+    <a href="05-triggering-actions.html">Next: Triggering Actions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

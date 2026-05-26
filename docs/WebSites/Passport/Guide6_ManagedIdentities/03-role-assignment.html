@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Assigning Roles and Permissions — Managed Identities | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Managed Identities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-creating.html">Creating a Managed Identity</a>
+  <a href="02-credentials.html">Managed Identity Credentials</a>
+  <a href="03-role-assignment.html" class="active">Assigning Roles and Permissions</a>
+  <a href="04-workflow-execution.html">Using in Workflow Execution</a>
+  <a href="05-service-calls.html">Using in Service-to-Service Calls</a>
+  <a href="06-credential-rotation.html">Credential Rotation</a>
+  <a href="07-audit.html">Managed Identity Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Assigning Roles and Permissions</h1>
+    <p class="lead">Managed identities use the same RBAC model as human users — assign only the roles the automation needs, apply least-privilege, and avoid broad roles like <code>admin</code> for service accounts.</p>
+  </div>
+
+  <h2>Role Assignment API</h2>
+  <pre><code">// Assign roles to a managed identity
+PUT /passport/admin/managed-identities/{managedIdentityId}/roles
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "roles": ["payroll-executor", "report-reader"]
+}
+
+// Response
+{
+  "managedIdentityId": "mi-guid-1234",
+  "roles":             ["payroll-executor", "report-reader"],
+  "updatedAt":         "2026-05-25T10:00:00Z"
+}
+
+// Add a single role without replacing existing ones
+POST /passport/admin/managed-identities/{managedIdentityId}/roles/{roleName}
+Authorization: Bearer {admin-token}
+
+// Remove a single role
+DELETE /passport/admin/managed-identities/{managedIdentityId}/roles/{roleName}
+Authorization: Bearer {admin-token}</code></pre>
+
+  <h2>Roles in the JWT Token</h2>
+  <p>When a managed identity authenticates via the client credentials flow, the issued JWT includes all assigned roles in the <code>roles</code> claim. The token is structurally identical to a human user's access token, except for the <code>is_service_account: true</code> flag:</p>
+  <pre><code">// JWT payload for a managed identity token
+{
+  "sub":                 "mi-payroll-scheduler-clientid",
+  "managed_identity_id": "mi-guid-1234",
+  "is_service_account":  true,
+  "tenant_id":           "tenant-abc",
+  "roles":               ["payroll-executor", "report-reader"],
+  "iss":                 "https://passport.bizfirst.ai",
+  "aud":                 "bizfirstgo-api",
+  "iat":                 1716631200,
+  "exp":                 1716634800   // 1 hour lifetime
+}
+
+// BizFirstGO IDInfo populated from this token:
+IDInfo {
+    UserId      = "mi-payroll-scheduler-clientid",   // sub claim
+    TenantId    = "tenant-abc",
+    Email       = "",                                 // no email for service accounts
+    DisplayName = "payroll-scheduler",               // name claim
+    Roles       = ["payroll-executor", "report-reader"],
+    IsServiceAccount  = true,
+    ManagedIdentityId = "mi-guid-1234"
+}</code></pre>
+
+  <h2>Least-Privilege Role Design</h2>
+  <p>Design dedicated roles for each automation rather than reusing human roles. The payroll scheduler needs to execute workflows and read reports — it should not inherit the full <code>manager</code> role that includes user management permissions.</p>
+  <table>
+    <thead>
+      <tr><th>Automation</th><th>Wrong (too broad)</th><th>Correct (least-privilege)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Monthly payroll runner</td><td><code>admin</code></td><td><code>payroll-executor</code></td></tr>
+      <tr><td>ERP data sync</td><td><code>manager</code></td><td><code>erp-reader</code>, <code>sync-writer</code></td></tr>
+      <tr><td>Slack notification sender</td><td><code>user</code></td><td><code>notification-sender</code></td></tr>
+      <tr><td>Backup export job</td><td><code>admin</code></td><td><code>backup-reader</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Custom Role Definitions for Service Accounts</h2>
+  <pre><code">// Define a purpose-specific role for automation
+POST /passport/admin/roles
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "name":        "payroll-executor",
+  "description": "Can execute payroll workflows and read payroll reports",
+  "permissions": [
+    "workflow.execute",
+    "payroll.read",
+    "payroll.run",
+    "report.payroll.read"
+  ],
+  "isServiceAccountRole": true  // advisory — marks role as intended for automation
+}
+
+// Then assign to the managed identity
+PUT /passport/admin/managed-identities/{managedIdentityId}/roles
+{
+  "roles": ["payroll-executor"]
+}</code></pre>
+
+  <h2>Checking Permissions in Application Code</h2>
+  <p>Application code uses the same permission check API regardless of whether the caller is a human user or managed identity. The <code>IDInfo.IsServiceAccount</code> flag is available if the application needs to apply different logic for automation actors:</p>
+  <pre><code">// In a BizFirstGO controller or service
+public class PayrollController : ControllerBase
+{
+    private readonly IPassportClient _passport;
+
+    [HttpPost("run")]
+    public async Task&lt;IActionResult&gt; RunPayroll(
+        [FromServices] IDInfo caller,
+        CancellationToken ct)
+    {
+        // Check permission — same call for human or managed identity
+        var allowed = await _passport.CheckPermissionAsync(
+            caller, "payroll.run", ct);
+
+        if (!allowed)
+            return Forbid();
+
+        // Optional: log whether this is an automated run
+        if (caller.IsServiceAccount)
+        {
+            _logger.LogInformation(
+                "Payroll run triggered by managed identity {ManagedIdentityId}",
+                caller.ManagedIdentityId);
+        }
+
+        // ...execute payroll
+    }
+}</code></pre>
+
+  <h2>Role Precedence and Deny Rules</h2>
+  <p>Managed identities participate in the same IAM policy evaluation pipeline as human users. Resource-level deny rules apply to managed identities. If a resource policy denies <code>payroll.run</code> for all principals except those with a specific tag, the managed identity will be denied even if it has the <code>payroll-executor</code> role.</p>
+  <pre><code">// Resource policy that restricts payroll execution to working hours
+// This applies to managed identities as well as human users
+{
+  "resourceType": "workflow",
+  "resourceId":   "wf-monthly-payroll",
+  "conditions": [
+    {
+      "effect":    "Deny",
+      "condition": "hour(now()) &lt; 6 || hour(now()) &gt;= 22",
+      "message":   "Payroll workflow cannot run outside 06:00-22:00 UTC"
+    }
+  ]
+}
+
+// Exception: tag the managed identity to bypass time restriction
+// Requires the resource policy to explicitly check for the tag
+{
+  "effect":    "Deny",
+  "condition": "hour(now()) &lt; 6 || hour(now()) &gt;= 22",
+  "exceptions": ["tag:scheduled-automation"]
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Role Changes Take Effect at Next Token Request</strong>
+    <p>When you add or remove roles from a managed identity, the change is not immediately reflected in existing tokens. A managed identity's access token is valid for up to 1 hour. If you need to revoke access immediately, disable the managed identity — this invalidates all active tokens and prevents new token issuance.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-credentials.html">&#8592; Managed Identity Credentials</a>
+    <a href="04-workflow-execution.html">Next: Using in Workflow Execution &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

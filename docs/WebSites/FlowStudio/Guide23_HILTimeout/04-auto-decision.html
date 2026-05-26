@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auto-Decision — HIL Timeout | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Timeout</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-timeout-config.html">Configuring Timeout</a>
+  <a href="02-timeout-job.html">The Timeout Background Job</a>
+  <a href="03-escalation.html">Escalation</a>
+  <a href="04-auto-decision.html" class="active">Auto-Decision</a>
+  <a href="05-timeout-port.html">Timeout Output Port</a>
+  <a href="06-no-action.html">No Action (Fail)</a>
+  <a href="07-monitoring.html">Monitoring Timeouts</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Auto-Decision on Timeout</h1>
+    <p class="lead">AutoApprove and AutoReject inject a synthetic actor decision when the timeout fires. The workflow continues on the approved or rejected port as if a human had responded — with a clearly marked auto-decision flag in the audit trail.</p>
+  </div>
+
+  <h2>How Auto-Decision Works</h2>
+  <pre><code">public async Task DecideAsync(SuspendedExecution suspension, CancellationToken ct)
+{
+    var decision = suspension.TimeoutBehavior == "AutoApprove"
+                   ? ApprovalDecision.Approved
+                   : ApprovalDecision.Rejected;
+
+    var syntheticResponse = new ApprovalOutput
+    {
+        Decision      = decision,
+        Comment       = $"Auto-{decision.ToString().ToLower()} after timeout. No response received.",
+        ActorId       = "SYSTEM:AutoDecide",
+        DecidedAt     = DateTimeOffset.UtcNow,
+        IsAutoDecided = true
+    };
+
+    // Write synthetic decision to audit table
+    await _decisionRepo.InsertAsync(new ApprovalDecision
+    {
+        ExecutionId    = suspension.ExecutionId,
+        NodeId         = suspension.SuspendedNodeId,
+        ActorId        = "SYSTEM:AutoDecide",
+        Decision       = decision,
+        IsAutoDecided  = true,
+        DecidedAt      = DateTimeOffset.UtcNow
+    }, ct);
+
+    // Inject response and continue execution
+    await _resumeService.ContinueWithAsync(suspension, syntheticResponse, ct);
+}</code></pre>
+
+  <h2>Audit Trail Entry for Auto-Decision</h2>
+  <pre><code">// What appears in the approval audit trail for an auto-decision:
+{
+  "actorId"      : "SYSTEM:AutoDecide",
+  "actorName"    : "System (Auto-Decision on Timeout)",
+  "decision"     : "Approved",
+  "comment"      : "Auto-approved after timeout. No response received.",
+  "isAutoDecided": true,
+  "decidedAt"    : "2026-05-25T18:00:00Z"
+}</code></pre>
+
+  <h2>Compliance Note</h2>
+  <p>For regulated industries (finance, healthcare, legal), auto-decisions may need explicit approval from your compliance team. Check your regulatory requirements before using AutoApprove in workflows that trigger regulated actions (e.g., payment disbursements, medical record changes).</p>
+
+  <h2>Use Cases</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Recommendation</th></tr></thead>
+    <tbody>
+      <tr><td>Employee onboarding form — optional manager review</td><td>AutoApprove — no response means no objection</td></tr>
+      <tr><td>Expense claim — manager must approve or it expires</td><td>AutoReject — no response means claim denied, resubmit required</td></tr>
+      <tr><td>Contract approval — high-value, must have a human</td><td>Escalate or Fail — do not auto-decide</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-escalation.html">&#8592; Escalation</a>
+    <a href="05-timeout-port.html">Next: Timeout Output Port &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Managed Identity Audit Log — Managed Identities | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Managed Identities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-creating.html">Creating a Managed Identity</a>
+  <a href="02-credentials.html">Managed Identity Credentials</a>
+  <a href="03-role-assignment.html">Assigning Roles and Permissions</a>
+  <a href="04-workflow-execution.html">Using in Workflow Execution</a>
+  <a href="05-service-calls.html">Using in Service-to-Service Calls</a>
+  <a href="06-credential-rotation.html">Credential Rotation</a>
+  <a href="07-audit.html" class="active">Managed Identity Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Managed Identity Audit Log</h1>
+    <p class="lead">Every authentication event, token issuance, secret rotation, role change, and API call made by a managed identity is recorded in Passport's audit log — query by <code>managed_identity_id</code>, <code>secretId</code>, or event type for complete traceability.</p>
+  </div>
+
+  <h2>Audit Event Types</h2>
+  <table>
+    <thead>
+      <tr><th>Event Type</th><th>When Emitted</th><th>Key Fields</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>mi.token.issued</code></td><td>Successful client credentials token issuance</td><td>managedIdentityId, secretId, clientIp, tokenId</td></tr>
+      <tr><td><code>mi.token.rejected</code></td><td>Authentication failed (bad secret, disabled identity)</td><td>managedIdentityId, reason, clientIp</td></tr>
+      <tr><td><code>mi.token.revoked</code></td><td>Token revoked (secret revocation or identity disable)</td><td>managedIdentityId, secretId, tokenId, reason</td></tr>
+      <tr><td><code>mi.created</code></td><td>New managed identity created</td><td>managedIdentityId, name, tenantId, createdBy</td></tr>
+      <tr><td><code>mi.disabled</code></td><td>Identity disabled</td><td>managedIdentityId, disabledBy, reason</td></tr>
+      <tr><td><code>mi.enabled</code></td><td>Identity re-enabled</td><td>managedIdentityId, enabledBy</td></tr>
+      <tr><td><code>mi.deleted</code></td><td>Identity permanently deleted</td><td>managedIdentityId, deletedBy</td></tr>
+      <tr><td><code>mi.secret.generated</code></td><td>New secret generated</td><td>managedIdentityId, secretId, label</td></tr>
+      <tr><td><code>mi.secret.revoked</code></td><td>Secret revoked</td><td>managedIdentityId, secretId, revokedBy, reason</td></tr>
+      <tr><td><code>mi.roles.updated</code></td><td>Roles added or removed</td><td>managedIdentityId, addedRoles, removedRoles, updatedBy</td></tr>
+      <tr><td><code>mi.api.call</code></td><td>API call made using managed identity token</td><td>managedIdentityId, method, path, statusCode, duration</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Querying the Audit Log</h2>
+  <pre><code">// Query all events for a specific managed identity
+GET /passport/admin/audit?managedIdentityId=mi-guid-1234&from=2026-05-01&to=2026-05-25
+Authorization: Bearer {admin-token}
+
+// Filter by event type
+GET /passport/admin/audit?managedIdentityId=mi-guid-1234&eventType=mi.token.issued
+
+// Filter by secret ID (useful post-rotation to verify old secret stopped being used)
+GET /passport/admin/audit?managedIdentityId=mi-guid-1234&secretId=sec-guid-OLD
+
+// Query across all managed identities in a tenant (admin only)
+GET /passport/admin/audit?tenantId=tenant-abc&eventType=mi.token.rejected&from=2026-05-25
+
+// Response
+{
+  "events": [
+    {
+      "eventId":           "evt-guid-9999",
+      "eventType":         "mi.token.issued",
+      "timestamp":         "2026-05-25T06:00:01Z",
+      "managedIdentityId": "mi-guid-1234",
+      "managedIdentityName": "payroll-monthly-scheduler",
+      "secretId":          "sec-guid-5678",
+      "clientIp":          "10.0.1.55",
+      "tokenId":           "tok-guid-abc",
+      "tenantId":          "tenant-abc",
+      "metadata": {
+        "triggeredBy": "schedule:Monthly Payroll Run",
+        "workflowId":  "wf-monthly-payroll"
+      }
+    }
+  ],
+  "total": 1,
+  "page":  1
+}</code></pre>
+
+  <h2>Audit Log Entry Structure</h2>
+  <pre><code">public class ManagedIdentityAuditEvent
+{
+    public required Guid   EventId             { get; init; }
+    public required string EventType           { get; init; }  // e.g. "mi.token.issued"
+    public required DateTimeOffset Timestamp   { get; init; }
+    public required Guid   ManagedIdentityId   { get; init; }
+    public required string ManagedIdentityName { get; init; }
+    public required string TenantId            { get; init; }
+
+    // For token events
+    public Guid?   SecretId   { get; init; }
+    public string? TokenId    { get; init; }
+    public string? ClientIp   { get; init; }
+
+    // For admin events (create, disable, role change)
+    public string? ActorUserId   { get; init; }  // admin who performed the action
+    public string? ActorEmail    { get; init; }
+
+    // For rejection events
+    public string? RejectionReason { get; init; }
+
+    // For API call events
+    public string? HttpMethod   { get; init; }
+    public string? ApiPath      { get; init; }
+    public int?    HttpStatus   { get; init; }
+    public int?    DurationMs   { get; init; }
+
+    // Free-form metadata
+    public IDictionary&lt;string,string&gt; Metadata { get; init; } = new Dictionary&lt;string,string&gt;();
+}</code></pre>
+
+  <h2>Security Investigation Queries</h2>
+  <pre><code">// Find all failed authentications in the last 24 hours (possible brute force)
+GET /passport/admin/audit
+  ?tenantId=tenant-abc
+  &eventType=mi.token.rejected
+  &from=2026-05-24T10:00:00Z
+
+// Verify rotation completed: confirm no token issuances using old secret after revocation
+GET /passport/admin/audit
+  ?managedIdentityId=mi-guid-1234
+  &secretId=sec-guid-OLD
+  &from=2026-05-25T11:00:00Z   // after revocation time
+
+// Audit trail for a specific workflow execution
+GET /passport/admin/audit
+  ?managedIdentityId=mi-guid-1234
+  &metadata.workflowId=wf-monthly-payroll
+  &from=2026-05-25T06:00:00Z
+  &to=2026-05-25T08:00:00Z
+
+// Who changed the roles on this managed identity?
+GET /passport/admin/audit
+  ?managedIdentityId=mi-guid-1234
+  &eventType=mi.roles.updated</code></pre>
+
+  <h2>Retention and Export</h2>
+  <p>Managed identity audit events are retained for the same period as all Passport audit logs — default 90 days, configurable up to 7 years for compliance requirements. Events can be exported to external SIEM systems:</p>
+  <pre><code">// Configure audit log export to external SIEM
+POST /passport/admin/audit/export-config
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "destination": "azure-event-hub",
+  "eventHubConnectionString": "Endpoint=sb://...",
+  "eventHubName":             "passport-audit",
+  "filter": {
+    "eventTypes": ["mi.token.rejected", "mi.secret.revoked", "mi.disabled"],
+    "tenantIds":  ["tenant-abc"]
+  },
+  "includeServiceAccountEvents": true
+}
+
+// Or export to Azure Monitor Logs
+{
+  "destination":       "azure-monitor",
+  "workspaceId":       "log-analytics-workspace-id",
+  "workspaceKey":      "{key}",
+  "customLogName":     "PassportManagedIdentityAudit"
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Audit Log Is Append-Only</strong>
+    <p>Audit log entries cannot be modified or deleted by any API call, including admin calls. Even deleting a managed identity does not remove its historical audit events — the events are retained for the full retention period so that security investigations can reconstruct the complete history of a decommissioned identity.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-credential-rotation.html">&#8592; Credential Rotation</a>
+    <span class="spacer"></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Working Memory Storage — Memory Storage | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Storage</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory Storage Overview</a>
+  <a href="01-sql-tables.html">SQL Tables</a>
+  <a href="02-vector-storage.html">Vector Storage</a>
+  <a href="03-working-storage.html" class="active">Working Memory Storage</a>
+  <a href="04-tenant-isolation.html">Tenant Isolation</a>
+  <a href="05-retention.html">Data Retention</a>
+  <a href="06-backup.html">Backup and Restore</a>
+  <a href="07-migration.html">Migration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Working Memory Storage</h1>
+    <p class="lead">Working memory is deliberately not stored persistently — it exists only in process RAM for the duration of a single conversation turn. This page explains the in-memory data structures, the conversation history cache, and how working memory is reconstructed when needed.</p>
+  </div>
+
+  <h2>In-Process Only: By Design</h2>
+  <p>Working memory contains the complete LLM context for the current turn. It is never written to disk, SQL, or a cache store. This is a deliberate architectural choice with several benefits:</p>
+  <ul>
+    <li><strong>Freshness</strong>: Each turn is assembled from the authoritative sources — SQL episodes, vector knowledge, agent config. There is no stale cache to invalidate.</li>
+    <li><strong>Horizontal scaling</strong>: Any Octopus API server can handle any turn for any conversation. No server affinity or sticky sessions needed.</li>
+    <li><strong>No sensitive data at rest</strong>: Working memory may contain the full system prompt and retrieved PII-containing knowledge. Not persisting it means it cannot be exfiltrated from storage.</li>
+    <li><strong>Simplicity</strong>: No cache consistency problems, no eviction strategies, no distributed cache synchronisation.</li>
+  </ul>
+
+  <h2>In-Memory Conversation History</h2>
+  <p>Between turns within the same HTTP session, the conversation message history is held in an in-memory store keyed by conversation ID. This is a <code>ConversationHistoryCache</code> held in a scoped DI lifetime:</p>
+  <pre><code>// In-memory conversation history cache (per-request scope in ASP.NET Core)
+public class ConversationHistoryCache
+{
+    // Key: ConversationId (Guid)
+    // Value: ordered list of messages accumulated this session
+    private readonly Dictionary&lt;Guid, List&lt;LLMMessage&gt;&gt; _history = new();
+
+    public IReadOnlyList&lt;LLMMessage&gt; GetHistory(Guid conversationId)
+        => _history.TryGetValue(conversationId, out var msgs)
+            ? msgs.AsReadOnly()
+            : Array.Empty&lt;LLMMessage&gt;();
+
+    public void AppendTurn(Guid conversationId, LLMMessage userMsg, LLMMessage assistantMsg)
+    {
+        if (!_history.ContainsKey(conversationId))
+            _history[conversationId] = new List&lt;LLMMessage&gt;();
+
+        _history[conversationId].Add(userMsg);
+        _history[conversationId].Add(assistantMsg);
+    }
+}</code></pre>
+
+  <h2>Session Persistence via EpisodicMessages</h2>
+  <p>Although working memory itself is not persisted, each message in the current session is also written to <code>Octopus_EpisodeMessages</code> in SQL. This allows full reconstruction of the conversation if the server restarts mid-session:</p>
+  <pre><code>// On every turn: write message to SQL for durability
+await _episodicStore.AddMessageAsync(episode.EpisodeId, new EpisodeMessage
+{
+    Role       = "user",
+    Content    = userMessage,
+    TokenCount = _tokenCounter.Count(userMessage),
+    CreatedAt  = DateTime.UtcNow
+}, ct);
+
+// If server restarts, reconstruct from SQL on next request:
+var messages = await _episodicStore.GetSessionMessagesAsync(conversationId, ct);
+// → Re-populate in-memory history from DB</code></pre>
+
+  <h2>Token Budget Management in RAM</h2>
+  <p>The token budget calculation and pruning happen entirely in process, before the messages array is sent to the LLM provider:</p>
+  <pre><code>public class WorkingMemoryManager
+{
+    public async Task&lt;IReadOnlyList&lt;LLMMessage&gt;&gt; BuildAsync(
+        AgentComposite agent,
+        ConversationComposite conversation,
+        MemoryAssembly memoryAssembly,
+        string userMessage,
+        CancellationToken ct)
+    {
+        // 1. Assemble all messages (system + knowledge + history + current)
+        var messages = Assemble(agent, conversation, memoryAssembly, userMessage);
+
+        // 2. Count total tokens
+        int totalTokens = _counter.CountMessages(messages);
+
+        // 3. Prune if over budget (modifies only the in-memory list)
+        if (totalTokens > agent.MemoryConfig.MaxWorkingMemoryTokens)
+        {
+            messages = await _pruner.PruneAsync(
+                messages,
+                agent.MemoryConfig.MaxWorkingMemoryTokens,
+                ct);
+        }
+
+        return messages;  // Sent directly to LLM provider — never written to disk
+    }
+}</code></pre>
+
+  <h2>RAM Footprint Estimate</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Typical Size</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>System prompt</td><td>2–5 KB</td><td>Text only</td></tr>
+      <tr><td>Retrieved knowledge (5 chunks)</td><td>5–20 KB</td><td>Depends on chunk size</td></tr>
+      <tr><td>Episodic snippets (3 episodes)</td><td>2–6 KB</td><td>Summaries, not full messages</td></tr>
+      <tr><td>Message history (20 turns)</td><td>20–100 KB</td><td>Wide variance based on message verbosity</td></tr>
+      <tr><td>Total working memory</td><td>30–130 KB per active turn</td><td>Released when request completes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>No Cache Warm-Up Needed</strong>
+    <p>Because working memory is rebuilt on every turn, there is no cache warm-up period after a deployment or server restart. The first turn for any conversation is as fast as any subsequent turn.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-vector-storage.html">&#8592; Vector Storage</a>
+    <a href="04-tenant-isolation.html">Next: Tenant Isolation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

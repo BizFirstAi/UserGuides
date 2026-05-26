@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Syncing to UI State — Real-Time Execution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Real-Time Execution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">SignalR Overview</a>
+  <a href="01-connection.html">Establishing Connection</a>
+  <a href="02-event-types.html">Execution Event Types</a>
+  <a href="03-node-stream.html">Per-Node Log Streaming</a>
+  <a href="04-workflow-stream.html">Workflow-Level Events</a>
+  <a href="05-state-sync.html" class="active">Syncing to UI State</a>
+  <a href="06-polling-fallback.html">Polling Fallback</a>
+  <a href="07-reconnection.html">Reconnection Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Syncing to UI State</h1>
+    <p class="lead"><code>useNodeExecutionSync</code> is the bridge between raw SignalR events and the visual state of the canvas. It translates incoming events into store mutations that trigger React re-renders.</p>
+  </div>
+
+  <h2>useNodeExecutionSync</h2>
+  <pre><code>// useNodeExecutionSync.ts
+export function useNodeExecutionSync(executionId: string) {
+  const { subscribeToNodeStream, subscribeToWorkflowStream } = useExecutionSignalR(executionId);
+  const designerStore = useDesignerModeStore();
+  const observerStore = useFlowObserverPanelStore();
+
+  useEffect(() => {
+    // Subscribe to node events
+    const unsubNode = subscribeToWorkflowStream((event) => {
+      switch (event.type) {
+        case 'NodeExecutionStarted':
+          designerStore.setNodeStatus(event.nodeId, {
+            status: 'running',
+            startedAt: event.startedAt
+          });
+          break;
+        case 'NodeExecutionCompleted':
+          designerStore.setNodeStatus(event.nodeId, {
+            status: 'completed',
+            durationMs: event.durationMs,
+            output: event.output
+          });
+          observerStore.incrementCompletedCount();
+          break;
+        case 'NodeExecutionFailed':
+          designerStore.setNodeStatus(event.nodeId, {
+            status: 'failed',
+            error: { message: event.errorMessage, type: event.errorType }
+          });
+          break;
+        case 'WorkflowExecutionCompleted':
+          designerStore.setExecutionComplete(event.status);
+          break;
+      }
+    });
+    return () => unsubNode();
+  }, [executionId]);
+}</code></pre>
+
+  <h2>executionStateMapper</h2>
+  <p>The <code>executionStateMapper.ts</code> utility converts raw event data into the <code>NodeExecutionState</code> format consumed by node components. It also handles the colour mapping:</p>
+  <pre><code>// executionStateMapper.ts
+export function mapEventToNodeState(event): NodeExecutionState {
+  return {
+    status: mapStatus(event.type),
+    borderColor: statusToColor(mapStatus(event.type)),
+    iconClass: statusToIcon(mapStatus(event.type)),
+    isAnimating: event.type === 'NodeExecutionStarted',
+    durationMs: event.durationMs,
+    errorSummary: event.errorMessage?.substring(0, 100)
+  };
+}
+
+function statusToColor(status: string): string {
+  const map = {
+    pending: '#4a5568',
+    running: '#60a5fa',
+    completed: '#34d399',
+    failed: '#f87171',
+    skipped: '#4a5568',
+    suspended: '#fbbf24'
+  };
+  return map[status] ?? '#4a5568';
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="04-workflow-stream.html">&#8592; Workflow-Level Events</a>
+    <a href="06-polling-fallback.html">Next: Polling Fallback &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

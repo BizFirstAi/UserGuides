@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Search API — Search and Filters | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Search &amp; Filters</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-global-search.html">Global Search</a>
+  <a href="02-task-filters.html">Task Inbox Filters</a>
+  <a href="03-history-filters.html">Workflow History Filters</a>
+  <a href="04-notification-filters.html">Notification Filters</a>
+  <a href="05-saved-filters.html">Saved Filters</a>
+  <a href="06-search-api.html" class="active">Search API</a>
+  <a href="07-performance.html">Search Performance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Search API</h1>
+    <p class="lead">The WorkDesk Search API provides a unified endpoint for global search and section-scoped search. All results are scoped to the authenticated user's visible data. The API is designed for low-latency results — typically under 100ms for most queries.</p>
+  </div>
+
+  <h2>Unified Search Endpoint</h2>
+  <pre><code>GET /api/workdesk/search
+Authorization: Bearer {token}
+
+// Query parameters
+?q=expense+approval      // required — minimum 2 characters
+&amp;section=tasks           // optional — tasks | history | notifications | all (default: all)
+&amp;limit=5                 // optional — results per section (default: 5, max: 20)
+&amp;page=1                  // optional — for paginating within a section result set
+
+// Response — global search (all sections)
+{
+  "query": "expense approval",
+  "tasks": {
+    "items": [
+      {
+        "taskId": "3fa85f64-...",
+        "type": "approval",
+        "title": "Expense Report Approval — Q1 Marketing",
+        "status": "pending",
+        "dueAt": "2026-05-27T17:00:00Z",
+        "workflowName": "Expense Approval Flow",
+        "score": 0.95,                   // relevance score 0-1
+        "matchHighlights": {
+          "title": "Expense Report &lt;mark&gt;Approval&lt;/mark&gt; — Q1 Marketing"
+        }
+      }
+    ],
+    "totalCount": 2,
+    "hasMore": false
+  },
+  "history": {
+    "items": [
+      {
+        "executionId": "7bc12d45-...",
+        "workflowName": "Expense Approval Flow",
+        "status": "completed",
+        "triggeredAt": "2026-05-25T09:12:00Z",
+        "score": 0.87
+      }
+    ],
+    "totalCount": 3,
+    "hasMore": true
+  },
+  "notifications": {
+    "items": [
+      {
+        "notificationId": "notif-789",
+        "type": "hil_task_assigned",
+        "title": "New Approval Task",
+        "body": "...",
+        "isRead": false,
+        "createdAt": "2026-05-25T10:00:00Z",
+        "score": 0.72
+      }
+    ],
+    "totalCount": 1,
+    "hasMore": false
+  },
+  "took": 48                           // query execution time in ms
+}</code></pre>
+
+  <h2>Section-Scoped Search</h2>
+  <pre><code>// Search only in tasks
+GET /api/workdesk/search?q=budget+review&amp;section=tasks&amp;limit=20
+
+// Search only in history
+GET /api/workdesk/search?q=payroll&amp;section=history&amp;limit=20
+
+// Response — scoped search returns full paginated results for that section only
+{
+  "query": "budget review",
+  "section": "tasks",
+  "items": [ { ... task objects ... } ],
+  "totalCount": 7,
+  "page": 1,
+  "pageSize": 20,
+  "took": 22
+}</code></pre>
+
+  <h2>Relevance Scoring</h2>
+  <p>Results within each section are ranked by relevance score (0-1, higher is more relevant):</p>
+  <table>
+    <thead><tr><th>Match Type</th><th>Score Range</th></tr></thead>
+    <tbody>
+      <tr><td>Exact title match</td><td>0.9 – 1.0</td></tr>
+      <tr><td>Partial title match (starts with)</td><td>0.75 – 0.9</td></tr>
+      <tr><td>Partial title match (contains)</td><td>0.5 – 0.75</td></tr>
+      <tr><td>Body / description match</td><td>0.3 – 0.5</td></tr>
+      <tr><td>Metadata match (workflow name)</td><td>0.2 – 0.4</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Error Responses</h2>
+  <table>
+    <thead><tr><th>HTTP Status</th><th>Error Code</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>400</td><td><code>QUERY_TOO_SHORT</code></td><td>Query is less than 2 characters</td></tr>
+      <tr><td>400</td><td><code>INVALID_SECTION</code></td><td>Unknown section value</td></tr>
+      <tr><td>400</td><td><code>LIMIT_EXCEEDED</code></td><td>Limit parameter exceeds maximum of 20</td></tr>
+      <tr><td>401</td><td><code>UNAUTHORIZED</code></td><td>Missing or invalid JWT</td></tr>
+      <tr><td>429</td><td><code>RATE_LIMITED</code></td><td>Too many search requests — rate limit: 60/minute per user</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-saved-filters.html">&#8592; Saved Filters</a>
+    <a href="07-performance.html">Next: Search Performance &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

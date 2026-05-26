@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Azure AD Integration — Bring Your Own IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Bring Your Own IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-external-token-validation.html">External Token Validation</a>
+  <a href="02-okta.html">Okta Integration</a>
+  <a href="03-azure-ad.html" class="active">Azure AD Integration</a>
+  <a href="04-auth0.html">Auth0 Integration</a>
+  <a href="05-keycloak.html">Keycloak Integration</a>
+  <a href="06-claims-mapping.html">Claims Mapping</a>
+  <a href="07-hybrid-mode.html">Hybrid Mode</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Azure AD / Entra ID Integration</h1>
+    <p class="lead">Register BizFirstGO as an API application in Azure AD / Entra ID — configure app roles, group claims, and the optional groups overage flow for organizations with many groups.</p>
+  </div>
+
+  <h2>Azure App Registration</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Create App Registration</h4>
+        <p>In Azure Portal → <strong>Microsoft Entra ID → App Registrations → New Registration</strong>.<br>
+        Name: <code>BizFirstGO API</code>, Supported account types: Single tenant (or multi-tenant if needed).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Configure App ID URI</h4>
+        <p>In <strong>Expose an API</strong>, set the Application ID URI to <code>api://bizfirstgo</code>. This becomes the audience in the access token.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Add App Roles</h4>
+        <p>In <strong>App Roles</strong>, create roles that map to BizFirstGO roles:</p>
+        <pre><code>Role: BizFirstGO.Admin    — Display name: "BizFirstGO Admin"
+Role: BizFirstGO.Manager  — Display name: "BizFirstGO Manager"
+Role: BizFirstGO.User     — Display name: "BizFirstGO User"
+Role: BizFirstGO.Viewer   — Display name: "BizFirstGO Viewer"</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Enable Group Claims (Optional)</h4>
+        <p>In <strong>Token Configuration → Add groups claim</strong>. Choose <strong>Security Groups</strong>. For the access token, select <strong>Group ID</strong> (GUIDs). Note: if a user has &gt;200 groups, the overage indicator appears instead of the groups list.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Configure BizFirstGO Tenant Claim</h4>
+        <p>Add a <strong>Optional Claim</strong> for the access token: <code>tid</code> (Azure tenant ID). BizFirstGO can use this to derive the BizFirstGO tenant ID via a static mapping.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Azure AD Token Structure</h2>
+  <pre><code>// Decoded Azure AD access token
+{
+  "iss": "https://login.microsoftonline.com/{aad-tenant-id}/v2.0",
+  "sub": "A1bC2-dEfG3-hIjK4-lMnO5",  // OID (Object ID) — stable user identifier
+  "oid": "A1bC2-dEfG3-hIjK4-lMnO5",  // same as sub in v2 tokens
+  "tid": "aad-tenant-id",             // Azure AD tenant ID
+  "aud": "api://bizfirstgo",
+  "upn": "jane.smith@company.onmicrosoft.com",
+  "name": "Jane Smith",
+  "email": "jane.smith@company.com",
+  "roles": ["BizFirstGO.Admin", "BizFirstGO.Manager"],  // App roles
+  "groups": [                                              // Security group GUIDs (if &lt;200 groups)
+    "a1b2c3d4-...", "e5f6g7h8-..."
+  ]
+}</code></pre>
+
+  <h2>BizFirstGO Federation Configuration</h2>
+  <pre><code>POST /passport/admin/tenants/{tenantId}/federation
+{
+  "providerId":    "azure-ad",
+  "displayName":   "Microsoft Entra ID",
+  "issuer":        "https://login.microsoftonline.com/{aad-tenant-id}/v2.0",
+  "jwksUri":       "https://login.microsoftonline.com/{aad-tenant-id}/discovery/v2.0/keys",
+  "audience":      "api://bizfirstgo",
+  "tenantIdConfig":{
+    "source":     "static",
+    "value":      "tenant-abc"   // or use "claim" source with "tid" claim + mapping table
+  },
+  "userIdClaim":   "oid",        // Object ID — more stable than "sub" for Azure AD
+  "emailClaim":    "email",
+  "rolesClaim":    "roles",      // App roles preferred over group GUIDs
+  "roleMapping": {
+    "BizFirstGO.Admin":   "admin",
+    "BizFirstGO.Manager": "manager",
+    "BizFirstGO.User":    "user",
+    "BizFirstGO.Viewer":  "viewer"
+  }
+}</code></pre>
+
+  <h2>Groups Overage Handling</h2>
+  <p>Azure AD includes a maximum of 200 groups in JWT tokens. When a user has more than 200 groups, the token includes an overage indicator (<code>_claim_names: { groups: "src1" }</code>) instead of the groups list. BizFirstGO's Azure AD provider handles this automatically by calling Microsoft Graph.</p>
+  <pre><code">// Overage token structure
+{
+  "_claim_names": { "groups": "src1" },
+  "_claim_sources": {
+    "src1": {
+      "endpoint": "https://graph.microsoft.com/v1.0/users/{oid}/getMemberObjects"
+    }
+  }
+}
+
+// BizFirstGO Azure AD provider — automatic overage handling
+public sealed class AzureADTokenProvider : IExternalTokenProvider
+{
+    // When groups overage is detected, fall back to Graph API
+    private async Task&lt;IList&lt;string&gt;&gt; GetGroupsWithOverageAsync(
+        string userId, string accessToken, CancellationToken ct)
+    {
+        var graphClient = new GraphServiceClient(/* ... */);
+        var groups = await graphClient.Users[userId]
+            .TransitiveMemberOf
+            .GetAsync(ct: ct);
+
+        return groups?.Value?
+            .OfType&lt;Group&gt;()
+            .Select(g =&gt; g.Id ?? "")
+            .ToList() ?? [];
+    }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Prefer App Roles Over Group GUIDs</strong>
+    <p>Azure AD security group claims contain GUIDs which are environment-specific (different in dev/staging/prod). App Roles use human-readable names (like <code>BizFirstGO.Admin</code>) and are portable across environments. Configure App Roles and use <code>roleMapping</code> instead of <code>groupMapping</code> for Azure AD integrations.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-okta.html">&#8592; Okta Integration</a>
+    <a href="04-auth0.html">Next: Auth0 Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

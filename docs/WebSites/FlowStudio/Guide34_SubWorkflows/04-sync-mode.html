@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synchronous Mode — Guide34_SubWorkflows | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Sub-Workflows</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-subworkflow-node.html"><i class="fa-solid fa-sitemap"></i> SubWorkflow Node</a>
+  <a href="02-input-mapping.html"><i class="fa-solid fa-right-to-bracket"></i> Input Mapping</a>
+  <a href="03-output-mapping.html"><i class="fa-solid fa-right-from-bracket"></i> Output Mapping</a>
+  <a href="04-sync-mode.html" class="active"><i class="fa-solid fa-hourglass-half"></i> Synchronous Mode</a>
+  <a href="05-async-mode.html"><i class="fa-solid fa-bolt"></i> Async Mode</a>
+  <a href="06-error-propagation.html"><i class="fa-solid fa-triangle-exclamation"></i> Error Propagation</a>
+  <a href="07-nesting.html"><i class="fa-solid fa-layer-group"></i> Nested Sub-Workflows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Synchronous Mode</h1>
+    <p class="lead">Parent execution suspends until the child workflow completes — how the suspension/resume mechanism works and how child output flows back to the parent.</p>
+  </div>
+
+  <h2>Execution Timeline</h2>
+  <pre><code>
+Parent:  ──[A]──[B]──[SubWorkflow]──(suspended)────────────────[C]──[D]──▶
+                          │                                      ▲
+                          │ Starts child                         │ Resumes with child output
+                          ▼                                      │
+Child:                 ──[X]──[Y]──[Z]──(complete)──────────────┘
+  </code></pre>
+
+  <h2>The Suspension Mechanism</h2>
+  <p>Synchronous mode uses the same HIL suspension mechanism as human-in-the-loop nodes. When the SubWorkflow executor calls <code>_invoker.InvokeAsync()</code> in sync mode:</p>
+  <ol>
+    <li>A new child execution is started with its own <code>ExecutionId</code> and <code>ParentExecutionId</code> linking to the parent</li>
+    <li>The parent execution's <code>SubWorkflowNode</code> registers a resume callback keyed to the child <code>ExecutionId</code></li>
+    <li>The parent execution transitions to <code>Suspended</code> state — no more nodes run</li>
+    <li>The child runs independently (may itself include HIL steps, loops, etc.)</li>
+    <li>When the child reaches its terminal state (<code>Completed</code> or <code>Failed</code>), the engine fires the registered callback</li>
+    <li>The parent resumes at the SubWorkflow node, which now returns with the child's output</li>
+  </ol>
+
+  <h2>Database-Backed Suspension</h2>
+  <p>The suspension state is persisted to the database, so a server restart does not lose the pending parent. The parent execution record shows:</p>
+  <pre><code class="language-json">{
+  "executionId": "exec-100",
+  "status": "Suspended",
+  "suspendedAt": "2026-05-25T10:00:00Z",
+  "suspendReason": "AwaitingChildExecution",
+  "pendingChildExecutionId": "exec-101"
+}</code></pre>
+
+  <h2>Timeout in Sync Mode</h2>
+  <p>If the child does not complete within the configured <code>timeout</code> (seconds), the engine:</p>
+  <ol>
+    <li>Cancels the child execution (transitions it to <code>Cancelled</code>)</li>
+    <li>Fires the <code>timeout</code> port on the SubWorkflow node in the parent</li>
+    <li>Resumes the parent with a timeout output: <code>{ timedOut: true, childExecutionId: "exec-101" }</code></li>
+  </ol>
+
+  <div class="callout callout-warning">
+    <strong>Long-running children:</strong> If the child workflow includes HIL steps (human approvals, form submissions), the child may take hours or days. Set the timeout accordingly or use async mode if the parent does not need the result immediately.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-output-mapping.html">&#8592; Output Mapping</a>
+    <a href="05-async-mode.html">Next: Async Mode &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Output Mapping — Guide34_SubWorkflows | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Sub-Workflows</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-subworkflow-node.html"><i class="fa-solid fa-sitemap"></i> SubWorkflow Node</a>
+  <a href="02-input-mapping.html"><i class="fa-solid fa-right-to-bracket"></i> Input Mapping</a>
+  <a href="03-output-mapping.html" class="active"><i class="fa-solid fa-right-from-bracket"></i> Output Mapping</a>
+  <a href="04-sync-mode.html"><i class="fa-solid fa-hourglass-half"></i> Synchronous Mode</a>
+  <a href="05-async-mode.html"><i class="fa-solid fa-bolt"></i> Async Mode</a>
+  <a href="06-error-propagation.html"><i class="fa-solid fa-triangle-exclamation"></i> Error Propagation</a>
+  <a href="07-nesting.html"><i class="fa-solid fa-layer-group"></i> Nested Sub-Workflows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Output Mapping</h1>
+    <p class="lead">How the child workflow's final node output is mapped back to the parent's execution memory — the <code>outputMap</code> schema and how the parent accesses the result.</p>
+  </div>
+
+  <h2>How outputMap Works</h2>
+  <p>When the child workflow completes in <strong>sync mode</strong>, the engine captures the child's final node output (the last node that ran before the workflow ended). The <code>outputMap</code> extracts fields from this output and places them into the SubWorkflow node's output object, which becomes accessible via <code>$output.{subWorkflowNodeId}</code> in the parent.</p>
+
+  <h2>outputMap Schema</h2>
+  <pre><code class="language-json">{
+  "outputMap": {
+    "decision":       "$.approvalResult.decision",
+    "approverName":   "$.approvalResult.approverName",
+    "approvedAt":     "$.approvalResult.timestamp",
+    "rejectionReason":"$.approvalResult.rejectionReason ?? null"
+  }
+}</code></pre>
+
+  <p>In the outputMap:</p>
+  <ul>
+    <li><strong>Key</strong> = the field name on the SubWorkflow node's output (accessible in parent as <code>$output.mySubFlow.decision</code>)</li>
+    <li><strong>Value</strong> = expression using <code>$.</code> to reference the child's final output (evaluated in the child's context)</li>
+  </ul>
+
+  <h2>The $ Prefix in Output Expressions</h2>
+  <p>The <code>$.</code> prefix refers to the child's final output object (a shorthand for the last executed node's output dictionary). For example, if the child's last node was <code>approvalResult</code>:</p>
+  <pre><code class="language-javascript">// Child's final output (the last node named "approvalResult"):
+{
+  decision: "approved",
+  approverName: "Bob Smith",
+  timestamp: "2026-05-25T14:30:00Z"
+}
+
+// outputMap expressions access this via:
+"$.approvalResult.decision"     // → "approved"
+"$.approvalResult.approverName" // → "Bob Smith"</code></pre>
+
+  <h2>Parent Access</h2>
+  <p>In the parent workflow, after the SubWorkflow node completes, the mapped values are accessible as if they were the SubWorkflow node's own output:</p>
+  <pre><code class="language-javascript">// SubWorkflow node id = "runApproval"
+$output.runApproval.decision        // → "approved"
+$output.runApproval.approverName    // → "Bob Smith"
+$output.runApproval.approvedAt      // → "2026-05-25T14:30:00Z"</code></pre>
+
+  <h2>No outputMap (Full Child Output)</h2>
+  <p>If you omit <code>outputMap</code>, the entire child final output object is returned as-is as the SubWorkflow node's output. This is convenient for simple cases but leaks child-internal node IDs into the parent:</p>
+  <pre><code class="language-javascript">// Without outputMap — parent receives the raw child output object
+$output.runApproval    // → { approvalResult: { decision: "approved", ... } }</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Explicit mapping preferred:</strong> Always use explicit outputMap in production workflows. It decouples the parent from the child's internal node ID structure and makes the contract explicit.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-input-mapping.html">&#8592; Input Mapping</a>
+    <a href="04-sync-mode.html">Next: Synchronous Mode &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

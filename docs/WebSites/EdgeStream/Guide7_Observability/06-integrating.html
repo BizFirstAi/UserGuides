@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Integrating into Your App — Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observability Overview</a>
+  <a href="01-hooks-monitor.html">HooksMonitor</a>
+  <a href="02-subscribers-monitor.html">SubscribersMonitor</a>
+  <a href="03-observability-hooks.html">observability-hooks-js</a>
+  <a href="04-observability-react.html">observability-react Package</a>
+  <a href="05-mobile-dashboard.html">Mobile Dashboard</a>
+  <a href="06-integrating.html" class="active">Integrating into Your App</a>
+  <a href="07-devtools.html">EdgeStream Dev Tools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Integrating into Your App</h1>
+    <p class="lead">Mount <code>HooksMonitor</code>, <code>SubscribersMonitor</code>, or <code>ActivityStreamMonitor</code> in a dev panel, admin page, or overlay within your application. The components are standalone — no special context or provider needed.</p>
+  </div>
+
+  <h2>Complete Setup: Pipeline + Monitor</h2>
+  <pre><code>// 1. Setup: add HookActivityLogger to the pipeline
+import { createEdgeStream, HookActivityLogger, NormalizationHook } from 'edge-stream-js';
+
+export const stream = createEdgeStream({ logLevel: 'debug' });
+
+stream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  url: '/hubs/edge-stream',
+  transportConfig: { type: 'signalr', url: '/hubs/edge-stream', accessToken: getToken() }
+});
+
+const server = stream.server('bas')!;
+
+// Enable observability — must be in the pipeline
+server.incomingPipeline.addHook(new HookActivityLogger()); // priority 5
+server.incomingPipeline.addHook(new NormalizationHook()); // priority 110
+
+await stream.start();</code></pre>
+
+  <h2>Dev Panel in React</h2>
+  <pre><code>import { useState } from 'react';
+import { HooksMonitor, SubscribersMonitor } from '@edge-stream/observability-react';
+
+export function EdgeStreamDevPanel() {
+  const [activeTab, setActiveTab] = useState&lt;'hooks' | 'subscribers'&gt;('hooks');
+
+  if (!import.meta.env.DEV) return null; // dev-only
+
+  return (
+    &lt;div style={{
+      position: 'fixed',
+      bottom: 0, right: 0,
+      width: '600px', height: '400px',
+      background: '#1a1a2e',
+      border: '1px solid #2d3a4a',
+      borderRadius: '8px 0 0 0',
+      overflow: 'auto',
+      zIndex: 9999,
+    }}&gt;
+      &lt;div style={{ display: 'flex', gap: '8px', padding: '8px', borderBottom: '1px solid #2d3a4a' }}&gt;
+        &lt;button onClick={() =&gt; setActiveTab('hooks')}&gt;Hooks&lt;/button&gt;
+        &lt;button onClick={() =&gt; setActiveTab('subscribers')}&gt;Subscribers&lt;/button&gt;
+      &lt;/div&gt;
+
+      {activeTab === 'hooks' &amp;&amp; (
+        &lt;HooksMonitor pollInterval={1000} maxLogs={50} showSettings={false} /&gt;
+      )}
+      {activeTab === 'subscribers' &amp;&amp; (
+        &lt;SubscribersMonitor pollInterval={1000} maxLogs={50} showSettings={false} /&gt;
+      )}
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Admin Dashboard Integration</h2>
+  <pre><code>// Dedicated observability page in an admin area
+import { ActivityStreamMonitor } from '@edge-stream/observability-react';
+
+export function EdgeStreamAdminPage() {
+  return (
+    &lt;AdminLayout title="EdgeStream Monitor"&gt;
+      &lt;ActivityStreamMonitor
+        pollInterval={2000}   // slower refresh for admin dashboards
+        maxLogs={200}         // more history for investigation
+        showSettings={true}
+      /&gt;
+    &lt;/AdminLayout&gt;
+  );
+}</code></pre>
+
+  <h2>LoggingService Direct Access</h2>
+  <p>If you need programmatic access to the log data — for custom UIs or server-side reporting — use the <code>LoggingService</code> singleton directly:</p>
+  <pre><code>import { getLoggingService, getLogSettings } from 'edge-stream-js';
+
+const loggingService = getLoggingService();
+
+// Retrieve recent logs
+const logs = loggingService.getRecentLogs(100);
+
+// Query with filters
+const failedLogs = loggingService.queryLogs({ status: 'failed' });
+const basLogs = loggingService.queryLogs({ serverId: 'bas' });
+
+// Export all logs as JSON string
+const json = loggingService.exportLogsAsJSON();
+
+// Clear all logs
+loggingService.clearAllLogs();
+
+// Check/set log settings
+const settings = getLogSettings();
+console.log('Hook logging:', settings.isHookLoggingEnabled());
+console.log('Subscriber logging:', settings.isSubscriberLoggingEnabled());</code></pre>
+
+  <h2>Environment-Conditional Mount</h2>
+  <pre><code>// Only include observability components in development builds
+// This ensures zero bundle impact in production
+
+// Vite example
+{import.meta.env.DEV &amp;&amp; &lt;EdgeStreamDevPanel /&gt;}
+
+// Environment variable example
+{process.env.NODE_ENV === 'development' &amp;&amp; &lt;HooksMonitor /&gt;}
+
+// Feature flag example
+{featureFlags.edgeStreamDebug &amp;&amp; &lt;ActivityStreamMonitor /&gt;}</code></pre>
+
+  <div class="page-nav">
+    <a href="05-mobile-dashboard.html">&#8592; Mobile Dashboard</a>
+    <a href="07-devtools.html">Next: EdgeStream Dev Tools &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

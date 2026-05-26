@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compliance and PII — Data Enrichment &amp; Enhancement | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Data Enrichment &amp; Enhancement</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enrichment-pipeline.html">Enrichment Pipeline Pattern</a>
+  <a href="02-ai-enhancement.html">AI-Driven Enhancement</a>
+  <a href="03-embedding-generation.html">Embedding Generation</a>
+  <a href="04-ai-ready-database.html">Building an AI-Ready Database</a>
+  <a href="05-data-lineage.html">Data Lineage</a>
+  <a href="06-compliance.html" class="active">Compliance and PII</a>
+  <a href="07-speed-benefits.html">AI Speed Benefits</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Compliance and PII</h1>
+    <p class="lead">GDPR-aware enrichment patterns — PII detection and tagging, consent management, right-to-erasure implementation, and how the Data Ocean lineage system satisfies GDPR accountability requirements.</p>
+  </div>
+
+  <h2>PII in Enrichment Workflows</h2>
+  <p>When enrichment workflows process personal data (names, emails, phone numbers, addresses), they must do so in compliance with applicable data protection regulations (GDPR, CCPA, PDPA). The Data Ocean compliance pattern addresses this through three mechanisms:</p>
+  <ul>
+    <li><strong>PII detection and classification</strong> — automatically identify which records contain personal data</li>
+    <li><strong>Consent management</strong> — track consent status and block enrichment for records where consent is not granted</li>
+    <li><strong>Right-to-erasure</strong> — when a deletion request arrives, purge enrichment fields from the record AND from the vector store</li>
+  </ul>
+
+  <h2>PII Detection Workflow</h2>
+  <p>Run PII detection as part of the enrichment pipeline — or as a separate dedicated PII scan workflow:</p>
+  <pre><code>// AI Node — PII Detection
+{
+  "nodeType": "AIAgentNode",
+  "promptTemplate": "Analyze the following data record and identify if it contains Personally Identifiable Information (PII).\n\nRecord fields:\nName: {{record.FullName}}\nEmail: {{record.Email}}\nPhone: {{record.Phone}}\nNotes: {{record.Notes}}\n\nClassify the PII level and list what PII types are present.\n\nReturn JSON:\n{\n  \"piiLevel\": \"None | Low | Medium | High | Sensitive\",\n  \"piiTypes\": [\"Name\", \"Email\", \"Phone\", \"Address\", \"HealthInfo\", \"Financial\"],\n  \"hasDirectIdentifiers\": true/false,\n  \"recommendation\": \"Safe to enrich | Enrich with consent | Do not enrich without legal basis\"\n}",
+  "responseFormat": "json",
+  "outputVariable": "piiResult"
+}</code></pre>
+
+  <h3>PII Classification Levels</h3>
+  <table>
+    <thead>
+      <tr><th>Level</th><th>Definition</th><th>Enrichment Policy</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>None</code></td><td>No personal data detected</td><td>Enrich freely</td></tr>
+      <tr><td><code>Low</code></td><td>Generic identifiers (job title, company name)</td><td>Enrich — log in lineage</td></tr>
+      <tr><td><code>Medium</code></td><td>Names, email addresses, phone numbers</td><td>Enrich if ConsentStatus = Granted</td></tr>
+      <tr><td><code>High</code></td><td>Financial details, location data, behavioral data</td><td>Enrich only with explicit consent and legal basis logged</td></tr>
+      <tr><td><code>Sensitive</code></td><td>Health data, biometric, special categories</td><td>Do NOT enrich without specific legal review</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Consent Management</h2>
+  <p>The <code>ConsentStatus</code> column controls whether a record's personal data may be processed by AI enrichment workflows:</p>
+  <pre><code>-- Check consent before enrichment (add at start of enrichment workflow)
+SqlQueryNode:
+SELECT ConsentStatus, PiiClassification, ConsentGrantedAt
+FROM Lead
+WHERE TenantId = @tenantId AND LeadId = @leadId
+
+// Condition Node:
+// If PiiClassification IN ('Medium', 'High', 'Sensitive')
+//    AND ConsentStatus != 'Granted'
+//    → Exit workflow (log to EnrichmentSkipped table)
+// Else
+//    → Proceed with enrichment</code></pre>
+
+  <h3>Recording Consent</h3>
+  <pre><code>// Consent granted via web form or explicit opt-in
+UPDATE Lead SET
+    ConsentStatus = 'Granted',
+    ConsentGrantedAt = GETUTCDATE(),
+    UpdatedAt = GETUTCDATE()
+WHERE TenantId = @tenantId AND LeadId = @leadId;</code></pre>
+
+  <h2>Right-to-Erasure Implementation</h2>
+  <p>GDPR Article 17 gives individuals the right to have their personal data erased. In Data Ocean, this means:</p>
+  <ol>
+    <li><strong>Soft-delete the record</strong>: Set <code>IsDeleted = 1</code></li>
+    <li><strong>Purge enrichment fields</strong>: Set all AI-generated columns to NULL — the enrichment was derived from personal data and must also be erased</li>
+    <li><strong>Delete from vector store</strong>: Remove the embedding from Qdrant using the <code>EmbeddingRef</code></li>
+    <li><strong>Record the erasure in lineage</strong>: Insert a lineage record with <code>EnrichmentType = 'DataErasure'</code></li>
+  </ol>
+  <pre><code>-- Step 1 & 2: Soft-delete and purge enrichment in one atomic UPDATE
+UPDATE Lead SET
+    IsDeleted = 1,
+    DeletedAt = GETUTCDATE(),
+    -- Purge all personal data fields
+    FullName = 'REDACTED',
+    Email = 'REDACTED@redacted.invalid',
+    Phone = NULL,
+    Notes = NULL,
+    -- Purge AI enrichment derived from personal data
+    SummaryText = NULL,
+    ClassificationLabel = NULL,
+    SentimentScore = NULL,
+    ExtractedEntitiesJson = NULL,
+    KeywordsJson = NULL,
+    EmbeddingRef = NULL,
+    AiProcessedAt = NULL,
+    -- Record consent withdrawal
+    ConsentStatus = 'Withdrawn',
+    ConsentWithdrawnAt = GETUTCDATE(),
+    UpdatedAt = GETUTCDATE()
+WHERE TenantId = @tenantId AND LeadId = @leadId;
+
+-- Step 3: Delete from vector store (via workflow node)
+-- VectorDeleteNode: collection='leads', embeddingRef={{embeddingRef}}</code></pre>
+
+  <div class="callout danger">
+    <strong>Erasure Must Also Cover the Vector Store</strong>
+    <p>Soft-deleting the SQL record is not sufficient. The vector store still holds the semantic embedding of the individual's personal data. The erasure workflow MUST delete the entry from Qdrant (or PGVector) using the <code>EmbeddingRef</code> value before setting it to NULL in SQL. Failure to delete from the vector store means personal data persists in a non-obvious location.</p>
+  </div>
+
+  <h2>Compliance Reporting Queries</h2>
+  <pre><code>-- PII distribution across all leads
+SELECT
+    ISNULL(PiiClassification, 'Not Classified') AS PiiLevel,
+    COUNT(*) AS RecordCount,
+    SUM(CASE WHEN ConsentStatus = 'Granted' THEN 1 ELSE 0 END) AS WithConsent
+FROM Lead
+WHERE TenantId = @tenantId AND IsDeleted = 0
+GROUP BY PiiClassification
+ORDER BY RecordCount DESC;
+
+-- Records pending PII classification
+SELECT COUNT(*) AS PendingPiiClassification
+FROM Lead
+WHERE TenantId = @tenantId
+  AND IsDeleted = 0
+  AND PiiClassification IS NULL;
+
+-- Consent withdrawal log (last 90 days)
+SELECT LeadId, ConsentWithdrawnAt, AiProcessedAt
+FROM Lead
+WHERE TenantId = @tenantId
+  AND ConsentStatus = 'Withdrawn'
+  AND ConsentWithdrawnAt >= DATEADD(DAY, -90, GETUTCDATE())
+ORDER BY ConsentWithdrawnAt DESC;</code></pre>
+
+  <div class="page-nav">
+    <a href="05-data-lineage.html">&#8592; Data Lineage</a>
+    <a href="07-speed-benefits.html">Next: AI Speed Benefits &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receiving Interaction Requests — Interaction Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-receiving-interactions.html" class="active">Receiving Interaction Requests</a>
+  <a href="02-callback-subscription.html">Callback Subscription</a>
+  <a href="03-response-handling.html">Handling Responses</a>
+  <a href="04-timeout-handling.html">Handling Timeout</a>
+  <a href="05-multi-user.html">Multi-User Interactions</a>
+  <a href="06-cleanup.html">Subscription Cleanup</a>
+  <a href="07-react-integration.html">React Integration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Receiving Interaction Requests</h1>
+    <p class="lead">The interaction receiver subscribes to the user's personal interaction topic and handles incoming <code>InteractionRequest</code> messages. The <code>InteractionSubscriber</code> manages the subscription; the <code>InteractionContainer</code> renders the UI.</p>
+  </div>
+
+  <h2>The interactions.{userId} Topic</h2>
+  <p>Every user has a dedicated interaction inbox topic: <code>interactions.{userId}</code>. This topic is:</p>
+  <ul>
+    <li><strong>Per-user:</strong> Only that user's authenticated sessions can subscribe</li>
+    <li><strong>Server-write-only:</strong> Only the EdgeInteract server can publish to this topic</li>
+    <li><strong>Persistent:</strong> Messages published while the user is offline are retained until the timeout expires</li>
+  </ul>
+
+  <h2>InteractionSubscriber — How It Works</h2>
+  <pre><code>// InteractionSubscriber wraps EdgeStream subscription (simplified internal implementation)
+class InteractionSubscriber {
+  private subscription: EdgeStreamSubscription | null = null;
+
+  async start(userId: string, queue: InteractionQueue): Promise&lt;void&gt; {
+    // Subscribe to the user's interaction inbox
+    this.subscription = await edgeStreamClient.subscribe(
+      `interactions.${userId}`,
+      async (message) =&gt; {
+        const request = JSON.parse(message.body) as InteractionRequest;
+
+        // Validate the message structure
+        if (!isValidInteractionRequest(request)) {
+          console.warn('Received malformed InteractionRequest', request);
+          return;
+        }
+
+        // Add to the interaction queue — InteractionContainer will render it
+        queue.enqueue(request);
+
+        // Notify the server that the client displayed the interaction
+        await this.sendDisplayedStatus(request.interactionId);
+      }
+    );
+  }
+
+  async stop(): Promise&lt;void&gt; {
+    await this.subscription?.unsubscribe();
+    this.subscription = null;
+  }
+}
+</code></pre>
+
+  <h2>Message Format on the Topic</h2>
+  <p>Messages on <code>interactions.{userId}</code> are always serialized <code>InteractionRequest</code> JSON. The client identifies the message type by the <code>type</code> field inside the JSON body:</p>
+  <pre><code>// Example message body on interactions.usr_abc123
+{
+  "interactionId": "8f4a91bc-...",
+  "type": "approval",
+  "targetUserId": "usr_abc123",
+  "title": "Invoice Approval Required",
+  "description": "Invoice #INV-2026-0042 requires your approval.",
+  "payload": {
+    "context": "...",
+    "fields": [...]
+  },
+  "timeoutMs": 86400000,
+  "priority": "high",
+  "correlationId": "wf-exec-7f3a",
+  "metadata": {}
+}
+</code></pre>
+
+  <h2>Reconnect Behavior</h2>
+  <p>If the user's session disconnects and reconnects:</p>
+  <ul>
+    <li>The <code>InteractionSubscriber</code> automatically re-subscribes via EdgeStream's reconnect mechanism</li>
+    <li>Any pending interactions (published during the disconnect window, not yet timed out) are replayed by EdgeStream</li>
+    <li>Interactions that timed out during the disconnect are not replayed — the server sends dismissal signals for them instead</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Duplicate Message Handling</strong>
+    On reconnect, EdgeStream may replay messages that were already received. The <code>InteractionQueue</code> deduplicates by <code>interactionId</code> — already-queued or already-responded interactions are silently dropped.
+  </div>
+
+  <h2>Interaction Queue Priority</h2>
+  <p>When multiple interactions are pending, they are displayed in this priority order:</p>
+  <ol>
+    <li><code>priority: "high"</code> interactions first (FIFO within high)</li>
+    <li><code>priority: "normal"</code> interactions (FIFO within normal, sorted by arrival time)</li>
+  </ol>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Subscribers Overview</a>
+    <a href="02-callback-subscription.html">Next: Callback Subscription &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loki Distributed Mode — Enterprise Options | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Enterprise Options</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Enterprise Options Overview</a>
+  <a href="01-loki-distributed.html" class="active">Loki Distributed Mode</a>
+  <a href="02-thanos.html">Thanos for Metrics HA</a>
+  <a href="03-tempo-ha.html">Tempo HA</a>
+  <a href="04-grafana-enterprise.html">Grafana Enterprise</a>
+  <a href="05-kubernetes.html">Kubernetes Native Scaling</a>
+  <a href="06-multi-region.html">Multi-Region Observability</a>
+  <a href="07-cost.html">Enterprise Cost Model</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Loki Distributed Mode</h1>
+    <p class="lead">Loki's microservices deployment mode splits the monolith into individually scalable components: Distributor (ingest fan-out), Ingester (write WAL), Querier (query execution), Query Frontend (caching), and Compactor (retention). Use when single-node Loki cannot keep up with log volume.</p>
+  </div>
+
+  <h2>Microservices Components</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Role</th><th>Scales With</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Distributor</strong></td><td>Receives log pushes; validates; fans out to ingesters via hash ring</td><td>Ingest rate (logs/second)</td></tr>
+      <tr><td><strong>Ingester</strong></td><td>Buffers logs in WAL; flushes chunks to object storage</td><td>Active stream count + ingest rate</td></tr>
+      <tr><td><strong>Query Frontend</strong></td><td>Splits large queries into shards; caches results; queues</td><td>Query concurrency</td></tr>
+      <tr><td><strong>Querier</strong></td><td>Executes LogQL against object storage and ingester caches</td><td>Query parallelism</td></tr>
+      <tr><td><strong>Compactor</strong></td><td>Compacts chunks; enforces retention; manages index</td><td>Single instance (usually)</td></tr>
+      <tr><td><strong>Ruler</strong></td><td>Evaluates alerting rules against Loki data</td><td>Alert rule count</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Kubernetes Helm Deployment (Loki Distributed)</h2>
+  <pre><code># Add Grafana Helm repo (if not already done):
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+
+# Install Loki in distributed mode:
+helm install loki grafana/loki-distributed \
+  --namespace observe \
+  --values loki-distributed-values.yaml
+
+# loki-distributed-values.yaml:
+loki:
+  auth_enabled: true         # Multi-tenancy required for enterprise
+  storage:
+    type: s3
+    s3:
+      endpoint: s3.amazonaws.com
+      region: us-east-1
+      bucketnames: bizfirst-loki-chunks
+      access_key_id: ${AWS_ACCESS_KEY}
+      secret_access_key: ${AWS_SECRET_KEY}
+
+ingester:
+  replicas: 3                # 3 ingesters for write HA
+  persistence:
+    enabled: true
+    size: 10Gi
+
+distributor:
+  replicas: 2                # 2 distributors for ingest HA
+
+querier:
+  replicas: 2                # 2 queriers for query parallelism
+
+queryFrontend:
+  replicas: 2
+
+compactor:
+  enabled: true
+  serviceAccount:
+    create: true</code></pre>
+
+  <h2>Scaling Guidelines</h2>
+  <table>
+    <thead>
+      <tr><th>Daily Log Volume</th><th>Ingesters</th><th>Queriers</th><th>Distributors</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>&lt; 10 GB/day</td><td>1 (single-binary)</td><td>1</td><td>1</td></tr>
+      <tr><td>10–50 GB/day</td><td>3</td><td>2</td><td>2</td></tr>
+      <tr><td>50–200 GB/day</td><td>6</td><td>4</td><td>3</td></tr>
+      <tr><td>&gt; 200 GB/day</td><td>12+</td><td>8+</td><td>6+</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Ingester Ring Requires Coordination</strong>
+    <p>Loki ingesters use a consistent hash ring to distribute stream ownership. When scaling ingesters up or down, the ring rebalances automatically — but rapid scaling changes can cause brief ingestion gaps. Scale gradually (add 1-2 ingesters at a time) and wait for the ring to stabilize (check <code>loki_ring_members</code> metric) before scaling further.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Enterprise Options Overview</a>
+    <a href="02-thanos.html">Next: Thanos for Metrics HA &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

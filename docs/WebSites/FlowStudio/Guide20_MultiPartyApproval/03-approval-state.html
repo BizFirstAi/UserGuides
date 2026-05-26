@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Approval State Tracking — Multi-Party Approval | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Multi-Party Approval</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-approval-node-config.html">Approval Node Configuration</a>
+  <a href="02-strategies.html">Approval Strategies</a>
+  <a href="03-approval-state.html" class="active">Approval State Tracking</a>
+  <a href="04-approval-inbox.html">Approval Inbox</a>
+  <a href="05-rejection-handling.html">Handling Rejection</a>
+  <a href="06-timeout-escalation.html">Timeout and Escalation</a>
+  <a href="07-audit-trail.html">Approval Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Approval State Tracking</h1>
+    <p class="lead">Per-actor decisions are stored in Process_ApprovalDecisions. After each decision is recorded, the ApprovalStateTracker evaluates whether consensus has been reached.</p>
+  </div>
+
+  <h2>Database Table: Process_ApprovalDecisions</h2>
+  <pre><code>CREATE TABLE Process_ApprovalDecisions (
+    Id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    TenantId    NVARCHAR(100)    NOT NULL,
+    ExecutionId NVARCHAR(100)    NOT NULL,
+    NodeId      NVARCHAR(100)    NOT NULL,
+    ActorId     NVARCHAR(100)    NOT NULL,
+    Decision    TINYINT          NOT NULL,   -- 1=Approved, 2=Rejected
+    Comment     NVARCHAR(2000)   NULL,
+    DecidedAt   DATETIMEOFFSET   NOT NULL DEFAULT GETUTCDATE(),
+    CONSTRAINT UQ_ApprovalDecision UNIQUE (ExecutionId, NodeId, ActorId)
+);</code></pre>
+
+  <h2>Decision States</h2>
+  <table>
+    <thead><tr><th>State</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Pending</td><td>Actor has been assigned a HIL task but has not yet responded (no row in Process_ApprovalDecisions yet)</td></tr>
+      <tr><td>Approved</td><td>Actor submitted an Approved decision — row exists with Decision=1</td></tr>
+      <tr><td>Rejected</td><td>Actor submitted a Rejected decision — row exists with Decision=2</td></tr>
+      <tr><td>Cancelled</td><td>Actor's task was cancelled because consensus was already reached by others</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Consensus Evaluation Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Actor submits decision</h4><p>POST /api/approvals/{taskId}/decide — writes a row to Process_ApprovalDecisions.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>ApprovalStateTracker.EvaluateAsync()</h4><p>Reads all decision rows for this (ExecutionId, NodeId). Applies the strategy logic.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3a</div><div class="line"></div></div>
+      <div class="body"><h4>Consensus reached → resume</h4><p>IWorkflowContinuationOrchestrator.ContinueAsync() is called. Remaining HIL tasks are cancelled.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot" style="background:var(--accent4)">3b</div><div class="line"></div></div>
+      <div class="body"><h4>Not yet → wait</h4><p>No action. The execution remains suspended. Other actors' tasks stay open.</p></div>
+    </div>
+  </div>
+
+  <h2>Accessing Approval State from Executors</h2>
+  <pre><code">// In a downstream executor, read approval decisions from execution memory
+var approvalOutput = ctx.ExecutionMemory.GetNodeOutput&lt;ApprovalNodeOutput&gt;("approvalNode1");
+
+// approvalOutput contains:
+// .AggregateDecision  — Approved | Rejected
+// .Decisions          — List&lt;ActorDecision&gt;: actorId, decision, decidedAt, comment
+// .Strategy           — the strategy used
+// .CompletedAt        — when consensus was reached</code></pre>
+
+  <div class="page-nav">
+    <a href="02-strategies.html">&#8592; Approval Strategies</a>
+    <a href="04-approval-inbox.html">Next: Approval Inbox &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

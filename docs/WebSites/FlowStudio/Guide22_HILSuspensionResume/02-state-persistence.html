@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Persisting Execution State — HIL Suspension & Resume | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Suspension &amp; Resume</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-suspending.html">Triggering Suspension</a>
+  <a href="02-state-persistence.html" class="active">Persisting Execution State</a>
+  <a href="03-correlation-token.html">Correlation Tokens</a>
+  <a href="04-resume-api.html">Resume API</a>
+  <a href="05-resume-data.html">Injecting Resume Data</a>
+  <a href="06-continuation.html">Resuming the Engine</a>
+  <a href="07-failure-modes.html">Failure Modes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Persisting Execution State</h1>
+    <p class="lead">When a workflow suspends, the entire ExecutionMemory — all node outputs, global variables, and execution metadata — is serialised to JSON and stored in Process_SuspendedExecutions. This is the full state needed to resume.</p>
+  </div>
+
+  <h2>What Is Persisted</h2>
+  <table>
+    <thead><tr><th>Data</th><th>Field in Process_SuspendedExecutions</th></tr></thead>
+    <tbody>
+      <tr><td>All node outputs collected so far</td><td><code>ExecutionMemory</code> (JSON)</td></tr>
+      <tr><td>Global variables set by SetVariable nodes</td><td>Inside <code>ExecutionMemory</code></td></tr>
+      <tr><td>Which node is suspended</td><td><code>SuspendedNodeId</code></td></tr>
+      <tr><td>The correlation token</td><td><code>ExecutionResId</code></td></tr>
+      <tr><td>The full process definition</td><td>Referenced by <code>ProcessId</code> + <code>ThreadId</code> — loaded fresh on resume</td></tr>
+      <tr><td>Timeout configuration</td><td><code>ExpiresAt</code>, <code>TimeoutBehavior</code>, <code>EscalationActorId</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Serialisation</h2>
+  <pre><code">// ExecutionMemorySerializer.cs
+public string Serialize(ExecutionMemory memory)
+{
+    // Uses System.Text.Json with custom converters for object type preservation
+    var options = new JsonSerializerOptions
+    {
+        WriteIndented = false,
+        Converters    = { new ExecutionMemoryTypeConverter() }
+    };
+    return JsonSerializer.Serialize(memory, options);
+}
+
+public ExecutionMemory Deserialize(string json)
+{
+    return JsonSerializer.Deserialize&lt;ExecutionMemory&gt;(json, _deserializeOptions)
+           ?? throw new InvalidOperationException("Failed to deserialise ExecutionMemory");
+}</code></pre>
+
+  <h2>Object Type Preservation</h2>
+  <p>The <code>nodeOutputs</code> dictionary stores <code>object</code> values. The serialiser uses type discriminators to preserve the original .NET type, so <code>GetNodeOutput&lt;T&gt;</code> returns the correct strongly-typed object after deserialisation:</p>
+  <pre><code">// Serialised as:
+{
+  "nodeOutputs": {
+    "httpRequest1": {
+      "$type": "BizFirst.Ai.ExecutionNodes.Http.HttpRequestOutput",
+      "statusCode": 200,
+      "body": "{ \"id\": 123 }"
+    }
+  }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Non-serialisable objects:</strong> Node output objects must be JSON-serialisable. If an executor returns an output containing non-serialisable types (e.g., raw streams, delegates), suspension will fail with a <code>SerializationException</code>. Use DTOs or primitives in output types.
+  </div>
+
+  <h2>Storage Size Limits</h2>
+  <p>The <code>ExecutionMemory</code> column is NVARCHAR(MAX) — no hard SQL limit. However, very large memories (e.g., workflows that process large documents and store them in node outputs) can cause performance issues. Recommendations:</p>
+  <ul>
+    <li>Do not store binary content in node outputs — store a reference (URL, blob ID) instead.</li>
+    <li>If a node processes large datasets, store results to a database or blob storage and put the ID in the output.</li>
+    <li>The engine logs a warning if ExecutionMemory serialises to more than 1MB.</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="01-suspending.html">&#8592; Triggering Suspension</a>
+    <a href="03-correlation-token.html">Next: Correlation Tokens &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

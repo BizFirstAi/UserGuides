@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Topic Patterns — Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-subscribing.html">Creating a Subscription</a>
+  <a href="02-topic-patterns.html" class="active">Topic Patterns</a>
+  <a href="03-topic-matcher.html">TopicMatcher</a>
+  <a href="04-subscription-manager.html">SubscriptionManager</a>
+  <a href="05-subscription-registry.html">SubscriptionRegistry</a>
+  <a href="06-callback-patterns.html">Callback Patterns</a>
+  <a href="07-unsubscribing.html">Unsubscribing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Topic Patterns</h1>
+    <p class="lead">EdgeStream topics are dot-delimited strings. Subscriptions support exact match and single-level wildcard (<code>.*</code>) patterns. Understanding topic design is critical for correct message routing.</p>
+  </div>
+
+  <h2>Topic Format</h2>
+  <p>Topics are dot-delimited hierarchical identifiers using alphanumeric characters, dots, underscores, and hyphens:</p>
+  <pre><code>// Valid topic formats
+'workflow.started'
+'workflow.execution.node-completed'
+'agent.chat.token'
+'hil.approval.user-123'
+'notifications.user.alice_bob'
+
+// Valid pattern characters: [a-zA-Z0-9._-]
+// Dots separate segments
+// No spaces, no special characters except ._-</code></pre>
+
+  <h2>Exact Match</h2>
+  <p>Subscribe to a single topic with no wildcards. Only messages with that exact topic string are delivered:</p>
+  <pre><code>// Exact match — receives only 'workflow.started', not 'workflow.started.sub'
+stream.subscribe('bas', 'workflow.started', handler);
+
+// Useful for high-specificity subscriptions
+stream.subscribe('bas', 'hil.approval.task-456', hilHandler);
+stream.subscribe('bas', 'agent.chat.session-789.done', completionHandler);</code></pre>
+
+  <h2>Single-Level Wildcard (.*)</h2>
+  <p>The <code>.*</code> suffix matches exactly one additional segment. Pattern must end with <code>.*</code>:</p>
+  <pre><code>// Matches: workflow.started, workflow.completed, workflow.failed
+// Does NOT match: workflow, workflow.node.started (multi-level)
+stream.subscribe('bas', 'workflow.*', handler);
+
+// Matches: agent.chat.token, agent.chat.done, agent.chat.error
+stream.subscribe('bas', 'agent.chat.*', streamHandler);
+
+// Nested prefix — still single level wildcard
+// Matches: workflow.execution.started, workflow.execution.completed
+// Does NOT match: workflow.execution.node.started (3 levels deep)
+stream.subscribe('bas', 'workflow.execution.*', execHandler);</code></pre>
+
+  <h2>Pattern Validation Rules</h2>
+  <p><code>TopicMatcher.validate(pattern)</code> enforces these rules:</p>
+  <table>
+    <thead>
+      <tr><th>Rule</th><th>Valid</th><th>Invalid</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Not empty</td><td><code>workflow.started</code></td><td><code>""</code></td></tr>
+      <tr><td>Valid characters only</td><td><code>workflow-v2.started_ok</code></td><td><code>workflow/event</code></td></tr>
+      <tr><td>Wildcard only at end</td><td><code>workflow.*</code></td><td><code>workflow.*.events</code></td></tr>
+      <tr><td>No consecutive dots</td><td><code>workflow.execution</code></td><td><code>workflow..execution</code></td></tr>
+      <tr><td>No leading/trailing dot</td><td><code>workflow.started</code></td><td><code>.workflow</code>, <code>workflow.</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>BizFirstGO Topic Namespace Conventions</h2>
+  <table>
+    <thead>
+      <tr><th>Prefix</th><th>Domain</th><th>Example Topics</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>workflow.*</code></td><td>Flow Studio</td><td>workflow.started, workflow.completed, workflow.failed</td></tr>
+      <tr><td><code>workflow.execution.*</code></td><td>Flow Studio Observer</td><td>workflow.execution.node-started, workflow.execution.node-completed</td></tr>
+      <tr><td><code>agent.chat.*</code></td><td>Octopus chat</td><td>agent.chat.token, agent.chat.tool-call, agent.chat.done</td></tr>
+      <tr><td><code>hil.*</code></td><td>Human-in-the-Loop</td><td>hil.approval.request, hil.approval.response</td></tr>
+      <tr><td><code>notifications.*</code></td><td>WorkDesk</td><td>notifications.task-assigned, notifications.mention</td></tr>
+      <tr><td><code>form.*</code></td><td>Atlas Forms</td><td>form.opened, form.submitted, form.abandoned</td></tr>
+      <tr><td><code>ancp.*</code></td><td>ANCP Protocol</td><td>ancp.tool-call, ancp.tool-result, ancp.memory-read</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-subscribing.html">&#8592; Creating a Subscription</a>
+    <a href="03-topic-matcher.html">Next: TopicMatcher &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Widget Node Config — Guide39 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Widgets</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-widget-node.html" class="active"><i class="fa-solid fa-window-restore"></i> Widget Node</a>
+  <a href="02-widget-registry.html"><i class="fa-solid fa-list"></i> Widget Registry</a>
+  <a href="03-rendering.html"><i class="fa-solid fa-display"></i> Widget Rendering</a>
+  <a href="04-interaction-capture.html"><i class="fa-solid fa-hand-pointer"></i> Interaction Capture</a>
+  <a href="05-data-binding.html"><i class="fa-solid fa-plug"></i> Data Binding</a>
+  <a href="06-custom-widget.html"><i class="fa-solid fa-plus-circle"></i> Custom Widget</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Widget Node Config</h1>
+    <p class="lead">Full configuration schema for the <code>WidgetNode</code> — widget ID, actor assignment, data props, interaction events, and port mapping.</p>
+  </div>
+
+  <h2>Config Schema</h2>
+  <pre><code class="language-json">{
+  "nodeType": "Widget",
+  "config": {
+    "widgetId": "data-approval-widget",
+    "actorExpression": "$output.getApprovers.userIds",
+    "title": "Review Line Items",
+    "widgetProps": {
+      "items": "$output.fetchInvoice.lineItems",
+      "totalAmount": "$output.fetchInvoice.total",
+      "currency": "$output.fetchInvoice.currency",
+      "readOnly": false,
+      "showBudgetComparison": true
+    },
+    "interactionEvents": ["approve", "reject", "requestAmendment"],
+    "submitPort": "approved",
+    "cancelPort": "cancelled",
+    "timeoutSeconds": 172800
+  }
+}</code></pre>
+
+  <h2>Config Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>widgetId</code></td><td>string</td><td>Registered widget identifier</td></tr>
+      <tr><td><code>actorExpression</code></td><td>expression</td><td>User ID or array of IDs allowed to interact</td></tr>
+      <tr><td><code>widgetProps</code></td><td>object</td><td>Props passed to the widget component (expressions evaluated)</td></tr>
+      <tr><td><code>interactionEvents</code></td><td>string[]</td><td>Expected interaction event names from the widget</td></tr>
+      <tr><td><code>submitPort</code></td><td>string</td><td>Port to fire on primary interaction (default: "main")</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Executor</h2>
+  <pre><code class="language-csharp">[NodeCapability(CapabilityType.Widget)]
+public class WidgetExecutor : BaseNodeExecutor
+{
+    public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(NodeExecutionContext ctx)
+    {
+        var config = ctx.GetConfig&lt;WidgetConfig&gt;();
+
+        // Evaluate widgetProps expressions
+        var props = config.WidgetProps.ToDictionary(
+            kv => kv.Key,
+            kv => ctx.EvaluateExpression&lt;object&gt;(kv.Value));
+
+        // Suspend via HIL
+        await _hilService.SuspendAsync(new WidgetHILRequest
+        {
+            ExecutionId = ctx.ExecutionId,
+            WidgetId = config.WidgetId,
+            Props = props,
+            ActorId = ctx.EvaluateExpression&lt;string&gt;(config.ActorExpression),
+            TimeoutSeconds = config.TimeoutSeconds
+        });
+
+        return NodeExecutionResult.Suspended();
+    }
+}</code></pre>
+
+  <h2>Interaction Data as Output</h2>
+  <p>When the widget fires an interaction, the interaction data becomes the node output:</p>
+  <pre><code class="language-javascript">// data-approval-widget fired "approve" interaction with:
+// { approvedItems: [...], rejectedItems: [], totalApproved: 2450.00, notes: "Approved" }
+
+$output.reviewWidget.approvedItems      // array of approved line items
+$output.reviewWidget.totalApproved      // 2450.00
+$output.reviewWidget._interactionEvent  // "approve"
+$output.reviewWidget._interactedBy     // "user-alice"</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-widget-registry.html">Next: Widget Registry &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

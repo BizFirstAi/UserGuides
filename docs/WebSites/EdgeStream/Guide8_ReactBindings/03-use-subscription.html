@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>useSubscription — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html">EdgeStreamProvider</a>
+  <a href="02-use-server.html">useEdgeStream</a>
+  <a href="03-use-subscription.html" class="active">useSubscription</a>
+  <a href="04-use-message.html">useMessage</a>
+  <a href="05-use-message-history.html">useConnectionStatus</a>
+  <a href="06-cleanup.html">Cleanup and Lifecycle</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>useSubscription</h1>
+    <p class="lead"><code>useSubscription</code> subscribes to an EdgeStream topic on mount and automatically unsubscribes when the component unmounts. It returns <code>{ isSubscribed, unsubscribe, error }</code> for status tracking and manual control.</p>
+  </div>
+
+  <h2>Signature</h2>
+  <pre><code>function useSubscription&lt;T = unknown&gt;(
+  serverId: string,
+  topic: string,
+  handler: (envelope: IEnvelope&lt;T&gt;) =&gt; void | Promise&lt;void&gt;,
+  options?: UseSubscriptionOptions,
+): UseSubscriptionReturn
+
+interface UseSubscriptionReturn {
+  isSubscribed: boolean;
+  unsubscribe: () =&gt; void;
+  error: Error | null;
+}
+
+interface UseSubscriptionOptions {
+  enabled?: boolean;     // false = skip subscription until true
+  onError?: (error: Error) =&gt; void;
+  autoCleanup?: boolean;
+}</code></pre>
+
+  <h2>Basic Subscription</h2>
+  <pre><code>import { useSubscription } from 'edge-stream-js-react';
+
+function WorkflowPanel() {
+  const [tasks, setTasks] = useState([]);
+
+  const { isSubscribed } = useSubscription(
+    'bas',
+    'workflow.*',
+    (envelope) =&gt; {
+      setTasks(prev =&gt; [...prev, {
+        id: envelope.meta.id,
+        topic: envelope.meta.topic,
+        data: envelope.body,
+      }]);
+    }
+  );
+
+  return (
+    &lt;div&gt;
+      {!isSubscribed &amp;&amp; &lt;span&gt;Connecting...&lt;/span&gt;}
+      &lt;ul&gt;
+        {tasks.map(t =&gt; &lt;li key={t.id}&gt;{t.topic}&lt;/li&gt;)}
+      &lt;/ul&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Conditional Subscription (enabled option)</h2>
+  <pre><code>function ConditionalSubscriber({ userId }: { userId: string | null }) {
+  const { isSubscribed } = useSubscription(
+    'bas',
+    `user.${userId}.*`,
+    (envelope) =&gt; handleUserEvent(envelope),
+    {
+      enabled: !!userId,  // only subscribe when userId is set
+      onError: (err) =&gt; console.error('Subscription failed:', err),
+    }
+  );
+
+  return &lt;div&gt;{isSubscribed ? 'Subscribed' : 'Waiting for user...'}&lt;/div&gt;;
+}</code></pre>
+
+  <h2>Manual Unsubscribe</h2>
+  <pre><code>function PausableStream() {
+  const { isSubscribed, unsubscribe } = useSubscription(
+    'bas',
+    'agent.chat.*',
+    handleAgentMessage
+  );
+
+  return (
+    &lt;div&gt;
+      &lt;p&gt;Status: {isSubscribed ? 'Active' : 'Stopped'}&lt;/p&gt;
+      {isSubscribed &amp;&amp; (
+        &lt;button onClick={unsubscribe}&gt;Pause stream&lt;/button&gt;
+      )}
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Error Handling</h2>
+  <pre><code>function RobustSubscription() {
+  const { isSubscribed, error } = useSubscription(
+    'bas',
+    'workflow.*',
+    handler,
+    {
+      onError: (err) =&gt; {
+        // Called if server not found or subscribe() throws
+        errorMonitor.capture(err);
+      }
+    }
+  );
+
+  if (error) {
+    return &lt;div&gt;Subscription error: {error.message}&lt;/div&gt;;
+  }
+
+  return &lt;div&gt;{isSubscribed ? 'Live' : 'Connecting...'}&lt;/div&gt;;
+}</code></pre>
+
+  <h2>How Cleanup Works</h2>
+  <pre><code>// Internally, useSubscription does this:
+useEffect(() =&gt; {
+  const subscription = client.subscribe(serverId, topic, handler);
+  setIsSubscribed(true);
+
+  return () =&gt; {
+    subscription.unsubscribe(); // called when component unmounts
+    setIsSubscribed(false);
+  };
+}, [client, serverId, topic, handler]);</code></pre>
+
+  <div class="callout warning">
+    <strong>Stable Handler Reference</strong>
+    If the handler function is created inline in the component, it will be a new reference on every render, causing useSubscription to re-subscribe on every render. Wrap the handler in <code>useCallback</code> to stabilize it.
+  </div>
+
+  <pre><code>// Correct: stable handler with useCallback
+function StableSubscriber() {
+  const dispatch = useDispatch();
+
+  const handler = useCallback((envelope) =&gt; {
+    dispatch(workflowEventReceived(envelope.body));
+  }, [dispatch]);
+
+  useSubscription('bas', 'workflow.*', handler);
+  return &lt;div /&gt;;
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="02-use-server.html">&#8592; useEdgeStream</a>
+    <a href="04-use-message.html">Next: useMessage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIExtension.Service API — AI Extension Data Layer | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>AI Extension Data Layer</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-why-no-db.html">Why No Direct Database Access</a>
+  <a href="02-service-api.html" class="active">AIExtension.Service API</a>
+  <a href="03-app-config-storage.html">App Config Storage</a>
+  <a href="04-widget-data-storage.html">Widget Data Storage</a>
+  <a href="05-extending.html">Extending the Service Layer</a>
+  <a href="06-caching.html">Service Layer Caching</a>
+  <a href="07-audit.html">Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>AIExtension.Service API</h1>
+    <p class="lead">The <code>IAppStudioService</code> interface is the complete contract between App Studio controllers and the AIExtension data layer. Every data operation has an explicit method on this interface — there is no other way to access App Studio data.</p>
+  </div>
+
+  <h2>IAppStudioService Interface</h2>
+  <pre><code>// AppStudio/Services/IAppStudioService.cs
+public interface IAppStudioService
+{
+    // App definitions
+    Task<AppDefinition?> GetAppAsync(string tenantId, string appId);
+    Task<IList<AppSummary>> GetAppsAsync(string tenantId);
+    Task<AppDefinition> SaveAppAsync(string tenantId, AppDefinition app, string changedByUserId);
+    Task DeleteAppAsync(string tenantId, string appId, string deletedByUserId);
+
+    // Pages
+    Task<IList<AppPage>> GetPagesAsync(string tenantId, string appId);
+    Task<AppPage?> GetPageAsync(string tenantId, string appId, string pageId);
+    Task<AppPage> SavePageAsync(string tenantId, string appId, AppPage page, string changedByUserId);
+    Task DeletePageAsync(string tenantId, string appId, string pageId, string deletedByUserId);
+
+    // Widgets and layout
+    Task<IList<WidgetPlacement>> GetWidgetsAsync(string tenantId, string appId, string pageId);
+    Task SaveLayoutAsync(string tenantId, string appId, string pageId, IList<WidgetPlacement> placements, string changedByUserId);
+
+    // Export / Import
+    Task<AppExportBundle> ExportAppAsync(string tenantId, string appId, string exportedByUserId);
+    Task<AppImportResult> ImportAppAsync(string tenantId, AppExportBundle bundle, ImportOptions options, string importedByUserId);
+
+    // Audit
+    Task<IList<AuditEntry>> GetAuditLogAsync(string tenantId, string appId, AuditQuery query);
+}
+</code></pre>
+
+  <h2>Key Methods Explained</h2>
+
+  <h3>GetAppAsync</h3>
+  <pre><code>// Returns the full AppDefinition (including pages, navigation, variables, permissions)
+// Served from Redis cache if available — fast path for app loads
+Task<AppDefinition?> GetAppAsync(string tenantId, string appId);
+
+// Returns null if the app doesn't exist or the tenantId doesn't match
+// Never throws on "not found" — callers handle null
+</code></pre>
+
+  <h3>SaveAppAsync</h3>
+  <pre><code>// Writes the complete AppDefinition to the database
+// Automatically:
+//   - invalidates Redis cache for this app
+//   - writes an audit log entry
+//   - validates tenantId ownership
+Task<AppDefinition> SaveAppAsync(string tenantId, AppDefinition app, string changedByUserId);
+</code></pre>
+
+  <h3>SaveLayoutAsync</h3>
+  <pre><code>// Saves the widget placements for a single page
+// Used by the designer's drag-drop layout operations
+// More granular than SaveAppAsync — only persists placement positions
+// Also cache-invalidating and audit-logged
+Task SaveLayoutAsync(string tenantId, string appId, string pageId,
+                     IList<WidgetPlacement> placements, string changedByUserId);
+</code></pre>
+
+  <h3>ExportAppAsync / ImportAppAsync</h3>
+  <pre><code>// Export — produces a complete AppExportBundle
+Task<AppExportBundle> ExportAppAsync(string tenantId, string appId, string exportedByUserId);
+
+// Import — applies the bundle with the given options
+// ImportOptions controls: conflictStrategy, dryRun, includePermissions
+Task<AppImportResult> ImportAppAsync(string tenantId, AppExportBundle bundle,
+                                     ImportOptions options, string importedByUserId);
+</code></pre>
+
+  <h2>How Controllers Use the Service</h2>
+  <pre><code>// AppController.cs — representative pattern
+[ApiController]
+[Route("api/tenants/{tenantId}/apps")]
+public class AppController : ControllerBase
+{
+    private readonly IAppStudioService _service;
+
+    public AppController(IAppStudioService service) => _service = service;
+
+    [HttpGet("{appId}")]
+    public async Task<IActionResult> GetApp(string tenantId, string appId)
+    {
+        // TenantId from route is validated against the JWT by middleware
+        var app = await _service.GetAppAsync(tenantId, appId);
+        return app == null ? NotFound() : Ok(app);
+    }
+
+    [HttpPost("{appId}")]
+    public async Task<IActionResult> SaveApp(string tenantId, string appId,
+                                             [FromBody] AppDefinition app)
+    {
+        var changedBy = User.GetUserId();  // From Passport JWT
+        var saved = await _service.SaveAppAsync(tenantId, app, changedBy);
+        return Ok(saved);
+    }
+}
+</code></pre>
+
+  <div class="page-nav">
+    <a href="01-why-no-db.html">&#8592; Why No Direct Database Access</a>
+    <a href="03-app-config-storage.html">Next: App Config Storage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

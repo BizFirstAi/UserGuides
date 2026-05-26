@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Extension Points — Integration | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.ext-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0;}
+.ext-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;}
+.ext-card h4{margin:0 0 4px;font-size:0.88rem;}
+.ext-card .ext-interface{font-family:monospace;font-size:0.75rem;background:var(--surface2);padding:2px 7px;border-radius:3px;display:inline-block;margin-bottom:6px;}
+.ext-card p{margin:0;font-size:0.78rem;color:var(--text-muted);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Integration</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Integration Overview</a>
+  <a href="01-atlas-forms.html">Atlas Forms</a>
+  <a href="02-flow-studio.html">Flow Studio</a>
+  <a href="03-octopus.html">Octopus</a>
+  <a href="04-app-studio.html">App Studio</a>
+  <a href="05-edgestream.html">EdgeStream</a>
+  <a href="06-passport.html">Passport</a>
+  <a href="07-extension-points.html" class="active">Extension Points</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Extension Points</h1>
+    <p class="lead">WorkDesk is designed to be extended by platform engineers without modifying core source code. Four primary extension points exist: custom search providers, custom notification handlers, dashboard widgets, and App Studio app hosting. Each follows a plugin registration pattern using .NET dependency injection.</p>
+  </div>
+
+  <h2>Extension Points Overview</h2>
+  <div class="ext-grid">
+    <div class="ext-card">
+      <h4>Search Providers</h4>
+      <div class="ext-interface">IWorkDeskSearchProvider</div>
+      <p>Add a new searchable section to the unified global search — your data appears alongside tasks, history, and notifications.</p>
+    </div>
+    <div class="ext-card">
+      <h4>Notification Handlers</h4>
+      <div class="ext-interface">IWorkDeskNotificationHandler</div>
+      <p>Handle new notification types from custom EdgeStream topics — control how they appear, what they link to, and how they affect the badge count.</p>
+    </div>
+    <div class="ext-card">
+      <h4>Dashboard Widgets</h4>
+      <div class="ext-interface">IWorkDeskWidgetDefinition</div>
+      <p>Register a new widget type that employees can add to their personal dashboard — provide the React component, config schema, and data fetcher.</p>
+    </div>
+    <div class="ext-card">
+      <h4>App Studio Hosting</h4>
+      <div class="ext-interface">Admin API</div>
+      <p>Add App Studio apps to the WorkDesk navigation — no code changes required, configured entirely through the admin API.</p>
+    </div>
+  </div>
+
+  <h2>IWorkDeskSearchProvider — Custom Search Sections</h2>
+  <p>Implement <code>IWorkDeskSearchProvider</code> to add your data as a searchable section in WorkDesk's unified search. Your results appear in the same search panel as native tasks, history, and notifications:</p>
+
+  <pre><code>// IWorkDeskSearchProvider — interface contract
+public interface IWorkDeskSearchProvider
+{
+    // Unique key for this section — appears in ?section= query param
+    string SectionKey { get; }
+
+    // Display name shown in the search results panel
+    string DisplayName { get; }
+
+    Task&lt;SearchSectionResult&gt; SearchAsync(
+        string query,
+        Guid   actorId,
+        Guid   tenantId,
+        int    limit,
+        int    page,
+        CancellationToken ct);
+}
+
+public record SearchSectionResult(
+    IReadOnlyList&lt;SearchResultItem&gt; Items,
+    int  TotalCount,
+    bool HasMore);
+
+public record SearchResultItem(
+    string  Id,
+    string  Title,
+    string? Subtitle,
+    double  Score,        // 0.0 – 1.0 relevance score
+    string? ActionUrl,   // URL to navigate to when result is clicked
+    Dictionary&lt;string, string&gt;? Highlights); // field → highlighted snippet
+
+// Example implementation
+public class ExpenseSearchProvider : IWorkDeskSearchProvider
+{
+    public string SectionKey  =&gt; "expenses";
+    public string DisplayName =&gt; "Expense Reports";
+
+    public async Task&lt;SearchSectionResult&gt; SearchAsync(
+        string query, Guid actorId, Guid tenantId, int limit, int page, CancellationToken ct)
+    {
+        var results = await _expenseRepo.SearchAsync(
+            query, actorId, tenantId, limit, page, ct);
+
+        return new SearchSectionResult(
+            Items: results.Select(r =&gt; new SearchResultItem(
+                Id:        r.Id.ToString(),
+                Title:     r.Description,
+                Subtitle:  $"${r.Amount:F2} — {r.Status}",
+                Score:     r.Relevance,
+                ActionUrl: $"/apps/expense-manager/reports/{r.Id}"
+            )).ToList(),
+            TotalCount: results.TotalCount,
+            HasMore:    results.HasMore);
+    }
+}
+
+// Registration in Program.cs
+services.AddWorkDeskSearchProvider&lt;ExpenseSearchProvider&gt;();</code></pre>
+
+  <h2>IWorkDeskNotificationHandler — Custom Notification Types</h2>
+  <p>By default, WorkDesk handles the four built-in notification types. To handle notifications from custom EdgeStream topics (e.g., a custom app emitting its own events), implement <code>IWorkDeskNotificationHandler</code>:</p>
+
+  <pre><code>// IWorkDeskNotificationHandler — handle custom notification types
+public interface IWorkDeskNotificationHandler
+{
+    // The notification type this handler is responsible for
+    string NotificationType { get; }
+
+    // Format the raw notification payload into a WorkDesk notification
+    WorkDeskNotification Handle(RawNotificationPayload raw);
+
+    // Optional: custom action URL builder
+    string? BuildActionUrl(RawNotificationPayload raw);
+}
+
+// Example — custom notification from an expense app
+public class ExpenseApprovedNotificationHandler : IWorkDeskNotificationHandler
+{
+    public string NotificationType =&gt; "expense_approved";
+
+    public WorkDeskNotification Handle(RawNotificationPayload raw)
+    {
+        return new WorkDeskNotification
+        {
+            Title     = $"Expense Approved: {raw.Data["description"]}",
+            Body      = $"Your expense of ${raw.Data["amount"]} was approved by {raw.Data["approverName"]}.",
+            Priority  = NotificationPriority.Normal,
+            ActionUrl = BuildActionUrl(raw),
+            Icon      = "fa-receipt",
+            IconColor = "#3cd282"
+        };
+    }
+
+    public string? BuildActionUrl(RawNotificationPayload raw)
+        =&gt; $"/apps/expense-manager/reports/{raw.Data["reportId"]}";
+}
+
+// Registration
+services.AddWorkDeskNotificationHandler&lt;ExpenseApprovedNotificationHandler&gt;();</code></pre>
+
+  <h2>Dashboard Widget Extension</h2>
+  <p>New widget types can be registered so employees can add them to their personal dashboard. A widget registration requires three parts: a backend definition (data fetcher + config schema) and a frontend React component:</p>
+
+  <pre><code>// Backend — register widget definition
+public class ExpenseSummaryWidgetDefinition : IWorkDeskWidgetDefinition
+{
+    public string WidgetType    =&gt; "expense-summary";
+    public string DisplayName   =&gt; "Expense Summary";
+    public string Description   =&gt; "Shows your pending and approved expenses for the current month";
+    public string IconClass     =&gt; "fa-receipt";
+
+    // JSON Schema for widget configuration (rendered in picker)
+    public string ConfigSchema =&gt; """
+    {
+      "type": "object",
+      "properties": {
+        "showChart": { "type": "boolean", "title": "Show Chart", "default": true },
+        "period":    { "type": "string",  "title": "Period", "enum": ["month", "quarter", "year"] }
+      }
+    }
+    """;
+
+    // Fetch data for the widget
+    public async Task&lt;object&gt; FetchDataAsync(
+        Guid actorId, Guid tenantId, JsonElement config, CancellationToken ct)
+    {
+        var period = config.GetProperty("period").GetString() ?? "month";
+        return await _expenseService.GetSummaryAsync(actorId, tenantId, period, ct);
+    }
+}
+
+services.AddWorkDeskWidget&lt;ExpenseSummaryWidgetDefinition&gt;();
+
+// Frontend — register React component (in WorkDesk frontend plugin)
+// workdesk-plugins/expense-summary-widget.tsx
+import { registerWidget } from '@bizfirstai/workdesk-sdk';
+
+registerWidget('expense-summary', ExpenseSummaryWidget);
+
+function ExpenseSummaryWidget({ data, config }: WidgetProps) {
+  return (
+    &lt;div className="widget-content"&gt;
+      &lt;div className="metric"&gt;Pending: ${data.pendingAmount.toFixed(2)}&lt;/div&gt;
+      &lt;div className="metric"&gt;Approved: ${data.approvedAmount.toFixed(2)}&lt;/div&gt;
+      {config.showChart &amp;&amp; &lt;ExpenseChart data={data.chartData} /&gt;}
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Extension Registration Summary</h2>
+  <table>
+    <thead><tr><th>Extension Type</th><th>Interface</th><th>Registration Method</th><th>Takes Effect</th></tr></thead>
+    <tbody>
+      <tr><td>Search Provider</td><td><code>IWorkDeskSearchProvider</code></td><td><code>services.AddWorkDeskSearchProvider&lt;T&gt;()</code></td><td>Next application restart</td></tr>
+      <tr><td>Notification Handler</td><td><code>IWorkDeskNotificationHandler</code></td><td><code>services.AddWorkDeskNotificationHandler&lt;T&gt;()</code></td><td>Next application restart</td></tr>
+      <tr><td>Dashboard Widget (backend)</td><td><code>IWorkDeskWidgetDefinition</code></td><td><code>services.AddWorkDeskWidget&lt;T&gt;()</code></td><td>Next application restart</td></tr>
+      <tr><td>Dashboard Widget (frontend)</td><td>React component</td><td><code>registerWidget(type, Component)</code></td><td>On next frontend bundle build</td></tr>
+      <tr><td>App Studio App</td><td>None (admin API)</td><td><code>PUT /api/workdesk/admin/navigation-config</code></td><td>Immediately (next page load)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Extension Security Rules</h2>
+  <div class="callout warning">
+    <strong>Extension Security Requirements</strong>
+    <ul>
+      <li><strong>Search providers</strong> must always apply <code>actorId</code> and <code>tenantId</code> filters before performing any full-text search. WorkDesk does not apply these filters on behalf of the provider.</li>
+      <li><strong>Notification handlers</strong> must not make API calls during the <code>Handle</code> method — it is synchronous and runs in the notification delivery hot path.</li>
+      <li><strong>Widget data fetchers</strong> must respect tenant isolation. The <code>tenantId</code> parameter is extracted from the user's JWT and cannot be overridden by client requests.</li>
+      <li><strong>App Studio apps</strong> receive the user's JWT via postMessage. Apps must validate the JWT origin before trusting the token.</li>
+    </ul>
+  </div>
+
+  <h2>Extension Testing</h2>
+  <p>WorkDesk provides test harnesses for validating extensions before deployment:</p>
+
+  <pre><code>// Testing a search provider
+var harness = new WorkDeskSearchProviderHarness&lt;ExpenseSearchProvider&gt;();
+var result = await harness.SearchAsync(
+    query: "travel expense",
+    actorId: testActorId,
+    tenantId: testTenantId,
+    limit: 5);
+
+Assert.True(result.Items.All(i =&gt; i.Score &gt;= 0 &amp;&amp; i.Score &lt;= 1));
+Assert.True(result.Items.All(i =&gt; i.ActionUrl != null));
+// Verify tenant isolation
+Assert.True(result.Items.All(i =&gt; i.BelongsToTenant(testTenantId)));
+
+// Testing a notification handler
+var handlerHarness = new WorkDeskNotificationHandlerHarness&lt;ExpenseApprovedNotificationHandler&gt;();
+var notification = handlerHarness.Handle(rawPayload);
+Assert.Equal("Expense Approved: Q1 Travel", notification.Title);
+Assert.Contains("/expense-manager/reports/", notification.ActionUrl);</code></pre>
+
+  <div class="callout info">
+    <strong>Extension Discovery</strong>
+    <p>WorkDesk uses .NET DI to discover all registered extensions at startup. There is no separate plugin manifest or configuration file needed. As long as the extension is registered via the <code>AddWorkDesk*</code> methods in <code>Program.cs</code>, it will be picked up automatically by the relevant subsystems (search, notifications, dashboard).</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-passport.html">&#8592; Passport</a>
+    <a href="index.html">&#8592; Integration Overview</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

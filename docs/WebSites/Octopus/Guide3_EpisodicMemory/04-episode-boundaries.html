@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Episode Boundaries — Episodic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Episodic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Episodic Memory Overview</a>
+  <a href="01-episode-structure.html">Episode Structure</a>
+  <a href="02-storage.html">Episode Storage</a>
+  <a href="03-recall.html">Recalling Past Episodes</a>
+  <a href="04-episode-boundaries.html" class="active">Episode Boundaries</a>
+  <a href="05-long-term.html">Long-Term Episode Retention</a>
+  <a href="06-privacy.html">Privacy and PII</a>
+  <a href="07-api.html">Episodic Memory API</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Episode Boundaries</h1>
+    <p class="lead">An episode begins when a session starts and ends on a well-defined boundary event. Understanding what starts and ends an episode is critical for configuring session timeout, multi-session continuity, and episode granularity.</p>
+  </div>
+
+  <h2>Episode Start Events</h2>
+  <table>
+    <thead>
+      <tr><th>Trigger</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>New session ID</strong></td><td>Client sends a message with a session ID not in the active sessions table — new episode created</td></tr>
+      <tr><td><strong>API call without sessionId</strong></td><td>Octopus generates a new UUID session — new episode</td></tr>
+      <tr><td><strong>Session resume after timeout</strong></td><td>If a session expired and a new message arrives with the old session ID, a new episode is opened (old one was closed at timeout)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Episode End Events</h2>
+  <table>
+    <thead>
+      <tr><th>End Reason</th><th>Trigger</th><th>Configurable</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>UserClosed</strong></td><td>User clicks "End conversation" in the chat UI — explicit <code>POST /api/sessions/{id}/close</code></td><td>No</td></tr>
+      <tr><td><strong>Timeout</strong></td><td>No activity for <code>SessionIdleTimeoutMinutes</code> (default: 30 min)</td><td>Yes — per agent</td></tr>
+      <tr><td><strong>AgentClosed</strong></td><td>Agent calls <code>close_session</code> tool (e.g., after completing a task)</td><td>No</td></tr>
+      <tr><td><strong>ErrorClosed</strong></td><td>Unrecoverable error during session</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Session Timeout Configuration</h2>
+  <pre><code>// Per-agent session timeout config
+public class SessionConfig
+{
+    public int IdleTimeoutMinutes { get; set; } = 30;    // close after 30min idle
+    public int MaxSessionDurationHours { get; set; } = 8; // force-close after 8h
+    public bool AllowResume { get; set; } = false;        // true = same sessionId reopens same episode
+    public bool CloseOnBrowserClose { get; set; } = false; // requires client-side heartbeat
+}</code></pre>
+
+  <h2>Session Resume vs. New Episode</h2>
+  <p>Octopus supports two models for returning users:</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4>New Episode per Visit</h4>
+      <p><code>AllowResume = false</code> (default). Each page load generates a new session. Continuity is provided by episodic recall (past episodes are searched and injected as context). Good for most use cases.</p>
+    </div>
+    <div class="card">
+      <h4>Persistent Session</h4>
+      <p><code>AllowResume = true</code>. The client stores the session ID and sends it with every request. The same episode accumulates messages across multiple page loads. Good for long-running task tracking.</p>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <strong>Episode Length and Token Budget</strong>
+    <p>Long episodes that span many days (with <code>AllowResume = true</code>) will accumulate large message histories. The working memory pruner will drop old messages from the context window, but the episode record in SQL will grow unbounded. Set <code>MaxSessionDurationHours</code> to enforce episode closure even for resumable sessions.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-recall.html">&#8592; Recalling Past Episodes</a>
+    <a href="05-long-term.html">Next: Long-Term Episode Retention &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

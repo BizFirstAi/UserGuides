@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Storage Overview — Memory Storage | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Storage</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Memory Storage Overview</a>
+  <a href="01-sql-tables.html">SQL Tables</a>
+  <a href="02-vector-storage.html">Vector Storage</a>
+  <a href="03-working-storage.html">Working Memory Storage</a>
+  <a href="04-tenant-isolation.html">Tenant Isolation</a>
+  <a href="05-retention.html">Data Retention</a>
+  <a href="06-backup.html">Backup and Restore</a>
+  <a href="07-migration.html">Migration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Memory Storage Overview</h1>
+    <p class="lead">Octopus uses two persistence backends — SQL Server and a vector database — to store three of its four memory types. This guide covers where each memory type is stored, the complete table schemas, tenant isolation, retention policies, backup strategies, and migration procedures.</p>
+  </div>
+
+  <h2>Storage Architecture</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>SQL Server</h4>
+      <p>Stores episodic memory (conversation episodes), procedural memory (procedure steps), and agent configuration. Managed via EF Core with multi-tenant global query filters.</p>
+      <p><a href="01-sql-tables.html">SQL Tables →</a></p>
+    </div>
+    <div class="card">
+      <h4>Vector Database</h4>
+      <p>Stores semantic memory (knowledge chunk embeddings). Qdrant for production, PGVector for PostgreSQL-first teams. One collection per agent.</p>
+      <p><a href="02-vector-storage.html">Vector Storage →</a></p>
+    </div>
+    <div class="card">
+      <h4>In-Process RAM</h4>
+      <p>Working memory exists only in RAM for the duration of a single request. Rebuilt from the other stores on every turn. Never persisted to disk.</p>
+      <p><a href="03-working-storage.html">Working Memory Storage →</a></p>
+    </div>
+  </div>
+
+  <h2>Storage Map</h2>
+  <table>
+    <thead>
+      <tr><th>Memory Type</th><th>Storage System</th><th>Table / Collection</th><th>Plugin</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Working</td><td>In-process RAM</td><td>N/A</td><td>Core (no plugin needed)</td></tr>
+      <tr><td>Episodic</td><td>SQL Server</td><td><code>Octopus_Episodes</code>, <code>Octopus_EpisodeMessages</code></td><td>SqlServerPlugin</td></tr>
+      <tr><td>Semantic</td><td>Qdrant or PGVector</td><td><code>agent_{agentId}</code> collection</td><td>SemanticKernelPlugin</td></tr>
+      <tr><td>Procedural</td><td>SQL Server</td><td><code>Octopus_Procedures</code></td><td>SqlServerPlugin</td></tr>
+      <tr><td>Agent Config</td><td>SQL Server</td><td><code>Octopus_Agents</code>, <code>Octopus_AgentMemoryConfig</code></td><td>SqlServerPlugin</td></tr>
+    </tbody>
+  </table>
+
+  <h2>SqlServerPlugin Responsibilities</h2>
+  <p>The <code>SqlServerPlugin</code> manages all SQL-backed storage. It registers EF Core services, runs migrations on startup, and applies multi-tenant query filters globally:</p>
+  <pre><code>public class SqlServerPlugin : IOctopusPlugin
+{
+    public void OnRegister(IServiceCollection services, OctopusConfig config)
+    {
+        services.AddDbContext&lt;OctopusDbContext&gt;(opt =>
+            opt.UseSqlServer(config.SqlConnectionString,
+                sql => sql.MigrationsAssembly("BizFirst.Octopus.SqlServerPlugin")));
+
+        services.AddScoped&lt;IEpisodicMemoryStore,  EpisodicMemoryStore&gt;();
+        services.AddScoped&lt;IProceduralMemoryStore, ProceduralMemoryStore&gt;();
+        services.AddScoped&lt;IAgentStore,            AgentStore&gt;();
+    }
+
+    public async Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        // Apply pending EF Core migrations on startup
+        var db = sp.GetRequiredService&lt;OctopusDbContext&gt;();
+        await db.Database.MigrateAsync(ct);
+    }
+}</code></pre>
+
+  <h2>Key Design Decisions</h2>
+  <table>
+    <thead>
+      <tr><th>Decision</th><th>Rationale</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SQL for relational + vector DB for embeddings</td><td>Relational queries (by userId, agentId, date) are naturally SQL; vector similarity is naturally a vector store concern</td></tr>
+      <tr><td>One vector collection per agent</td><td>Enforces knowledge isolation without any query-time filtering overhead</td></tr>
+      <tr><td>EF Core global query filters for TenantId</td><td>Every SQL query automatically scoped to the tenant — no risk of cross-tenant data leakage</td></tr>
+      <tr><td>Soft delete before hard purge</td><td>Episodic memory is soft-deleted at TTL expiry; a background job hard-purges after a grace period</td></tr>
+      <tr><td>Schema migrations in plugin assembly</td><td>Self-contained — deploying the plugin is sufficient to create all required tables</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-sql-tables.html">Next: SQL Tables &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

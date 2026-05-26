@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Overview — Servers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Servers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Server Overview</a>
+  <a href="01-creating.html">Creating a Server</a>
+  <a href="02-attaching-transport.html">Attaching a Transport</a>
+  <a href="03-registering-hooks.html">Registering Hooks</a>
+  <a href="04-starting.html">Starting the Server</a>
+  <a href="05-stopping.html">Stopping the Server</a>
+  <a href="06-multi-server.html">Multi-Server Patterns</a>
+  <a href="07-error-handling.html">Server Error Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Server Overview</h1>
+    <p class="lead">An EdgeStream server is the central broker for a single message domain — it holds one transport connection, two pipelines (incoming and outgoing), and one subscription manager. Most applications use a single 'bas' server.</p>
+  </div>
+
+  <h2>What a Server Does</h2>
+  <p>The <code>IServer</code> is the orchestration hub for a logical message domain. When a message arrives from the transport, the server receives raw bytes, runs them through the incoming pipeline, and delivers the processed envelope to subscribers. When the app calls <code>send()</code>, the server runs the outgoing pipeline and then calls <code>transport.send()</code>.</p>
+
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Type</th><th>Role</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>transport</code></td><td><code>ITransport</code></td><td>Network connection — receives/sends raw bytes</td></tr>
+      <tr><td><code>incomingPipeline</code></td><td><code>IPipeline</code></td><td>Processes received messages hook-by-hook</td></tr>
+      <tr><td><code>outgoingPipeline</code></td><td><code>IPipeline</code></td><td>Processes outgoing messages hook-by-hook</td></tr>
+      <tr><td><code>subscriptionManager</code></td><td><code>ISubscriptionManager</code></td><td>Routes processed envelopes to subscriber callbacks</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Server Types</h2>
+  <p>Servers are typed as <code>'bas'</code> (BizFirstGO Application Server) or <code>'chat'</code>. The type is informational — it can be used to differentiate pipeline configurations for different message domains:</p>
+  <pre><code>type ServerType = 'bas' | 'chat';</code></pre>
+
+  <h2>Server Interface</h2>
+  <pre><code>export interface IServer {
+  readonly id: string;                          // e.g., 'bas', 'chat-server'
+  readonly type: ServerType;                    // 'bas' | 'chat'
+  readonly status: TransportStatus;             // connection status
+  readonly transport: ITransport;
+  readonly incomingPipeline: IPipeline;
+  readonly outgoingPipeline: IPipeline;
+  readonly subscriptionManager: ISubscriptionManager;
+
+  start(): Promise&lt;void&gt;;       // connects transport, begins message processing
+  stop(): Promise&lt;void&gt;;        // disconnects transport, cleanup
+  send(topic: string, body: unknown): Promise&lt;void&gt;; // outgoing message
+}</code></pre>
+
+  <h2>Server Registration Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>registerServer(registration)</h4>
+        <p>Call <code>edgeStream.registerServer({ id, type, url, transportConfig })</code>. The facade creates a transport from config and instantiates a Server.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Add Hooks</h4>
+        <p>Get the server with <code>edgeStream.server('bas')</code> and add hooks to <code>incomingPipeline</code> and/or <code>outgoingPipeline</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Subscribe</h4>
+        <p>Register subscriber callbacks via <code>edgeStream.subscribe(serverId, topic, callback)</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>edgeStream.start()</h4>
+        <p>Calls <code>server.start()</code> on all registered servers. Transport connects; the server begins processing messages.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Single Server Setup (Typical)</h2>
+  <pre><code>import { createEdgeStream, NormalizationHook } from 'edge-stream-js';
+import { HookActivityLogger } from 'observability-hooks-js';
+
+const stream = createEdgeStream({ logLevel: 'info' });
+
+// Register one server for the entire application
+stream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  name: 'BizFirst Application Server',
+  url: '/hubs/edge-stream',
+  transportConfig: {
+    type: 'signalr',
+    url: '/hubs/edge-stream',
+    accessToken: authService.getToken,
+    reconnect: { maxAttempts: 0, initialDelayMs: 1000, maxDelayMs: 30000, backoffMultiplier: 2 }
+  }
+});
+
+const server = stream.server('bas')!;
+server.incomingPipeline.addHook(new HookActivityLogger());
+server.incomingPipeline.addHook(new NormalizationHook());
+
+await stream.start();</code></pre>
+
+  <div class="callout info">
+    <strong>One Server Per Domain</strong>
+    In most BizFirstGO applications, a single <code>'bas'</code> server handles all messages. Use multi-server patterns only when you need separate transport configurations, different pipeline setups, or isolated subscription namespaces for distinct message domains.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-creating.html">Next: Creating a Server &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

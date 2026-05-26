@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Metrics Exemplars — Distributed Traces | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Distributed Traces</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Tempo Overview</a>
+  <a href="01-deployment.html">Deploying Tempo</a>
+  <a href="02-trace-ingestion.html">Trace Ingestion</a>
+  <a href="03-trace-structure.html">BizFirstGO Trace Structure</a>
+  <a href="04-trace-search.html">Searching Traces</a>
+  <a href="05-traceql.html">TraceQL Basics</a>
+  <a href="06-log-correlation.html">Trace-to-Log Correlation</a>
+  <a href="07-exemplars.html" class="active">Metrics Exemplars</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Metrics Exemplars</h1>
+    <p class="lead">Prometheus exemplars are the bridge between metrics and traces. They attach a TraceId to specific high-value metric samples — enabling you to jump from a spike on a Grafana histogram panel directly to the trace that caused it.</p>
+  </div>
+
+  <h2>What Are Exemplars?</h2>
+  <p>An exemplar is additional metadata attached to an individual metric sample. For BizFirstGO histograms, the OTel SDK automatically attaches the current TraceId as an exemplar to histogram bucket observations — when an active trace context is present. This means every high-latency node execution measurement is linked to its exact trace.</p>
+
+  <h2>How Exemplars Work</h2>
+  <pre><code># Prometheus exposition format with exemplar:
+bizfirst_node_execution_duration_seconds_bucket{
+  node_type="DataFetchNode",
+  le="5.0"
+} 2211 # {traceID="4bf92f3577b34da6a3ce929d0e0e4736",spanID="00f067aa0ba902b7"} 4.742 1716648000000
+
+# Breakdown:
+# 2211          = bucket count (number of observations ≤ 5.0s)
+# traceID=...   = exemplar: the trace for the observation that had value 4.742s
+# 4.742         = the actual observation value that triggered this exemplar
+# timestamp     = when this observation occurred</code></pre>
+
+  <h2>Enabling Exemplars in Prometheus</h2>
+  <pre><code># prometheus.yml — enable exemplar storage
+global:
+  scrape_interval: 15s
+
+# Enable exemplar storage (required for Prometheus 2.25+)
+storage:
+  exemplars:
+    max_exemplars: 100000   # Maximum exemplars stored in memory</code></pre>
+
+  <h2>Viewing Exemplars in Grafana</h2>
+  <p>To see exemplar dots on Grafana histogram panels:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Configure Exemplar Trace Destination in Prometheus Data Source</h4>
+        <p>In Grafana's Prometheus data source settings → Exemplars section → add a link: TraceId field name: <code>traceID</code>, target datasource: Tempo.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Enable Exemplars on Grafana Time Series Panel</h4>
+        <p>Edit the panel → Visualization tab → enable "Exemplars" toggle. A ⬥ diamond appears on the chart at data points with exemplars attached.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Click an Exemplar Diamond</h4>
+        <p>Clicking a ⬥ diamond on the chart opens the linked trace in Tempo — showing the full execution trace for that specific high-latency observation.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Prometheus Data Source Exemplar Configuration</h2>
+  <pre><code"># grafana-provisioning/datasources/bizfirst-observe.yaml
+datasources:
+  - name: Prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    jsonData:
+      exemplarTraceIdDestinations:
+        - name: traceID          # Exemplar label name in Prometheus
+          datasourceUid: tempo-uid  # Grafana UID of the Tempo datasource
+          urlDisplayLabel: "View in Tempo"</code></pre>
+
+  <div class="callout success">
+    <strong>Exemplars are Automatic — No Code Changes</strong>
+    <p>The OTel SDK automatically attaches TraceId exemplars to histogram observations when a trace context is active. Since BizFirstGO's <code>BaseNodeExecutor</code> always runs within an active trace context, every node execution duration measurement is automatically exemplar-linked. No changes to executor code are required to enable this Metrics → Trace correlation path.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-log-correlation.html">&#8592; Trace-to-Log Correlation</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

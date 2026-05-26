@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom IAM Overview — Custom IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Custom IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Custom IAM Overview</a>
+  <a href="01-custom-resolver.html">Custom Permission Resolver</a>
+  <a href="02-custom-role-provider.html">Custom Role Provider</a>
+  <a href="03-attribute-conditions.html">Attribute-Based Conditions</a>
+  <a href="04-combining.html">Combining with Built-In IAM</a>
+  <a href="05-registration.html">Registering Custom Extensions</a>
+  <a href="06-testing.html">Testing Custom IAM</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Custom IAM Overview</h1>
+    <p class="lead">Passport's IAM system is extensible — plug in custom permission resolvers for ABAC rules and custom role providers for dynamic runtime role assignment, without replacing the built-in system.</p>
+  </div>
+
+  <h2>Why Extend IAM?</h2>
+  <p>The built-in role-based system works well for stable, predictable access patterns. Custom IAM extensions are needed when:</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Attribute-Based Conditions</h4>
+      <p>Access depends on user attributes that change — department, project assignment, clearance level, employment type. RBAC cannot express "Finance employees can access payroll — contractors cannot".</p>
+    </div>
+    <div class="card">
+      <h4>Dynamic Role Assignment</h4>
+      <p>Roles derive from external system state — a user is a "project manager" for Project X only when they have an open project in the ERP. Static role assignment cannot capture this.</p>
+    </div>
+    <div class="card">
+      <h4>Time or Location Constraints</h4>
+      <p>Access is restricted to business hours, specific IP ranges, or geographic regions. These environmental conditions cannot be expressed in role definitions.</p>
+    </div>
+    <div class="card">
+      <h4>Cross-System Authorization</h4>
+      <p>The authorization decision requires consulting an external system (HR database, project tracker, clearance registry) that is not part of Passport's identity data.</p>
+    </div>
+  </div>
+
+  <h2>RBAC vs. ABAC</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>RBAC (Built-In)</th><th>ABAC (Custom Extension)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Access decision based on</td><td>User's assigned roles</td><td>User attributes + resource attributes + environment</td></tr>
+      <tr><td>Rule flexibility</td><td>Low — role membership is binary</td><td>High — any boolean expression</td></tr>
+      <tr><td>Administrative overhead</td><td>Low — assign/remove roles</td><td>Higher — maintain attribute data and rules</td></tr>
+      <tr><td>Performance</td><td>Very fast (JWT claims)</td><td>Slower (external lookups possible)</td></tr>
+      <tr><td>Auditability</td><td>Clear — role assignment log</td><td>Complex — rule evaluation log needed</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Extension Points</h2>
+  <pre><code>// Two extension points — implement one or both
+
+// 1. ICustomPermissionResolver — adds ABAC rules to the evaluation pipeline
+public interface ICustomPermissionResolver
+{
+    Task&lt;PermissionResolution&gt; ResolveAsync(
+        PermissionContext context,
+        CancellationToken ct = default);
+}
+
+// 2. ICustomRoleProvider — adds dynamic roles to a user at evaluation time
+public interface ICustomRoleProvider
+{
+    Task&lt;IReadOnlyList&lt;string&gt;&gt; GetRolesAsync(
+        string userId,
+        string tenantId,
+        CancellationToken ct = default);
+}
+
+// Resolution outcomes
+public enum PermissionResolution
+{
+    Allow,  // Explicitly allow — stops pipeline evaluation
+    Deny,   // Explicitly deny — stops pipeline evaluation
+    Defer   // No opinion — continue to next resolver
+}</code></pre>
+
+  <h2>Pipeline Position</h2>
+  <p>Custom extensions are called after the built-in role/permission check, unless configured with <code>Priority.Before</code>:</p>
+  <pre><code>// Default evaluation order:
+// 1. IIdentityProvider — resolve identity
+// 2. IMembershipProvider — resolve built-in roles
+// 3. ICustomRoleProvider(s) — add dynamic roles (merged)
+// 4. IPermissionProvider — resolve permissions from all roles
+// 5. ICustomPermissionResolver(s) — ABAC rules (short-circuit on Allow/Deny)
+// 6. IAccessDecisionProvider — optional final gate</code></pre>
+
+  <div class="callout info">
+    <strong>Prerequisite: Guide3 — IAM</strong>
+    <p>Custom IAM extensions build on the core IAM model. Read <a href="../Guide3_IAM/index.html">Guide3: IAM</a> first to understand the evaluation pipeline, permission string format, and the six provider interfaces before implementing custom extensions.</p>
+  </div>
+
+  <div class="page-nav">
+    <span class="spacer"></span>
+    <a href="01-custom-resolver.html">Next: Custom Permission Resolver &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

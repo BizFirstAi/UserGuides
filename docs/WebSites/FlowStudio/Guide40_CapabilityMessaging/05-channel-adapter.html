@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IMessagingChannelAdapter — Guide40 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Messaging</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-slack.html"><i class="fa-brands fa-slack"></i> Slack</a>
+  <a href="02-email.html"><i class="fa-solid fa-envelope"></i> Email</a>
+  <a href="03-sms.html"><i class="fa-solid fa-mobile-alt"></i> SMS</a>
+  <a href="04-push.html"><i class="fa-solid fa-bell"></i> Push Notifications</a>
+  <a href="05-channel-adapter.html" class="active"><i class="fa-solid fa-plug"></i> Channel Adapter</a>
+  <a href="06-credentials.html"><i class="fa-solid fa-key"></i> Credentials</a>
+  <a href="07-templating.html"><i class="fa-solid fa-code"></i> Templating</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>IMessagingChannelAdapter</h1>
+    <p class="lead">The channel adapter interface — contract definition, the <code>MessagingChannelRegistry</code>, and how to add a new messaging channel in three steps.</p>
+  </div>
+
+  <h2>Interface Contract</h2>
+  <pre><code class="language-csharp">public interface IMessagingChannelAdapter
+{
+    /// Unique channel type key — must match the node's "provider" config field.
+    string ChannelType { get; }
+
+    /// Send a message. Throw MessagingException on unrecoverable errors.
+    /// Transient errors (network, rate limit) should throw TransientMessagingException
+    /// so the executor's retry policy can retry without counting it as a failure.
+    Task&lt;MessagingResult&gt; SendAsync(
+        MessagingMessage message,
+        MessagingConfig config,
+        CancellationToken cancellationToken);
+}
+
+public record MessagingMessage
+{
+    public string To { get; init; } = default!;
+    public string? Subject { get; init; }
+    public string? Title { get; init; }
+    public string? Text { get; init; }
+    public string? BodyHtml { get; init; }
+    public string? BodyText { get; init; }
+    public object? Blocks { get; init; }
+    public string? Body { get; init; }
+    public Dictionary&lt;string, object?&gt;? Data { get; init; }
+    public List&lt;EmailAttachment&gt;? Attachments { get; init; }
+}
+
+public record MessagingResult
+{
+    public string MessageId { get; init; } = default!;
+    public string Channel { get; init; } = default!;
+    public string Recipient { get; init; } = default!;
+    public DateTimeOffset SentAt { get; init; }
+    public string Status { get; init; } = "sent";
+}</code></pre>
+
+  <h2>MessagingChannelRegistry</h2>
+  <pre><code class="language-csharp">public class MessagingChannelRegistry : IMessagingChannelRegistry
+{
+    private readonly IReadOnlyDictionary&lt;string, IMessagingChannelAdapter&gt; _adapters;
+
+    public MessagingChannelRegistry(IEnumerable&lt;IMessagingChannelAdapter&gt; adapters)
+    {
+        _adapters = adapters.ToDictionary(a => a.ChannelType, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public IMessagingChannelAdapter GetAdapter(string channelType)
+    {
+        if (_adapters.TryGetValue(channelType, out var adapter))
+            return adapter;
+        throw new InvalidOperationException(
+            $"No messaging adapter registered for channel type '{channelType}'. " +
+            $"Registered: {string.Join(", ", _adapters.Keys)}");
+    }
+
+    public IReadOnlyCollection&lt;string&gt; RegisteredChannels =>
+        _adapters.Keys.ToList().AsReadOnly();
+}</code></pre>
+
+  <h2>Adding a New Channel — Three Steps</h2>
+
+  <h3>Step 1: Implement IMessagingChannelAdapter</h3>
+  <pre><code class="language-csharp">// Example: Microsoft Teams adapter
+public class TeamsChannelAdapter : IMessagingChannelAdapter
+{
+    private readonly ICredentialResolver _credentials;
+    private readonly IHttpClientFactory _httpFactory;
+
+    public string ChannelType => "Teams";
+
+    public async Task&lt;MessagingResult&gt; SendAsync(
+        MessagingMessage message,
+        MessagingConfig config,
+        CancellationToken ct)
+    {
+        // Retrieve webhook URL stored as credential
+        var webhookUrl = await _credentials.GetPasswordAsync(config.CredentialId, ct);
+        var client = _httpFactory.CreateClient();
+
+        // Teams Adaptive Card payload
+        var payload = new
+        {
+            type = "message",
+            attachments = new[]
+            {
+                new
+                {
+                    contentType = "application/vnd.microsoft.card.adaptive",
+                    content = new
+                    {
+                        type = "AdaptiveCard",
+                        version = "1.4",
+                        body = new[] { new { type = "TextBlock", text = message.Text, wrap = true } }
+                    }
+                }
+            }
+        };
+
+        var response = await client.PostAsJsonAsync(webhookUrl, payload, ct);
+        response.EnsureSuccessStatusCode();
+
+        return new MessagingResult
+        {
+            MessageId = Guid.NewGuid().ToString(),
+            Channel = "teams",
+            Recipient = config.ChannelId,
+            SentAt = DateTimeOffset.UtcNow,
+            Status = "sent"
+        };
+    }
+}</code></pre>
+
+  <h3>Step 2: Register with DI</h3>
+  <pre><code class="language-csharp">// In your module's service registration
+services.AddSingleton&lt;IMessagingChannelAdapter, TeamsChannelAdapter&gt;();
+
+// The MessagingChannelRegistry is registered as:
+services.AddSingleton&lt;IMessagingChannelRegistry, MessagingChannelRegistry&gt;();</code></pre>
+
+  <h3>Step 3: Add Atlas Form Fields for Config</h3>
+  <p>Add a new entry to the <code>SendMessage</code> node's Atlas Form definition so the designer can configure the Teams-specific fields (webhook credential, channel name) when <code>provider = "Teams"</code> is selected.</p>
+
+  <h2>Executor — Channel Resolution</h2>
+  <pre><code class="language-csharp">public class SendMessageExecutor : BaseNodeExecutor&lt;SendMessageConfig&gt;
+{
+    private readonly IMessagingChannelRegistry _registry;
+    private readonly IExpressionEvaluator _evaluator;
+
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        SendMessageConfig config,
+        NodeDataContext ctx,
+        CancellationToken ct)
+    {
+        // Resolve the correct adapter for the configured provider
+        var adapter = _registry.GetAdapter(config.Provider);
+
+        // Evaluate all expression fields in the config
+        var message = await _evaluator.EvaluateMessagingMessage(config, ctx);
+
+        var result = await adapter.SendAsync(message, config, ct);
+
+        return NodeExecutionResult.Success(new
+        {
+            result.MessageId,
+            result.Channel,
+            result.SentAt,
+            result.Status,
+            result.Recipient
+        });
+    }
+}</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>ChannelType key casing:</strong> The <code>MessagingChannelRegistry</code> performs case-insensitive lookup. Use a consistent casing in your <code>ChannelType</code> property (e.g., <code>"Teams"</code>) and matching node config value (e.g., <code>"provider": "teams"</code>) — both will resolve correctly.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-push.html">&#8592; Push Notifications</a>
+    <a href="06-credentials.html">Next: Credentials &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

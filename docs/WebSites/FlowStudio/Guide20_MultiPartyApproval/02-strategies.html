@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Approval Strategies — Multi-Party Approval | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Multi-Party Approval</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-approval-node-config.html">Approval Node Configuration</a>
+  <a href="02-strategies.html" class="active">Approval Strategies</a>
+  <a href="03-approval-state.html">Approval State Tracking</a>
+  <a href="04-approval-inbox.html">Approval Inbox</a>
+  <a href="05-rejection-handling.html">Handling Rejection</a>
+  <a href="06-timeout-escalation.html">Timeout and Escalation</a>
+  <a href="07-audit-trail.html">Approval Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Approval Strategies</h1>
+    <p class="lead">Three strategies define how the engine evaluates individual actor decisions to determine when the overall approval is complete. Each strategy has different approval and rejection semantics.</p>
+  </div>
+
+  <h2>Any Strategy</h2>
+  <p><strong>Approval:</strong> The first actor to approve immediately completes the approval — all remaining HIL tasks are cancelled. Execution resumes on the approved port.</p>
+  <p><strong>Rejection:</strong> A single rejection does NOT abort. The workflow waits for an approval from any remaining actor. Only if ALL actors reject does the approval fail.</p>
+  <pre><code>// ApprovalStateTracker.EvaluateAny()
+bool isApproved = decisions.Any(d => d.Decision == ApprovalDecision.Approved);
+bool isRejected = decisions.All(d => d.Decision == ApprovalDecision.Rejected);</code></pre>
+  <p><strong>Use case:</strong> Approval pool where any available manager can sign off — the fastest responder wins.</p>
+
+  <h2>All Strategy</h2>
+  <p><strong>Approval:</strong> All actors must approve. The approval completes only when every actor has voted Approved.</p>
+  <p><strong>Rejection:</strong> Any single rejection immediately fails the approval. Remaining tasks are cancelled.</p>
+  <pre><code">// ApprovalStateTracker.EvaluateAll()
+bool isApproved = decisions.Count == totalApprovers
+                  &amp;&amp; decisions.All(d => d.Decision == ApprovalDecision.Approved);
+bool isRejected = decisions.Any(d => d.Decision == ApprovalDecision.Rejected);</code></pre>
+  <p><strong>Use case:</strong> Regulatory compliance where Finance AND Legal AND Management must all sign off.</p>
+
+  <h2>Quorum Strategy</h2>
+  <p><strong>Approval:</strong> N of M actors must approve. Configure <code>quorumCount</code> (absolute) or <code>quorumPercent</code> (fraction).</p>
+  <p><strong>Rejection:</strong> If enough rejections make quorum mathematically impossible — e.g., with 3 of 5 required and 3 already rejected — the approval fails early.</p>
+  <pre><code">// ApprovalStateTracker.EvaluateQuorum()
+int required  = settings.QuorumCount ?? (int)Math.Ceiling(totalApprovers * settings.QuorumPercent!.Value);
+int approved  = decisions.Count(d => d.Decision == ApprovalDecision.Approved);
+int rejected  = decisions.Count(d => d.Decision == ApprovalDecision.Rejected);
+int remaining = totalApprovers - decisions.Count;
+
+bool isApproved = approved >= required;
+bool isRejected = (approved + remaining) &lt; required;  // cannot reach quorum</code></pre>
+  <p><strong>Use case:</strong> Board committee where 3 of 5 board members must vote approve.</p>
+
+  <h2>Strategy Comparison</h2>
+  <table>
+    <thead><tr><th>Scenario (5 approvers)</th><th>Any</th><th>All</th><th>Quorum (3/5)</th></tr></thead>
+    <tbody>
+      <tr><td>1 approves, 4 pending</td><td>Approved</td><td>Still waiting</td><td>Still waiting</td></tr>
+      <tr><td>1 rejects, 4 pending</td><td>Still waiting</td><td>Rejected</td><td>Still waiting</td></tr>
+      <tr><td>3 approve, 2 pending</td><td>Approved</td><td>Still waiting</td><td>Approved</td></tr>
+      <tr><td>3 reject, 2 pending</td><td>Still waiting</td><td>Rejected</td><td>Rejected (impossible)</td></tr>
+      <tr><td>5 reject</td><td>Rejected</td><td>Rejected</td><td>Rejected</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-approval-node-config.html">&#8592; Approval Node Configuration</a>
+    <a href="03-approval-state.html">Next: Approval State Tracking &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

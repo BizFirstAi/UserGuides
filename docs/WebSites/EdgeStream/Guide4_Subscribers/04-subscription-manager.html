@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SubscriptionManager — Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-subscribing.html">Creating a Subscription</a>
+  <a href="02-topic-patterns.html">Topic Patterns</a>
+  <a href="03-topic-matcher.html">TopicMatcher</a>
+  <a href="04-subscription-manager.html" class="active">SubscriptionManager</a>
+  <a href="05-subscription-registry.html">SubscriptionRegistry</a>
+  <a href="06-callback-patterns.html">Callback Patterns</a>
+  <a href="07-unsubscribing.html">Unsubscribing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>SubscriptionManager</h1>
+    <p class="lead">SubscriptionManager is the central registry and message router for a server instance. It maintains the list of active subscriptions and delivers envelopes to all matching callbacks when <code>publish()</code> is called.</p>
+  </div>
+
+  <h2>SubscriptionManager Interface</h2>
+  <pre><code>export interface ISubscriptionManager {
+  subscribe&lt;TBody&gt;(topic: string, callback: SubscriberCallback&lt;TBody&gt;): ISubscription;
+  publish&lt;TBody&gt;(topic: string, envelope: IEnvelope&lt;TBody&gt;, messageId?: string): Promise&lt;void&gt;;
+  setObserver(observer: IPipelineObserver): void;
+  readonly subscriptions: ReadonlyArray&lt;ISubscription&gt;;
+  clear(): void;
+}</code></pre>
+
+  <h2>Internal Data Structures</h2>
+  <pre><code>// Each registered subscription is stored as a SubscriberEntry
+interface SubscriberEntry {
+  id: string;                        // 'sub-a1b2c3d4'
+  topic: string;                     // the registered pattern
+  callback: SubscriberCallback;      // the callback function
+}
+
+// The registry is a simple Map — O(1) lookup by ID
+private subscribers: Map&lt;string, SubscriberEntry&gt; = new Map();
+
+// All live subscription handles (for external enumeration)
+private _subscriptions: Subscription[] = [];</code></pre>
+
+  <h2>Publish Flow</h2>
+  <p>When the pipeline completes, it calls <code>subscriptionManager.publish(topic, envelope)</code>. The manager iterates all subscribers and evaluates patterns:</p>
+  <pre><code>// Simplified publish flow
+async publish(topic, envelope, messageId?) {
+  const promises = [];
+
+  for (const entry of this.subscribers.values()) {
+    if (this.topicMatches(entry.topic, topic)) {
+      // 1. Notify observer (feeds SubscribersMonitor)
+      observer?.onSubscriberQueued({ messageId, subscriberId: entry.id, topic });
+
+      // 2. Invoke callback
+      try {
+        const result = entry.callback(envelope);
+        if (result instanceof Promise) {
+          promises.push(result
+            .then(() =&gt; observer?.onSubscriberDelivered({ ... }))
+            .catch(err =&gt; observer?.onSubscriberFailed({ ... }))
+          );
+        } else {
+          observer?.onSubscriberDelivered({ ... });
+        }
+      } catch (syncError) {
+        observer?.onSubscriberFailed({ ... });
+      }
+    }
+  }
+
+  await Promise.all(promises); // wait for all async deliveries
+}</code></pre>
+
+  <h2>Accessing the SubscriptionManager</h2>
+  <pre><code>// Via the server instance
+const manager = edgeStream.server('bas')!.subscriptionManager;
+
+// Subscribe
+const sub = manager.subscribe('workflow.*', handler);
+
+// Enumerate active subscriptions
+for (const sub of manager.subscriptions) {
+  console.log(sub.id, sub.active);
+}
+
+// Clear all subscriptions (useful in tests)
+manager.clear();</code></pre>
+
+  <h2>Observer Integration</h2>
+  <pre><code>// Set an observer to receive delivery events
+manager.setObserver({
+  onSubscriberQueued(event) {
+    monitorStore.trackQueued(event.subscriberId, event.messageId);
+  },
+  onSubscriberDelivered(event) {
+    monitorStore.trackDelivered(event.subscriberId, event.processingTime);
+  },
+  onSubscriberFailed(event) {
+    errorStore.recordSubscriberFailure(event.error, event.subscriberId);
+  },
+  // ... other observer methods
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="03-topic-matcher.html">&#8592; TopicMatcher</a>
+    <a href="05-subscription-registry.html">Next: SubscriptionRegistry &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

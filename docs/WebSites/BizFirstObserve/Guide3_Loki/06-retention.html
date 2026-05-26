@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log Retention in Loki — Loki Log Aggregation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Loki Log Aggregation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Loki Overview</a>
+  <a href="01-deployment.html">Deploying Loki</a>
+  <a href="02-ingestion.html">Log Ingestion from BizFirstGO</a>
+  <a href="03-label-strategy.html">Label Strategy</a>
+  <a href="04-logql-basics.html">LogQL Basics</a>
+  <a href="05-logql-examples.html">LogQL for BizFirstGO</a>
+  <a href="06-retention.html" class="active">Log Retention in Loki</a>
+  <a href="07-alerts.html">Loki Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Log Retention in Loki</h1>
+    <p class="lead">Loki's compactor component enforces retention by periodically deleting chunks older than the configured retention period. Retention can be configured globally or per-tenant, and old data can be archived to cold storage before deletion.</p>
+  </div>
+
+  <h2>Global Retention Configuration</h2>
+  <pre><code># loki-config.yaml — retention settings
+limits_config:
+  retention_period: 720h       # 30 days — global default
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true       # Must be true for retention to be enforced
+  retention_delete_delay: 2h    # Delay between marking and deleting chunks
+  retention_delete_worker_count: 150
+  compaction_interval: 10m      # How often compactor runs
+  delete_request_store: filesystem  # Where delete requests are stored</code></pre>
+
+  <h2>Per-Tenant Retention (Enterprise / Multi-Tenant)</h2>
+  <p>In multi-tenant deployments with <code>auth_enabled: true</code>, different tenants can have different retention periods:</p>
+  <pre><code># loki-config.yaml — per-tenant retention overrides
+limits_config:
+  retention_period: 720h   # Default: 30 days
+
+# Per-tenant overrides in overrides section or separate file:
+overrides:
+  "tenant-premium":
+    retention_period: 2160h    # 90 days for premium tenants
+  "tenant-compliance":
+    retention_period: 8760h    # 1 year for compliance tenants
+  "tenant-dev":
+    retention_period: 168h     # 7 days for development tenants</code></pre>
+
+  <h2>Recommended Retention Tiers</h2>
+  <table>
+    <thead>
+      <tr><th>Tier</th><th>Retention Period</th><th>Storage</th><th>Cost</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Hot</td><td>30 days</td><td>S3 Standard or local disk</td><td>High</td><td>Active operations, debugging, alerting</td></tr>
+      <tr><td>Warm</td><td>30–90 days</td><td>S3 Standard-IA</td><td>Medium</td><td>Incident post-mortems, trend analysis</td></tr>
+      <tr><td>Cold</td><td>90 days – 1 year</td><td>S3 Glacier Instant</td><td>Low</td><td>Compliance, audit, regulatory requirements</td></tr>
+      <tr><td>Archive</td><td>1–7 years</td><td>S3 Glacier Deep Archive</td><td>Very Low</td><td>Legal hold, long-term compliance</td></tr>
+    </tbody>
+  </table>
+
+  <h2>S3 Lifecycle Policy for Cold Storage Transition</h2>
+  <pre><code"># S3 bucket lifecycle configuration (JSON)
+{
+  "Rules": [
+    {
+      "ID": "loki-chunks-tiering",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "loki/chunks/" },
+      "Transitions": [
+        {
+          "Days": 30,
+          "StorageClass": "STANDARD_IA"   # Warm: after 30 days
+        },
+        {
+          "Days": 90,
+          "StorageClass": "GLACIER_IR"    # Cold: after 90 days
+        },
+        {
+          "Days": 365,
+          "StorageClass": "DEEP_ARCHIVE"  # Archive: after 1 year
+        }
+      ],
+      "Expiration": {
+        "Days": 2555   # Delete after 7 years (adjust to compliance needs)
+      }
+    }
+  ]
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>S3 Lifecycle and Loki Retention Must Align</strong>
+    <p>If Loki's <code>retention_period</code> is 30 days and S3 lifecycle transitions to Glacier at 90 days, Loki will have already deleted its internal references to those chunks at 30 days — even though the data is still in S3 in a cold tier. Loki will not be able to serve queries for that data. If you need data to remain queryable beyond <code>retention_period</code>, extend Loki's retention period — not the S3 lifecycle alone.</p>
+  </div>
+
+  <h2>GDPR Deletion</h2>
+  <p>Loki provides a delete API for removing specific log lines on GDPR right-to-erasure requests:</p>
+  <pre><code># Request deletion of logs matching a query within a time range
+curl -X POST \
+  "http://loki:3100/loki/api/v1/delete?query={tenant_id='t123'}|='userId=user-xyz'&start=2026-01-01T00:00:00Z&end=2026-05-25T23:59:59Z" \
+  -H "X-Scope-OrgID: tenant-t123"
+
+# Check delete request status
+curl "http://loki:3100/loki/api/v1/delete" \
+  -H "X-Scope-OrgID: tenant-t123"</code></pre>
+
+  <div class="page-nav">
+    <a href="05-logql-examples.html">&#8592; LogQL for BizFirstGO</a>
+    <a href="07-alerts.html">Next: Loki Alert Rules &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

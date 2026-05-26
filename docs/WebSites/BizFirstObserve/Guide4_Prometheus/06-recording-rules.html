@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recording Rules — Prometheus Metrics | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Prometheus Metrics</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Prometheus Overview</a>
+  <a href="01-deployment.html">Deploying Prometheus</a>
+  <a href="02-scrape-config.html">Scrape Configuration</a>
+  <a href="03-bizfirst-metrics.html">BizFirst Metrics Reference</a>
+  <a href="04-promql-basics.html">PromQL Basics</a>
+  <a href="05-promql-examples.html">PromQL for BizFirstGO</a>
+  <a href="06-recording-rules.html" class="active">Recording Rules</a>
+  <a href="07-alerting.html">Prometheus Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Recording Rules</h1>
+    <p class="lead">Recording rules pre-compute expensive PromQL expressions and store the results as new time series. Dashboard panels that use recording rules load instantly instead of running expensive queries against raw data. They are also the foundation for multi-day SLA calculations.</p>
+  </div>
+
+  <h2>Why Recording Rules?</h2>
+  <p>Consider a Grafana dashboard showing the P99 workflow latency for the past 7 days with 1-minute resolution. Without a recording rule, each dashboard refresh runs <code>histogram_quantile(0.99, rate(...[5m]))</code> over 7 days of data — potentially millions of data points. With a recording rule, Prometheus pre-computes this every 15 seconds and stores the result as a simple time series — the dashboard loads in milliseconds.</p>
+
+  <h2>BizFirstGO Recording Rules</h2>
+  <pre><code># recording-rules.yml
+groups:
+  - name: bizfirst.workflow.rules
+    interval: 15s
+    rules:
+
+      # Pre-compute workflow error rate per tenant
+      - record: bizfirst:workflow_error_rate:5m
+        expr: |
+          sum(rate(bizfirst_workflow_executions_total{status="failed"}[5m])) by (tenant_id)
+          /
+          sum(rate(bizfirst_workflow_executions_total[5m])) by (tenant_id)
+
+      # Pre-compute total workflow throughput
+      - record: bizfirst:workflow_throughput:5m
+        expr: |
+          sum(rate(bizfirst_workflow_executions_total[5m])) by (tenant_id)
+
+      # Pre-compute P99 node latency by node type
+      - record: bizfirst:node_p99_latency:5m
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+          )
+
+      # Pre-compute P50 node latency
+      - record: bizfirst:node_p50_latency:5m
+        expr: |
+          histogram_quantile(0.50,
+            sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+          )
+
+      # HIL SLA — percentage of tasks resolved within 24 hours
+      - record: bizfirst:hil_sla_compliance:24h
+        expr: |
+          sum(rate(bizfirst_hil_suspension_duration_seconds_bucket{le="86400"}[24h])) by (tenant_id)
+          /
+          sum(rate(bizfirst_hil_suspension_duration_seconds_count[24h])) by (tenant_id)
+
+      # EdgeStream message throughput per topic
+      - record: bizfirst:edgestream_throughput:1m
+        expr: |
+          sum(rate(bizfirst_edgestream_messages_total[1m])) by (topic)
+
+      # Octopus token cost rate
+      - record: bizfirst:octopus_tokens_per_minute:5m
+        expr: |
+          sum(rate(bizfirst_octopus_tokens_total[5m])) by (tenant_id, model, type) * 60</code></pre>
+
+  <h2>Using Recording Rules in Dashboards</h2>
+  <p>Replace expensive raw PromQL with the pre-computed recording rule name in Grafana panels:</p>
+  <pre><code># Instead of this (slow, runs on every dashboard refresh):
+histogram_quantile(0.99,
+  sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+)
+
+# Use this (fast, pre-computed every 15s):
+bizfirst:node_p99_latency:5m
+
+# Filter by node type using the pre-computed series:
+bizfirst:node_p99_latency:5m{node_type="DataFetchNode"}</code></pre>
+
+  <h2>Recording Rule Naming Convention</h2>
+  <p>BizFirstGO follows Prometheus recording rule naming best practices:</p>
+  <pre><code># Format: &lt;namespace&gt;:&lt;metric&gt;:&lt;aggregation_period&gt;
+# Examples:
+bizfirst:workflow_error_rate:5m      # 5-minute window
+bizfirst:node_p99_latency:5m         # Pre-computed P99
+bizfirst:hil_sla_compliance:24h      # 24-hour SLA metric
+bizfirst:edgestream_throughput:1m    # 1-minute throughput</code></pre>
+
+  <div class="callout success">
+    <strong>Record Before Alerting on Expensive Expressions</strong>
+    <p>Any alert rule that uses <code>histogram_quantile()</code> or multi-level aggregations should be backed by a recording rule. Alert rule evaluation and dashboard queries share the same Prometheus query engine — if an alert rule runs an expensive query every 15 seconds, it consumes resources that slow down dashboard queries. Pre-compute the expression and alert on the recording rule result instead.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-promql-examples.html">&#8592; PromQL for BizFirstGO</a>
+    <a href="07-alerting.html">Next: Prometheus Alert Rules &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

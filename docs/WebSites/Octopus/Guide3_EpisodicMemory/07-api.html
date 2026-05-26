@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Episodic Memory API — Episodic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Episodic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Episodic Memory Overview</a>
+  <a href="01-episode-structure.html">Episode Structure</a>
+  <a href="02-storage.html">Episode Storage</a>
+  <a href="03-recall.html">Recalling Past Episodes</a>
+  <a href="04-episode-boundaries.html">Episode Boundaries</a>
+  <a href="05-long-term.html">Long-Term Episode Retention</a>
+  <a href="06-privacy.html">Privacy and PII</a>
+  <a href="07-api.html" class="active">Episodic Memory API</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Episodic Memory API</h1>
+    <p class="lead">The Episodic Memory REST API allows external systems and the conversation history UI to query, replay, and manage episodes. All endpoints are tenant-scoped and require a valid bearer token.</p>
+  </div>
+
+  <h2>API Endpoints</h2>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>GET</td><td><code>/api/octopus/episodes</code></td><td>List episodes for the authenticated user, paginated</td></tr>
+      <tr><td>GET</td><td><code>/api/octopus/episodes/{id}</code></td><td>Get a specific episode by ID (with full messages if active)</td></tr>
+      <tr><td>GET</td><td><code>/api/octopus/episodes?agentId=&amp;userId=</code></td><td>Filter by agent and user (admin only)</td></tr>
+      <tr><td>POST</td><td><code>/api/octopus/episodes/search</code></td><td>Semantic search across episodes</td></tr>
+      <tr><td>DELETE</td><td><code>/api/octopus/episodes/{id}</code></td><td>Delete a specific episode (GDPR erasure)</td></tr>
+      <tr><td>DELETE</td><td><code>/api/octopus/users/{userId}/episodes</code></td><td>Erase all episodes for a user</td></tr>
+    </tbody>
+  </table>
+
+  <h2>List Episodes</h2>
+  <pre><code>GET /api/octopus/episodes?page=1&pageSize=20&agentId={guid}
+Authorization: Bearer {token}
+
+// Response
+{
+  "items": [
+    {
+      "id": "3f2a...",
+      "sessionId": "9b1c...",
+      "agentId": "5e7d...",
+      "agentDisplayName": "HR Agent",
+      "startedAt": "2025-05-20T09:14:22Z",
+      "endedAt": "2025-05-20T09:28:10Z",
+      "messageCount": 12,
+      "summary": "User inquired about annual leave policy...",
+      "isArchived": false
+    }
+  ],
+  "totalCount": 47,
+  "page": 1,
+  "pageSize": 20
+}</code></pre>
+
+  <h2>Semantic Episode Search</h2>
+  <pre><code>POST /api/octopus/episodes/search
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "query": "annual leave balance",
+  "agentId": "5e7d...",
+  "topK": 5,
+  "includeArchived": false
+}
+
+// Response
+{
+  "results": [
+    {
+      "episodeId": "3f2a...",
+      "summary": "User inquired about annual leave policy...",
+      "date": "2025-05-20T09:14:22Z",
+      "relevanceScore": 0.91,
+      "isArchived": false
+    }
+  ]
+}</code></pre>
+
+  <h2>TypeScript Client Example</h2>
+  <pre><code>// Fetching conversation history in chat-app
+interface EpisodeListItem {
+  id: string;
+  agentDisplayName: string;
+  startedAt: string;
+  messageCount: number;
+  summary: string;
+}
+
+async function getConversationHistory(
+  agentId: string, token: string
+): Promise&lt;EpisodeListItem[]&gt; {
+  const res = await fetch(
+    `/api/octopus/episodes?agentId=${agentId}&pageSize=10`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await res.json();
+  return data.items;
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="06-privacy.html">&#8592; Privacy and PII</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

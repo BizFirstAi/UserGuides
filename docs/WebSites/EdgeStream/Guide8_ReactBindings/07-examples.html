@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Examples — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html">EdgeStreamProvider</a>
+  <a href="02-use-server.html">useEdgeStream</a>
+  <a href="03-use-subscription.html">useSubscription</a>
+  <a href="04-use-message.html">useMessage</a>
+  <a href="05-use-message-history.html">useConnectionStatus</a>
+  <a href="06-cleanup.html">Cleanup and Lifecycle</a>
+  <a href="07-examples.html" class="active">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Examples</h1>
+    <p class="lead">Complete React components using EdgeStream React bindings — a real-time status panel, a live log feed, and a workflow execution tracker.</p>
+  </div>
+
+  <h2>Real-Time Status Panel</h2>
+  <pre><code>import { useState, useCallback } from 'react';
+import { useSubscription, useConnectionStatus } from 'edge-stream-js-react';
+
+interface ServerStatus {
+  serverId: string;
+  status: 'healthy' | 'degraded' | 'error';
+  lastCheck: string;
+}
+
+function ServerStatusPanel() {
+  const [servers, setServers] = useState&lt;Map&lt;string, ServerStatus&gt;&gt;(new Map());
+  const { isReady } = useConnectionStatus();
+
+  const handler = useCallback((envelope) =&gt; {
+    const status: ServerStatus = envelope.body;
+    setServers(prev =&gt; new Map(prev).set(status.serverId, status));
+  }, []);
+
+  useSubscription('bas', 'monitor.server.*', handler);
+
+  return (
+    &lt;div&gt;
+      {!isReady &amp;&amp; &lt;p&gt;Connecting to EdgeStream...&lt;/p&gt;}
+      {Array.from(servers.values()).map(s =&gt; (
+        &lt;div key={s.serverId} className={`server-card status-${s.status}`}&gt;
+          &lt;strong&gt;{s.serverId}&lt;/strong&gt;
+          &lt;span&gt;{s.status}&lt;/span&gt;
+          &lt;small&gt;Last check: {s.lastCheck}&lt;/small&gt;
+        &lt;/div&gt;
+      ))}
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Live Log Feed</h2>
+  <pre><code>import { useState, useCallback, useRef } from 'react';
+import { useSubscription } from 'edge-stream-js-react';
+
+interface LogEntry {
+  id: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  timestamp: string;
+}
+
+function LiveLogFeed({ maxLines = 200 }: { maxLines?: number }) {
+  const [logs, setLogs] = useState&lt;LogEntry[]&gt;([]);
+  const bottomRef = useRef&lt;HTMLDivElement&gt;(null);
+
+  const handler = useCallback((envelope) =&gt; {
+    const entry: LogEntry = {
+      id: envelope.meta.id,
+      level: envelope.body.level,
+      message: envelope.body.message,
+      timestamp: envelope.meta.receivedAt.toISOString(),
+    };
+
+    setLogs(prev =&gt; {
+      const updated = [...prev, entry];
+      return updated.length &gt; maxLines
+        ? updated.slice(updated.length - maxLines) // keep most recent
+        : updated;
+    });
+
+    // Auto-scroll to bottom
+    setTimeout(() =&gt; bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 10);
+  }, [maxLines]);
+
+  useSubscription('bas', 'logs.*', handler);
+
+  return (
+    &lt;div style={{ height: '400px', overflow: 'auto', fontFamily: 'monospace', fontSize: '12px' }}&gt;
+      {logs.map(log =&gt; (
+        &lt;div key={log.id} style={{ color: log.level === 'error' ? '#e74c3c' : log.level === 'warn' ? '#f39c12' : '#b0c4d8' }}&gt;
+          [{log.timestamp}] [{log.level.toUpperCase()}] {log.message}
+        &lt;/div&gt;
+      ))}
+      &lt;div ref={bottomRef} /&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Workflow Execution Tracker</h2>
+  <pre><code>import { useState, useCallback } from 'react';
+import { useSubscription } from 'edge-stream-js-react';
+
+interface WorkflowState {
+  id: string;
+  name: string;
+  status: 'running' | 'completed' | 'failed' | 'suspended';
+  currentNode: string;
+  progress: number;
+  startedAt: string;
+}
+
+function WorkflowTracker({ workflowId }: { workflowId: string }) {
+  const [workflow, setWorkflow] = useState&lt;WorkflowState | null&gt;(null);
+  const [events, setEvents] = useState&lt;string[]&gt;([]);
+
+  const statusHandler = useCallback((envelope) =&gt; {
+    setWorkflow(envelope.body);
+  }, []);
+
+  const eventHandler = useCallback((envelope) =&gt; {
+    const { nodeId, event, timestamp } = envelope.body;
+    setEvents(prev =&gt; [`${timestamp}: ${nodeId} — ${event}`, ...prev].slice(0, 50));
+  }, []);
+
+  // Subscribe to workflow-specific topics
+  useSubscription('bas', `workflow.${workflowId}.status`, statusHandler);
+  useSubscription('bas', `workflow.${workflowId}.node.*`, eventHandler);
+
+  if (!workflow) return &lt;div&gt;Waiting for workflow data...&lt;/div&gt;;
+
+  return (
+    &lt;div&gt;
+      &lt;h2&gt;{workflow.name}&lt;/h2&gt;
+      &lt;p&gt;Status: &lt;strong&gt;{workflow.status}&lt;/strong&gt;&lt;/p&gt;
+      &lt;p&gt;Current node: {workflow.currentNode}&lt;/p&gt;
+      &lt;progress value={workflow.progress} max={100} /&gt;
+      &lt;p&gt;{workflow.progress}% complete&lt;/p&gt;
+
+      &lt;h3&gt;Event Log&lt;/h3&gt;
+      &lt;ul&gt;
+        {events.map((e, i) =&gt; &lt;li key={i}&gt;{e}&lt;/li&gt;)}
+      &lt;/ul&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Next: Message Plugins</strong>
+    Learn about the EdgeStream message plugin system — hooks that transform, filter, encrypt, or forward messages at the pipeline level. See <a href="../Guide9_MessagePlugins/index.html">Guide 9: Message Plugins</a>.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-cleanup.html">&#8592; Cleanup and Lifecycle</a>
+    <a href="../Guide9_MessagePlugins/index.html">Next Guide: Message Plugins &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

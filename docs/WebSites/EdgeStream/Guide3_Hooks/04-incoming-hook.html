@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Incoming Hook — Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-normalization-hook.html">NormalizationHook</a>
+  <a href="02-pre-pipeline-hook.html">Pre-Pipeline Hook</a>
+  <a href="03-post-pipeline-hook.html">Post-Pipeline Hook</a>
+  <a href="04-incoming-hook.html" class="active">Incoming Hook</a>
+  <a href="05-outgoing-hook.html">Outgoing Hook</a>
+  <a href="06-activity-logger.html">HookActivityLogger</a>
+  <a href="07-custom-hook.html">Implementing a Custom Hook</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Incoming Hook</h1>
+    <p class="lead">Incoming hooks are registered on the server's <code>incomingPipeline</code>. They process every message that arrives from the transport — from raw decryption all the way through to post-delivery audit logging.</p>
+  </div>
+
+  <h2>Incoming Pipeline Flow</h2>
+  <p>All hooks added to <code>server.incomingPipeline</code> are "incoming hooks." They handle the full lifecycle of a received message:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">5</div><div class="line"></div></div>
+      <div class="body">
+        <h4>HookActivityLogger (priority 5)</h4>
+        <p>Captures hook timings — must run first to observe all others.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">90</div><div class="line"></div></div>
+      <div class="body">
+        <h4>DecryptHook (priority 90)</h4>
+        <p>Decrypts encrypted body. Runs before any body inspection.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">95</div><div class="line"></div></div>
+      <div class="body">
+        <h4>VerifySignatureHook (priority 95)</h4>
+        <p>Verifies message authenticity on original format.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">100</div><div class="line"></div></div>
+      <div class="body">
+        <h4>ValidationHook (priority 100)</h4>
+        <p>Schema validation before normalization.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">110</div><div class="line"></div></div>
+      <div class="body">
+        <h4>NormalizationHook (priority 110)</h4>
+        <p>Converts to CloudEvents format.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">120+</div></div>
+      <div class="body">
+        <h4>Custom hooks (priority 120+)</h4>
+        <p>Enrichment, filtering, processing, audit. Register any hook at any priority in this range.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Registering Incoming Hooks</h2>
+  <pre><code>const server = edgeStream.server('bas')!;
+
+// All these are "incoming hooks" — they process inbound messages
+server.incomingPipeline.addHook(new HookActivityLogger());
+server.incomingPipeline.addHook(new NormalizationHook());
+server.incomingPipeline.addHook(new TenantFilterHook(tenantId));
+server.incomingPipeline.addHook(new WorkflowEventMapperHook());
+server.incomingPipeline.addHook(new AuditLogHook(auditService));</code></pre>
+
+  <h2>Incoming vs. Outgoing</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Incoming Pipeline</th><th>Outgoing Pipeline</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Triggered by</td><td>Message arrives from transport</td><td><code>server.send(topic, body)</code></td></tr>
+      <tr><td>Direction</td><td>Transport → Subscriber callbacks</td><td>Application → Transport</td></tr>
+      <tr><td>Common hooks</td><td>Decrypt, Verify, Normalize, Enrich, Audit</td><td>Sign, Encrypt, Rate-limit, Log</td></tr>
+      <tr><td>Terminal action</td><td>Publish to subscribers</td><td>Transport.send()</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-post-pipeline-hook.html">&#8592; Post-Pipeline Hook</a>
+    <a href="05-outgoing-hook.html">Next: Outgoing Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Triggering Actions — Custom JavaScript | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Custom JavaScript</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom JS Overview</a>
+  <a href="01-editor.html">Custom JS Editor</a>
+  <a href="02-available-apis.html">Available APIs</a>
+  <a href="03-widget-data.html">Reading Widget Data</a>
+  <a href="04-setting-variables.html">Setting Variables</a>
+  <a href="05-triggering-actions.html" class="active">Triggering Actions</a>
+  <a href="06-sandbox.html">Execution Sandbox</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Triggering Actions</h1>
+    <p class="lead">The <code>actions</code> API lets Custom JS trigger the same App Studio actions available in the no-code builder — navigate, open modal, trigger workflow, show notification. This is useful for implementing conditional navigation or complex event-driven UI flows.</p>
+  </div>
+
+  <h2>actions.navigate()</h2>
+  <pre><code>// Simple navigation
+actions.navigate('/leads');
+
+// Navigate with a computed path
+function onUserAction(widget, variables, actions, context) {
+  const selectedRow = widget.selectedRow;
+  if (!selectedRow) return;
+
+  actions.navigate('/leads/' + selectedRow.id);
+}
+
+// Navigate with options
+actions.navigate('/leads/' + id, { mode: 'replace' });
+actions.navigate('/leads/' + id, { mode: 'new-tab' });
+
+// Navigate with query params (append to the path string)
+actions.navigate('/leads?status=active&owner=' + context.userId);
+</code></pre>
+
+  <h2>actions.openModal()</h2>
+  <pre><code>// Open a modal by its widgetId
+actions.openModal('confirm-delete-modal');
+
+// Open with params (passed as modal variables inside the modal)
+actions.openModal('lead-detail-modal', {
+  leadId: widget.selectedRow?.id,
+  mode: 'view'
+});
+
+// Inside the modal, access params as:
+// {{ modal.leadId }}
+// {{ modal.mode }}
+</code></pre>
+
+  <h2>actions.closeModal()</h2>
+  <pre><code>// Close the currently open modal
+// Typically used in a confirm/cancel button Custom JS
+function onUserAction(widget, variables, actions, context) {
+  actions.closeModal();
+}
+</code></pre>
+
+  <h2>actions.triggerWorkflow()</h2>
+  <pre><code>// Trigger a workflow and handle the result
+function onUserAction(widget, variables, actions, context) {
+  const row = widget.selectedRow;
+
+  actions.triggerWorkflow('ArchiveLead', {
+    leadId: row.id,
+    archivedBy: context.userId
+  }).then(function(result) {
+    if (result.success) {
+      actions.showNotification('Lead archived successfully', 'success');
+      actions.navigate('/leads');
+    } else {
+      actions.showNotification('Archive failed: ' + result.error, 'error');
+    }
+  });
+}
+</code></pre>
+
+  <h2>actions.showNotification()</h2>
+  <pre><code>// Show a toast notification
+actions.showNotification('Changes saved', 'success');
+actions.showNotification('Please fill all required fields', 'warning');
+actions.showNotification('An error occurred', 'error');
+actions.showNotification('Processing...', 'info');
+
+// Variants: 'info' | 'success' | 'warning' | 'error'
+</code></pre>
+
+  <h2>Conditional Action Trigger</h2>
+  <pre><code>// Navigate to different destinations based on computed logic
+function onUserAction(widget, variables, actions, context) {
+  const row = widget.selectedRow;
+  if (!row) return;
+
+  // Complex condition not expressible in a simple token expression
+  const isHighValue = row.dealValue > 50000;
+  const isAdmin = context.roles.includes('admin');
+
+  if (isHighValue && !isAdmin) {
+    actions.showNotification('High-value leads require admin approval', 'warning');
+    actions.openModal('request-approval-modal', { leadId: row.id });
+  } else {
+    actions.navigate('/leads/' + row.id + '/edit');
+  }
+}
+</code></pre>
+
+  <div class="callout callout-info">
+    <strong>Actions are async — use .then()</strong>
+    All <code>actions.*</code> calls return Promises. The sandbox does not support top-level await or async functions — use <code>.then()</code> for result handling. For navigation and notifications, you don't need to handle the return value.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-setting-variables.html">&#8592; Setting Variables</a>
+    <a href="06-sandbox.html">Next: Execution Sandbox &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

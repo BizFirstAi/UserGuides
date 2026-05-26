@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cleanup and Lifecycle — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html">InteractionProvider</a>
+  <a href="02-use-interaction.html">useInteraction</a>
+  <a href="03-use-receiver.html">useInteractionReceiver</a>
+  <a href="04-use-callback.html">useInteractionCallback</a>
+  <a href="05-use-interaction-history.html">useInteractionHistory</a>
+  <a href="06-cleanup.html" class="active">Cleanup and Lifecycle</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Cleanup and Lifecycle</h1>
+    <p class="lead">EdgeInteract React hooks are designed to be safe — subscriptions are cleaned up automatically when components unmount or when hook parameters change. This page explains how the cleanup works and what to watch out for in more advanced scenarios.</p>
+  </div>
+
+  <h2>Automatic Cleanup Summary</h2>
+  <table>
+    <thead><tr><th>Hook / Component</th><th>What Gets Cleaned Up</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td><code>InteractionProvider</code></td><td>interactions.{userId} subscription, dismiss subscription</td><td>On unmount or user ID change</td></tr>
+      <tr><td><code>useInteractionReceiver()</code></td><td>Reads from shared context — no subscription leak possible</td><td>—</td></tr>
+      <tr><td><code>useInteractionCallback(id)</code></td><td>interactions.ack.{id} subscription</td><td>On response received, unmount, or id change</td></tr>
+      <tr><td><code>useInteraction()</code></td><td>If the component unmounts while awaiting, the Promise is cancelled</td><td>On unmount</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Unmount Safety</h2>
+  <p>If a component that called <code>useInteraction()</code> unmounts before the response arrives (e.g., the user navigates away), the hook automatically cancels the pending interaction. The promise rejection is swallowed internally — React's "Can't perform a state update on an unmounted component" warning will not appear.</p>
+  <pre><code">// This is safe — even if the user navigates away before the manager responds
+function ApprovalButton() {
+  const { sendInteraction } = useInteraction();
+  const [status, setStatus] = useState('idle');
+
+  const handleSend = async () =&gt; {
+    setStatus('pending');
+    try {
+      const response = await sendInteraction({ ... });
+      setStatus('complete'); // Only runs if still mounted
+      showToast(response.outcome);
+    } catch (err) {
+      if (!isUnmountError(err)) {
+        setStatus('error'); // Only runs if still mounted
+      }
+    }
+  };
+  // ...
+}
+</code></pre>
+
+  <h2>User ID Change</h2>
+  <p>If the user logs out and a new user logs in within the same app session, <code>InteractionProvider</code> detects the user ID change (from <code>EdgeStreamProvider</code>) and:</p>
+  <ol>
+    <li>Unsubscribes from the previous user's interaction topics</li>
+    <li>Clears the interaction queue</li>
+    <li>Subscribes to the new user's interaction topics</li>
+  </ol>
+  <p>No manual cleanup is required on your end.</p>
+
+  <h2>React Strict Mode</h2>
+  <p>EdgeInteract hooks are compatible with React Strict Mode. In Strict Mode, effects run twice in development. The subscription setup/teardown cycle handles this correctly — double subscriptions are deduplicated by the EdgeStream client.</p>
+
+  <div class="callout success">
+    <strong>No Cleanup Required</strong>
+    If you use only <code>InteractionProvider</code>, <code>InteractionContainer</code>, and the provided hooks, you will never need to write manual cleanup code. The library handles everything.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-use-interaction-history.html">&#8592; useInteractionHistory</a>
+    <a href="07-examples.html">Next: Examples &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

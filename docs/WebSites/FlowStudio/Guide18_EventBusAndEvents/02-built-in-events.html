@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Built-In Workflow Events — Workflow Event Bus | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Event Bus</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interface.html">IWorkflowEventBus</a>
+  <a href="02-built-in-events.html" class="active">Built-In Workflow Events</a>
+  <a href="03-event-schema.html">WorkflowEvent Schema</a>
+  <a href="04-publishing.html">Publishing from a Node</a>
+  <a href="05-subscribing.html">Subscribing to Events</a>
+  <a href="06-custom-events.html">Defining Custom Events</a>
+  <a href="07-delivery-guarantees.html">Delivery Guarantees</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Built-In Workflow Events</h1>
+    <p class="lead">Five events are published automatically by the ProcessEngine at key workflow lifecycle transitions. Subscribe to any combination to build webhook delivery, audit logs, dashboards, and billing integrations.</p>
+  </div>
+
+  <h2>Event Reference</h2>
+  <table>
+    <thead><tr><th>Event Class</th><th>When Published</th><th>Key Payload Fields</th></tr></thead>
+    <tbody>
+      <tr><td><code>WorkflowStarted</code></td><td>Execution begins (first node queued)</td><td>ExecutionId, ProcessId, TenantId, TriggeredBy, StartedAt</td></tr>
+      <tr><td><code>WorkflowCompleted</code></td><td>All nodes finished successfully</td><td>ExecutionId, ProcessId, TenantId, DurationMs, CompletedAt</td></tr>
+      <tr><td><code>WorkflowFailed</code></td><td>A node threw an unrecoverable error</td><td>ExecutionId, ProcessId, TenantId, FailedNodeId, Error, FailedAt</td></tr>
+      <tr><td><code>WorkflowPaused</code></td><td>A HIL node suspended the execution</td><td>ExecutionId, ProcessId, TenantId, SuspendedNodeId, SuspendedAt</td></tr>
+      <tr><td><code>WorkflowResumed</code></td><td>A HIL resume call restarted execution</td><td>ExecutionId, ProcessId, TenantId, ResumedAt, ResumedBy</td></tr>
+    </tbody>
+  </table>
+
+  <h2>WorkflowStarted</h2>
+  <pre><code>public class WorkflowStarted : WorkflowEvent
+{
+    public string TriggeredBy { get; init; }  // userId or "system"
+    public DateTimeOffset StartedAt { get; init; }
+    public Dictionary&lt;string, object&gt;? TriggerPayload { get; init; }
+}</code></pre>
+
+  <h2>WorkflowCompleted</h2>
+  <pre><code>public class WorkflowCompleted : WorkflowEvent
+{
+    public long DurationMs   { get; init; }
+    public DateTimeOffset CompletedAt { get; init; }
+    public WorkflowStatus Status { get; init; }  // Success
+}</code></pre>
+
+  <h2>WorkflowFailed</h2>
+  <pre><code>public class WorkflowFailed : WorkflowEvent
+{
+    public string FailedNodeId   { get; init; }
+    public string FailedNodeType { get; init; }
+    public string ErrorMessage   { get; init; }
+    public string? ErrorType     { get; init; }
+    public DateTimeOffset FailedAt { get; init; }
+}</code></pre>
+
+  <h2>WorkflowPaused</h2>
+  <pre><code>public class WorkflowPaused : WorkflowEvent
+{
+    public string SuspendedNodeId   { get; init; }
+    public string CorrelationToken  { get; init; }
+    public string ActorId           { get; init; }
+    public DateTimeOffset SuspendedAt { get; init; }
+    public DateTimeOffset? ExpiresAt  { get; init; }
+}</code></pre>
+
+  <h2>WorkflowResumed</h2>
+  <pre><code>public class WorkflowResumed : WorkflowEvent
+{
+    public string ResumedBy         { get; init; }  // userId who responded
+    public string CorrelationToken  { get; init; }
+    public DateTimeOffset ResumedAt { get; init; }
+}</code></pre>
+
+  <h2>Subscribing to a Built-In Event (Example)</h2>
+  <pre><code>// Handler: send a webhook when a workflow completes or fails
+public class WorkflowWebhookHandler :
+    IWorkflowEventHandler&lt;WorkflowCompleted&gt;,
+    IWorkflowEventHandler&lt;WorkflowFailed&gt;
+{
+    private readonly IWebhookService _webhooks;
+
+    public WorkflowWebhookHandler(IWebhookService webhooks) => _webhooks = webhooks;
+
+    public async Task HandleAsync(WorkflowCompleted @event, CancellationToken ct)
+    {
+        await _webhooks.DeliverAsync(@event.ProcessId, "completed", new
+        {
+            executionId = @event.ExecutionId,
+            durationMs  = @event.DurationMs,
+            status      = "success"
+        }, ct);
+    }
+
+    public async Task HandleAsync(WorkflowFailed @event, CancellationToken ct)
+    {
+        await _webhooks.DeliverAsync(@event.ProcessId, "failed", new
+        {
+            executionId  = @event.ExecutionId,
+            failedNode   = @event.FailedNodeId,
+            errorMessage = @event.ErrorMessage
+        }, ct);
+    }
+}
+
+// Registration (both event types, same handler class)
+services.AddTransient&lt;IWorkflowEventHandler&lt;WorkflowCompleted&gt;, WorkflowWebhookHandler&gt;();
+services.AddTransient&lt;IWorkflowEventHandler&lt;WorkflowFailed&gt;,    WorkflowWebhookHandler&gt;();</code></pre>
+
+  <div class="page-nav">
+    <a href="01-interface.html">&#8592; IWorkflowEventBus</a>
+    <a href="03-event-schema.html">Next: WorkflowEvent Schema &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Metrics to BizFirst Observe — Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.pipeline-steps{display:flex;align-items:center;gap:0;margin:20px 0;flex-wrap:wrap;}
+.pipe-step{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 16px;font-size:0.82rem;font-weight:600;color:var(--text);}
+.pipe-arrow{color:var(--text-muted);font-size:1.1rem;padding:0 6px;}
+.metric-full{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin:12px 0;overflow:hidden;}
+.mf-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
+.mf-name{font-family:'Cascadia Code','Fira Code',monospace;color:var(--accent);font-size:0.85rem;}
+.mf-type{font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;}
+.mf-body{padding:12px 16px;font-size:0.82rem;}
+.mf-labels{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+.mf-label-chip{background:rgba(100,160,255,0.12);color:#7ab0ff;font-size:0.72rem;padding:2px 8px;border-radius:4px;font-family:'Cascadia Code','Fira Code',monospace;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observability Overview</a>
+  <a href="01-interaction-monitor.html">InteractionMonitor Component</a>
+  <a href="02-response-time.html">Response Time Tracking</a>
+  <a href="03-completion-rate.html">Completion Rate</a>
+  <a href="04-audit-log.html">Interaction Audit Log</a>
+  <a href="05-metrics-emission.html" class="active">Metrics to BizFirst Observe</a>
+  <a href="06-alerting.html">Alerting</a>
+  <a href="07-debugging.html">Debugging Stuck Interactions</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Metrics to BizFirst Observe</h1>
+    <p class="lead">EdgeInteract emits interaction metrics via OpenTelemetry (OTel). These flow through the BizFirstGO observability pipeline into Prometheus and surface in BizFirst Observe (Grafana) dashboards. This page covers the full pipeline: metric registration, OTel configuration, and Prometheus scraping.</p>
+  </div>
+
+  <h2>Emission Pipeline</h2>
+  <div class="pipeline-steps">
+    <div class="pipe-step">MetricsInteractionHook</div>
+    <div class="pipe-arrow">&#8594;</div>
+    <div class="pipe-step">OTel MeterProvider</div>
+    <div class="pipe-arrow">&#8594;</div>
+    <div class="pipe-step">OTel Prometheus Exporter</div>
+    <div class="pipe-arrow">&#8594;</div>
+    <div class="pipe-step">/metrics endpoint</div>
+    <div class="pipe-arrow">&#8594;</div>
+    <div class="pipe-step">Prometheus scrape</div>
+    <div class="pipe-arrow">&#8594;</div>
+    <div class="pipe-step">BizFirst Observe</div>
+  </div>
+
+  <h2>Step 1 — Register the Metrics Hook</h2>
+  <pre><code">// Program.cs
+builder.Services.AddEdgeInteract(options =>
+{
+    options.DefaultTimeoutMs = 3_600_000;
+});
+
+// Register hooks
+builder.Services.AddInteractionHook&lt;AuditInteractionHook&gt;();
+builder.Services.AddInteractionHook&lt;MetricsInteractionHook&gt;(); // enables metric emission
+</code></pre>
+
+  <h2>Step 2 — Configure OTel</h2>
+  <pre><code">// Add OpenTelemetry with EdgeInteract meter
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddAspNetCoreInstrumentation()
+            .AddRuntimeInstrumentation()
+            .AddMeter("BizFirst.EdgeInteract")   // EdgeInteract meter name
+            .AddPrometheusExporter();             // exposes /metrics endpoint
+    });
+
+// Map the Prometheus scrape endpoint
+app.MapPrometheusScrapingEndpoint(); // default: /metrics
+</code></pre>
+
+  <h2>Step 3 — Configure Prometheus to Scrape</h2>
+  <pre><code"># prometheus.yml
+scrape_configs:
+  - job_name: 'edge-interact'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['your-server:8080']
+    metrics_path: /metrics
+</code></pre>
+
+  <h2>Available Metrics Reference</h2>
+
+  <div class="metric-full">
+    <div class="mf-header">
+      <span class="mf-name">interaction_response_time_ms</span>
+      <span class="mf-type">Histogram</span>
+    </div>
+    <div class="mf-body">
+      Time from <code>displayedAt</code> to <code>respondedAt</code>. Only recorded for interactions that receive a response (not timeouts).
+      <div class="mf-labels">
+        <span class="mf-label-chip">type</span>
+        <span class="mf-label-chip">outcome</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="metric-full">
+    <div class="mf-header">
+      <span class="mf-name">interaction_published_total</span>
+      <span class="mf-type">Counter</span>
+    </div>
+    <div class="mf-body">
+      Incremented each time an interaction passes pre-send hooks and is published to the pipeline.
+      <div class="mf-labels">
+        <span class="mf-label-chip">type</span>
+        <span class="mf-label-chip">priority</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="metric-full">
+    <div class="mf-header">
+      <span class="mf-name">interaction_responses_total</span>
+      <span class="mf-type">Counter</span>
+    </div>
+    <div class="mf-body">
+      Incremented each time a valid user response is received. Tagged by outcome.
+      <div class="mf-labels">
+        <span class="mf-label-chip">type</span>
+        <span class="mf-label-chip">outcome</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="metric-full">
+    <div class="mf-header">
+      <span class="mf-name">interaction_timeout_total</span>
+      <span class="mf-type">Counter</span>
+    </div>
+    <div class="mf-body">
+      Incremented when an interaction's timeout window expires without a response.
+      <div class="mf-labels">
+        <span class="mf-label-chip">type</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="metric-full">
+    <div class="mf-header">
+      <span class="mf-name">interaction_in_flight</span>
+      <span class="mf-type">Gauge</span>
+    </div>
+    <div class="mf-body">
+      Current count of interactions in the pipeline awaiting a response. Incremented on publish, decremented on response or timeout.
+      <div class="mf-labels">
+        <span class="mf-label-chip">type</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="metric-full">
+    <div class="mf-header">
+      <span class="mf-name">interaction_blocked_total</span>
+      <span class="mf-type">Counter</span>
+    </div>
+    <div class="mf-body">
+      Incremented when a pre-send hook blocks an interaction before delivery. Tagged with the hook name that rejected it.
+      <div class="mf-labels">
+        <span class="mf-label-chip">type</span>
+        <span class="mf-label-chip">blocked_by</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Verifying Metric Emission</h2>
+  <p>Curl the <code>/metrics</code> endpoint and search for EdgeInteract metrics:</p>
+  <pre><code">curl http://localhost:8080/metrics | grep interaction_
+
+# Expected output (sample):
+# HELP interaction_published_total Total interactions published to the pipeline
+# TYPE interaction_published_total counter
+interaction_published_total{type="approval",priority="high"} 142
+interaction_published_total{type="notification",priority="normal"} 1089
+# HELP interaction_response_time_ms Response time from displayed to responded
+# TYPE interaction_response_time_ms histogram
+interaction_response_time_ms_bucket{type="approval",outcome="approved",le="500"} 0
+interaction_response_time_ms_bucket{type="approval",outcome="approved",le="60000"} 12
+...
+interaction_in_flight{type="approval"} 3
+</code></pre>
+
+  <div class="callout info">
+    <strong>Meter Name</strong>
+    The OTel meter name is <code>BizFirst.EdgeInteract</code>. When using the <code>AddMeter()</code> call, this exact string must match to include EdgeInteract metrics in the export pipeline.
+  </div>
+
+  <h2>BizFirst Observe Dashboard Setup</h2>
+  <p>After Prometheus begins scraping, import the pre-built EdgeInteract dashboard from BizFirst Observe's dashboard library. The dashboard includes panels for:</p>
+  <ul>
+    <li>Completion rate over time (area chart, by type)</li>
+    <li>Timeout rate over time (line chart, alert threshold overlay)</li>
+    <li>Response time P50/P95/P99 (histogram heatmap)</li>
+    <li>In-flight interaction count (live gauge)</li>
+    <li>Blocked interaction rate by hook name (bar chart)</li>
+    <li>Volume breakdown by type and priority (stacked bar)</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="04-audit-log.html">&#8592; Interaction Audit Log</a>
+    <a href="06-alerting.html">Next: Alerting &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

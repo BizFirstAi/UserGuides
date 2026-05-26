@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EdgeStreamProvider — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html" class="active">EdgeStreamProvider</a>
+  <a href="02-use-server.html">useEdgeStream</a>
+  <a href="03-use-subscription.html">useSubscription</a>
+  <a href="04-use-message.html">useMessage</a>
+  <a href="05-use-message-history.html">useConnectionStatus</a>
+  <a href="06-cleanup.html">Cleanup and Lifecycle</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>EdgeStreamProvider</h1>
+    <p class="lead"><code>EdgeStreamProvider</code> wraps your application, calls <code>edgeStreamClient.start()</code> on mount, subscribes to lifecycle events, and provides the client plus connection status to all child components via React context.</p>
+  </div>
+
+  <h2>Basic Setup</h2>
+  <pre><code>import React from 'react';
+import { createEdgeStream, NormalizationHook } from 'edge-stream-js';
+import { EdgeStreamProvider } from 'edge-stream-js-react';
+
+// Create and configure EdgeStream outside React (module scope)
+const stream = createEdgeStream({ logLevel: 'info' });
+
+stream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  url: '/hubs/edge-stream',
+  transportConfig: {
+    type: 'signalr',
+    url: '/hubs/edge-stream',
+    accessToken: () => authStore.getToken(),
+  }
+});
+
+const server = stream.server('bas')!;
+server.incomingPipeline.addHook(new NormalizationHook());
+
+// Provide to React tree
+function App() {
+  return (
+    &lt;EdgeStreamProvider
+      edgeStreamClient={stream}
+      onError={(error) =&gt; console.error('EdgeStream error:', error)}
+      onConnectionStatusChange={(status) =&gt; console.log('Status:', status)}
+    &gt;
+      &lt;Router /&gt;
+    &lt;/EdgeStreamProvider&gt;
+  );
+}</code></pre>
+
+  <h2>Props</h2>
+  <table>
+    <thead>
+      <tr><th>Prop</th><th>Type</th><th>Required</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>edgeStreamClient</code></td><td>IEdgeStream</td><td>Yes</td><td>The EdgeStream instance to manage</td></tr>
+      <tr><td><code>children</code></td><td>ReactNode</td><td>Yes</td><td>Child components to receive context</td></tr>
+      <tr><td><code>onError</code></td><td>(error: Error) => void</td><td>No</td><td>Called when <code>stream:error</code> fires or start() throws</td></tr>
+      <tr><td><code>onConnectionStatusChange</code></td><td>(status: ConnectionStatus) => void</td><td>No</td><td>Called on every connection status transition</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What the Provider Does</h2>
+  <pre><code>// On mount (simplified internal logic):
+// 1. Sets connectionStatus = 'connecting'
+// 2. Calls edgeStreamClient.start() if status === 'idle'
+// 3. On success: sets connectionStatus = 'connected', isInitialized = true
+// 4. Subscribes to: stream:started, stream:stopped, stream:error
+// 5. Provides { client, connectionStatus, health } via EdgeStreamContext
+
+// On unmount:
+// 1. Sets isMounted = false (prevents state updates after unmount)
+// 2. Unsubscribes from stream:started, stream:stopped, stream:error
+// Note: does NOT call stop() — transport manages itself</code></pre>
+
+  <h2>Context Value</h2>
+  <pre><code>interface EdgeStreamContextValue {
+  client: IEdgeStream;          // the EdgeStream instance
+  connectionStatus: ConnectionStatus; // 'connecting' | 'connected' | 'disconnected' | 'error' | 'checking'
+  health: HealthStatus | null;  // health metrics
+}
+
+interface HealthStatus {
+  connectionStatus: ConnectionStatus;
+  lastHeartbeat: Date | null;
+  messageCount: number;
+  errorCount: number;
+  reconnectAttempts: number;
+  uptime: number;  // milliseconds
+}</code></pre>
+
+  <h2>Connection Status Transitions</h2>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Trigger</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>'connecting'</code></td><td>Provider mounts, start() begins</td></tr>
+      <tr><td><code>'connected'</code></td><td>start() resolves, or <code>stream:started</code> event fires</td></tr>
+      <tr><td><code>'disconnected'</code></td><td><code>stream:stopped</code> event fires</td></tr>
+      <tr><td><code>'error'</code></td><td>start() throws, or <code>stream:error</code> fires</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Create EdgeStream Outside React</strong>
+    Create and configure the EdgeStream instance at module scope (outside any React component), then pass it to <code>EdgeStreamProvider</code>. Creating it inside a component or in <code>useMemo</code> risks re-creating it on re-renders.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; React Bindings Overview</a>
+    <a href="02-use-server.html">Next: useEdgeStream &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

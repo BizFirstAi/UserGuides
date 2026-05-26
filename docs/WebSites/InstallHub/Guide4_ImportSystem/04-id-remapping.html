@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ID Remapping — Import System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Import System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-upload.html">Uploading a Package</a>
+  <a href="02-validation.html">Package Validation</a>
+  <a href="03-security-scan.html">Security Scanning</a>
+  <a href="04-id-remapping.html" class="active">ID Remapping</a>
+  <a href="05-install.html">Installation</a>
+  <a href="06-verification.html">Post-Install Verification</a>
+  <a href="07-rollback.html">Rollback on Failure</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>ID Remapping</h1>
+    <p class="lead">Artifact IDs in the package are scoped to the source tenant. Before installation, every ID is remapped to a new ID in the target tenant, and all cross-references within artifact definitions are updated accordingly.</p>
+  </div>
+
+  <h2>Why ID Remapping is Necessary</h2>
+  <p>In BizFirstGO, artifact IDs like <code>proc-1001</code> or <code>form-2005</code> are tenant-scoped. If the target tenant already has a <code>proc-1001</code> (a different workflow), installing the package's <code>proc-1001</code> without remapping would overwrite it — a silent data loss error.</p>
+  <p>ID remapping generates fresh, unique IDs for all artifacts in the target tenant and updates every reference within the artifact definitions to use the new IDs. The result is that the installed artifacts are completely independent from any existing artifacts, even if they share names.</p>
+
+  <h2>Remapping Process</h2>
+  <pre><code>// Source package IDs:
+proc-1001  →  proc-7823   (new ID in target tenant)
+form-2005  →  form-9104   (new ID in target tenant)
+rule-305   →  rule-6612   (new ID in target tenant)
+ent-44     →  ent-2291    (new ID in target tenant)
+
+// Cross-reference update in proc-7823.json:
+// BEFORE remapping:
+"config": { "formId": "form-2005" }
+
+// AFTER remapping:
+"config": { "formId": "form-9104" }
+
+// The mapping table is stored in ImportContext and
+// applied to every artifact JSON after deserialization</code></pre>
+
+  <h2>Conflict Cases</h2>
+  <p>Remapping creates new IDs, but conflicts can still arise when an artifact in the package has the same <em>name</em> and <em>type</em> as an existing artifact in the target tenant. For example, both the package and the target tenant have an <code>AtlasForm</code> named <code>EmployeeForm</code>.</p>
+  <p>In this case, the import engine proceeds to the <strong>Conflict Resolution</strong> stage (see <a href="05-install.html">Installation</a> and <a href="../Guide5_ConflictResolution/index.html">Guide 5</a>).</p>
+
+  <h2>The ID Remap Table</h2>
+  <p>The complete remap table is stored in the <code>ImportContext</code> and is available in the import result for audit purposes:</p>
+  <pre><code>{
+  "importId":    "imp-f9a2c1e8-...",
+  "idRemapTable": {
+    "proc-1001": "proc-7823",
+    "form-2005": "form-9104",
+    "rule-305":  "rule-6612",
+    "ent-44":    "ent-2291"
+  }
+}</code></pre>
+
+  <h2>IDRemappingService</h2>
+  <pre><code>public interface IIDRemappingService
+{
+    /// &lt;summary&gt;
+    /// Generates new target-tenant IDs for all artifacts in the manifest.
+    /// Returns the complete remap table.
+    /// &lt;/summary&gt;
+    Task&lt;IDRemapTable&gt; GenerateRemapTableAsync(
+        PackageManifest manifest,
+        string          targetTenantId,
+        CancellationToken ct = default);
+
+    /// &lt;summary&gt;
+    /// Applies the remap table to all artifact JSON definitions,
+    /// replacing source IDs with target IDs throughout.
+    /// &lt;/summary&gt;
+    IReadOnlyList&lt;RemappedArtifact&gt; ApplyRemap(
+        IReadOnlyList&lt;SerializedArtifact&gt; artifacts,
+        IDRemapTable                       remapTable);
+}</code></pre>
+
+  <h2>Cross-Reference Fields</h2>
+  <p>The remapper knows which JSON fields contain artifact ID references for each artifact type:</p>
+  <table>
+    <thead>
+      <tr><th>Artifact Type</th><th>Fields Containing Cross-References</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ProcessDefinition</td><td><code>nodes[].config.formId</code>, <code>nodes[].config.ruleSetId</code>, <code>nodes[].config.threadId</code>, <code>nodes[].config.entityId</code></td></tr>
+      <tr><td>ThreadDefinition</td><td><code>nodes[].config.formId</code>, <code>nodes[].config.ruleSetId</code>, <code>nodes[].config.entityId</code></td></tr>
+      <tr><td>AtlasForm</td><td><code>fields[].dataSource.entityId</code>, <code>validationRules[].ruleSetId</code></td></tr>
+      <tr><td>RuleSet</td><td><code>rules[].condition</code> (entity references within expressions)</td></tr>
+      <tr><td>AppDefinition</td><td><code>widgets[].config.formId</code>, <code>actions[].workflowId</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Source IDs in Artifact JSON</strong>
+    The artifact JSON files inside the bundle contain source-tenant IDs. The import engine always applies remapping before installation — source IDs never appear in the target tenant's database.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-security-scan.html">&#8592; Security Scanning</a>
+    <a href="05-install.html">Next: Installation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

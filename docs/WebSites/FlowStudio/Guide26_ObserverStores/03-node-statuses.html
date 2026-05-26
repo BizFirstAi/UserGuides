@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Statuses — Observer Stores | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Observer Stores</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-panel-store.html">flowObserverPanelStore</a>
+  <a href="02-execution-store.html">executionStore</a>
+  <a href="03-node-statuses.html" class="active">Node Statuses</a>
+  <a href="04-logs.html">Log Entries</a>
+  <a href="05-node-inspector.html">Node Inspector Data</a>
+  <a href="06-subscribing.html">Subscribing in Tab Components</a>
+  <a href="07-resetting.html">Resetting for New Execution</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Node Statuses in executionStore</h1>
+    <p class="lead">executionStore.nodeStatuses is a Record keyed by nodeId holding the current execution status of each node. SignalR events update individual entries in place — only the changed node triggers a re-render in subscribing components.</p>
+  </div>
+
+  <h2>How SignalR Updates Flow In</h2>
+  <pre><code">// useExecutionSignalR.ts
+connection.on("NodeStatusChanged", (event: NodeStatusChangedEvent) => {
+    // Update executionStore (for Observer Panel tabs)
+    useExecutionStore.getState().setNodeStatus(event.nodeId, {
+        nodeId      : event.nodeId,
+        status      : event.status,
+        startedAt   : event.startedAt,
+        completedAt : event.completedAt,
+        durationMs  : event.durationMs,
+        errorMessage: event.errorMessage,
+        retryCount  : event.retryCount
+    });
+
+    // Also update designerModeStore (for canvas overlays)
+    useDesignerModeStore.getState().setNodeStatus(event.nodeId, event);
+});</code></pre>
+
+  <h2>setNodeStatus Implementation</h2>
+  <pre><code">setNodeStatus: (nodeId, status) => set(state => ({
+    nodeStatuses: {
+        ...state.nodeStatuses,
+        [nodeId]: status
+    }
+}));
+
+// Immutable update — creates a new object for nodeStatuses
+// Only components subscribing to state.nodeStatuses[specificNodeId] re-render</code></pre>
+
+  <h2>Consuming Node Statuses in the Nodes Tab</h2>
+  <pre><code">// NodeListTabContent.tsx — shows all nodes with their statuses
+function NodeListTabContent() {
+    const nodeStatuses = useExecutionStore(state => state.nodeStatuses);
+    const { nodes }    = useWorkflowStore(state => ({ nodes: state.nodes }));
+
+    return (
+        &lt;ul&gt;
+            {nodes.map(node => {
+                const status = nodeStatuses[node.id];
+                return (
+                    &lt;li key={node.id}&gt;
+                        &lt;StatusDot status={status?.status ?? 'pending'} /&gt;
+                        &lt;span&gt;{node.data.label}&lt;/span&gt;
+                        {status?.durationMs != null &amp;&amp;
+                            &lt;span&gt;{status.durationMs}ms&lt;/span&gt;}
+                    &lt;/li&gt;
+                );
+            })}
+        &lt;/ul&gt;
+    );
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>nodeStatuses is the Observer Panel view — not the authority.</strong> The authoritative status lives in the backend <code>Process_Executions</code> table. The frontend store is a real-time mirror. If a user reloads mid-execution, the statuses are re-fetched from the API.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-execution-store.html">&#8592; executionStore</a>
+    <a href="04-logs.html">Next: Log Entries &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

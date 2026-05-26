@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Examples — Custom JavaScript | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Custom JavaScript</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom JS Overview</a>
+  <a href="01-editor.html">Custom JS Editor</a>
+  <a href="02-available-apis.html">Available APIs</a>
+  <a href="03-widget-data.html">Reading Widget Data</a>
+  <a href="04-setting-variables.html">Setting Variables</a>
+  <a href="05-triggering-actions.html">Triggering Actions</a>
+  <a href="06-sandbox.html">Execution Sandbox</a>
+  <a href="07-examples.html" class="active">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Custom JavaScript Examples</h1>
+    <p class="lead">Real-world patterns for using Custom JS in App Studio — computed summaries, dynamic chart data, conditional routing, and custom table sorting.</p>
+  </div>
+
+  <h2>Example 1: Computed Summary Stats from DataGrid</h2>
+  <p>Attach this to a DataGrid widget's <code>onDataChange</code> event to compute totals and averages that display in Stat widgets on the same page:</p>
+  <pre><code>// DataGrid widget — onDataChange
+function onDataChange(widget, variables, actions, context) {
+  const rows = widget.data?.rows ?? [];
+
+  const total = rows.reduce((s, r) => s + (r.dealValue ?? 0), 0);
+  const avg = rows.length > 0 ? total / rows.length : 0;
+  const highValue = rows.filter(r => r.dealValue > 50000).length;
+
+  variables.set('dealTotal', total);
+  variables.set('dealAverage', Math.round(avg));
+  variables.set('highValueCount', highValue);
+}
+
+// Stat widgets on the same page display:
+// {{ variables.dealTotal | currency }}
+// {{ variables.dealAverage | currency }}
+// {{ variables.highValueCount }}
+</code></pre>
+
+  <h2>Example 2: Custom Table Sorting</h2>
+  <p>When the built-in column sort is not sufficient (e.g., natural-order string sort), use Custom JS to pre-sort data and write it to a variable that the grid binds to:</p>
+  <pre><code>// DataGrid — onDataChange — natural sort on "version" field
+function onDataChange(widget, variables, actions, context) {
+  const rows = [...(widget.data?.rows ?? [])];
+
+  // Natural sort: "2.10.0" > "2.9.0" (unlike lexicographic)
+  rows.sort(function(a, b) {
+    return a.version.localeCompare(b.version, undefined, { numeric: true });
+  });
+
+  variables.set('sortedRows', rows);
+}
+
+// DataGrid config — binds rows to the sorted variable
+// "dataSource": "variables.sortedRows"
+</code></pre>
+
+  <h2>Example 3: Dynamic Chart Configuration</h2>
+  <p>Transform flat data into a chart-ready series format on the fly:</p>
+  <pre><code>// Chart widget — onDataChange
+function onDataChange(widget, variables, actions, context) {
+  const rows = widget.data?.rows ?? [];
+
+  // Group by month
+  const byMonth = {};
+  rows.forEach(function(r) {
+    const month = r.closedDate.substring(0, 7);  // "2026-01"
+    byMonth[month] = (byMonth[month] ?? 0) + r.dealValue;
+  });
+
+  const categories = Object.keys(byMonth).sort();
+  const values = categories.map(m => byMonth[m]);
+
+  variables.set('chartCategories', categories);
+  variables.set('chartSeries', [{ name: 'Revenue', data: values }]);
+}
+
+// Chart widget binds:
+// categories: {{ variables.chartCategories }}
+// series:     {{ variables.chartSeries }}
+</code></pre>
+
+  <h2>Example 4: Role-Conditional Navigation After Row Click</h2>
+  <pre><code>// DataGrid — onUserAction (row click)
+function onUserAction(widget, variables, actions, context) {
+  const row = widget.selectedRow;
+  if (!row) return;
+
+  const isAdmin = context.roles.includes('admin');
+  const isOwner = row.assignedUserId === context.userId;
+
+  if (isAdmin || isOwner) {
+    // Admins and owners go to the edit page
+    actions.navigate('/leads/' + row.id + '/edit');
+  } else {
+    // Others go to the read-only detail page
+    actions.navigate('/leads/' + row.id);
+  }
+}
+</code></pre>
+
+  <h2>Example 5: Computed Form Validation</h2>
+  <pre><code>// Form widget — onUserAction (before submit)
+function onUserAction(widget, variables, actions, context) {
+  const values = widget.formValues;
+
+  // Custom cross-field validation: end date must be after start date
+  const start = new Date(values.startDate);
+  const end = new Date(values.endDate);
+
+  if (end <= start) {
+    variables.set('formError', 'End date must be after start date');
+    actions.showNotification('End date must be after start date', 'warning');
+    return;   // Stop — don't proceed to submit
+  }
+
+  variables.set('formError', null);
+  // Proceed — the no-code submit action chain fires after this custom JS
+}
+</code></pre>
+
+  <h2>Example 6: Selecting All Rows and Triggering Bulk Action</h2>
+  <pre><code>// "Select All + Archive" button — onUserAction
+function onUserAction(widget, variables, actions, context) {
+  const rows = widget.data?.rows ?? [];
+  const activeIds = rows
+    .filter(r => r.status === 'active')
+    .map(r => r.id);
+
+  if (activeIds.length === 0) {
+    actions.showNotification('No active records to archive', 'info');
+    return;
+  }
+
+  actions.triggerWorkflow('BulkArchive', {
+    ids: activeIds,
+    archivedBy: context.userId
+  }).then(function(result) {
+    actions.showNotification(
+      result.archivedCount + ' records archived',
+      'success'
+    );
+  });
+}
+</code></pre>
+
+  <div class="page-nav">
+    <a href="06-sandbox.html">&#8592; Execution Sandbox</a>
+    <a href="index.html">Back to Overview &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multiple Transports — Transports | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Transports</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Transport Overview</a>
+  <a href="01-signalr.html">SignalR Transport</a>
+  <a href="02-websocket.html">WebSocket Transport</a>
+  <a href="03-sse.html">SSE Transport</a>
+  <a href="04-choosing.html">Choosing a Transport</a>
+  <a href="05-connection-lifecycle.html">Connection Lifecycle</a>
+  <a href="06-custom-transport.html">Custom Transport</a>
+  <a href="07-multiple-transports.html" class="active">Multiple Transports</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Multiple Transports</h1>
+    <p class="lead">Each EdgeStream server has exactly one transport. To use multiple transports — for example, SignalR for workflow events and WebSocket for agent streaming — register multiple servers, each with its own transport configuration.</p>
+  </div>
+
+  <h2>One Transport Per Server</h2>
+  <p>The architecture is: <strong>EdgeStream → Servers → Transport</strong>. Each server owns one transport. Multiple servers = multiple transports, all managed by a single EdgeStream instance:</p>
+  <pre><code>EdgeStream
+├── Server 'bas'  →  SignalRTransport (/hubs/edge-stream)
+├── Server 'chat' →  RawWebSocketTransport (wss://chat.bizfirst.com/ws)
+└── Server 'audit' → SseTransport (/api/audit/stream)</code></pre>
+
+  <h2>Registering Multiple Transports</h2>
+  <pre><code>const stream = createEdgeStream({ logLevel: 'info' });
+
+// Transport 1: SignalR for workflow + HIL events
+stream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  url: '/hubs/edge-stream',
+  transportConfig: {
+    type: 'signalr',
+    url: '/hubs/edge-stream',
+    accessToken: authStore.getToken(),
+  }
+});
+
+// Transport 2: Raw WebSocket for Octopus agent streaming (low latency)
+stream.registerServer({
+  id: 'chat',
+  type: 'chat',
+  url: 'wss://chat.bizfirst.com/ws',
+  transportConfig: {
+    type: 'websocket',
+    url: 'wss://chat.bizfirst.com/ws',
+    queryParams: { token: authStore.getChatToken() },
+  }
+});
+
+// Transport 3: SSE for read-only audit stream
+stream.registerServer({
+  id: 'audit',
+  type: 'bas',
+  url: '/api/audit/stream',
+  transportConfig: {
+    type: 'sse',
+    url: '/api/audit/stream',
+    queryParams: { tenantId: tenantId },
+  }
+});
+
+// All three connect concurrently
+await stream.start();</code></pre>
+
+  <h2>Subscribing per Transport</h2>
+  <pre><code>// Subscribe to workflow events (SignalR)
+stream.subscribe('bas', 'workflow.*', workflowHandler);
+stream.subscribe('bas', 'hil.*', hilHandler);
+
+// Subscribe to agent streaming (WebSocket)
+stream.subscribe('chat', 'agent.chat.*', chatHandler);
+
+// Subscribe to audit events (SSE — receive only)
+stream.subscribe('audit', 'audit.*', auditHandler);</code></pre>
+
+  <h2>Monitoring Transport Status Independently</h2>
+  <pre><code>// Monitor each transport independently
+const basTransport = stream.server('bas')!.transport;
+const chatTransport = stream.server('chat')!.transport;
+
+basTransport.onStatusChange((status) =&gt; {
+  uiStore.setBASStatus(status); // 'connected' | 'reconnecting' | ...
+});
+
+chatTransport.onStatusChange((status) =&gt; {
+  uiStore.setChatStatus(status);
+});
+
+// Or use EdgeStream lifecycle events (server-level)
+stream.on('server:connected', (event) =&gt; {
+  console.log(`${event.serverId} transport connected`);
+  // event.serverId is 'bas', 'chat', or 'audit'
+});
+
+stream.on('server:disconnected', (event) =&gt; {
+  console.warn(`${event.serverId} transport disconnected`);
+});</code></pre>
+
+  <h2>Transport Isolation</h2>
+  <p>Each server's transport is fully isolated from others. A reconnecting WebSocket does not affect the SignalR connection:</p>
+  <table>
+    <thead>
+      <tr><th>Event</th><th>Affected</th><th>Unaffected</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Chat WebSocket drops</td><td>Server 'chat' → reconnecting</td><td>Server 'bas' (SignalR) continues normally</td></tr>
+      <tr><td>BAS SignalR error</td><td>Server 'bas' → error</td><td>Server 'chat', Server 'audit' unaffected</td></tr>
+      <tr><td>stream.stop()</td><td>ALL servers disconnected concurrently</td><td>N/A</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>start() and stop() Are Global</strong>
+    <code>stream.start()</code> connects ALL registered servers concurrently via <code>Promise.all</code>. <code>stream.stop()</code> disconnects ALL servers concurrently. To connect/disconnect a single server independently, call <code>server.start()</code> or <code>server.stop()</code> directly on the server reference.
+  </div>
+
+  <div class="callout success">
+    <strong>Next: Observability</strong>
+    Learn how to monitor hook activity, subscriber delivery, and pipeline health in real-time using EdgeStream's observability hooks. See <a href="../Guide7_Observability/index.html">Guide 7: Observability</a>.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-custom-transport.html">&#8592; Custom Transport</a>
+    <a href="../Guide7_Observability/index.html">Next Guide: Observability &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Responding to Alerts — Using the Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Using the Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Using the Tools Overview</a>
+  <a href="01-find-execution-logs.html">Find Logs for an Execution</a>
+  <a href="02-trace-slow-node.html">Trace a Slow Node</a>
+  <a href="03-error-analysis.html">Error Analysis Workflow</a>
+  <a href="04-hil-backlog.html">Monitoring HIL Backlog</a>
+  <a href="05-alert-response.html" class="active">Responding to Alerts</a>
+  <a href="06-tenant-isolation.html">Querying as a Tenant Admin</a>
+  <a href="07-common-queries.html">Common Query Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Responding to Alerts</h1>
+    <p class="lead">When a Grafana alert fires, you receive a Slack message or PagerDuty notification with a direct link into Grafana. This page describes how to read the alert context, navigate to the relevant dashboard, and begin investigation — the first 5 minutes of alert response.</p>
+  </div>
+
+  <h2>Anatomy of a BizFirstGO Alert Notification</h2>
+  <pre><code># Example Slack alert message format:
+ALERT: WorkflowErrorRateHigh
+
+Summary: Workflow error rate has exceeded 5% for 5 minutes
+Severity: critical
+Environment: production
+Current Value: 8.3%
+Time: 2025-05-25 14:35:00 UTC
+
+[View in Grafana] → link to Flow Studio Overview dashboard
+[View Alert]     → link to Grafana Alert detail page
+[Silence]        → link to create a silence (use carefully)
+
+Labels:
+  alertname: WorkflowErrorRateHigh
+  environment: production
+  severity: critical</code></pre>
+
+  <h2>First 5 Minutes: Alert Response Procedure</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Click "View in Grafana" and acknowledge</h4>
+        <p>The link opens the Flow Studio Overview dashboard scoped to the production environment. Immediately assess: Is the error rate still rising? When did it start (look at the Error Rate time series)? Is it all tenants or one?</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Set the $tenant variable to "All" and look for the spike</h4>
+        <p>On the Flow Studio Overview dashboard, the Error Rate panel by tenant shows which tenants are affected. If the spike is in one tenant — scoped incident. If all tenants — systemic issue with the engine or infrastructure.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Find the error pattern in Loki</h4>
+        <p>Open Grafana Explore (Loki). Query: <code>{job="processengine", level="error"} | json</code> for the last 15 minutes. Look at the error messages — what is failing? Is it a specific node type, a specific external service, or a configuration error?</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Check the Node Performance dashboard for the bottleneck</h4>
+        <p>Navigate to the Node Performance dashboard. The "Error Rate by Node Type" bar chart shows which node is failing. The "Slowest Nodes (Top 10)" table confirms if there is a latency issue as well.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Decide: mitigate or investigate further</h4>
+        <p>If root cause is clear (e.g., "external API is down") — initiate mitigation (circuit breaker, fallback). If root cause is unclear — continue investigation using the Error Analysis workflow. Post status update in the incident channel before 10 minutes have elapsed.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Alert-Specific Response Guides</h2>
+  <table>
+    <thead>
+      <tr><th>Alert</th><th>First Query to Run</th><th>Likely Causes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>WorkflowErrorRateHigh</td><td>Loki: <code>{job="processengine", level="error"} | json | nodeType != ""</code></td><td>External API down, invalid workflow config, database connection failure</td></tr>
+      <tr><td>WorkflowP99LatencyHigh</td><td>PromQL: <code>topk(5, histogram_quantile(0.99, ...))</code> by node_type</td><td>Slow external dependency, database query slowdown, OTel Collector overloaded</td></tr>
+      <tr><td>HILSLABreached</td><td>Loki: <code>{job="processengine"} | json | hilStatus="overdue"</code></td><td>Approvers not responding — notify business team, not engineering</td></tr>
+      <tr><td>ProcessEngineDown</td><td>Prometheus targets: check if processengine is "up"</td><td>Service crash, OOM kill, deployment failure</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Create a Silence During Planned Maintenance</strong>
+    <p>If you are performing planned maintenance that will cause alerts to fire, create a Grafana silence before starting. Navigate to Alerting → Silences → Add Silence. Set the matchers to the relevant alert (e.g., <code>environment = staging</code>) and the duration to cover the maintenance window plus 30 minutes buffer. Always add a reason comment explaining why the silence was created.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-hil-backlog.html">&#8592; Monitoring HIL Backlog</a>
+    <a href="06-tenant-isolation.html">Next: Querying as a Tenant Admin &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

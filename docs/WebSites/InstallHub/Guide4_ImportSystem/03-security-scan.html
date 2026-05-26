@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Scanning — Import System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Import System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-upload.html">Uploading a Package</a>
+  <a href="02-validation.html">Package Validation</a>
+  <a href="03-security-scan.html" class="active">Security Scanning</a>
+  <a href="04-id-remapping.html">ID Remapping</a>
+  <a href="05-install.html">Installation</a>
+  <a href="06-verification.html">Post-Install Verification</a>
+  <a href="07-rollback.html">Rollback on Failure</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Security Scanning</h1>
+    <p class="lead">Every package is scanned for malicious content before any artifact is installed. A FAIL result blocks the import entirely. A WARN requires explicit administrator acknowledgment.</p>
+  </div>
+
+  <h2>When Scanning Runs</h2>
+  <p>Security scanning runs immediately after checksum verification passes and before ID remapping or installation begins. This order ensures we never process potentially malicious content further than necessary.</p>
+
+  <h2>Scan Results</h2>
+  <table>
+    <thead>
+      <tr><th>Result</th><th>Meaning</th><th>Import Behavior</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-green">PASS</span></td>
+        <td>No issues detected</td>
+        <td>Import proceeds automatically</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-yellow">WARN</span></td>
+        <td>Potential issues — not definitively malicious</td>
+        <td>Import blocked unless <code>allowSecurityWarnings: true</code> is set by an authorized user</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-red">FAIL</span></td>
+        <td>Definitive security issue detected</td>
+        <td>Import blocked — cannot be overridden</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>What is Scanned</h2>
+
+  <h3>Expression Injection Detection</h3>
+  <p>All expression strings in workflow node configurations and form field bindings are scanned for dangerous patterns:</p>
+  <pre><code>// Examples that trigger FAIL:
+"expression": "user.__proto__.isAdmin = true"      // Prototype pollution
+"expression": "eval(atob('aGFja2Vk'))"             // eval() usage
+"expression": "constructor.constructor('hack')()"   // Constructor chain attack
+"expression": "${process.env.SECRET_KEY}"          // Environment access attempt
+
+// Examples that trigger WARN:
+"expression": "require('child_process').exec(cmd)" // Node.js require (unusual pattern)
+"expression": "window.location.href = url"        // DOM manipulation attempt</code></pre>
+
+  <h3>SQL Injection Pattern Detection</h3>
+  <p>SQL query strings in datasource configurations are checked for injection patterns:</p>
+  <pre><code>// FAIL patterns:
+"query": "SELECT * FROM users; DROP TABLE users; --"
+"query": "SELECT * FROM users WHERE id = ' OR '1'='1"
+
+// WARN patterns (parameterized queries missing):
+"query": "SELECT * FROM users WHERE id = " + userId  // String concatenation</code></pre>
+
+  <h3>Content Policy Check</h3>
+  <p>Artifact content is checked against a blocklist of forbidden keywords, domains, and patterns. This prevents packages containing:</p>
+  <ul>
+    <li>References to known malicious domains</li>
+    <li>Hardcoded API keys or credentials patterns</li>
+    <li>Base64-encoded executable content</li>
+    <li>Obfuscated code patterns</li>
+  </ul>
+
+  <h2>Full Scan Report in Response</h2>
+  <pre><code>{
+  "securityScanResult": "WARN",
+  "checks": [
+    {
+      "checkName": "ExpressionInjection",
+      "result":    "PASS",
+      "findings":  []
+    },
+    {
+      "checkName": "SqlInjection",
+      "result":    "WARN",
+      "findings": [
+        {
+          "artifactId":  "form-2005",
+          "artifactType": "AtlasForm",
+          "field":       "fields[2].dataSource.query",
+          "pattern":     "String concatenation in SQL query",
+          "severity":    "Warning",
+          "suggestion":  "Use parameterized queries instead"
+        }
+      ]
+    },
+    {
+      "checkName": "ContentPolicy",
+      "result":    "PASS",
+      "findings":  []
+    }
+  ]
+}</code></pre>
+
+  <p>For full details on the security scanning system, see <a href="../Guide8_SecurityScanning/index.html">Guide 8: Security Scanning</a>.</p>
+
+  <div class="page-nav">
+    <a href="02-validation.html">&#8592; Package Validation</a>
+    <a href="04-id-remapping.html">Next: ID Remapping &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

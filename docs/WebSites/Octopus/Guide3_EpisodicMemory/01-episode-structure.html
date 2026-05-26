@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Episode Structure — Episodic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Episodic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Episodic Memory Overview</a>
+  <a href="01-episode-structure.html" class="active">Episode Structure</a>
+  <a href="02-storage.html">Episode Storage</a>
+  <a href="03-recall.html">Recalling Past Episodes</a>
+  <a href="04-episode-boundaries.html">Episode Boundaries</a>
+  <a href="05-long-term.html">Long-Term Episode Retention</a>
+  <a href="06-privacy.html">Privacy and PII</a>
+  <a href="07-api.html">Episodic Memory API</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Episode Structure</h1>
+    <p class="lead">An <code>Episode</code> is the complete record of one conversation session — from the first message to the session close. It captures messages, tool calls, agents involved, metadata, and an optional summary embedding for semantic search.</p>
+  </div>
+
+  <h2>Episode Entity</h2>
+  <pre><code>public class Episode
+{
+    public Guid Id { get; init; }
+    public Guid SessionId { get; init; }      // = ConversationComposite.Id
+    public Guid AgentId { get; init; }
+    public Guid UserId { get; init; }
+    public string TenantId { get; init; }
+
+    // Content
+    public List&lt;EpisodeMessage&gt; Messages { get; set; }
+    public List&lt;ToolCallRecord&gt; ToolCalls { get; set; }
+
+    // Metadata
+    public DateTimeOffset StartedAt { get; init; }
+    public DateTimeOffset EndedAt { get; set; }
+    public EpisodeEndReason EndReason { get; set; } // UserClosed, Timeout, AgentClosed
+
+    // Summary for efficient search (generated at episode close)
+    public string? Summary { get; set; }       // LLM-generated summary of the session
+    public float[]? SummaryEmbedding { get; set; } // embedding of the summary
+
+    // Audit
+    public int MessageCount { get; set; }
+    public int TotalInputTokens { get; set; }
+    public int TotalOutputTokens { get; set; }
+}</code></pre>
+
+  <h2>EpisodeMessage</h2>
+  <pre><code>public class EpisodeMessage
+{
+    public int Ordinal { get; set; }          // position in conversation
+    public string Role { get; set; }           // "user", "assistant", "system", "tool"
+    public string Content { get; set; }
+    public DateTimeOffset Timestamp { get; set; }
+    public Guid? AgentId { get; set; }         // for multi-agent episodes
+    public bool ContainsPII { get; set; }      // flagged by PII detector
+    public string? RedactedContent { get; set; } // PII-scrubbed version
+}</code></pre>
+
+  <h2>Episode Summary Generation</h2>
+  <p>When a session ends, Octopus optionally generates a summary of the conversation using a lightweight LLM call. This summary is embedded and stored — enabling efficient semantic search across episodes without loading all messages:</p>
+  <pre><code>// Episode closure and summary generation
+public async Task CloseEpisodeAsync(Episode episode, bool generateSummary = true)
+{
+    episode.EndedAt = DateTimeOffset.UtcNow;
+
+    if (generateSummary && episode.MessageCount > 2)
+    {
+        var summaryPrompt = BuildSummaryPrompt(episode.Messages);
+        var summaryResponse = await _summaryLLM.CompleteAsync(
+            new[] { new LLMMessage(Role.User, summaryPrompt) },
+            tools: null,
+            new LLMOptions { MaxOutputTokens = 200 });
+
+        episode.Summary = summaryResponse.Content;
+        episode.SummaryEmbedding = await _embeddingProvider
+            .EmbedAsync(episode.Summary);
+    }
+
+    await _store.StoreAsync(episode);
+}</code></pre>
+
+  <h2>Episode in Database</h2>
+  <p>The episode is stored in the <code>Octopus_Episodes</code> SQL table. The message list is stored as a JSON column:</p>
+  <table>
+    <thead>
+      <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Id</td><td>uniqueidentifier</td><td>Primary key</td></tr>
+      <tr><td>SessionId</td><td>uniqueidentifier</td><td>FK to Octopus_Conversations</td></tr>
+      <tr><td>AgentId</td><td>uniqueidentifier</td><td>FK to Octopus_Agents</td></tr>
+      <tr><td>UserId</td><td>uniqueidentifier</td><td>FK to Octopus_Users</td></tr>
+      <tr><td>TenantId</td><td>nvarchar(100)</td><td>Tenant isolation key</td></tr>
+      <tr><td>MessagesJson</td><td>nvarchar(max)</td><td>JSON array of EpisodeMessage</td></tr>
+      <tr><td>Summary</td><td>nvarchar(2000)</td><td>LLM-generated summary</td></tr>
+      <tr><td>SummaryEmbedding</td><td>varbinary(max)</td><td>float[] serialized as binary</td></tr>
+      <tr><td>StartedAt / EndedAt</td><td>datetimeoffset</td><td>Session time range</td></tr>
+      <tr><td>MessageCount / TotalTokens</td><td>int</td><td>Usage statistics</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Episodic Memory Overview</a>
+    <a href="02-storage.html">Next: Episode Storage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

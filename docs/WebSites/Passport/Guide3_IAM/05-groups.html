@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User Groups — IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">IAM Overview</a>
+  <a href="01-roles.html">Roles</a>
+  <a href="02-permissions.html">Permissions</a>
+  <a href="03-policy-evaluation.html">Policy Evaluation</a>
+  <a href="04-resource-policies.html">Resource-Level Policies</a>
+  <a href="05-groups.html" class="active">User Groups</a>
+  <a href="06-runtime-checks.html">Runtime Permission Checks</a>
+  <a href="07-capability-integration.html">Integration with Node Capabilities</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>User Groups</h1>
+    <p class="lead">Groups provide team-level role assignment — add users to a group and all group members inherit the group's roles and resource policy assignments, simplifying access management at scale.</p>
+  </div>
+
+  <h2>Groups vs. Roles</h2>
+  <p>Groups are <strong>organizational</strong> — they represent teams, departments, or functional units. Roles are <strong>capability</strong> definitions — they define what permissions a user has. The connection: groups are assigned roles, and users are assigned to groups.</p>
+  <pre><code>// Hierarchy:
+User → Group → Role → Permission Set → Permission Strings
+User → Role  → Permission Set → Permission Strings  (direct role assignment)</code></pre>
+
+  <h2>Creating a Group</h2>
+  <pre><code>POST /passport/admin/groups
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "groupName": "finance-team",
+  "displayName": "Finance Team",
+  "description": "Accounts, payroll, and financial reporting staff",
+  "tenantId": "tenant-abc",
+  "roleIds": [
+    "role-finance-manager",
+    "role-report-viewer"
+  ]
+}
+
+// Response
+{
+  "groupId": "group-guid",
+  "groupName": "finance-team",
+  "memberCount": 0,
+  "createdAt": "2026-05-25T10:00:00Z"
+}</code></pre>
+
+  <h2>Group Membership Management</h2>
+  <pre><code>// Add users to a group
+POST /passport/admin/groups/{groupId}/members
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "userIds": ["user-guid-1", "user-guid-2", "user-guid-3"],
+  "tenantId": "tenant-abc"
+}
+
+// Remove a user from a group
+DELETE /passport/admin/groups/{groupId}/members/{userId}
+Authorization: Bearer {admin-token}
+
+// List group members
+GET /passport/admin/groups/{groupId}/members?page=1&pageSize=50
+Authorization: Bearer {admin-token}
+
+// List groups for a user
+GET /passport/admin/users/{userId}/groups
+Authorization: Bearer {admin-token}</code></pre>
+
+  <h2>Group-Based Resource Policies</h2>
+  <p>Resource policies can target groups using the <code>group:</code> prefix in <code>subjectIds</code>. All current and future members of the group automatically inherit the policy:</p>
+  <pre><code>{
+  "resourceType": "workflow",
+  "resourceId":   "payroll-workflow-guid",
+  "effect":       "Allow",
+  "permission":   "workflow.initiate",
+  "subjectIds":   ["group:group-guid-finance-team"],
+  "description":  "All finance team members can initiate payroll"
+}</code></pre>
+
+  <h2>IMembershipProvider and Groups</h2>
+  <p>The <code>IMembershipProvider</code> returns both directly-assigned roles and group-derived roles in a single call. The policy engine does not distinguish the source — all resolved role IDs are evaluated together.</p>
+  <pre><code>// For a user in group "finance-team" with direct role "viewer":
+var groups = await membership.GetUserGroupsAsync("user-guid", "tenant-abc", ct);
+// Returns: ["viewer", "finance-manager", "report-viewer"]
+// viewer = direct assignment
+// finance-manager, report-viewer = from finance-team group</code></pre>
+
+  <h2>Bulk Import from External Directory</h2>
+  <pre><code>// Sync groups from Azure AD or Okta at tenant onboarding
+POST /passport/admin/groups/sync-from-provider
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "provider": "AzureAD",
+  "tenantId": "tenant-abc",
+  "groupFilters": ["Finance*", "IT-*", "HR-Managers"],
+  "defaultRoleMapping": {
+    "Finance*":      ["finance-manager"],
+    "IT-*":          ["admin"],
+    "HR-Managers":   ["manager"]
+  },
+  "syncMembership": true
+}
+
+// Sync runs asynchronously — returns a job ID
+{
+  "syncJobId": "sync-job-guid",
+  "status": "queued",
+  "estimatedMinutes": 2
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Groups Simplify Offboarding</strong>
+    <p>When a user leaves the organization, removing them from all groups (or disabling their account) immediately revokes all group-derived permissions. No need to audit individual role assignments. For organizations with hundreds of users, group-based access management dramatically reduces administrative overhead.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-resource-policies.html">&#8592; Resource-Level Policies</a>
+    <a href="06-runtime-checks.html">Next: Runtime Permission Checks &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

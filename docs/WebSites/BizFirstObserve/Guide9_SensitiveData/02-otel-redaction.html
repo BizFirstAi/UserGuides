@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OTel Collector Redaction — Sensitive Data Handling | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Sensitive Data Handling</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Sensitive Data Overview</a>
+  <a href="01-log-sanitization.html">Log Sanitization in BizFirstGO</a>
+  <a href="02-otel-redaction.html" class="active">OTel Collector Redaction</a>
+  <a href="03-label-hygiene.html">Label Hygiene</a>
+  <a href="04-trace-attributes.html">Trace Attribute Filtering</a>
+  <a href="05-loki-access.html">Loki Access Controls</a>
+  <a href="06-gdpr-deletion.html">GDPR Deletion</a>
+  <a href="07-audit.html">Observability Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>OTel Collector Redaction</h1>
+    <p class="lead">The OpenTelemetry Collector's <code>redaction</code> processor acts as a central security checkpoint for all telemetry passing through — logs, spans, and metrics. It can block entire attribute keys, mask attribute values matching patterns, and drop telemetry records that contain forbidden content.</p>
+  </div>
+
+  <h2>Redaction Processor Configuration</h2>
+  <pre><code># otel-collector-config.yaml
+processors:
+  # Redaction processor — masks sensitive span and log attributes
+  redaction:
+    # Block these attribute keys entirely (value replaced with empty string):
+    blocked_values:
+      - "http.request.header.authorization"
+      - "http.request.header.x-api-key"
+      - "db.statement"              # SQL queries may contain PII
+      - "url.full"                  # URLs may contain tokens in query params
+
+    # Allow only these attribute keys (everything else is dropped):
+    # Use 'allow_all_keys: true' if you want to mask specific values instead
+    allow_all_keys: true
+
+    # Mask values matching these regex patterns:
+    blocked_values_patterns:
+      # Password patterns
+      - "password[^&amp;=]*=[^&amp;]*"
+      # Bearer tokens
+      - "bearer [a-zA-Z0-9._-]{20,}"
+      # AWS access keys
+      - "AKIA[0-9A-Z]{16}"
+      # Credit cards (simplified)
+      - "\\b[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}\\b"
+      # SSN
+      - "\\b[0-9]{3}-[0-9]{2}-[0-9]{4}\\b"</code></pre>
+
+  <h2>Transform Processor for Log Body Redaction</h2>
+  <pre><code># The redaction processor works on span/log attributes.
+# To redact content in the log BODY (the message text itself), use the transform processor:
+
+processors:
+  transform/redact-log-body:
+    log_statements:
+      - context: log
+        statements:
+          # Replace password values in log body JSON:
+          - replace_pattern(body, "\"password\":\\s*\"[^\"]+\"", "\"password\":\"[REDACTED]\"")
+          # Replace credit card patterns:
+          - replace_pattern(body, "\\b[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}\\b", "[CC-REDACTED]")
+          # Replace SSN patterns:
+          - replace_pattern(body, "\\b[0-9]{3}-[0-9]{2}-[0-9]{4}\\b", "[SSN-REDACTED]")</code></pre>
+
+  <h2>Pipeline Configuration with Redaction</h2>
+  <pre><code># otel-collector-config.yaml — complete pipeline with redaction
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors:
+        - memory_limiter
+        - batch
+        - transform/redact-log-body    # Redact log body content
+        - redaction                     # Redact span/log attributes
+        - resource/add-bizfirst-labels  # Add Loki labels
+      exporters: [loki]
+
+    traces:
+      receivers: [otlp]
+      processors:
+        - memory_limiter
+        - batch
+        - redaction                     # Redact trace span attributes
+        - tail_sampling
+      exporters: [otlp/tempo]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors:
+        - memory_limiter
+        - batch
+        # No redaction needed for metrics — labels should never contain PII
+        # (enforced by label hygiene policy — see Label Hygiene page)
+      exporters: [prometheusremotewrite]</code></pre>
+
+  <h2>Testing Redaction Effectiveness</h2>
+  <pre><code># Send a test span with known-sensitive attributes to verify redaction:
+# Use the OTel Collector's debug exporter to inspect what reaches the backend.
+
+# In otel-collector-config.yaml (temporarily add during testing):
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces/test:
+      receivers: [otlp]
+      processors: [redaction]
+      exporters: [debug]  # Output redacted spans to collector logs
+
+# Check collector output for the test span:
+docker compose logs otel-collector | grep "http.request.header.authorization"
+# Expected: no output (attribute should be blocked)
+# If the attribute appears: the redaction rule is not matching</code></pre>
+
+  <div class="callout warning">
+    <strong>Redaction Is Not Encryption</strong>
+    <p>The redaction processor replaces sensitive values with placeholder text — it does not encrypt or hash them. The original values are permanently discarded. If you need to preserve sensitive data in an encrypted form for audit purposes, that must be done in a separate secure audit system — not in Loki or Tempo.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-log-sanitization.html">&#8592; Log Sanitization in BizFirstGO</a>
+    <a href="03-label-hygiene.html">Next: Label Hygiene &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

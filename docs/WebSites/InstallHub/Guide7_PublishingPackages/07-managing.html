@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Managing Published Packages — Publishing Packages | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Publishing</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-publisher-profile.html">Publisher Profile</a>
+  <a href="02-preparing.html">Preparing the Package</a>
+  <a href="03-submitting.html">Submitting</a>
+  <a href="04-review.html">Review Process</a>
+  <a href="05-security-scan.html">Security Scan</a>
+  <a href="06-certification.html">Certification</a>
+  <a href="07-managing.html" class="active">Managing Published Packages</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Managing Published Packages</h1>
+    <p class="lead">Once published, packages can be updated with new versions, metadata can be edited, old versions can be deprecated, and packages can be unlisted. All operations preserve install history and existing installations.</p>
+  </div>
+
+  <div class="callout warning"><strong>Phase 3 — PENDING</strong> This feature is planned but not yet implemented.</div>
+
+  <h2>Publishing a New Version</h2>
+  <p>To update a package, submit a new version through the standard submission endpoint with an incremented SemVer version. The new version enters the review pipeline independently.</p>
+  <pre><code>POST /api/marketplace/submit
+// Same as initial submission — increment the version in manifest.json
+// The packageId in manifest must match the existing marketplace packageId
+
+// After the new version is listed:
+// - New installs receive the latest version
+// - Existing installs remain on their pinned version
+// - Tenants subscribed to update notifications receive an in-app alert</code></pre>
+
+  <h2>Updating Package Metadata</h2>
+  <p>Marketplace metadata (description, screenshots, tags) can be updated without resubmitting the package. Metadata updates do not require a new review.</p>
+  <pre><code>PATCH /api/marketplace/packages/{packageId}
+Authorization: Bearer {publisherToken}
+{
+  "description": "Updated description with improved clarity.",
+  "tags":        ["onboarding", "hr", "approval", "parallel-approvals"],
+  "screenshots": [
+    { "url": "https://acmecorp.com/screenshots/v3-flow.png", "caption": "v3.0 parallel approval flow" }
+  ]
+}
+
+// Response:
+{
+  "packageId":   "mkt-pkg-a1b2c3",
+  "updatedAt":   "2026-05-25T15:00:00Z",
+  "updatedFields": ["description", "tags", "screenshots"]
+}</code></pre>
+
+  <h2>Deprecating a Version</h2>
+  <p>Deprecating a version warns current installers without removing access. Use deprecation when a version has known issues and you want to guide users to a newer version.</p>
+  <pre><code>POST /api/marketplace/packages/{packageId}/versions/{version}/deprecate
+Authorization: Bearer {publisherToken}
+{
+  "reason":            "Critical bug in approval escalation logic — upgrade to 3.0.1 or later.",
+  "replacedByVersion": "3.0.1"
+}
+
+// Effect:
+// - Version marked as deprecated in marketplace
+// - Tenants with this version installed receive an urgent update notification
+// - Deprecated versions cannot be freshly installed — new installs use latest non-deprecated version
+// - Deprecated versions remain downloadable for tenants who have them pinned</code></pre>
+
+  <h2>Unlisting a Package</h2>
+  <p>Unlisting removes a package from marketplace discovery. Existing installations continue to work, and existing installs can still download their pinned version. Unlisting cannot be reversed without a new submission review.</p>
+  <pre><code>POST /api/marketplace/packages/{packageId}/unlist
+Authorization: Bearer {publisherToken}
+{
+  "reason": "Package superseded by 'acme-corp/onboarding-v2' which includes all functionality."
+}
+
+// Response:
+{
+  "packageId":   "mkt-pkg-a1b2c3",
+  "status":      "Unlisted",
+  "unlistedAt":  "2026-05-25T16:00:00Z",
+  "message":     "Package removed from search results. Existing installations remain functional."
+}</code></pre>
+
+  <h2>Version State Summary</h2>
+  <table>
+    <thead>
+      <tr><th>State</th><th>New Installs?</th><th>Existing Installs?</th><th>Appears in Search?</th><th>Update Notification?</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><span class="badge badge-green">Listed</span></td><td>Yes</td><td>Yes</td><td>Yes</td><td>—</td></tr>
+      <tr><td><span class="badge badge-yellow">Deprecated</span></td><td>No (redirected to latest)</td><td>Yes (with warning)</td><td>Yes (with badge)</td><td>Urgent notice sent</td></tr>
+      <tr><td><span class="badge badge-red">Unlisted</span></td><td>No</td><td>Yes</td><td>No</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Viewing Install Analytics</h2>
+  <pre><code>GET /api/marketplace/packages/{packageId}/analytics?period=30d
+
+{
+  "packageId":      "mkt-pkg-a1b2c3",
+  "period":         "30d",
+  "totalInstalls":  847,
+  "newInstalls":    63,
+  "activeVersions": {
+    "3.0.0": 312,
+    "2.2.0": 480,
+    "2.1.0": 55
+  },
+  "installsByDay": [
+    { "date": "2026-05-01", "count": 2 },
+    { "date": "2026-05-02", "count": 5 }
+  ],
+  "topInstallerRegions": ["US", "EU", "APAC"]
+}</code></pre>
+
+  <h2>Publisher Dashboard Summary</h2>
+  <pre><code>GET /api/marketplace/publishers/{publisherId}/dashboard
+
+{
+  "publisherId":    "pub-a1b2c3",
+  "totalPackages":  12,
+  "listedPackages": 10,
+  "totalInstalls":  4821,
+  "averageRating":  4.7,
+  "pendingSubmissions": 1,
+  "packages": [
+    {
+      "packageId":    "mkt-pkg-a1b2c3",
+      "name":         "Employee Onboarding",
+      "trustLevel":   "Certified",
+      "installs":     847,
+      "rating":       4.8,
+      "latestVersion": "3.0.0"
+    }
+  ]
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="06-certification.html">&#8592; Certification</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

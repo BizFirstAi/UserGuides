@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Package Validation — Import System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Import System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-upload.html">Uploading a Package</a>
+  <a href="02-validation.html" class="active">Package Validation</a>
+  <a href="03-security-scan.html">Security Scanning</a>
+  <a href="04-id-remapping.html">ID Remapping</a>
+  <a href="05-install.html">Installation</a>
+  <a href="06-verification.html">Post-Install Verification</a>
+  <a href="07-rollback.html">Rollback on Failure</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Package Validation</h1>
+    <p class="lead">Before any artifact is touched, the import engine runs three layers of validation: ZIP structure, manifest schema, and checksum integrity. Any failure at this stage blocks the import.</p>
+  </div>
+
+  <h2>Validation Layers</h2>
+
+  <h3>Layer 1 — ZIP Structure Validation</h3>
+  <table>
+    <thead><tr><th>Check</th><th>Failure</th></tr></thead>
+    <tbody>
+      <tr><td>File is a valid ZIP archive</td><td><code>InvalidZip</code></td></tr>
+      <tr><td><code>manifest.json</code> exists at root</td><td><code>ManifestMissing</code></td></tr>
+      <tr><td><code>README.md</code> exists at root</td><td><code>ReadmeMissing</code></td></tr>
+      <tr><td>No forbidden file types (.exe, .dll, .sh, .bat)</td><td><code>ForbiddenContent</code></td></tr>
+      <tr><td>No path traversal patterns (../)</td><td><code>PathTraversalDetected</code></td></tr>
+      <tr><td>No nested ZIP files</td><td><code>NestedArchiveDetected</code></td></tr>
+      <tr><td>All artifact paths declared in manifest are present in ZIP</td><td><code>ArtifactFileMissing</code></td></tr>
+      <tr><td>No extra files in artifacts/ not declared in manifest</td><td><code>UndeclaredArtifact</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>Layer 2 — Manifest Schema Validation</h3>
+  <table>
+    <thead><tr><th>Check</th><th>Failure</th></tr></thead>
+    <tbody>
+      <tr><td><code>manifestVersion</code> is a supported value</td><td><code>UnsupportedManifestVersion</code></td></tr>
+      <tr><td>All required fields are present and non-empty</td><td><code>ManifestFieldMissing</code></td></tr>
+      <tr><td><code>version</code> is valid SemVer</td><td><code>InvalidVersion</code></td></tr>
+      <tr><td><code>packageType</code> is a valid enum value</td><td><code>InvalidPackageType</code></td></tr>
+      <tr><td><code>exportedAt</code> is a valid ISO 8601 datetime</td><td><code>InvalidDatetime</code></td></tr>
+      <tr><td><code>artifacts</code> array has at least 1 item</td><td><code>EmptyArtifactList</code></td></tr>
+      <tr><td><code>installOrder</code> contains all artifact IDs</td><td><code>IncompleteInstallOrder</code></td></tr>
+      <tr><td>Every <code>artifacts[].type</code> is a valid artifact type</td><td><code>UnknownArtifactType</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>Layer 3 — Checksum Integrity</h3>
+  <table>
+    <thead><tr><th>Check</th><th>Failure</th></tr></thead>
+    <tbody>
+      <tr><td>Per-artifact hash matches each file's bytes</td><td><code>ArtifactHashMismatch</code></td></tr>
+      <tr><td>Bundle checksum matches all artifact bytes in install order</td><td><code>BundleChecksumMismatch</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Platform Version Check</h2>
+  <p>After schema validation, the import engine compares the manifest's <code>platformVersion</code> to the target platform:</p>
+  <pre><code>// manifest.platformVersion = "4.2.0"
+// target platform = "4.1.5"
+
+// Result: Warning (not blocking)
+{
+  "warning": "PlatformVersionMismatch",
+  "message": "This package was created on platform 4.2.0 but the target is 4.1.5. Some features may not be available.",
+  "packagePlatformVersion": "4.2.0",
+  "targetPlatformVersion":  "4.1.5"
+}</code></pre>
+
+  <h2>Package Dependency Check</h2>
+  <p>The engine checks that every package listed in <code>packageDependencies</code> is installed in the target tenant at a compatible version. Missing or incompatible dependencies block the import:</p>
+  <pre><code>{
+  "error":   "MissingPackageDependency",
+  "missing": [
+    { "packageName": "BizFirstGO.HRBase", "requiredMinVersion": "1.0.0", "installedVersion": null }
+  ]
+}</code></pre>
+
+  <h2>Validation Error Format</h2>
+  <pre><code>HTTP 400 Bad Request
+{
+  "error":   "ValidationFailed",
+  "message": "Package validation failed. Fix the errors below and retry.",
+  "errors": [
+    {
+      "layer":   "ZipStructure",
+      "code":    "ArtifactFileMissing",
+      "message": "File 'artifacts/forms/form-2005.json' declared in manifest but not found in ZIP"
+    },
+    {
+      "layer":   "ManifestSchema",
+      "code":    "InvalidVersion",
+      "message": "version '2.1' is not valid SemVer — expected major.minor.patch"
+    }
+  ]
+}</code></pre>
+
+  <div class="callout info">
+    <strong>All Errors Returned Together</strong>
+    The engine runs all validation layers before returning. You get a complete list of all issues at once rather than discovering them one by one.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-upload.html">&#8592; Uploading a Package</a>
+    <a href="03-security-scan.html">Next: Security Scanning &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

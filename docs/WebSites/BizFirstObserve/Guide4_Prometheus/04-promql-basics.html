@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromQL Basics — Prometheus Metrics | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Prometheus Metrics</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Prometheus Overview</a>
+  <a href="01-deployment.html">Deploying Prometheus</a>
+  <a href="02-scrape-config.html">Scrape Configuration</a>
+  <a href="03-bizfirst-metrics.html">BizFirst Metrics Reference</a>
+  <a href="04-promql-basics.html" class="active">PromQL Basics</a>
+  <a href="05-promql-examples.html">PromQL for BizFirstGO</a>
+  <a href="06-recording-rules.html">Recording Rules</a>
+  <a href="07-alerting.html">Prometheus Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>PromQL Basics</h1>
+    <p class="lead">PromQL (Prometheus Query Language) is a functional language for querying time series data. It supports instant queries (return a single value per series), range queries (return a matrix of values over time), and aggregation across label dimensions.</p>
+  </div>
+
+  <h2>Selectors</h2>
+  <pre><code># Select all series for a metric
+bizfirst_workflow_executions_total
+
+# Filter by label
+bizfirst_workflow_executions_total{tenant_id="t123"}
+bizfirst_workflow_executions_total{status="failed"}
+bizfirst_workflow_executions_total{tenant_id="t123", status="failed"}
+
+# Regex match on label
+bizfirst_node_execution_duration_seconds_count{node_type=~"DataFetchNode|ApiCallNode"}
+
+# Negative match
+bizfirst_workflow_executions_total{status!="success"}
+
+# Range vector — values over a time window (for rate/increase functions)
+bizfirst_workflow_executions_total[5m]</code></pre>
+
+  <h2>Key Functions</h2>
+  <table>
+    <thead>
+      <tr><th>Function</th><th>Input</th><th>Output</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>rate()</code></td><td>Counter range vector</td><td>Per-second rate</td><td>Error rate, throughput per second</td></tr>
+      <tr><td><code>increase()</code></td><td>Counter range vector</td><td>Total increase</td><td>Count of events in window</td></tr>
+      <tr><td><code>irate()</code></td><td>Counter range vector</td><td>Instantaneous rate</td><td>High-resolution rate (volatile)</td></tr>
+      <tr><td><code>histogram_quantile()</code></td><td>Bucket histogram</td><td>Quantile value</td><td>P50, P95, P99 latency</td></tr>
+      <tr><td><code>avg_over_time()</code></td><td>Gauge range vector</td><td>Average over window</td><td>Smoothed gauge values</td></tr>
+      <tr><td><code>delta()</code></td><td>Gauge range vector</td><td>Change in value</td><td>Rate of change for gauges</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Aggregation Operators</h2>
+  <pre><code># Sum across all tenants
+sum(bizfirst_hil_pending_count)
+
+# Sum and keep tenant_id label
+sum(bizfirst_hil_pending_count) by (tenant_id)
+
+# Average node latency across all node types
+avg(rate(bizfirst_node_execution_duration_seconds_sum[5m])
+  / rate(bizfirst_node_execution_duration_seconds_count[5m]))
+
+# Maximum HIL backlog across tenants
+max(bizfirst_hil_pending_count) by (tenant_id)
+
+# Count of tenants with HIL backlog > 10
+count(bizfirst_hil_pending_count > 10)</code></pre>
+
+  <h2>histogram_quantile — Latency Percentiles</h2>
+  <pre><code># P99 node execution latency by node type
+histogram_quantile(0.99,
+  sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+)
+
+# P50 and P95 for all node types combined
+histogram_quantile(0.50, sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (le))
+histogram_quantile(0.95, sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (le))
+
+# P99 for a specific tenant
+histogram_quantile(0.99,
+  sum(rate(bizfirst_node_execution_duration_seconds_bucket{tenant_id="t123"}[5m])) by (le)
+)</code></pre>
+
+  <h2>Arithmetic and Comparisons</h2>
+  <pre><code># Error rate ratio (failed / total)
+rate(bizfirst_workflow_executions_total{status="failed"}[5m])
+  /
+rate(bizfirst_workflow_executions_total[5m])
+
+# Percentage of HIL tasks that are overdue
+(bizfirst_hil_overdue_count / bizfirst_hil_pending_count) * 100
+
+# Alert condition: error rate > 5%
+(
+  rate(bizfirst_workflow_executions_total{status="failed"}[5m])
+  /
+  rate(bizfirst_workflow_executions_total[5m])
+) > 0.05</code></pre>
+
+  <div class="callout info">
+    <strong>PromQL in Grafana</strong>
+    <p>Grafana's Prometheus query editor provides PromQL autocomplete, metric explorer, label value suggestions, and real-time query validation. Press Shift+Enter to run the query. Use the "Explain" button (Grafana 9+) to get a step-by-step explanation of what a complex PromQL query is doing — extremely helpful when learning.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-bizfirst-metrics.html">&#8592; BizFirst Metrics Reference</a>
+    <a href="05-promql-examples.html">Next: PromQL for BizFirstGO &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>useMessage — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html">EdgeStreamProvider</a>
+  <a href="02-use-server.html">useEdgeStream</a>
+  <a href="03-use-subscription.html">useSubscription</a>
+  <a href="04-use-message.html" class="active">useMessage</a>
+  <a href="05-use-message-history.html">useConnectionStatus</a>
+  <a href="06-cleanup.html">Cleanup and Lifecycle</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>useMessage (Custom Hook Pattern)</h1>
+    <p class="lead">EdgeStream's React bindings provide <code>useSubscription</code> as the core hook. The <code>useMessage</code> and <code>useMessageHistory</code> patterns are built on top of it — you implement them using <code>useSubscription</code> + <code>useState</code>. This page shows the complete pattern.</p>
+  </div>
+
+  <h2>useMessage Pattern — Latest Message Only</h2>
+  <p>Build a hook that returns the latest message for a topic, causing a re-render on each new arrival:</p>
+  <pre><code>import { useState, useCallback } from 'react';
+import { useSubscription } from 'edge-stream-js-react';
+import type { IEnvelope } from 'edge-stream-js';
+
+export function useMessage&lt;T = unknown&gt;(serverId: string, topic: string) {
+  const [message, setMessage] = useState&lt;IEnvelope&lt;T&gt; | null&gt;(null);
+  const [receivedAt, setReceivedAt] = useState&lt;Date | null&gt;(null);
+
+  const handler = useCallback((envelope: IEnvelope&lt;T&gt;) =&gt; {
+    setMessage(envelope);
+    setReceivedAt(new Date());
+  }, []);
+
+  const { isSubscribed, error } = useSubscription(serverId, topic, handler);
+
+  return { message, receivedAt, isSubscribed, error };
+}</code></pre>
+
+  <h2>Using useMessage in a Component</h2>
+  <pre><code>function WorkflowStatusBadge({ workflowId }: { workflowId: string }) {
+  const { message, receivedAt } = useMessage&lt;{ status: string; progress: number }&gt;(
+    'bas',
+    `workflow.${workflowId}.status`
+  );
+
+  if (!message) return &lt;span&gt;Waiting...&lt;/span&gt;;
+
+  return (
+    &lt;div&gt;
+      &lt;span className={`badge badge-${message.body.status}`}&gt;
+        {message.body.status}
+      &lt;/span&gt;
+      &lt;span&gt;{message.body.progress}%&lt;/span&gt;
+      &lt;small&gt;Updated: {receivedAt?.toLocaleTimeString()}&lt;/small&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>useMessageHistory Pattern — N Most Recent Messages</h2>
+  <pre><code>import { useState, useCallback } from 'react';
+import { useSubscription } from 'edge-stream-js-react';
+import type { IEnvelope } from 'edge-stream-js';
+
+export function useMessageHistory&lt;T = unknown&gt;(
+  serverId: string,
+  topic: string,
+  maxCount = 50
+) {
+  const [messages, setMessages] = useState&lt;IEnvelope&lt;T&gt;[]&gt;([]);
+
+  const handler = useCallback((envelope: IEnvelope&lt;T&gt;) =&gt; {
+    setMessages(prev =&gt; {
+      const updated = [envelope, ...prev];
+      return updated.slice(0, maxCount); // keep only most recent N
+    });
+  }, [maxCount]);
+
+  const { isSubscribed, error } = useSubscription(serverId, topic, handler);
+
+  return { messages, isSubscribed, error };
+}</code></pre>
+
+  <h2>Using useMessageHistory for a Live Log Feed</h2>
+  <pre><code>function AuditLogFeed() {
+  const { messages, isSubscribed } = useMessageHistory&lt;{
+    action: string;
+    userId: string;
+    timestamp: string;
+  }&gt;('bas', 'audit.*', 100);
+
+  return (
+    &lt;div&gt;
+      &lt;h3&gt;Audit Log {isSubscribed ? '' : '(connecting...)'}&lt;/h3&gt;
+      &lt;ul style={{ maxHeight: '400px', overflow: 'auto' }}&gt;
+        {messages.map(msg =&gt; (
+          &lt;li key={msg.meta.id}&gt;
+            &lt;strong&gt;{msg.body.action}&lt;/strong&gt; by {msg.body.userId}
+            &lt;small&gt;{msg.body.timestamp}&lt;/small&gt;
+          &lt;/li&gt;
+        ))}
+      &lt;/ul&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Filtering in the Handler</h2>
+  <pre><code>// Only update state for messages that matter to this component
+function UserTaskList({ userId }: { userId: string }) {
+  const [tasks, setTasks] = useState([]);
+
+  const handler = useCallback((envelope) =&gt; {
+    // Filter inside the handler — no unnecessary re-renders for other users
+    if (envelope.body.assignedTo === userId) {
+      setTasks(prev =&gt; [...prev, envelope.body]);
+    }
+  }, [userId]);
+
+  useSubscription('bas', 'workflow.task.*', handler);
+
+  return &lt;TaskList tasks={tasks} /&gt;;
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Re-render Budget</strong>
+    Each call to <code>setMessage</code> or <code>setMessages</code> triggers a React re-render. For high-frequency topics (e.g., agent token streaming at 60 messages/second), consider batching state updates with a <code>useRef</code> accumulator and only calling <code>setState</code> on a throttled timer to stay within React's re-render budget.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-use-subscription.html">&#8592; useSubscription</a>
+    <a href="05-use-message-history.html">Next: useConnectionStatus &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

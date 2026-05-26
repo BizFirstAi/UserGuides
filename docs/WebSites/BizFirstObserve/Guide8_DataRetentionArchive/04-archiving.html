@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Archiving to Cold Storage — Data Retention & Archive | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Data Retention &amp; Archive</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Data Retention Overview</a>
+  <a href="01-loki-retention.html">Loki Log Retention</a>
+  <a href="02-prometheus-retention.html">Prometheus Metric Retention</a>
+  <a href="03-tempo-retention.html">Tempo Trace Retention</a>
+  <a href="04-archiving.html" class="active">Archiving to Cold Storage</a>
+  <a href="05-backup.html">Backup Strategies</a>
+  <a href="06-compliance.html">Compliance Retention</a>
+  <a href="07-cost-optimization.html">Cost Optimization</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Archiving to Cold Storage</h1>
+    <p class="lead">Cold storage archiving moves older data to cheaper storage tiers (S3 Glacier, Azure Archive, Google Coldline) while keeping it retrievable for compliance. Since Loki and Tempo already use S3 as their primary storage, archiving is handled by S3 Lifecycle Rules — no additional tooling required.</p>
+  </div>
+
+  <h2>S3 Lifecycle Rules for Loki Logs</h2>
+  <pre><code>{
+  "Rules": [
+    {
+      "ID": "loki-log-archive",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "loki/chunks/"},
+      "Transitions": [
+        {
+          "Days": 30,
+          "StorageClass": "STANDARD_IA"   // After 30 days: Infrequent Access (50% cheaper)
+        },
+        {
+          "Days": 90,
+          "StorageClass": "GLACIER"       // After 90 days: Glacier (80% cheaper than Standard)
+        },
+        {
+          "Days": 365,
+          "StorageClass": "DEEP_ARCHIVE"  // After 1 year: Deep Archive (cheapest)
+        }
+      ],
+      "Expiration": {
+        "Days": 2557                      // Delete after 7 years (2557 days)
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>S3 Lifecycle Rules for Tempo Traces</h2>
+  <pre><code>{
+  "Rules": [
+    {
+      "ID": "tempo-trace-archive",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "tempo/traces/"},
+      "Transitions": [
+        {
+          "Days": 7,
+          "StorageClass": "STANDARD_IA"   // After 7 days: cheaper storage
+        }
+      ],
+      "Expiration": {
+        "Days": 30                        // Delete traces after 30 days total
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>Prometheus Long-Term Archive via Thanos</h2>
+  <pre><code># Thanos automatically uploads Prometheus TSDB blocks to S3.
+# Apply lifecycle rules to the Thanos bucket for cost optimization:
+{
+  "Rules": [
+    {
+      "ID": "thanos-metrics-tiering",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "thanos/"},
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "STANDARD_IA"
+        },
+        {
+          "Days": 365,
+          "StorageClass": "GLACIER_IR"    // Glacier Instant Retrieval for fast access
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+  <h2>Cold Storage Retrieval</h2>
+  <p>Data in S3 Glacier requires a restore step before it can be queried. For compliance retrieval requests:</p>
+  <pre><code># Restore an S3 Glacier object (e.g., for a compliance audit request):
+aws s3api restore-object \
+  --bucket bizfirst-loki-logs \
+  --key "loki/chunks/tenant-financial-corp/2025/01/15/chunk-abc123.gz" \
+  --restore-request '{"Days": 7, "GlacierJobParameters": {"Tier": "Standard"}}'
+
+# "Standard" tier: restored within 3-5 hours
+# "Bulk" tier: restored within 5-12 hours (cheaper)
+# "Expedited" tier: restored within 1-5 minutes (more expensive)
+
+# After restoration, the object is accessible for the specified Days count.
+# Loki cannot directly query Glacier objects — you must restore to Standard first,
+# then optionally re-import into a temporary Loki instance for querying.</code></pre>
+
+  <div class="callout warning">
+    <strong>Plan Retrieval Before You Need It</strong>
+    <p>Glacier retrieval takes 3-12 hours for Standard tier. If a compliance audit requires logs from 6 months ago, you need to initiate the restore request well in advance of when the auditor needs to access the data. Document your retrieval procedure and test it annually as part of compliance exercises.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-tempo-retention.html">&#8592; Tempo Trace Retention</a>
+    <a href="05-backup.html">Next: Backup Strategies &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP Tools Overview — MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">MCP Tools Overview</a>
+  <a href="01-tool-schema.html">Tool Schema</a>
+  <a href="02-tool-registration.html">Tool Registration</a>
+  <a href="03-tool-call-loop.html">Tool Call Loop</a>
+  <a href="04-tool-results.html">Tool Results</a>
+  <a href="05-built-in-tools.html">Built-In Tools</a>
+  <a href="06-custom-tools.html">Custom Tools</a>
+  <a href="07-tool-security.html">Tool Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>MCP Tools Overview</h1>
+    <p class="lead">MCP (Model Context Protocol) is the standard Octopus uses for agent tool calling. Tools are functions the LLM can request execution of — database queries, API calls, workflow triggers, email sends. The LLM decides when to call a tool; the runtime executes it and returns the result.</p>
+  </div>
+
+  <h2>What Is MCP?</h2>
+  <p>MCP is a protocol that standardises how LLMs describe and call tools. Each tool has a JSON Schema definition that the LLM uses to construct valid tool call requests. Octopus's <code>MCPToolRegistry</code> manages all registered tools per agent:</p>
+  <pre><code>// MCP tool definition (what the LLM sees)
+{
+  "name":        "get_employee_leave_balance",
+  "description": "Returns the remaining leave days for a given employee.",
+  "input_schema": {
+    "type":     "object",
+    "properties": {
+      "employeeId": {
+        "type":        "string",
+        "description": "The employee's unique identifier"
+      }
+    },
+    "required": ["employeeId"]
+  }
+}</code></pre>
+
+  <h2>The Tool Call Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>LLM Receives Tool Schemas</strong>
+        <span>All registered tools are sent with every LLM call as the <code>tools</code> parameter. The LLM knows what tools are available.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>LLM Decides to Call a Tool</strong>
+        <span>The LLM response contains a <code>tool_calls</code> array instead of (or alongside) text content.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Runtime Executes the Tool</strong>
+        <span><code>MCPToolRegistry.ExecuteAsync</code> looks up the registered handler and invokes it with the LLM-provided arguments.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Result Appended to History</strong>
+        <span>Tool call + result messages appended to working memory as a required consecutive pair.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>LLM Continues</strong>
+        <span>Another LLM call is made with the tool result in context. LLM either calls another tool or produces a final text response.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Tool Categories</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Data Query Tools</h4>
+      <p>Query databases, APIs, or service endpoints. Return structured data the LLM can use to form answers. Examples: <code>get_leave_balance</code>, <code>lookup_vendor</code>, <code>search_inventory</code>.</p>
+    </div>
+    <div class="card">
+      <h4>Action Tools</h4>
+      <p>Create, update, or trigger things. Examples: <code>create_vendor</code>, <code>send_email</code>, <code>submit_expense_report</code>, <code>start_workflow</code>.</p>
+    </div>
+    <div class="card">
+      <h4>Workflow Tools</h4>
+      <p>Trigger Flow Studio workflows or hand off to other agents. The ProcessPlugin provides these automatically when the agent is linked to workflows.</p>
+    </div>
+  </div>
+
+  <h2>MCPToolRegistry</h2>
+  <pre><code>public class MCPToolRegistry
+{
+    private readonly Dictionary&lt;string, MCPTool&gt; _tools = new();
+
+    // Register a tool with its schema and handler
+    public void Register(MCPTool tool) => _tools[tool.Name] = tool;
+
+    // Get all tool schemas for the LLM call
+    public IReadOnlyList&lt;ToolDefinition&gt; GetSchemas()
+        => _tools.Values.Select(t => t.Schema).ToList();
+
+    // Execute a tool call
+    public async Task&lt;string&gt; ExecuteAsync(
+        ToolCallRequest request,
+        ConversationContext context,
+        CancellationToken ct)
+    {
+        if (!_tools.TryGetValue(request.Name, out var tool))
+            return JsonSerializer.Serialize(new { error = $"Unknown tool: {request.Name}" });
+
+        return await tool.Handler(request.Input, context, ct);
+    }
+}</code></pre>
+
+  <h2>Tool Limits and Best Practices</h2>
+  <table>
+    <thead>
+      <tr><th>Guideline</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Keep tool count below 20 per agent</td><td>Too many tools confuses the LLM — it may choose the wrong one</td></tr>
+      <tr><td>Write clear, specific descriptions</td><td>The LLM uses the description to decide when to call the tool</td></tr>
+      <tr><td>Return minimal data</td><td>Large tool results consume tokens and may overflow the context budget</td></tr>
+      <tr><td>Never expose admin operations as tools</td><td>The LLM is not an authorisation layer — use tool security guards</td></tr>
+      <tr><td>Truncate large results</td><td>Use <code>ToolResultTruncator</code> to cap output to 2000 tokens</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-tool-schema.html">Next: Tool Schema &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

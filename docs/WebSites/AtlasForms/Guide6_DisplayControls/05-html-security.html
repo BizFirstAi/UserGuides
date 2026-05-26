@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTML Control Security — Display Controls | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Display Controls</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-label.html">Label Control</a>
+  <a href="02-header.html">Header Control</a>
+  <a href="03-image.html">Image Control</a>
+  <a href="04-html.html">HTML Control</a>
+  <a href="05-html-security.html" class="active">HTML Control Security</a>
+  <a href="06-file-upload.html">File Upload</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>HTML Control Security</h1>
+    <p class="lead">The HTML control uses a 6-layer XSS prevention pipeline. Each layer provides independent protection so that if one layer is bypassed, subsequent layers catch the attack. More than 28 known XSS vectors are blocked across these layers.</p>
+  </div>
+
+  <h2>The 6-Layer Pipeline</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>DOMPurify (primary sanitiser)</strong>
+        <p>Industry-standard HTML sanitiser. Parses the input into a DOM tree and strips disallowed nodes and attributes. Configured with <code>ALLOWED_TAGS</code> and <code>ALLOWED_ATTR</code> whitelists.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Custom sanitiser hooks</strong>
+        <p>DOMPurify <code>BEFORE_SANITIZE_ELEMENT</code> and <code>AFTER_SANITIZE_ATTRIBUTES</code> hooks apply additional rules not covered by the standard whitelist. Strips <code>javascript:</code> in href values, data URIs in img src, and mXSS patterns.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Content Security Policy (CSP)</strong>
+        <p>HTTP header <code>Content-Security-Policy</code> set by the Atlas Forms server prevents execution of inline scripts even if a script tag somehow reaches the DOM. <code>script-src 'self'</code> blocks all inline script execution.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Tag whitelist enforcement</strong>
+        <p>After DOMPurify runs, a secondary tag-list check validates every element in the sanitised output against the 17-tag allowed list. Any element not in the list is replaced with its text content.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>Event-handler stripping</strong>
+        <p>All <code>on*</code> attribute names (onclick, onload, onerror, etc.) are stripped by a regex pass over the sanitised HTML string before it is inserted into the DOM. This is a final backstop for browser-specific DOMPurify bypasses.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">6</div>
+      <div class="step-content">
+        <strong>Style injection blocking</strong>
+        <p>All <code>style</code> attributes and <code>&lt;style&gt;</code> elements are removed. CSS injection can be used to exfiltrate data through background-image URLs or create phishing overlays. Blocking all inline styles is the safest approach.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>DOMPurify Configuration</h2>
+  <pre><code>import DOMPurify from 'dompurify';
+
+const ALLOWED_TAGS = [
+  'p', 'br', 'hr', 'div', 'span',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'strong', 'em', 'u', 'code', 'pre',
+  'ul', 'ol', 'li',
+  'a', 'blockquote', 'img'
+];
+
+const ALLOWED_ATTR = [
+  'href', 'target', 'rel',   // a
+  'src', 'alt', 'width', 'height',  // img
+  'class', 'id'
+];
+
+const config = {
+  ALLOWED_TAGS,
+  ALLOWED_ATTR,
+  ALLOW_DATA_ATTR: false,
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+  FORCE_BODY: true,
+};
+
+export function sanitizeHtml(dirty: string): string {
+  return DOMPurify.sanitize(dirty, config);
+}</code></pre>
+
+  <h2>Custom Hook: javascript: href Blocking</h2>
+  <pre><code>DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  // Block javascript: protocol in href
+  if (node.hasAttribute('href')) {
+    const href = node.getAttribute('href') ?? '';
+    if (/^javascript:/i.test(href.trim())) {
+      node.removeAttribute('href');
+    }
+  }
+
+  // Block data: URIs in img src (potential XSS vector)
+  if (node.tagName === 'IMG' && node.hasAttribute('src')) {
+    const src = node.getAttribute('src') ?? '';
+    if (/^data:/i.test(src.trim())) {
+      node.removeAttribute('src');
+    }
+  }
+
+  // Force noopener on external links
+  if (node.tagName === 'A' && node.getAttribute('target') === '_blank') {
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
+});</code></pre>
+
+  <h2>Blocked Attack Vectors (28+)</h2>
+  <table>
+    <thead><tr><th>Category</th><th>Example Vector</th><th>Blocked By</th></tr></thead>
+    <tbody>
+      <tr><td>Script injection</td><td><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></td><td>Layer 1 (DOMPurify tag whitelist)</td></tr>
+      <tr><td>Event handler</td><td><code>&lt;img onload="alert(1)"&gt;</code></td><td>Layer 1 + Layer 5</td></tr>
+      <tr><td>JavaScript href</td><td><code>&lt;a href="javascript:alert(1)"&gt;</code></td><td>Layer 2 (custom hook)</td></tr>
+      <tr><td>SVG script</td><td><code>&lt;svg&gt;&lt;script&gt;...&lt;/script&gt;&lt;/svg&gt;</code></td><td>Layer 1</td></tr>
+      <tr><td>Data URI</td><td><code>&lt;img src="data:text/html,&lt;script&gt;..."&gt;</code></td><td>Layer 2 (custom hook)</td></tr>
+      <tr><td>Style injection</td><td><code>&lt;div style="background:url()"&gt;</code></td><td>Layer 6</td></tr>
+      <tr><td>CSS import</td><td><code>&lt;style&gt;@import url(evil.css)&lt;/style&gt;</code></td><td>Layer 6</td></tr>
+      <tr><td>mXSS</td><td>Malformed HTML parsed differently by browsers</td><td>Layer 1 + Layer 2</td></tr>
+      <tr><td>Object/embed</td><td><code>&lt;object data="evil.swf"&gt;</code></td><td>Layer 1</td></tr>
+      <tr><td>Form hijack</td><td><code>&lt;form action="evil.com"&gt;</code></td><td>Layer 1</td></tr>
+      <tr><td>Meta redirect</td><td><code>&lt;meta http-equiv="refresh"&gt;</code></td><td>Layer 1</td></tr>
+      <tr><td>Base tag</td><td><code>&lt;base href="evil.com"&gt;</code></td><td>Layer 1</td></tr>
+      <tr><td>Inline script CSP bypass</td><td><code>&lt;p&gt;&lt;/p&gt;&lt;script&gt;...&lt;/script&gt;</code></td><td>Layer 1 + Layer 3 (CSP)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Security Guarantees</h2>
+  <ul>
+    <li>No JavaScript can execute from content rendered by the html control</li>
+    <li>No external stylesheet can be loaded or injected</li>
+    <li>All external links open in new tabs with <code>rel="noopener noreferrer"</code></li>
+    <li>No form elements can be injected to create phishing inputs</li>
+    <li>No navigation redirects via meta tags</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Security Applies to Form-Author Content Only</strong>
+    The html control is designed for content written by trusted form authors in Form Studio. If your application allows end-users to provide HTML content that is then stored in a form schema and rendered by the html control, you are bypassing the intended security boundary. Always validate and sanitise user-provided content on the server before it enters a form schema.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-html.html">&#8592; HTML Control</a>
+    <a href="06-file-upload.html">Next: File Upload &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

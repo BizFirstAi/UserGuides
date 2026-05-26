@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tempo HA — Enterprise Options | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Enterprise Options</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Enterprise Options Overview</a>
+  <a href="01-loki-distributed.html">Loki Distributed Mode</a>
+  <a href="02-thanos.html">Thanos for Metrics HA</a>
+  <a href="03-tempo-ha.html" class="active">Tempo HA</a>
+  <a href="04-grafana-enterprise.html">Grafana Enterprise</a>
+  <a href="05-kubernetes.html">Kubernetes Native Scaling</a>
+  <a href="06-multi-region.html">Multi-Region Observability</a>
+  <a href="07-cost.html">Enterprise Cost Model</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Tempo HA</h1>
+    <p class="lead">Tempo supports distributed deployment for high availability. With S3 as the backend, multiple Tempo ingesters can accept spans simultaneously — if one ingester fails, others continue without data loss. The S3 backend provides the durability; ingester replicas provide the write availability.</p>
+  </div>
+
+  <h2>Tempo Distributed Components</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Role</th><th>Replicas for HA</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Distributor</strong></td><td>Receives OTLP traces; routes to ingesters via consistent hash ring</td><td>2+</td></tr>
+      <tr><td><strong>Ingester</strong></td><td>Buffers spans in WAL; flushes blocks to S3</td><td>3 (replication factor 3)</td></tr>
+      <tr><td><strong>Querier</strong></td><td>Executes TraceQL queries against S3 and ingester cache</td><td>2+</td></tr>
+      <tr><td><strong>Query Frontend</strong></td><td>Caches and shards queries</td><td>2</td></tr>
+      <tr><td><strong>Compactor</strong></td><td>Merges blocks; enforces retention</td><td>1 (singleton)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Tempo HA Helm Configuration</h2>
+  <pre><code># tempo-distributed-values.yaml
+tempo-distributed:
+  ingester:
+    replicas: 3
+    config:
+      replication_factor: 3     # Write to 3 ingesters simultaneously
+    persistence:
+      enabled: true
+      size: 10Gi
+
+  distributor:
+    replicas: 2
+
+  querier:
+    replicas: 2
+
+  compactor:
+    replicas: 1
+
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: bizfirst-tempo-traces
+        endpoint: s3.amazonaws.com
+        region: us-east-1
+        access_key: ${AWS_ACCESS_KEY}
+        secret_key: ${AWS_SECRET_KEY}
+
+# Install:
+helm install tempo grafana/tempo-distributed \
+  --namespace observe \
+  --values tempo-distributed-values.yaml</code></pre>
+
+  <h2>Is Tempo HA Worth the Complexity?</h2>
+  <p>Tempo HA adds significant operational complexity. Consider the trade-offs before upgrading:</p>
+  <table>
+    <thead>
+      <tr><th>Factor</th><th>Single-Node Tempo</th><th>Tempo HA</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Write HA</td><td>No — single point of failure</td><td>Yes — 3 replicas, replication factor 3</td></tr>
+      <tr><td>Data durability</td><td>S3 backend: 11-nines durability</td><td>Same — S3 backend</td></tr>
+      <tr><td>Trace loss on ingester failure</td><td>WAL data in memory is lost</td><td>Other ingesters have the data (replication factor)</td></tr>
+      <tr><td>Operational complexity</td><td>Low — single process</td><td>High — 5 component types, ring coordination</td></tr>
+      <tr><td>Resource cost</td><td>~4 CPU, ~8 GB RAM</td><td>~16 CPU, ~32 GB RAM</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Trace Loss During Single-Node Downtime Is Acceptable</strong>
+    <p>For most BizFirstGO deployments, losing a few minutes of traces during a Tempo restart is acceptable — traces are a debugging aid, not a system of record. The WAL ensures that buffered traces are persisted locally before an orderly shutdown. Consider Tempo HA only if you have a hard requirement for zero trace loss and cannot tolerate brief ingestion gaps during Kubernetes rolling updates.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-thanos.html">&#8592; Thanos for Metrics HA</a>
+    <a href="04-grafana-enterprise.html">Next: Grafana Enterprise &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

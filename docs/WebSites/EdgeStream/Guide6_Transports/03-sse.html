@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSE Transport — Transports | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Transports</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Transport Overview</a>
+  <a href="01-signalr.html">SignalR Transport</a>
+  <a href="02-websocket.html">WebSocket Transport</a>
+  <a href="03-sse.html" class="active">SSE Transport</a>
+  <a href="04-choosing.html">Choosing a Transport</a>
+  <a href="05-connection-lifecycle.html">Connection Lifecycle</a>
+  <a href="06-custom-transport.html">Custom Transport</a>
+  <a href="07-multiple-transports.html">Multiple Transports</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>SSE Transport</h1>
+    <p class="lead"><code>SseTransport</code> uses the browser's <code>EventSource</code> API for server-sent events — a one-way (server to client only) streaming channel. Calling <code>send()</code> throws; clients must use a separate HTTP channel to push data to the server.</p>
+  </div>
+
+  <h2>Configuration</h2>
+  <pre><code>stream.registerServer({
+  id: 'notifications',
+  type: 'bas',
+  url: '/api/events/stream',
+  transportConfig: {
+    type: 'sse',
+    url: '/api/events/stream',
+
+    // Auth and filtering via query params
+    queryParams: {
+      token: authStore.getToken(),
+      tenantId: tenantId,
+    },
+  }
+});</code></pre>
+
+  <h2>Subscriptions Work Normally</h2>
+  <p>From the subscriber's perspective, SSE is transparent — you subscribe the same way as any other transport:</p>
+  <pre><code>// Subscribe to notifications — works identically for SSE, WebSocket, or SignalR
+stream.subscribe('notifications', 'notification.*', (envelope) =&gt; {
+  notificationStore.push({
+    id: envelope.meta.id,
+    topic: envelope.meta.topic,
+    body: envelope.body,
+    receivedAt: envelope.meta.receivedAt,
+  });
+});</code></pre>
+
+  <h2>Sending Data via HTTP</h2>
+  <p>Since SSE is read-only, use a standard HTTP call for any client-to-server communication:</p>
+  <pre><code>// SSE transport for receiving
+stream.registerServer({
+  id: 'notifications',
+  type: 'bas',
+  url: '/api/events/stream',
+  transportConfig: { type: 'sse', url: '/api/events/stream', queryParams: { token } }
+});
+
+// Separate HTTP client for sending — do NOT call stream.send()
+async function markNotificationRead(notificationId: string) {
+  await fetch('/api/notifications/read', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${authStore.getToken()}` },
+    body: JSON.stringify({ notificationId }),
+  });
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>send() Throws on SSE</strong>
+    Calling <code>stream.send('notifications', ...)</code> will throw an error: <em>"Cannot send data via SSE transport (server-to-client only)"</em>. SSE is receive-only by design. Always pair an SSE transport with HTTP endpoints for outbound communication.
+  </div>
+
+  <h2>Event Types</h2>
+  <p>SseTransport listens to both standard <code>message</code> and custom <code>data</code> event types from the server:</p>
+  <pre><code>// Both of these server-sent event types are handled:
+// data: {...}\n\n        → standard SSE message event
+// event: data\n          → custom "data" event type
+
+// Server-side (ASP.NET Core) example:
+// await response.WriteAsync("data: " + json + "\n\n");</code></pre>
+
+  <h2>Reconnection</h2>
+  <p>When the SSE connection drops (EventSource closes), SseTransport reconnects with exponential backoff — identical to the WebSocket transport's retry logic:</p>
+  <pre><code>// Reconnect: 1s → 2s → 4s → 8s → 16s → 30s (capped)
+// maxAttempts: 0 (unlimited by default)</code></pre>
+
+  <h2>Use Cases</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Good Fit for SSE?</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Real-time notification feed (no replies needed)</td><td>Yes — ideal</td></tr>
+      <tr><td>Live dashboard metrics (server pushes only)</td><td>Yes — ideal</td></tr>
+      <tr><td>Chat with message replies</td><td>No — use WebSocket or SignalR</td></tr>
+      <tr><td>Workflow events with form submissions</td><td>No — use SignalR</td></tr>
+      <tr><td>Read-only audit event stream</td><td>Yes — ideal</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-websocket.html">&#8592; WebSocket Transport</a>
+    <a href="04-choosing.html">Next: Choosing a Transport &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

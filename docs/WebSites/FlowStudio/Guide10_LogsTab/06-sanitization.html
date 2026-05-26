@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log Sanitization — Logs Tab | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display;flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Logs Tab</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Logs Tab Overview</a>
+  <a href="01-log-entry.html">Log Entry Anatomy</a>
+  <a href="02-level-filter.html">Filtering by Level</a>
+  <a href="03-node-filter.html">Filtering by Node</a>
+  <a href="04-text-search.html">Text Search</a>
+  <a href="05-virtualization.html">Virtual Scrolling</a>
+  <a href="06-sanitization.html" class="active">Log Sanitization</a>
+  <a href="07-expand-detail.html">Expanding a Log Entry</a>
+  <a href="08-trace-id.html">OpenTelemetry Trace ID</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Log Sanitization</h1>
+    <p class="lead">The <code>sanitize()</code> function runs on every log entry before it is displayed in the UI. It strips patterns that should not appear in a browser interface — credential-like strings, PII patterns, and HTML tags.</p>
+  </div>
+
+  <h2>What sanitize() Strips</h2>
+  <table>
+    <thead><tr><th>Pattern</th><th>Replacement</th><th>Examples</th></tr></thead>
+    <tbody>
+      <tr><td>JWT tokens (three base64url segments)</td><td><code>[REDACTED:JWT]</code></td><td>Bearer eyJhbG...</td></tr>
+      <tr><td>16-digit credit card patterns</td><td><code>[REDACTED:CC]</code></td><td>4111111111111111</td></tr>
+      <tr><td>Known password field names + value</td><td><code>password=[REDACTED]</code></td><td>password=secret123</td></tr>
+      <tr><td>Known secret field names + value</td><td><code>apiKey=[REDACTED]</code></td><td>apiKey=sk-abc123</td></tr>
+      <tr><td>HTML tags</td><td>Tags stripped, text retained</td><td>&lt;script&gt;alert()&lt;/script&gt;</td></tr>
+      <tr><td>User home directory paths</td><td><code>[REDACTED:PATH]</code></td><td>C:\Users\binoy\secrets.json</td></tr>
+    </tbody>
+  </table>
+
+  <h2>sanitize() Source</h2>
+  <pre><code>// flow-observer-core/src/sanitization/sanitize.ts
+const JWT_PATTERN = /\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g;
+const CC_PATTERN = /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g;
+const PASSWORD_PATTERN = /\b(password|passwd|secret|apikey|api_key|token)\s*=\s*\S+/gi;
+const HTML_PATTERN = /&lt;[^&gt;]+&gt;/g;
+const HOME_PATH_WIN = /C:\\Users\\[^\\]+\\/gi;
+const HOME_PATH_UNIX = /\/home\/[^/]+\//gi;
+
+export function sanitize(text: string): string {
+  return text
+    .replace(JWT_PATTERN, '[REDACTED:JWT]')
+    .replace(CC_PATTERN, '[REDACTED:CC]')
+    .replace(PASSWORD_PATTERN, (m, key) =&gt; `${key}=[REDACTED]`)
+    .replace(HTML_PATTERN, '')
+    .replace(HOME_PATH_WIN, '[REDACTED:PATH]\\')
+    .replace(HOME_PATH_UNIX, '[REDACTED:PATH]/');
+}</code></pre>
+
+  <h2>When Sanitization Runs</h2>
+  <p>Sanitization runs on the <strong>display path only</strong> — not in the buffer. The raw log entry (with all original fields) is stored in <code>flowObserverPanelStore.logs</code>. The <code>sanitize()</code> call happens inside the <code>LogRow</code> render function:</p>
+  <pre><code>// Inside LogRow component
+const displayMessage = useMemo(
+  () =&gt; sanitize(log.message),
+  [log.message]
+);</code></pre>
+  <p>This means the Log Detail tab shows the sanitized version, and the text search also operates on sanitized text.</p>
+
+  <div class="callout warning">
+    <strong>Not a Security Boundary</strong>
+    Sanitization is a UI convenience to prevent accidental credential exposure in shared screen sessions or screenshots. The raw log data is transmitted over the authenticated WebSocket connection. Do not rely on <code>sanitize()</code> as a security control — sanitize sensitive data at the source (the executor) instead.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-virtualization.html">&#8592; Virtual Scrolling</a>
+    <a href="07-expand-detail.html">Next: Expanding a Log Entry &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

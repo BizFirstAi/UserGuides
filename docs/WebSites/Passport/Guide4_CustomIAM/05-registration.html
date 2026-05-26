@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registering Custom Extensions — Custom IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Custom IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom IAM Overview</a>
+  <a href="01-custom-resolver.html">Custom Permission Resolver</a>
+  <a href="02-custom-role-provider.html">Custom Role Provider</a>
+  <a href="03-attribute-conditions.html">Attribute-Based Conditions</a>
+  <a href="04-combining.html">Combining with Built-In IAM</a>
+  <a href="05-registration.html" class="active">Registering Custom Extensions</a>
+  <a href="06-testing.html">Testing Custom IAM</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Registering Custom Extensions</h1>
+    <p class="lead">Register custom permission resolvers and role providers through ASP.NET Core DI — control evaluation order, configure lifetimes, and understand short-circuit behavior.</p>
+  </div>
+
+  <h2>Registration Methods</h2>
+  <pre><code>// Program.cs — register custom IAM extensions
+builder.Services
+    .AddPassportAuthentication(opts =&gt; { /* ... */ })
+
+    // Custom permission resolvers — evaluated in registration order
+    .AddCustomPermissionResolver&lt;ContractorRestrictionResolver&gt;()
+    .AddCustomPermissionResolver&lt;BusinessHoursResolver&gt;()
+    .AddCustomPermissionResolver&lt;ClearanceLevelResolver&gt;()
+
+    // Custom role providers — all run, results merged
+    .AddCustomRoleProvider&lt;ProjectRoleProvider&gt;()
+    .AddCustomRoleProvider&lt;OnCallRoleProvider&gt;();</code></pre>
+
+  <h2>Extension Methods Signature</h2>
+  <pre><code">// AddCustomPermissionResolver — adds a resolver to the pipeline
+public static IServiceCollection AddCustomPermissionResolver&lt;TResolver&gt;(
+    this IServiceCollection services,
+    ServiceLifetime lifetime = ServiceLifetime.Scoped)
+    where TResolver : class, ICustomPermissionResolver;
+
+// AddCustomRoleProvider — adds a role provider
+public static IServiceCollection AddCustomRoleProvider&lt;TProvider&gt;(
+    this IServiceCollection services,
+    ServiceLifetime lifetime = ServiceLifetime.Scoped)
+    where TProvider : class, ICustomRoleProvider;</code></pre>
+
+  <h2>Recommended Lifetimes</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Lifetime</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Resolver with HttpContext dependency</td><td>Scoped</td><td>HttpContext is scoped to the request</td></tr>
+      <tr><td>Resolver with IMemoryCache only</td><td>Singleton</td><td>IMemoryCache is singleton; resolver is stateless</td></tr>
+      <tr><td>Resolver with database access</td><td>Scoped</td><td>DbContext is scoped; opens a new connection per request</td></tr>
+      <tr><td>Resolver calling external HTTP API</td><td>Scoped or Singleton with IHttpClientFactory</td><td>HttpClient should use IHttpClientFactory pattern</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Conditional Registration</h2>
+  <pre><code">// Only register custom IAM in production or when a feature flag is set
+if (builder.Environment.IsProduction())
+{
+    builder.Services
+        .AddCustomPermissionResolver&lt;ContractorRestrictionResolver&gt;()
+        .AddCustomRoleProvider&lt;ProjectRoleProvider&gt;();
+}
+
+// Feature flag controlled registration
+if (builder.Configuration.GetValue&lt;bool&gt;("Features:AdvancedIAM"))
+{
+    builder.Services.AddCustomPermissionResolver&lt;ClearanceLevelResolver&gt;();
+}</code></pre>
+
+  <h2>Complete Program.cs Example</h2>
+  <pre><code">var builder = WebApplication.CreateBuilder(args);
+
+// Configure services
+builder.Services
+    .AddHttpContextAccessor()
+    .AddMemoryCache()
+
+    // Passport authentication
+    .AddPassportAuthentication(opts =&gt;
+    {
+        opts.Authority   = builder.Configuration["Passport:Authority"];
+        opts.ClientId    = builder.Configuration["Passport:ClientId"];
+        opts.ClientSecret= builder.Configuration["Passport:ClientSecret"];
+    })
+    .AddPassportClient()
+
+    // Custom IAM pipeline
+    .AddCustomPermissionResolver&lt;ContractorRestrictionResolver&gt;()
+    .AddCustomPermissionResolver&lt;BusinessHoursResolver&gt;()
+    .AddCustomRoleProvider&lt;ProjectRoleProvider&gt;()
+
+    // Dependencies used by custom resolvers
+    .AddScoped&lt;IUserProfileService, UserProfileService&gt;()
+    .AddScoped&lt;IProjectRepository, ProjectRepository&gt;()
+
+    // Authorization
+    .AddAuthorization(opts =&gt;
+    {
+        opts.AddPolicy("Finance", p =&gt; p.RequireClaim("roles", "finance-manager", "admin"));
+        opts.AddPolicy("Admin",   p =&gt; p.RequireClaim("roles", "admin"));
+    });
+
+var app = builder.Build();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+app.Run();</code></pre>
+
+  <div class="callout info">
+    <strong>Order Matters for Resolvers</strong>
+    <p>The first resolver to return Allow or Deny wins — subsequent resolvers are not called. Register the most specific or restrictive resolver first. For example, register <code>ContractorRestrictionResolver</code> before <code>DepartmentResolver</code> — if the user is a contractor, deny immediately without needing the department check.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-combining.html">&#8592; Combining with Built-In IAM</a>
+    <a href="06-testing.html">Next: Testing Custom IAM &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

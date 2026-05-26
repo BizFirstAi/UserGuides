@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EdgeStream Integration — Integration | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.topic-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0;}
+.topic-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;}
+.topic-card h4{margin:0 0 6px;font-size:0.88rem;}
+.topic-card .topic-key{font-family:monospace;font-size:0.78rem;background:var(--surface2);padding:3px 8px;border-radius:4px;display:inline-block;margin-bottom:8px;}
+.topic-card p{margin:0;font-size:0.8rem;color:var(--text-muted);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Integration</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Integration Overview</a>
+  <a href="01-atlas-forms.html">Atlas Forms</a>
+  <a href="02-flow-studio.html">Flow Studio</a>
+  <a href="03-octopus.html">Octopus</a>
+  <a href="04-app-studio.html">App Studio</a>
+  <a href="05-edgestream.html" class="active">EdgeStream</a>
+  <a href="06-passport.html">Passport</a>
+  <a href="07-extension-points.html">Extension Points</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>EdgeStream Integration</h1>
+    <p class="lead">EdgeStream is BizFirstGO's real-time push messaging system. WorkDesk subscribes to EdgeStream to receive instant task assignments and notification events — eliminating the need to poll the server. When a new HIL task is created or a workflow event occurs, the employee's WorkDesk UI updates immediately.</p>
+  </div>
+
+  <h2>Integration Direction</h2>
+  <p><strong>EdgeStream pushes to WorkDesk</strong> — WorkDesk subscribes to topics and receives server-pushed events. WorkDesk never publishes to EdgeStream; it only receives. Publishing is done by backend services (HILTaskSyncService, notification services, workflow engine).</p>
+
+  <h2>WorkDesk Topic Subscriptions</h2>
+  <p>WorkDesk subscribes to exactly two EdgeStream topics per authenticated user session:</p>
+
+  <div class="topic-grid">
+    <div class="topic-card">
+      <h4>Task Events</h4>
+      <div class="topic-key">tasks.{userId}</div>
+      <p>New HIL task assignments, task status changes (claimed by another, cancelled, deadline updated), task expiry warnings.</p>
+    </div>
+    <div class="topic-card">
+      <h4>Notification Events</h4>
+      <div class="topic-key">notifications.{userId}</div>
+      <p>New notifications of any type (workflow completed, HIL assigned, approval decision made, system alerts). Drives the notification bell badge count.</p>
+    </div>
+  </div>
+
+  <h2>Subscription Setup in WorkDeskShell</h2>
+  <p>Subscriptions are established in <code>WorkDeskShell.tsx</code> immediately after the user authenticates. The <code>useSubscription</code> hook manages the WebSocket connection lifecycle:</p>
+
+  <pre><code>// WorkDeskShell.tsx — EdgeStream subscriptions
+import { useSubscription } from '@bizfirstai/edgestream-react';
+import { useInboxStore }   from './stores/inboxStore';
+import { useNotifStore }   from './stores/notifStore';
+
+export function WorkDeskShell() {
+  const userId = useAuthStore(s => s.userId);
+  const addTask = useInboxStore(s => s.addTask);
+  const updateTask = useInboxStore(s => s.updateTask);
+  const addNotif = useNotifStore(s => s.addNotification);
+  const incrementBell = useNotifStore(s => s.incrementUnread);
+
+  // Subscribe to task events
+  useSubscription(`tasks.${userId}`, (event: TaskEvent) => {
+    switch (event.type) {
+      case 'task_assigned':
+        addTask(event.task);
+        showToast(`New task: ${event.task.title}`, 'info');
+        break;
+      case 'task_claimed_by_other':
+        updateTask(event.taskId, { status: 'claimed', claimedBy: event.actorId });
+        break;
+      case 'task_cancelled':
+        updateTask(event.taskId, { status: 'cancelled' });
+        break;
+      case 'task_deadline_warning':
+        showToast(`Task due soon: ${event.taskTitle}`, 'warning');
+        break;
+    }
+  });
+
+  // Subscribe to notification events
+  useSubscription(`notifications.${userId}`, (event: NotificationEvent) => {
+    addNotif(event.notification);
+    incrementBell();
+    if (event.notification.priority === 'high') {
+      showToast(event.notification.title, 'info');
+    }
+  });
+
+  return ( &lt;div className="shell"&gt;...&lt;/div&gt; );
+}</code></pre>
+
+  <h2>Event Payload Schemas</h2>
+  <p>Each EdgeStream event published to WorkDesk's topics follows a typed schema:</p>
+
+  <pre><code>// Task events — published to topics.{userId}
+interface TaskAssignedEvent {
+  type: 'task_assigned';
+  task: {
+    id:           string;
+    type:         'approval' | 'form' | 'review';
+    title:        string;
+    workflowName: string;
+    dueAt:        string | null;
+    createdAt:    string;
+    status:       'pending';
+  };
+}
+
+interface TaskClaimedByOtherEvent {
+  type:      'task_claimed_by_other';
+  taskId:    string;
+  actorId:   string;
+  claimedAt: string;
+}
+
+interface TaskCancelledEvent {
+  type:        'task_cancelled';
+  taskId:      string;
+  cancelledAt: string;
+  reason:      string | null;
+}
+
+// Notification events — published to notifications.{userId}
+interface NotificationEvent {
+  type: 'notification_created';
+  notification: {
+    id:        string;
+    type:      'hil_task_assigned' | 'workflow_completed' | 'approval_decision' | 'system_alert';
+    title:     string;
+    body:      string;
+    priority:  'normal' | 'high';
+    isRead:    false;
+    createdAt: string;
+    actionUrl: string | null;
+  };
+}</code></pre>
+
+  <h2>Connection Lifecycle</h2>
+  <p>The EdgeStream WebSocket connection is managed by the <code>useSubscription</code> hook. WorkDesk handles connection failures gracefully with exponential backoff reconnection:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>User Authenticates</h4>
+        <p><code>WorkDeskShell</code> mounts. <code>useSubscription</code> opens a WebSocket connection to EdgeStream using the user's Passport JWT.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Topics Subscribed</h4>
+        <p>After connection established, WorkDesk sends subscription frames for <code>tasks.{userId}</code> and <code>notifications.{userId}</code>. EdgeStream acknowledges each subscription.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Events Received</h4>
+        <p>Backend services publish events to the relevant topic. EdgeStream delivers them to all active subscribers matching that topic — in this case, the employee's WorkDesk browser session.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Connection Lost</h4>
+        <p>If the WebSocket drops, <code>useSubscription</code> enters reconnection mode. WorkDesk shows a subtle "Reconnecting..." indicator in the status bar. Reconnect attempts use exponential backoff: 1s, 2s, 4s, 8s, max 30s.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body">
+        <h4>Reconnected — Catch-Up Fetch</h4>
+        <p>On reconnection, WorkDesk fetches any missed events via REST API (<code>GET /api/workdesk/tasks?createdAfter={lastEventTime}</code>) to cover the offline gap before EdgeStream resumes live delivery.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Multiple Browser Tabs</h2>
+  <p>WorkDesk uses a shared WebSocket approach — if the employee has WorkDesk open in multiple tabs, only one WebSocket connection is maintained per browser using a <code>BroadcastChannel</code> leader election. The leader tab receives EdgeStream events and broadcasts them to other tabs:</p>
+
+  <pre><code>// EdgeStream leader election for multi-tab scenarios
+// (handled inside @bizfirstai/edgestream-react useSubscription hook)
+
+// One tab wins the leader election and holds the WebSocket
+// All other tabs receive events via BroadcastChannel
+const bc = new BroadcastChannel('workdesk-edgestream');
+
+// Leader tab — after receiving EdgeStream event:
+bc.postMessage({ topic, event });  // fan out to follower tabs
+
+// Follower tabs — receive via BroadcastChannel:
+bc.onmessage = ({ data }) => dispatchEvent(data.topic, data.event);</code></pre>
+
+  <h2>Performance Characteristics</h2>
+  <table>
+    <thead><tr><th>Metric</th><th>Value</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Event delivery latency</td><td>&lt; 200ms p99</td><td>From backend publish to browser event handler</td></tr>
+      <tr><td>Connection overhead</td><td>1 WebSocket per browser</td><td>Leader election reduces connections in multi-tab scenarios</td></tr>
+      <tr><td>Reconnection max backoff</td><td>30 seconds</td><td>After which WorkDesk shows a manual reconnect button</td></tr>
+      <tr><td>Catch-up fetch window</td><td>Last 15 minutes</td><td>Events older than 15 minutes are not replayed on reconnection</td></tr>
+      <tr><td>Max subscriptions per session</td><td>10 topics</td><td>WorkDesk uses 2; remaining quota available for hosted App Studio apps</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>No Polling</strong>
+    <p>WorkDesk never polls for task updates or notifications. All real-time updates are delivered exclusively via EdgeStream. This eliminates unnecessary API load and ensures instant delivery. The REST APIs are used only for initial page loads (hydrating state) and post-reconnection catch-up fetches.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-app-studio.html">&#8592; App Studio</a>
+    <a href="06-passport.html">Next: Passport &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

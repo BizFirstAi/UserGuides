@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claims Mapping — Bring Your Own IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Bring Your Own IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-external-token-validation.html">External Token Validation</a>
+  <a href="02-okta.html">Okta Integration</a>
+  <a href="03-azure-ad.html">Azure AD Integration</a>
+  <a href="04-auth0.html">Auth0 Integration</a>
+  <a href="05-keycloak.html">Keycloak Integration</a>
+  <a href="06-claims-mapping.html" class="active">Claims Mapping</a>
+  <a href="07-hybrid-mode.html">Hybrid Mode</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Claims Mapping</h1>
+    <p class="lead">Map external IdP claims to BizFirstGO's IDInfo — configure claim paths, group-to-role mapping tables, and tenant ID resolution strategies for each provider.</p>
+  </div>
+
+  <h2>ExternalClaimsMapper</h2>
+  <pre><code">// ExternalClaimsMapper — converts ExternalIdentityClaims → IDInfo
+public sealed class ExternalClaimsMapper
+{
+    public IDInfo MapToIDInfo(
+        ExternalIdentityClaims external,
+        FederationProviderConfig config)
+    {
+        // Map external groups to BizFirstGO role names
+        var roles = external.Groups
+            .Select(g =&gt; config.GroupMapping.TryGetValue(g, out var role) ? role : null)
+            .Where(r =&gt; r is not null)
+            .Select(r =&gt; r!)
+            .Distinct()
+            .ToList();
+
+        // Determine tenant ID
+        var tenantId = config.TenantIdConfig.Source switch
+        {
+            TenantIdSource.Static  =&gt; config.TenantIdConfig.Value,
+            TenantIdSource.Claim   =&gt; external.RawClaims.GetValueOrDefault(config.TenantIdConfig.ClaimName) ?? "",
+            TenantIdSource.Mapping =&gt; config.TenantIdConfig.TenantMapping
+                .GetValueOrDefault(external.RawClaims.GetValueOrDefault(config.TenantIdConfig.ClaimName) ?? "") ?? "",
+            _ =&gt; ""
+        };
+
+        return new IDInfo
+        {
+            UserId      = external.UserId,
+            TenantId    = tenantId,
+            Email       = external.Email,
+            DisplayName = external.DisplayName ?? external.Email,
+            Roles       = roles,
+            IsServiceAccount = false
+        };
+    }
+}</code></pre>
+
+  <h2>Claims Mapping Reference</h2>
+  <table>
+    <thead>
+      <tr><th>BizFirstGO IDInfo</th><th>Passport</th><th>Okta</th><th>Azure AD</th><th>Auth0</th><th>Keycloak</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>UserId</code></td><td><code>sub</code></td><td><code>sub</code></td><td><code>oid</code></td><td><code>sub</code></td><td><code>sub</code></td></tr>
+      <tr><td><code>TenantId</code></td><td><code>tenant_id</code></td><td><code>tenant_id</code></td><td>static mapping from <code>tid</code></td><td><code>https://bfgo.com/tenant_id</code></td><td><code>tenant_id</code></td></tr>
+      <tr><td><code>Email</code></td><td><code>email</code></td><td><code>email</code></td><td><code>email</code> or <code>upn</code></td><td><code>email</code></td><td><code>email</code></td></tr>
+      <tr><td><code>DisplayName</code></td><td><code>name</code></td><td><code>name</code></td><td><code>name</code></td><td><code>name</code></td><td><code>name</code></td></tr>
+      <tr><td><code>Roles</code></td><td><code>roles[]</code></td><td><code>groups[]</code> → mapped</td><td><code>roles[]</code> → mapped</td><td><code>https://bfgo.com/roles[]</code></td><td><code>realm_roles[]</code> → mapped</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Tenant ID Resolution Strategies</h2>
+  <p>The most critical claim to map correctly is <code>TenantId</code>. BizFirstGO offers three resolution strategies:</p>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>Config</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Static</td><td><code>"source": "static", "value": "tenant-abc"</code></td><td>Single-tenant deployment where all users belong to one BizFirstGO tenant</td></tr>
+      <tr><td>Claim</td><td><code>"source": "claim", "claimName": "tenant_id"</code></td><td>Multi-tenant — each user has a tenant_id custom attribute in the IdP</td></tr>
+      <tr><td>Mapping Table</td><td><code>"source": "mapping", "claimName": "tid", "tenantMapping": {...}</code></td><td>Map Azure AD tenant IDs or Okta org IDs to BizFirstGO tenant IDs</td></tr>
+    </tbody>
+  </table>
+
+  <pre><code">// Example: mapping Azure AD tenant ID → BizFirstGO tenant ID
+{
+  "tenantIdConfig": {
+    "source": "mapping",
+    "claimName": "tid",
+    "tenantMapping": {
+      "aad-tenant-id-company-a": "tenant-abc",
+      "aad-tenant-id-company-b": "tenant-def",
+      "aad-tenant-id-company-c": "tenant-ghi"
+    }
+  }
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Unmapped Groups Are Silently Ignored</strong>
+    <p>If an external group is not in the <code>groupMapping</code> or <code>roleMapping</code> table, it is silently ignored — no error, no BizFirstGO role. A user who only has unmapped groups will have no BizFirstGO roles and will likely be denied access. Always audit your group mapping table after changes to the external IdP's group structure.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-keycloak.html">&#8592; Keycloak Integration</a>
+    <a href="07-hybrid-mode.html">Next: Hybrid Mode &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

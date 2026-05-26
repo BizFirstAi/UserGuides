@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HookActivityLogger — Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-normalization-hook.html">NormalizationHook</a>
+  <a href="02-pre-pipeline-hook.html">Pre-Pipeline Hook</a>
+  <a href="03-post-pipeline-hook.html">Post-Pipeline Hook</a>
+  <a href="04-incoming-hook.html">Incoming Hook</a>
+  <a href="05-outgoing-hook.html">Outgoing Hook</a>
+  <a href="06-activity-logger.html" class="active">HookActivityLogger</a>
+  <a href="07-custom-hook.html">Implementing a Custom Hook</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>HookActivityLogger</h1>
+    <p class="lead">The HookActivityLogger is EdgeStream's built-in observability hook. It captures the start, success, error, and skip events for every hook execution — with timing data — and feeds the HooksMonitor React component.</p>
+  </div>
+
+  <h2>Role in the Pipeline</h2>
+  <p><code>HookActivityLogger</code> runs at priority 5 — before all other hooks. It implements <code>IHookActivityLogger</code> and is called by the pipeline engine around each hook execution, not by the hook itself.</p>
+
+  <table>
+    <thead>
+      <tr><th>Method</th><th>When Called</th><th>Parameters</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>logHookStart</code></td><td>Just before a hook's execute() is called</td><td>messageId, hookName, priority</td></tr>
+      <tr><td><code>logHookSuccess</code></td><td>After execute() completes without error</td><td>messageId, hookName, priority, executionTime, context?</td></tr>
+      <tr><td><code>logHookError</code></td><td>After execute() throws an exception</td><td>messageId, hookName, priority, error, executionTime</td></tr>
+      <tr><td><code>logHookSkipped</code></td><td>When a hook is not executed (e.g., pipeline aborted)</td><td>messageId, hookName, priority, reason?</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Log Settings Control</h2>
+  <p>The logger respects the EdgeStream log settings — hook logging can be enabled/disabled and configured independently of transport logging:</p>
+
+  <pre><code>// Internal (from source)
+logHookStart(messageId, hookName, priority) {
+  if (!getLogSettings().isHookLoggingEnabled()) return;
+  getLoggingService().logHookExecution(messageId, {
+    hookName, priority, status: 'start',
+    message: `Starting hook: ${hookName}`,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+logHookSuccess(messageId, hookName, priority, executionTime, context?) {
+  if (!getLogSettings().isHookLoggingEnabled()) return;
+  getLoggingService().logHookExecution(messageId, {
+    hookName, priority, status: 'success',
+    message: '✅ Hook completed successfully',
+    executionTime, timestamp: new Date().toISOString(),
+    ...(getLogSettings().shouldLogHookMetadata() &amp;&amp; context &amp;&amp; { context }),
+  });
+}</code></pre>
+
+  <h2>Installation and Usage</h2>
+  <pre><code>import { HookActivityLogger, getHookActivityLogger } from 'edge-stream-js';
+
+// Option 1: Create a new instance
+const logger = new HookActivityLogger();
+server.incomingPipeline.addHook(logger);
+
+// Option 2: Use the global singleton (recommended)
+const logger = getHookActivityLogger();
+server.incomingPipeline.addHook(logger);
+server.outgoingPipeline.addHook(logger); // reuse same logger for both</code></pre>
+
+  <h2>HookActivityLogger + HooksMonitor</h2>
+  <p>The <code>HooksMonitor</code> React component (from <code>observability-react</code>) subscribes to the logging service that <code>HookActivityLogger</code> writes to. Without <code>HookActivityLogger</code> registered, <code>HooksMonitor</code> shows no data.</p>
+
+  <pre><code>// In your dev panel / admin dashboard
+import { HooksMonitor } from 'observability-react';
+
+function DevPanel() {
+  return (
+    &lt;div className="dev-panel"&gt;
+      &lt;HooksMonitor
+        maxEntries={200}
+        filterByHookName="WorkflowEventMapperHook"
+        showTimings={true}
+        showEnvelopePreview={true}
+      /&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Development Only</strong>
+    It's recommended to register <code>HookActivityLogger</code> in development environments only. In production, the logging overhead (however small) adds up at high throughput. Use an environment check: <code>if (import.meta.env.DEV) server.incomingPipeline.addHook(logger)</code>.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-outgoing-hook.html">&#8592; Outgoing Hook</a>
+    <a href="07-custom-hook.html">Next: Implementing a Custom Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

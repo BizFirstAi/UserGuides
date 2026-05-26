@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Configure BizFirstGO Services — Setup Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Setup Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Setup Overview</a>
+  <a href="01-prerequisites.html">Prerequisites</a>
+  <a href="02-install-stack.html">Install the Stack</a>
+  <a href="03-configure-services.html" class="active">Configure BizFirstGO Services</a>
+  <a href="04-verify-ingestion.html">Verify Ingestion</a>
+  <a href="05-import-dashboards.html">Import Pre-Built Dashboards</a>
+  <a href="06-configure-alerts.html">Configure Alerts</a>
+  <a href="07-validation-checklist.html">Validation Checklist</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Configure BizFirstGO Services</h1>
+    <p class="lead">BizFirstGO services use the OpenTelemetry SDK, which reads configuration from environment variables. Three environment variables control where telemetry goes. Set them on each service and restart — no code changes required.</p>
+  </div>
+
+  <h2>The Three Required Environment Variables</h2>
+  <table>
+    <thead>
+      <tr><th>Variable</th><th>Value</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td><code>http://otel-collector:4317</code></td><td>Where to send telemetry. Use the OTel Collector address (gRPC). Use <code>http://</code> prefix for gRPC; <code>https://</code> if TLS is configured.</td></tr>
+      <tr><td><code>OTEL_SERVICE_NAME</code></td><td><code>processengine</code></td><td>Identifies this service in traces, metrics, and logs. Use consistent names: <code>processengine</code>, <code>edgestream</code>, <code>octopus</code>, <code>flow-studio-api</code>.</td></tr>
+      <tr><td><code>OTEL_RESOURCE_ATTRIBUTES</code></td><td><code>environment=production,tenant_id=all</code></td><td>Additional resource attributes added to all telemetry from this service instance.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Environment Variable Configuration — Docker Compose</h2>
+  <pre><code># In your BizFirstGO docker-compose.yml:
+services:
+  processengine:
+    image: bizfirstgo/processengine:latest
+    environment:
+      # OTel Configuration
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=processengine
+      - OTEL_RESOURCE_ATTRIBUTES=environment=production,deployment.region=us-east-1
+      # Optional: set sampling rate (default is 1.0 = 100%)
+      - OTEL_TRACES_SAMPLER=parentbased_traceidratio
+      - OTEL_TRACES_SAMPLER_ARG=0.1  # 10% sampling in production
+
+  edgestream:
+    image: bizfirstgo/edgestream:latest
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=edgestream
+      - OTEL_RESOURCE_ATTRIBUTES=environment=production
+
+  octopus:
+    image: bizfirstgo/octopus:latest
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=octopus
+      - OTEL_RESOURCE_ATTRIBUTES=environment=production
+
+  flow-studio-api:
+    image: bizfirstgo/flow-studio-api:latest
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=flow-studio-api
+      - OTEL_RESOURCE_ATTRIBUTES=environment=production</code></pre>
+
+  <h2>Environment Variable Configuration — Kubernetes</h2>
+  <pre><code># In your Kubernetes deployment manifest:
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: processengine
+spec:
+  template:
+    spec:
+      containers:
+        - name: processengine
+          image: bizfirstgo/processengine:latest
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observe.svc.cluster.local:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "processengine"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "environment=production,k8s.namespace.name=bizfirstgo"
+            # Inject pod name and node name as resource attributes:
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.pod.name=$(POD_NAME),k8s.node.name=$(NODE_NAME)"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName</code></pre>
+
+  <h2>appsettings.json OTel Section (Additional Configuration)</h2>
+  <p>For settings not covered by environment variables, BizFirstGO's OTel SDK reads from <code>appsettings.json</code>:</p>
+  <pre><code>// appsettings.json
+{
+  "OpenTelemetry": {
+    "Enabled": true,
+    "Metrics": {
+      "Enabled": true,
+      "ExportIntervalMilliseconds": 15000  // Push metrics every 15s
+    },
+    "Tracing": {
+      "Enabled": true,
+      "SampleRate": 0.1,              // 10% of traces sampled
+      "AlwaysSampleErrors": true       // Always sample error traces
+    },
+    "Logging": {
+      "Enabled": true,
+      "MinimumLevel": "Information",  // Don't send Debug logs to OTel
+      "IncludeFormattedMessage": true
+    }
+  }
+}</code></pre>
+
+  <h2>Per-Service Configuration Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Service</th><th>OTEL_SERVICE_NAME</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ProcessEngine</td><td><code>processengine</code></td><td>Primary workflow execution engine — highest telemetry volume</td></tr>
+      <tr><td>EdgeStream</td><td><code>edgestream</code></td><td>Message broker — high-frequency spans for message delivery</td></tr>
+      <tr><td>Octopus</td><td><code>octopus</code></td><td>AI agent — LLM call spans; token usage metrics</td></tr>
+      <tr><td>Flow Studio API</td><td><code>flow-studio-api</code></td><td>Workflow editor backend — low volume</td></tr>
+      <tr><td>InstallHub API</td><td><code>installhub-api</code></td><td>Package marketplace — moderate volume</td></tr>
+      <tr><td>AtlasForms API</td><td><code>atlasforms-api</code></td><td>Form renderer API</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Service Name Must Match Loki Labels</strong>
+    <p>The <code>OTEL_SERVICE_NAME</code> value becomes the <code>job</code> label in Loki and the <code>service_name</code> resource attribute in Tempo. Use the same value consistently — a mismatch between deployments makes cross-signal correlation fail because log queries use <code>{job="processengine"}</code> and traces use <code>service.name = "processengine"</code>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-install-stack.html">&#8592; Install the Stack</a>
+    <a href="04-verify-ingestion.html">Next: Verify Ingestion &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

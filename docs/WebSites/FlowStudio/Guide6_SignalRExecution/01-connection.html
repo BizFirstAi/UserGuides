@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Establishing Connection — Real-Time Execution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Real-Time Execution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">SignalR Overview</a>
+  <a href="01-connection.html" class="active">Establishing Connection</a>
+  <a href="02-event-types.html">Execution Event Types</a>
+  <a href="03-node-stream.html">Per-Node Log Streaming</a>
+  <a href="04-workflow-stream.html">Workflow-Level Events</a>
+  <a href="05-state-sync.html">Syncing to UI State</a>
+  <a href="06-polling-fallback.html">Polling Fallback</a>
+  <a href="07-reconnection.html">Reconnection Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Establishing Connection</h1>
+    <p class="lead">The <code>useExecutionSignalR</code> hook manages the full lifecycle of the SignalR WebSocket connection — building it, authenticating, subscribing to the execution group, and tearing it down when the execution ends or the component unmounts.</p>
+  </div>
+
+  <h2>useExecutionSignalR</h2>
+  <pre><code>// useExecutionSignalR.ts (simplified)
+export function useExecutionSignalR(executionId: string) {
+  const connectionRef = useRef&lt;HubConnection | null&gt;(null);
+
+  useEffect(() => {
+    const connection = new HubConnectionBuilder()
+      .withUrl('/hubs/execution', {
+        accessTokenFactory: () => getAuthToken()  // JWT
+      })
+      .withAutomaticReconnect([1000, 2000, 5000, 10000])
+      .build();
+
+    connection.start().then(() => {
+      connection.invoke('JoinExecution', executionId);
+    });
+
+    // Register event handlers
+    connection.on('NodeExecutionStarted', handleNodeStarted);
+    connection.on('NodeExecutionCompleted', handleNodeCompleted);
+    connection.on('NodeExecutionFailed', handleNodeFailed);
+    connection.on('WorkflowExecutionCompleted', handleWorkflowCompleted);
+
+    connectionRef.current = connection;
+
+    // Cleanup on unmount or executionId change
+    return () => {
+      connection.invoke('LeaveExecution', executionId);
+      connection.stop();
+    };
+  }, [executionId]);
+}</code></pre>
+
+  <h2>Authentication</h2>
+  <p>The SignalR connection includes the user's JWT bearer token via the <code>accessTokenFactory</code>. The backend hub validates the token on connection. If the token expires during a long execution, SignalR automatically reconnects with a fresh token.</p>
+
+  <h2>Hub URL and Transport</h2>
+  <table>
+    <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Hub URL</td><td><code>/hubs/execution</code></td></tr>
+      <tr><td>Preferred transport</td><td>WebSocket</td></tr>
+      <tr><td>Fallback transports</td><td>Server-Sent Events, then Long-Polling</td></tr>
+      <tr><td>Reconnect delays</td><td>1s, 2s, 5s, 10s (then gives up and falls back to polling)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Connection States</h2>
+  <table>
+    <thead><tr><th>State</th><th>Meaning</th><th>UI Indicator</th></tr></thead>
+    <tbody>
+      <tr><td>Connecting</td><td>WebSocket handshake in progress</td><td>Spinner in Observer Panel header</td></tr>
+      <tr><td>Connected</td><td>WebSocket open and subscribed</td><td>Green dot in Observer Panel header</td></tr>
+      <tr><td>Reconnecting</td><td>Connection lost; attempting to restore</td><td>Amber dot + "Reconnecting..."</td></tr>
+      <tr><td>Disconnected</td><td>Connection lost permanently; polling fallback active</td><td>Red dot + "Live updates unavailable"</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; SignalR Overview</a>
+    <a href="02-event-types.html">Next: Execution Event Types &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

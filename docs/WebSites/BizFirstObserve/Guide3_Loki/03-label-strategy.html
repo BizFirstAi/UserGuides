@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Label Strategy — Loki Log Aggregation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Loki Log Aggregation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Loki Overview</a>
+  <a href="01-deployment.html">Deploying Loki</a>
+  <a href="02-ingestion.html">Log Ingestion from BizFirstGO</a>
+  <a href="03-label-strategy.html" class="active">Label Strategy</a>
+  <a href="04-logql-basics.html">LogQL Basics</a>
+  <a href="05-logql-examples.html">LogQL for BizFirstGO</a>
+  <a href="06-retention.html">Log Retention in Loki</a>
+  <a href="07-alerts.html">Loki Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Label Strategy</h1>
+    <p class="lead">The label strategy is the most important design decision for Loki. Correct labels enable fast queries and low storage overhead. Incorrect labels (too many, too high cardinality) cause serious performance problems that are difficult to fix without re-ingesting all data.</p>
+  </div>
+
+  <h2>The Golden Rule: Low-Cardinality Labels Only</h2>
+  <p>A label's cardinality is the number of unique values it can take. Labels should have bounded, low cardinality:</p>
+  <ul>
+    <li><strong>Good</strong>: <code>environment</code> — 3 values (production, staging, development)</li>
+    <li><strong>Good</strong>: <code>level</code> — 6 values (trace, debug, info, warn, error, fatal)</li>
+    <li><strong>Acceptable</strong>: <code>tenant_id</code> — hundreds of values (not thousands)</li>
+    <li><strong>Bad</strong>: <code>execution_id</code> — millions of unique values</li>
+    <li><strong>Bad</strong>: <code>user_id</code> — millions of unique values</li>
+    <li><strong>Bad</strong>: <code>request_id</code> — unique per request</li>
+  </ul>
+
+  <h2>BizFirstGO Standard Label Set</h2>
+  <table>
+    <thead>
+      <tr><th>Label</th><th>Source</th><th>Example Values</th><th>Cardinality</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>job</code></td><td>OTel resource <code>service.name</code></td><td>processengine, edgestream, octopus, api, worker</td><td>&lt;10</td><td>Broad service category filtering</td></tr>
+      <tr><td><code>service</code></td><td>OTel resource <code>service.name</code></td><td>flow-studio-api, processengine-worker</td><td>&lt;50</td><td>Specific service name</td></tr>
+      <tr><td><code>environment</code></td><td>OTel resource <code>deployment.environment</code></td><td>production, staging, development</td><td>&lt;5</td><td>Environment separation</td></tr>
+      <tr><td><code>level</code></td><td>OTel LogRecord severity</td><td>trace, debug, info, warn, error, fatal</td><td>6</td><td>Log severity filtering</td></tr>
+      <tr><td><code>tenant_id</code></td><td>OTel log attribute <code>tenant.id</code></td><td>tenant-abc, tenant-xyz</td><td>Hundreds</td><td>Multi-tenant isolation</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Stream Count Estimation</h2>
+  <p>Total unique streams = product of unique values of each label. For BizFirstGO:</p>
+  <pre><code># Stream count estimate:
+jobs:        5 (processengine, edgestream, octopus, api, worker)
+environments: 3 (prod, staging, dev)
+levels:      6 (trace, debug, info, warn, error, fatal)
+tenants:     500 (example: 500 tenant deployment)
+
+Total streams = 5 × 3 × 6 × 500 = 45,000 streams
+
+# This is within Loki's comfortable range (&lt;100,000 streams).
+# Adding execution_id as a label (say, 1M executions/day) would create:
+# 5 × 3 × 6 × 500 × 1,000,000 = 45 BILLION streams → catastrophic</code></pre>
+
+  <h2>What Goes in the Log Line (Not Labels)</h2>
+  <p>High-cardinality context belongs in the structured log body. Loki can filter on log line content using <code>|=</code>, <code>|~</code>, <code>| json</code> — just more slowly than label filtering. This trade-off is acceptable because you almost always start a query with a label selector that narrows the result set before content filtering.</p>
+
+  <pre><code># High-cardinality values in the log body (JSON format)
+{
+  "timestamp": "...",
+  "level": "error",        ← label ✓
+  "service": "processengine", ← label ✓
+  "tenant_id": "t123",     ← label ✓
+  "message": "Node failed",
+  "executionId": "exec-abc123",  ← log body, not label ✓
+  "nodeKey": "approval-01",      ← log body, not label ✓
+  "traceId": "4bf92f...",        ← log body, not label ✓
+  "workflowId": "wf-xyz"         ← log body, not label ✓
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Pattern for Finding Specific Executions</strong>
+    <p>Start with label selector (fast, indexed) → then filter on log body content (slower, but applied to small result set):</p>
+    <code>{job="processengine", tenant_id="t123", level="error"} |= "executionId=exec-abc123"</code>
+  </div>
+
+  <h2>Label Naming Conventions</h2>
+  <ul>
+    <li>Use <code>snake_case</code> for label names (e.g., <code>tenant_id</code>, not <code>tenantId</code> or <code>TenantId</code>)</li>
+    <li>Never use dots in label names — they cause issues in some Grafana versions</li>
+    <li>Keep label names short and meaningful — they appear in every LogQL query</li>
+    <li>Be consistent across all BizFirstGO services — the same label name for the same concept</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="02-ingestion.html">&#8592; Log Ingestion from BizFirstGO</a>
+    <a href="04-logql-basics.html">Next: LogQL Basics &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

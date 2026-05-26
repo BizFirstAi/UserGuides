@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Combining with Built-In IAM — Custom IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Custom IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom IAM Overview</a>
+  <a href="01-custom-resolver.html">Custom Permission Resolver</a>
+  <a href="02-custom-role-provider.html">Custom Role Provider</a>
+  <a href="03-attribute-conditions.html">Attribute-Based Conditions</a>
+  <a href="04-combining.html" class="active">Combining with Built-In IAM</a>
+  <a href="05-registration.html">Registering Custom Extensions</a>
+  <a href="06-testing.html">Testing Custom IAM</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Combining with Built-In IAM</h1>
+    <p class="lead">Custom resolvers and role providers stack on top of — not instead of — the built-in RBAC system. Understand the interaction model, the <code>BaseAllowed</code> flag, and the layering semantics.</p>
+  </div>
+
+  <h2>The Layering Model</h2>
+  <p>Custom extensions do not replace the built-in IAM — they extend it. The built-in system runs first, producing a tentative ALLOW or DENY. Custom resolvers then have the opportunity to override or affirm that decision.</p>
+  <pre><code>// Full evaluation pipeline with custom extensions
+Phase 1 — Built-in:
+  IIdentityProvider.ResolveIdentityAsync()   → IdentityClaims
+  IMembershipProvider.GetUserGroupsAsync()   → built-in roles
+  ICustomRoleProvider[0].GetRolesAsync()     → extra roles (merged)
+  ICustomRoleProvider[1].GetRolesAsync()     → extra roles (merged)
+  IPermissionProvider.GetUserPermissionsAsync() → permission strings
+  PermissionEngine.Match()                   → BaseAllowed = true/false
+
+Phase 2 — Custom Resolvers (pipeline, short-circuits on Allow/Deny):
+  ICustomPermissionResolver[0].ResolveAsync()  → Allow/Deny/Defer
+  ICustomPermissionResolver[1].ResolveAsync()  → Allow/Deny/Defer  (if previous Defer)
+  ICustomPermissionResolver[2].ResolveAsync()  → Allow/Deny/Defer  (if previous Defer)
+
+Phase 3 — Final Gate:
+  IAccessDecisionProvider.CanUserAccessAsync() → true/false/null</code></pre>
+
+  <h2>Using context.BaseAllowed</h2>
+  <p>The <code>PermissionContext.BaseAllowed</code> property tells you whether the built-in RBAC check produced an ALLOW. Use this to decide whether your resolver needs to act:</p>
+  <pre><code">// Pattern 1: Only add ABAC constraints when RBAC already allows
+// "RBAC is necessary but not sufficient"
+public Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+{
+    // If RBAC already denied, don't override — it's already denied
+    if (!ctx.BaseAllowed) return Task.FromResult(PermissionResolution.Defer);
+
+    // RBAC allowed, but add additional constraints
+    if (!MeetsAbacCondition(ctx))
+        return Task.FromResult(PermissionResolution.Deny);
+
+    return Task.FromResult(PermissionResolution.Defer);  // RBAC allow stands
+}
+
+// Pattern 2: Override RBAC entirely (use sparingly)
+// "Custom resolver has full authority regardless of RBAC"
+public Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+{
+    if (IsSystemAdmin(ctx.User))
+        return Task.FromResult(PermissionResolution.Allow);  // bypass RBAC
+
+    if (IsContractor(ctx.User) &amp;&amp; IsSensitiveResource(ctx))
+        return Task.FromResult(PermissionResolution.Deny);   // override RBAC allow
+
+    return Task.FromResult(PermissionResolution.Defer);  // let RBAC stand
+}</code></pre>
+
+  <h2>Interaction Matrix</h2>
+  <table>
+    <thead>
+      <tr><th>RBAC Result</th><th>Resolver Returns</th><th>Final Decision</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Allow</td><td>Defer</td><td>Allow (RBAC result stands)</td></tr>
+      <tr><td>Allow</td><td>Allow</td><td>Allow (explicit confirmation)</td></tr>
+      <tr><td>Allow</td><td>Deny</td><td>Deny (resolver overrides RBAC)</td></tr>
+      <tr><td>Deny</td><td>Defer</td><td>Deny (RBAC result stands)</td></tr>
+      <tr><td>Deny</td><td>Allow</td><td>Allow (resolver overrides RBAC — use carefully)</td></tr>
+      <tr><td>Deny</td><td>Deny</td><td>Deny (explicit confirmation)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Overriding RBAC Denials Requires Justification</strong>
+    <p>A resolver that returns Allow when <code>BaseAllowed</code> is false effectively bypasses the role system. This is a powerful capability — use it only for scenarios like "break-glass" emergency access or resource ownership grants. Every such override should be logged with a clear reason. Audit this code path carefully.</p>
+  </div>
+
+  <h2>Multiple Resolvers — Priority and Order</h2>
+  <pre><code">// Registration order determines evaluation order
+services.AddCustomPermissionResolver&lt;ContractorRestrictionResolver&gt;();  // first
+services.AddCustomPermissionResolver&lt;BusinessHoursResolver&gt;();          // second
+services.AddCustomPermissionResolver&lt;ClearanceLevelResolver&gt;();         // third
+
+// Pipeline stops when any resolver returns Allow or Deny
+// If ContractorRestrictionResolver returns Deny → done, Deny
+// If ContractorRestrictionResolver returns Defer → BusinessHoursResolver is called
+// If all return Defer → RBAC decision stands</code></pre>
+
+  <div class="page-nav">
+    <a href="03-attribute-conditions.html">&#8592; Attribute-Based Conditions</a>
+    <a href="05-registration.html">Next: Registering Custom Extensions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

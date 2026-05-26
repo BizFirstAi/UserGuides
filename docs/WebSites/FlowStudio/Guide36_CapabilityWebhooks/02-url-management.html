@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Webhook URL Management — Guide36 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Webhooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-inbound-trigger.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Inbound Trigger</a>
+  <a href="02-url-management.html" class="active"><i class="fa-solid fa-link"></i> URL Management</a>
+  <a href="03-signature-verification.html"><i class="fa-solid fa-key"></i> Signature Verification</a>
+  <a href="04-outbound-call.html"><i class="fa-solid fa-paper-plane"></i> Outbound Call</a>
+  <a href="05-retry-policy.html"><i class="fa-solid fa-rotate-right"></i> Retry Policy</a>
+  <a href="06-async-response.html"><i class="fa-solid fa-clock-rotate-left"></i> Async Response</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Webhook URL Management</h1>
+    <p class="lead">Creating, rotating, and deleting webhook URLs via the admin API — lifecycle operations and how URL changes affect running integrations.</p>
+  </div>
+
+  <h2>Webhook URL Lifecycle</h2>
+  <table>
+    <thead><tr><th>Operation</th><th>API</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td>Create</td><td>POST /api/webhooks</td><td>Generates a new URL and secret</td></tr>
+      <tr><td>Get URL</td><td>GET /api/webhooks/{id}</td><td>Returns URL (secret never returned after creation)</td></tr>
+      <tr><td>Rotate Secret</td><td>POST /api/webhooks/{id}/rotate</td><td>Generates new secret; old secret valid for 24h grace period</td></tr>
+      <tr><td>Deactivate</td><td>PATCH /api/webhooks/{id} (active: false)</td><td>Stops accepting requests — returns 410 Gone</td></tr>
+      <tr><td>Delete</td><td>DELETE /api/webhooks/{id}</td><td>Permanently removes URL and secret</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Create Response</h2>
+  <pre><code class="language-json">POST /api/webhooks
+{
+  "processId": "proc-orders-main",
+  "threadId": "main",
+  "description": "Order events from Shopify"
+}
+
+Response 201:
+{
+  "webhookId": "wh-abc123",
+  "url": "https://api.bizfirstai.com/webhook/tenant-acme/proc-orders-main",
+  "secret": "whs_sk_live_Xy9mQ3...",    ← shown ONCE, then hashed
+  "createdAt": "2026-05-25T10:00:00Z"
+}</code></pre>
+
+  <div class="callout callout-warning">
+    <strong>Secret storage:</strong> The secret is shown only once at creation time. Store it securely immediately — the platform only stores a bcrypt hash. If lost, rotate to get a new secret.
+  </div>
+
+  <h2>Secret Rotation with Grace Period</h2>
+  <p>When rotating a secret, the old secret remains valid for 24 hours. This allows you to update the secret in the external system without any downtime:</p>
+  <ol>
+    <li>Call POST /api/webhooks/{id}/rotate → receive new secret</li>
+    <li>Update the secret in your external system (Shopify, GitHub, etc.)</li>
+    <li>Old secret still accepted for 24 hours in case some requests are already in-flight</li>
+    <li>After 24 hours, old secret is invalidated automatically</li>
+  </ol>
+
+  <h2>WebhookUrlService (Backend)</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Webhooks/WebhookUrlService.cs
+public class WebhookUrlService
+{
+    public async Task&lt;WebhookRegistration&gt; CreateAsync(CreateWebhookRequest request)
+    {
+        var secret = _secretGenerator.Generate(32); // cryptographically random
+        var credentialId = await _credentialResolver.StoreSecretAsync(secret);
+
+        var registration = new WebhookRegistration
+        {
+            TenantId = request.TenantId,
+            ProcessId = request.ProcessId,
+            ThreadId = request.ThreadId,
+            CredentialId = credentialId,
+            IsActive = true
+        };
+        await _repo.CreateAsync(registration);
+
+        return registration with { PlaintextSecret = secret }; // returned ONCE
+    }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="01-inbound-trigger.html">&#8592; Inbound Trigger</a>
+    <a href="03-signature-verification.html">Next: Signature Verification &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FormActionContext Deep Dive — Form Action Libraries | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Action Libraries</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-action-context.html" class="active">FormActionContext Deep Dive</a>
+  <a href="02-custom-handler.html">Writing a Custom Handler</a>
+  <a href="03-registering-actions.html">Registering Actions</a>
+  <a href="04-action-repositories.html">Action Repositories</a>
+  <a href="05-action-scope.html">Action Scope</a>
+  <a href="06-distributing.html">Distributing Your Library</a>
+  <a href="07-testing.html">Testing Custom Actions</a>
+  <a href="08-examples.html">Complete Library Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>FormActionContext Deep Dive</h1>
+    <p class="lead">The <code>FormActionContext</code> is the single argument passed to every action handler. It provides complete access to the form's state, the Atlas Forms API client, navigation, and the completion signalling API. Understanding every field is essential for writing robust handlers.</p>
+  </div>
+
+  <h2>Complete Interface</h2>
+  <pre><code>interface FormActionContext {
+  // ── Identity ──────────────────────────────────────────────
+  formId: string;              // Numeric form ID as string (e.g., "13001")
+  tenantId: string;            // Current tenant ID
+  userId?: string;             // Current user ID (if available from auth context)
+
+  // ── Form Data ─────────────────────────────────────────────
+  formValues: Record&lt;string, any&gt;;  // Snapshot of ALL current field values
+  formEngine: FormEngine;            // Direct FormEngine access (advanced)
+
+  // ── Services ─────────────────────────────────────────────
+  apiClient: FormDefinitionApiClient; // Atlas Forms API (list/get/create/update forms)
+
+  // ── Navigation ────────────────────────────────────────────
+  navigate: (url: string, options?: { target?: '_self' | '_blank' }) =&gt; void;
+
+  // ── Completion Signals ────────────────────────────────────
+  complete: (message?: string) =&gt; void;   // Signal success
+  fail: (reason?: string) =&gt; void;        // Signal failure (shows error)
+
+  // ── Validation ────────────────────────────────────────────
+  validate: () =&gt; Promise&lt;boolean&gt;;       // Run full form validation
+
+  // ── Action Configuration ──────────────────────────────────
+  config?: Record&lt;string, any&gt;;  // handlerConfig from the form schema action
+}</code></pre>
+
+  <h2>Field-by-Field Reference</h2>
+
+  <h3>formValues</h3>
+  <p>A plain object snapshot of all current field values at the moment the action was triggered. Keys are field IDs, values are the current field values. For <code>data-table</code> controls, the value is an array of row objects.</p>
+  <pre><code>// Example formValues object
+{
+  "company-name": "Acme Corp",
+  "contact-email": "jane@acme.com",
+  "invoice-lines": [
+    { "description": "Setup fee", "qty": 1, "price": 500 },
+    { "description": "Monthly licence", "qty": 12, "price": 99 }
+  ],
+  "terms-accepted": true
+}</code></pre>
+
+  <h3>formEngine</h3>
+  <p>Direct access to the <code>FormEngine</code> instance. Use this for advanced scenarios: reading error state, programmatically setting field values, or triggering validation for specific fields only.</p>
+  <pre><code>// Set a field value from within the handler
+ctx.formEngine.setFieldValue('status', 'approved');
+
+// Check if a specific field is valid
+const emailErrors = ctx.formEngine.getFieldError('contact-email');
+if (emailErrors) {
+  ctx.fail('Please fix the email address first.');
+  return;
+}</code></pre>
+
+  <h3>apiClient</h3>
+  <p>The same <code>FormDefinitionApiClient</code> instance used by the rest of the application. Useful for loading related forms, checking form metadata, or updating form records during the action.</p>
+
+  <h3>complete() and fail()</h3>
+  <p>These are the ONLY way to signal the end of your handler. Both exit the loading state on the button.</p>
+  <ul>
+    <li><code>complete(message?)</code> — Shows a success toast with the optional message, resets button state</li>
+    <li><code>fail(reason?)</code> — Shows an error toast with the optional reason, resets button state</li>
+  </ul>
+
+  <h3>config</h3>
+  <p>The <code>handlerConfig</code> object from the action schema. Use this to parameterise your handler so the same code can serve multiple use cases:</p>
+  <pre><code>// Schema
+{
+  "type": "custom",
+  "config": {
+    "handlerType": "send-notification",
+    "handlerConfig": {
+      "channel": "slack",
+      "recipient": "#approvals",
+      "urgency": "high"
+    }
+  }
+}
+
+// Handler
+const handler = async (ctx: FormActionContext) =&gt; {
+  const { channel, recipient, urgency } = ctx.config ?? {};
+  await notifyService.send({ channel, recipient, urgency, data: ctx.formValues });
+  ctx.complete('Notification sent');
+};</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-custom-handler.html">Next: Writing a Custom Handler &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

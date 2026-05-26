@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Registration — MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">MCP Tools Overview</a>
+  <a href="01-tool-schema.html">Tool Schema</a>
+  <a href="02-tool-registration.html" class="active">Tool Registration</a>
+  <a href="03-tool-call-loop.html">Tool Call Loop</a>
+  <a href="04-tool-results.html">Tool Results</a>
+  <a href="05-built-in-tools.html">Built-In Tools</a>
+  <a href="06-custom-tools.html">Custom Tools</a>
+  <a href="07-tool-security.html">Tool Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Tool Registration</h1>
+    <p class="lead">Tools are registered with the <code>MCPToolRegistry</code> during agent initialisation. Tools can be registered globally (available to all agents), per-agent (specific agents only), or dynamically at runtime. This page covers all three registration patterns.</p>
+  </div>
+
+  <h2>MCPTool Class</h2>
+  <pre><code>public class MCPTool
+{
+    public ToolDefinition Schema  { get; init; } = new();
+
+    // Handler receives raw JSON input from the LLM + execution context
+    public Func&lt;JsonElement, ConversationContext, CancellationToken, Task&lt;string&gt;&gt;
+        Handler { get; init; } = (_, _, _) => Task.FromResult("{}");
+}
+
+public class ConversationContext
+{
+    public Guid   AgentId        { get; init; }
+    public Guid   ConversationId { get; init; }
+    public string UserId         { get; init; } = string.Empty;
+    public Guid   TenantId       { get; init; }
+    public IServiceProvider Services { get; init; } = default!;
+}</code></pre>
+
+  <h2>Pattern 1: Plugin-Level Registration (Global)</h2>
+  <p>Tools registered in a plugin's <code>OnRegister</code> are available to all agents that have that plugin active:</p>
+  <pre><code>public class HRToolsPlugin : IOctopusPlugin
+{
+    public void OnRegister(IServiceCollection services, OctopusConfig config)
+    {
+        services.AddSingleton&lt;ILeaveService, LeaveService&gt;();
+    }
+
+    public Task OnStartAsync(IServiceProvider sp, CancellationToken ct)
+    {
+        var registry = sp.GetRequiredService&lt;MCPToolRegistry&gt;();
+        var leave    = sp.GetRequiredService&lt;ILeaveService&gt;();
+
+        registry.Register(new MCPTool
+        {
+            Schema = new ToolDefinition
+            {
+                Name        = "get_leave_balance",
+                Description = "Returns remaining annual leave days for an employee.",
+                InputSchema = JsonDocument.Parse("""
+                {
+                  "type": "object",
+                  "properties": {
+                    "employeeId": { "type": "string", "description": "Employee ID" }
+                  },
+                  "required": ["employeeId"]
+                }
+                """)
+            },
+            Handler = async (input, ctx, ct) =>
+            {
+                string empId = input.GetProperty("employeeId").GetString()!;
+                int days = await leave.GetBalanceAsync(empId, ctx.TenantId, ct);
+                return JsonSerializer.Serialize(new { employeeId = empId, remainingDays = days });
+            }
+        });
+
+        return Task.CompletedTask;
+    }
+}</code></pre>
+
+  <h2>Pattern 2: Per-Agent Registration via Admin UI</h2>
+  <p>In the agents-app, administrators assign tool groups to specific agents. Tool group assignments are stored in <code>Octopus_AgentToolGroups</code> and resolved at agent load time:</p>
+  <pre><code>// Agent tool group assignment (stored in SQL)
+POST /api/octopus/agents/{agentId}/tool-groups
+{
+  "toolGroupId": "tg_hr_leave",
+  "enabled":      true
+}
+
+// At runtime, AgentComposite.ToolRegistry contains only the tools
+// assigned to that agent — not all globally registered tools.</code></pre>
+
+  <h2>Pattern 3: Dynamic Registration</h2>
+  <p>Tools can be registered or unregistered while the application is running. This supports scenarios like feature flags or per-tenant tool availability:</p>
+  <pre><code>// Register a tool at runtime (e.g. when a feature is enabled)
+public class FeatureFlagToolRegistrar
+{
+    private readonly MCPToolRegistry _registry;
+    private readonly IFeatureFlags   _flags;
+
+    public async Task SyncToolsForAgentAsync(Guid agentId, CancellationToken ct)
+    {
+        if (await _flags.IsEnabledAsync("BetaExpenseReports", agentId, ct))
+        {
+            _registry.RegisterForAgent(agentId, new MCPTool
+            {
+                Schema  = ExpenseReportToolDefinition,
+                Handler = ExpenseReportHandler
+            });
+        }
+        else
+        {
+            _registry.UnregisterForAgent(agentId, "submit_expense_report");
+        }
+    }
+}</code></pre>
+
+  <h2>Registration Scope Summary</h2>
+  <table>
+    <thead>
+      <tr><th>Scope</th><th>Who Sees the Tool</th><th>When to Use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Global (plugin-level)</td><td>All agents with that plugin</td><td>Core tools used by most agents</td></tr>
+      <tr><td>Per-agent (admin UI)</td><td>Only the configured agent</td><td>Specialist tools for specific agent roles</td></tr>
+      <tr><td>Dynamic (runtime)</td><td>Controlled at runtime per agent</td><td>Feature flags, per-tenant capabilities, A/B testing</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-tool-schema.html">&#8592; Tool Schema</a>
+    <a href="03-tool-call-loop.html">Next: Tool Call Loop &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

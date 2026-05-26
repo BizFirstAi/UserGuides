@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Semantic Memory — Memory Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory System Overview</a>
+  <a href="01-working.html">Working Memory</a>
+  <a href="02-episodic.html">Episodic Memory</a>
+  <a href="03-semantic.html" class="active">Semantic Memory</a>
+  <a href="04-procedural.html">Procedural Memory</a>
+  <a href="05-comparison.html">Comparison Table</a>
+  <a href="06-interaction.html">How Memory Types Interact</a>
+  <a href="07-config.html">Memory Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Semantic Memory</h1>
+    <p class="lead">Semantic memory is the agent's knowledge base — documents, policies, FAQs, manuals, and any other text that the agent should be able to answer questions about. It lives in a vector database and is retrieved by cosine similarity on the user's current message.</p>
+  </div>
+
+  <h2>What Is Semantic Memory?</h2>
+  <p>Semantic memory is not conversation history — it is static (or slowly changing) knowledge. You load it by indexing documents into a vector store. At query time, the user's message is embedded and the most semantically similar document chunks are retrieved:</p>
+  <pre><code>// Simplified RAG pipeline
+string userMessage = "Can I carry over unused leave days?";
+
+// 1. Embed the question
+float[] queryEmbedding = await _embedder.EmbedAsync(userMessage);
+
+// 2. Search the vector store for similar chunks
+IReadOnlyList&lt;MemoryRecord&gt; results = await _vectorStore.SearchAsync(
+    collection: $"agent_{agentId}",
+    embedding:  queryEmbedding,
+    topK:       5,
+    minScore:   0.75f);
+
+// 3. Inject the top chunks into working memory before the LLM call
+string injected = FormatForContext(results);
+// → "[Retrieved Knowledge]\nSource: HR Policy 2025.pdf\nCarry-over cap is 5 days..."</code></pre>
+
+  <h2>Key Characteristics</h2>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Value</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Storage</td><td>Vector database (Qdrant or PGVector)</td><td>Each agent has its own collection</td></tr>
+      <tr><td>Lifetime</td><td>Persistent until deleted</td><td>Survives server restarts and deployments</td></tr>
+      <tr><td>Retrieval</td><td>Cosine similarity on query embedding</td><td>Supports hybrid search (vector + keyword) and reranking</td></tr>
+      <tr><td>Indexing</td><td>Document ingestion pipeline</td><td>Chunk → Embed → Store (via admin UI or API)</td></tr>
+      <tr><td>Per-agent isolation</td><td>Collection per agent</td><td>Agent A cannot read Agent B's knowledge base</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Indexing Pipeline</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Ingest Document</strong>
+        <span>Upload PDF, DOCX, TXT, or Markdown. The <code>IDocumentIngester</code> extracts raw text.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Chunk</strong>
+        <span>Split text into overlapping chunks (default 512 tokens, 64-token overlap) for granular retrieval.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Embed</strong>
+        <span>Each chunk is embedded via <code>IEmbeddingProvider</code> (e.g. OpenAI text-embedding-3-small).</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Store</strong>
+        <span>Chunk text + embedding + metadata written to the agent's vector collection.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>Available Immediately</strong>
+        <span>Next turn retrieval will find the new chunks — no restart needed.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Supported Vector Backends</h2>
+  <table>
+    <thead>
+      <tr><th>Backend</th><th>Best For</th><th>Filtering</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Qdrant</td><td>Production deployments, large knowledge bases</td><td>Payload filters (metadata)</td></tr>
+      <tr><td>PGVector</td><td>Teams already on PostgreSQL</td><td>SQL WHERE clauses</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Advanced Retrieval Options</h2>
+  <p>Beyond simple vector search, two advanced retrieval modes improve answer quality:</p>
+  <ul>
+    <li><strong>Hybrid search</strong>: Combines vector similarity with BM25 keyword search using Reciprocal Rank Fusion (RRF). Better for precise term matching (part numbers, names, codes).</li>
+    <li><strong>Reranking</strong>: A cross-encoder model rescores the retrieved chunks and reorders them by relevance. Supported providers: Cohere Rerank, ONNX local models.</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Full Guide</strong>
+    <p>This is a summary page. The <a href="../Guide4_SemanticMemory/index.html">Semantic Memory full guide</a> covers embedding models, vector store setup (Qdrant/PGVector), the indexing pipeline, retrieval configuration, hybrid search with RRF, reranking, and per-agent collection isolation.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-episodic.html">&#8592; Episodic Memory</a>
+    <a href="04-procedural.html">Next: Procedural Memory &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

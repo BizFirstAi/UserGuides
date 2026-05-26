@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>No Action (Fail) — HIL Timeout | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Timeout</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-timeout-config.html">Configuring Timeout</a>
+  <a href="02-timeout-job.html">The Timeout Background Job</a>
+  <a href="03-escalation.html">Escalation</a>
+  <a href="04-auto-decision.html">Auto-Decision</a>
+  <a href="05-timeout-port.html">Timeout Output Port</a>
+  <a href="06-no-action.html" class="active">No Action (Fail)</a>
+  <a href="07-monitoring.html">Monitoring Timeouts</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>No Action (Fail on Timeout)</h1>
+    <p class="lead">When timeoutBehavior is set to Fail (or left unset), the workflow fails entirely on timeout with a HILTimeoutError. No output port is used — this is a terminal failure state.</p>
+  </div>
+
+  <h2>Fail Behaviour</h2>
+  <pre><code">// HILFailureService.cs
+public async Task FailAsync(SuspendedExecution suspension, CancellationToken ct)
+{
+    // Mark the suspended execution as Failed
+    await _suspendedRepo.UpdateStatusAsync(
+        suspension.ExecutionResId, SuspensionStatus.TimedOut, ct);
+
+    // Fail the workflow execution with a terminal error
+    await _executionService.FailAsync(suspension.ExecutionId, new HILTimeoutError
+    {
+        Message      = $"HIL task at node '{suspension.SuspendedNodeId}' timed out without a response.",
+        NodeId       = suspension.SuspendedNodeId,
+        ExpiredAt    = DateTimeOffset.UtcNow,
+        ActorId      = suspension.ActorId
+    }, ct);
+}</code></pre>
+
+  <h2>Execution Status After Fail</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Execution Status</td><td>Failed</td></tr>
+      <tr><td>FailedNodeId</td><td>The HIL node's ID</td></tr>
+      <tr><td>ErrorType</td><td><code>HILTimeoutError</code></td></tr>
+      <tr><td>ErrorMessage</td><td>"HIL task at node '{nodeId}' timed out without a response."</td></tr>
+    </tbody>
+  </table>
+
+  <h2>When to Use Fail</h2>
+  <ul>
+    <li>The task MUST have human involvement — no automated fallback is acceptable.</li>
+    <li>Missing a deadline is itself a business process failure that must be tracked and investigated.</li>
+    <li>The workflow is non-critical and can be restarted from scratch by the initiator.</li>
+  </ul>
+
+  <h2>Recovery After Fail</h2>
+  <p>Once a workflow fails on HIL timeout, it cannot be resumed through the normal resume API. Recovery options:</p>
+  <ul>
+    <li>The initiator creates a new execution of the same workflow.</li>
+    <li>An admin uses the force-resume API if the state needs to be recovered (advanced).</li>
+    <li>A monitoring alert fires (Guide 28) — the ops team investigates and restarts manually.</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Default behavior is Fail:</strong> If you set <code>timeoutDuration</code> but leave <code>timeoutBehavior</code> unset, the default is <code>Fail</code>. Be intentional — always set both fields when configuring a timeout.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-timeout-port.html">&#8592; Timeout Output Port</a>
+    <a href="07-monitoring.html">Next: Monitoring Timeouts &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

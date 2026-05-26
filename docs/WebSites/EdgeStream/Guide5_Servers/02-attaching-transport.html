@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attaching a Transport — Servers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Servers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Server Overview</a>
+  <a href="01-creating.html">Creating a Server</a>
+  <a href="02-attaching-transport.html" class="active">Attaching a Transport</a>
+  <a href="03-registering-hooks.html">Registering Hooks</a>
+  <a href="04-starting.html">Starting the Server</a>
+  <a href="05-stopping.html">Stopping the Server</a>
+  <a href="06-multi-server.html">Multi-Server Patterns</a>
+  <a href="07-error-handling.html">Server Error Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Attaching a Transport</h1>
+    <p class="lead">The transport is specified as part of the server registration via <code>transportConfig</code>. EdgeStream's <code>TransportFactory</code> instantiates the correct transport class from the config's <code>type</code> field.</p>
+  </div>
+
+  <h2>How Transport Attachment Works</h2>
+  <p>When you call <code>registerServer(registration)</code>, the <code>EdgeStream</code> facade immediately calls <code>createTransport(registration.transportConfig)</code> and passes the result to the <code>Server</code> constructor. You never instantiate transports directly in application code.</p>
+
+  <pre><code>// Internal — EdgeStream.registerServer()
+registerServer(registration: IServerRegistration): void {
+  const transport = createTransport(registration.transportConfig); // factory
+  const server = new Server(registration, transport);
+  this.servers.set(registration.id, server);
+}</code></pre>
+
+  <h2>TransportFactory</h2>
+  <pre><code>// TransportFactory selects the implementation based on type
+export function createTransport(config: TransportConfig): ITransport {
+  const id = generatePrefixedId('transport');
+  switch (config.type) {
+    case 'signalr':      return new SignalRTransport(id, config);
+    case 'websocket':    return new RawWebSocketTransport(id, config);
+    case 'sse':          return new SseTransport(id, config);
+    case 'http-polling': return new HttpPollingTransport(id, config);
+    default:
+      throw new Error(`Unknown transport type: ${(config as any).type}`);
+  }
+}</code></pre>
+
+  <h2>TransportConfig Options</h2>
+  <pre><code>export interface TransportConfig {
+  type: 'signalr' | 'websocket' | 'sse' | 'http-polling';
+  url: string;            // hub URL or endpoint
+  accessToken?: string;   // JWT for SignalR auth
+  timeoutMs?: number;     // connection timeout in ms
+  headers?: Record&lt;string, string&gt;;    // for HTTP-based transports
+  queryParams?: Record&lt;string, string&gt;; // URL query parameters
+  reconnect?: {
+    maxAttempts: number;      // 0 = infinite
+    initialDelayMs: number;   // delay before first retry
+    maxDelayMs: number;       // max backoff cap
+    backoffMultiplier: number; // exponential factor
+  };
+}</code></pre>
+
+  <h2>Accessing the Transport After Registration</h2>
+  <pre><code>const server = edgeStream.server('bas')!;
+
+// Access transport for status monitoring
+console.log(server.transport.type);    // 'signalr'
+console.log(server.transport.status);  // 'disconnected' until start()
+console.log(server.transport.id);      // 'transport-xxxx'
+
+// Listen to transport status changes
+server.transport.onStatusChange((status) =&gt; {
+  console.log('Transport status:', status);
+  // 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error'
+});
+
+server.transport.onError((error) =&gt; {
+  console.error('Transport error:', error.message);
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="01-creating.html">&#8592; Creating a Server</a>
+    <a href="03-registering-hooks.html">Next: Registering Hooks &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

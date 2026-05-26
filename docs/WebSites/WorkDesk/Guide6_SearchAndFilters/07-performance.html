@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Search Performance — Search and Filters | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Search &amp; Filters</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-global-search.html">Global Search</a>
+  <a href="02-task-filters.html">Task Inbox Filters</a>
+  <a href="03-history-filters.html">Workflow History Filters</a>
+  <a href="04-notification-filters.html">Notification Filters</a>
+  <a href="05-saved-filters.html">Saved Filters</a>
+  <a href="06-search-api.html">Search API</a>
+  <a href="07-performance.html" class="active">Search Performance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Search Performance</h1>
+    <p class="lead">WorkDesk search is designed for fast, real-time results — typically under 100ms. This is achieved through actor-scoped data, indexed fields, result limits, and debouncing. Understanding these design decisions helps engineers extend the search system correctly.</p>
+  </div>
+
+  <h2>Performance Design Principles</h2>
+  <ul>
+    <li><strong>Actor scoping first</strong> — every query is filtered by <code>actorId + tenantId</code> before full-text matching, drastically reducing the search corpus</li>
+    <li><strong>Indexed fields</strong> — search targets only indexed columns; no full-table scans</li>
+    <li><strong>Result limits enforced</strong> — maximum 20 results per section per request — no unbounded queries</li>
+    <li><strong>Client debouncing</strong> — 300ms debounce on the frontend prevents query-per-keystroke</li>
+    <li><strong>Rate limiting</strong> — 60 search requests/minute per user enforced at the API gateway</li>
+  </ul>
+
+  <h2>Indexed Fields by Section</h2>
+  <table>
+    <thead><tr><th>Section</th><th>Indexed Fields</th><th>Index Type</th></tr></thead>
+    <tbody>
+      <tr><td>Tasks</td><td><code>title</code>, <code>workflowName</code>, <code>status</code>, <code>dueAt</code>, <code>actorId</code></td><td>Full-text on title; B-tree on status, dueAt, actorId</td></tr>
+      <tr><td>History</td><td><code>workflowName</code>, <code>status</code>, <code>triggeredAt</code>, <code>actorId</code></td><td>Full-text on workflowName; B-tree on status, triggeredAt</td></tr>
+      <tr><td>Notifications</td><td><code>title</code>, <code>body</code>, <code>type</code>, <code>isRead</code>, <code>createdAt</code>, <code>userId</code></td><td>Full-text on title+body; B-tree on type, isRead, userId</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Performance SLOs</h2>
+  <table>
+    <thead><tr><th>Query Type</th><th>P50 Target</th><th>P99 Target</th></tr></thead>
+    <tbody>
+      <tr><td>Global search (all sections)</td><td>&lt; 80ms</td><td>&lt; 300ms</td></tr>
+      <tr><td>Section-scoped search</td><td>&lt; 40ms</td><td>&lt; 150ms</td></tr>
+      <tr><td>Filter-only (no text query)</td><td>&lt; 20ms</td><td>&lt; 80ms</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pagination for Large Result Sets</h2>
+  <p>When a search returns more than the limit per section (<code>hasMore: true</code>), the WorkDesk UI shows a "Show more from Tasks" link below the results. Clicking it fetches the next page of results for that section with <code>section=tasks&amp;page=2</code>. This prevents overloading the UI with hundreds of results at once.</p>
+
+  <h2>Search Scope Boundaries</h2>
+  <div class="callout danger">
+    <strong>Hard Scope Boundary</strong>
+    <p>Search results are always bounded to the actor's visible data. The query planner applies <code>WHERE UserId = @actorId AND TenantId = @tenantId</code> as the outermost condition before full-text matching. This is enforced server-side and cannot be bypassed by URL manipulation.</p>
+  </div>
+
+  <h2>Extending Search</h2>
+  <p>To add a new searchable section (e.g., a custom app's data), implement the <code>IWorkDeskSearchProvider</code> interface and register it in the DI container. The unified search endpoint will automatically include results from all registered providers:</p>
+
+  <pre><code>// IWorkDeskSearchProvider — interface for extending search
+public interface IWorkDeskSearchProvider
+{
+    string SectionKey { get; }   // e.g., "my-custom-section"
+
+    Task&lt;SearchSectionResult&gt; SearchAsync(
+        string query,
+        Guid actorId,
+        Guid tenantId,
+        int limit,
+        CancellationToken ct);
+}
+
+// Register in DI
+services.AddWorkDeskSearchProvider&lt;MyCustomSearchProvider&gt;();</code></pre>
+
+  <div class="page-nav">
+    <a href="06-search-api.html">&#8592; Search API</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

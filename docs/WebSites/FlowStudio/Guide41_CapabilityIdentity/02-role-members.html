@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Role Members Node — Guide41 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Identity</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-user-lookup.html"><i class="fa-solid fa-user-magnifying-glass"></i> User Lookup</a>
+  <a href="02-role-members.html" class="active"><i class="fa-solid fa-users"></i> Role Members</a>
+  <a href="03-permission-check.html"><i class="fa-solid fa-shield-check"></i> Permission Check</a>
+  <a href="04-actor-context.html"><i class="fa-solid fa-fingerprint"></i> Actor Context</a>
+  <a href="05-managed-identities.html"><i class="fa-solid fa-robot"></i> Managed Identities</a>
+  <a href="06-passport-client.html"><i class="fa-solid fa-passport"></i> Passport Client</a>
+  <a href="07-tenant-scoping.html"><i class="fa-solid fa-building"></i> Tenant Scoping</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Role Members Node</h1>
+    <p class="lead">Getting all active users in a named role — the <code>RoleMembersNode</code> config and using the result to populate dynamic approver lists or notification targets.</p>
+  </div>
+
+  <h2>Node Configuration</h2>
+  <pre><code class="language-json">{
+  "nodeType": "RoleMembers",
+  "name": "getFinanceApprovers",
+  "config": {
+    "roleName": "finance-approver",
+    "activeOnly": true,
+    "department": "$output.fetchEmployee.department",
+    "maxResults": 50
+  }
+}</code></pre>
+
+  <h2>Configuration Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>roleName</code></td><td>string / expr</td><td>The Passport role name to query. Must be an exact match (case-insensitive).</td></tr>
+      <tr><td><code>activeOnly</code></td><td>bool</td><td>When true (default), only returns active (non-suspended) users.</td></tr>
+      <tr><td><code>department</code></td><td>string / expr</td><td>Optional filter — only return members from this department.</td></tr>
+      <tr><td><code>maxResults</code></td><td>int</td><td>Maximum members to return. Default: 100. Cap: 500.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Node Output</h2>
+  <pre><code class="language-json">{
+  "roleName": "finance-approver",
+  "members": [
+    { "userId": "usr-a1b2", "email": "alice@acme.com", "displayName": "Alice K.", "department": "Finance" },
+    { "userId": "usr-c3d4", "email": "bob@acme.com",   "displayName": "Bob M.",   "department": "Finance" }
+  ],
+  "memberCount": 2
+}</code></pre>
+
+  <h2>Common Use Cases</h2>
+
+  <h3>Dynamic Approval Assignment</h3>
+  <pre><code class="language-json">// RoleMembers → ApprovalNode
+// ApprovalNode config:
+{
+  "actorIds": "$output.getFinanceApprovers.members.map(m => m.userId)",
+  "assignmentMode": "any-one"
+}</code></pre>
+
+  <h3>Bulk Notification</h3>
+  <pre><code class="language-javascript">// RoleMembers → ForEach → SendEmail
+// ForEach items:
+"$output.getFinanceApprovers.members"
+
+// SendEmail to (inside ForEach):
+"$json.email"</code></pre>
+
+  <h3>Role Membership Count Guard</h3>
+  <pre><code class="language-javascript">// Condition node expression — stop workflow if no approvers:
+"$output.getFinanceApprovers.memberCount === 0"
+// → route to error / notify admin path</code></pre>
+
+  <div class="callout callout-warning">
+    <strong>Large roles:</strong> Roles with hundreds of members should use <code>maxResults</code> and <code>department</code> filters to narrow the result. Returning 500 users into a ForEach that sends individual emails creates 500 parallel node executions — ensure the workflow is designed to handle the scale.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-user-lookup.html">&#8592; User Lookup</a>
+    <a href="03-permission-check.html">Next: Permission Check &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

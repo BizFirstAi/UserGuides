@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hook Execution Order — Interaction Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-pre-send.html">Pre-Send Hook</a>
+  <a href="02-post-receive.html">Post-Receive Hook</a>
+  <a href="03-response-validation.html">Response Validation Hook</a>
+  <a href="04-audit-hook.html">Audit Hook</a>
+  <a href="05-rate-limit-hook.html">Rate Limit Hook</a>
+  <a href="06-custom.html">Custom Interaction Hooks</a>
+  <a href="07-order.html" class="active">Hook Execution Order</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Hook Execution Order</h1>
+    <p class="lead">Hooks run in the order they are registered. The order matters — rate limiting should run before audit logging (so blocked interactions aren't logged as valid publishes), and validation always runs first on response receipt.</p>
+  </div>
+
+  <h2>Recommended Registration Order</h2>
+  <pre><code>// Program.cs — recommended hook registration order
+builder.Services.AddInteractionHook&lt;RateLimitInteractionHook&gt;();     // 1st: Block flooding before anything else
+builder.Services.AddInteractionHook&lt;BusinessPermissionHook&gt;();        // 2nd: Custom business permission check
+builder.Services.AddInteractionHook&lt;TraceEnrichmentHook&gt;();           // 3rd: Enrich with trace context
+builder.Services.AddInteractionHook&lt;AuditInteractionHook&gt;();          // 4th: Log (after checks pass)
+builder.Services.AddInteractionHook&lt;MetricsInteractionHook&gt;();        // 5th: Metrics (last)
+</code></pre>
+
+  <h2>Pre-Send Hook Execution Order</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Request Created &amp; Validated</h4><p>Schema validation runs before any hooks. Invalid requests are rejected immediately.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Hook 1: RateLimitInteractionHook.OnBeforePublish</h4><p>Blocks if user is being flooded. If blocked, throws — subsequent hooks do not run.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Hook 2..N: Custom Hooks OnBeforePublish</h4><p>Run in registration order. Any hook can block — subsequent hooks do not run if blocked.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body"><h4>Hook N: AuditInteractionHook.OnBeforePublish</h4><p>Records the publish event. Audit runs last so it only logs interactions that actually get delivered.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body"><h4>EdgeStream Delivery</h4><p>After all hooks pass, the request is published to EdgeStream.</p></div>
+    </div>
+  </div>
+
+  <h2>Post-Receive Hook Execution Order</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>ResponseValidationHook (always first)</h4><p>The built-in validation hook always runs first — it is not in the registered hook list. If validation fails, no other hooks run.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Hook 1..N: Registered Hooks OnAfterRespond</h4><p>Run in registration order. Exceptions are caught and logged — the cycle continues regardless.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div></div>
+      <div class="body"><h4>TaskCompletionSource Resolves</h4><p>After all hooks complete, <code>PublishAndWaitAsync()</code> resolves with the response.</p></div>
+    </div>
+  </div>
+
+  <h2>Hook Order Summary Table</h2>
+  <table>
+    <thead><tr><th>Position</th><th>Hook</th><th>Type</th><th>Can Block?</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>RateLimitInteractionHook</code></td><td>Pre-send</td><td>Yes</td></tr>
+      <tr><td>2</td><td>Custom permission hooks</td><td>Pre-send</td><td>Yes</td></tr>
+      <tr><td>3</td><td>Enrichment hooks</td><td>Pre-send</td><td>No (but can modify request)</td></tr>
+      <tr><td>4</td><td><code>AuditInteractionHook</code> (pre-send side)</td><td>Pre-send</td><td>No</td></tr>
+      <tr><td>5</td><td><code>MetricsInteractionHook</code> (pre-send side)</td><td>Pre-send</td><td>No</td></tr>
+      <tr><td>—</td><td>[EdgeStream Delivery]</td><td>—</td><td>—</td></tr>
+      <tr><td>—</td><td><code>ResponseValidationHook</code> (always first)</td><td>Post-receive</td><td>Yes (sends error ack)</td></tr>
+      <tr><td>6</td><td><code>AuditInteractionHook</code> (post-receive side)</td><td>Post-receive</td><td>No</td></tr>
+      <tr><td>7</td><td><code>MetricsInteractionHook</code> (post-receive side)</td><td>Post-receive</td><td>No</td></tr>
+      <tr><td>8</td><td>Custom business hooks</td><td>Post-receive</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-custom.html">&#8592; Custom Interaction Hooks</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

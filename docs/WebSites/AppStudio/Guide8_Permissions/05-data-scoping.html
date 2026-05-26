@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Scoping — Permissions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Permissions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Permissions Overview</a>
+  <a href="01-app-access.html">App-Level Access</a>
+  <a href="02-page-visibility.html">Page Visibility</a>
+  <a href="03-widget-visibility.html">Widget Visibility</a>
+  <a href="04-role-expression.html">Role-Based Expression</a>
+  <a href="05-data-scoping.html" class="active">Data Scoping</a>
+  <a href="06-passport-integration.html">Passport IAM Integration</a>
+  <a href="07-audit.html">Permissions Audit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Data Scoping</h1>
+    <p class="lead">Widget visibility controls rendering — but data scoping ensures that even if a widget renders, it only receives data the user is authorized to see. Data scoping happens server-side in the data services that App Studio widgets call, not in the UI layer.</p>
+  </div>
+
+  <h2>Why Data Scoping Is Necessary</h2>
+  <p>Hiding a widget does not prevent an API call from being made. If a widget makes a data request, that request returns whatever the server sends — regardless of UI visibility rules. Data security must be enforced at the server.</p>
+  <pre><code>// WITHOUT data scoping:
+// A viewer might modify the URL, reload the page,
+// and the DataGrid would load all records — even from a "hidden" widget.
+
+// WITH data scoping (correct approach):
+// The data service enforces tenant + role filters on every query.
+// Even if the request is made, only authorized records are returned.
+</code></pre>
+
+  <h2>How Data Scoping Works in App Studio</h2>
+  <p>App Studio widgets load data through data services configured with the widget. The data service is responsible for applying role-based filters. App Studio passes the user's <code>context</code> (including roles) with every data request:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Widget requests data</strong>
+        <p>The DataGrid, Form, or other data-bound widget calls its configured data source.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Context forwarded with request</strong>
+        <p>App Studio includes the user's Passport JWT in the Authorization header of the API call. The server extracts tenantId, userId, and roles from the token.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Server applies role filters</strong>
+        <p>The data service (e.g., a Flow Studio workflow or a backend API) applies tenant isolation and role-based data filters before returning records.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Filtered data returned</strong>
+        <p>Only authorized records are included in the response. The widget displays what it receives.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Passing context to Data Sources</h2>
+  <p>Use <code>context.*</code> tokens in widget data source params to pass the user's identity to backend filters:</p>
+  <pre><code>// DataGrid — load only leads assigned to the current user (sales rep scope)
+{
+  "widgetId": "my-leads-grid",
+  "type": "DataGrid",
+  "config": {
+    "dataSource": "GetLeads",
+    "params": {
+      "assignedUserId": "{{ context.userId }}",   // Server filters by this
+      "tenantId": "{{ context.tenantId }}"
+    }
+  }
+}
+
+// For managers — load leads for their team
+// The backend uses context.roles to determine if the user can see all leads
+{
+  "dataSource": "GetLeads",
+  "params": {
+    "requestingUserId": "{{ context.userId }}",
+    "requestingUserRoles": "{{ context.roles.join(',') }}"
+  }
+}
+</code></pre>
+
+  <h2>Tenant Isolation</h2>
+  <p>Tenant isolation is enforced at the data layer — always. The <code>tenantId</code> from the JWT is used by all data services to scope queries. App Studio never mixes data across tenants regardless of widget configuration.</p>
+  <pre><code>// The platform guarantees: all data requests carry tenantId from the JWT.
+// Data services MUST NOT use tenantId from query params alone —
+// always validate against the JWT claim.
+//
+// This is enforced by the IAppStudioService architecture —
+// the service layer always sources tenantId from the authenticated context.
+</code></pre>
+
+  <h2>Role-Based Column Visibility + Data Scoping Together</h2>
+  <pre><code>// Combining UI hiding (column visibility) with data scoping (server-side):
+// Even if someone bypasses the column visibility in the UI,
+// the server won't return the salary field for non-HR users.
+
+// Widget config — hide salary column in the UI for non-HR
+{
+  "field": "salary",
+  "header": "Salary",
+  "visibilityExpression": "{{ context.roles.includes('hr') }}"
+}
+
+// Server-side data service — exclude salary from non-HR responses
+// (This lives in the Flow workflow or backend API, not in App Studio config)
+</code></pre>
+
+  <div class="callout callout-info">
+    <strong>Defense in depth</strong>
+    Use both widget visibility (client-side UX) and data scoping (server-side enforcement) together. Widget visibility improves UX; data scoping is the actual security control. Never rely on widget visibility alone for sensitive data.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-role-expression.html">&#8592; Role-Based Expression</a>
+    <a href="06-passport-integration.html">Next: Passport IAM Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

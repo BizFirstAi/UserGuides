@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Indexing — RAG | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>RAG Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">RAG Pipeline Overview</a>
+  <a href="01-document-ingestion.html">Document Ingestion</a>
+  <a href="02-chunking.html">Chunking Strategies</a>
+  <a href="03-embedding.html">Embedding</a>
+  <a href="04-indexing.html" class="active">Indexing</a>
+  <a href="05-retrieval.html">Retrieval</a>
+  <a href="06-hybrid-search.html">Hybrid Search</a>
+  <a href="07-reranking.html">Reranking</a>
+  <a href="08-context-injection.html">Context Injection</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Indexing</h1>
+    <p class="lead">Indexing is the process of writing embedded chunks to the vector store. This page covers the <code>ISemanticMemoryStore</code> write API, document metadata, upsert semantics for updates, deletion, and the indexing job for bulk re-indexing.</p>
+  </div>
+
+  <h2>ISemanticMemoryStore Write API</h2>
+  <pre><code>public interface ISemanticMemoryStore
+{
+    // Write a single memory record
+    Task UpsertAsync(string collection, MemoryRecord record, CancellationToken ct);
+
+    // Write a batch of memory records (more efficient)
+    Task UpsertBatchAsync(string collection, IReadOnlyList&lt;MemoryRecord&gt; records, CancellationToken ct);
+
+    // Delete all records for a specific source document
+    Task DeleteBySourceAsync(string collection, string source, CancellationToken ct);
+
+    // Delete a single record by ID
+    Task DeleteAsync(string collection, string id, CancellationToken ct);
+
+    // Search (retrieval — see Retrieval page)
+    Task&lt;IReadOnlyList&lt;MemoryRecord&gt;&gt; SearchAsync(
+        string collection, float[] queryEmbedding, int topK, float minScore, CancellationToken ct);
+}
+
+public class MemoryRecord
+{
+    public string         Id        { get; init; } = Guid.NewGuid().ToString();
+    public string         Content   { get; init; } = string.Empty;
+    public float[]        Embedding { get; init; } = Array.Empty&lt;float&gt;();
+    public MemoryMetadata Metadata  { get; init; } = new();
+    public float          Score     { get; set; }   // Populated by SearchAsync
+}
+
+public class MemoryMetadata
+{
+    public string Source     { get; set; } = string.Empty;
+    public string Category   { get; set; } = string.Empty;
+    public string AgentId    { get; set; } = string.Empty;
+    public string TenantId   { get; set; } = string.Empty;
+    public int    ChunkIndex { get; set; }
+    public string IndexedAt  { get; set; } = string.Empty;
+}</code></pre>
+
+  <h2>Document Indexing Service</h2>
+  <pre><code>public class DocumentIndexingService
+{
+    public async Task&lt;IndexingResult&gt; IndexAsync(
+        Stream fileStream,
+        DocumentMetadata metadata,
+        Guid agentId,
+        CancellationToken ct)
+    {
+        // 1. Extract text
+        var ingester = _ingesters.First(i => i.CanHandle(metadata.Extension, metadata.MimeType));
+        var doc = await ingester.IngestAsync(fileStream, metadata, ct);
+
+        // 2. Chunk
+        var chunks = _chunker.Chunk(doc.RawText, _chunkingConfig);
+
+        // 3. Embed (batched)
+        var embeddings = await _embedder.EmbedBatchAsync(
+            chunks.Select(c => c.Content).ToList(), ct);
+
+        // 4. Delete old chunks for this source (for re-indexing updates)
+        string collection = $"agent_{agentId:N}";
+        await _store.DeleteBySourceAsync(collection, metadata.Source, ct);
+
+        // 5. Write new chunks
+        var records = chunks.Select((chunk, i) => new MemoryRecord
+        {
+            Id        = Guid.NewGuid().ToString(),
+            Content   = chunk.Content,
+            Embedding = embeddings[i],
+            Metadata  = new MemoryMetadata
+            {
+                Source     = metadata.Source,
+                Category   = metadata.Category,
+                AgentId    = agentId.ToString(),
+                TenantId   = metadata.TenantId.ToString(),
+                ChunkIndex = chunk.Index,
+                IndexedAt  = DateTime.UtcNow.ToString("O")
+            }
+        }).ToList();
+
+        await _store.UpsertBatchAsync(collection, records, ct);
+
+        return new IndexingResult
+        {
+            DocumentId = metadata.DocumentId,
+            ChunkCount = records.Count,
+            TokenCount = chunks.Sum(c => c.TokenCount),
+            IndexedAt  = DateTime.UtcNow
+        };
+    }
+}</code></pre>
+
+  <h2>Re-indexing a Document</h2>
+  <p>When a document is updated, re-indexing atomically replaces all its chunks:</p>
+  <pre><code>// PATCH /api/octopus/knowledge/{agentId}/documents/{documentId}/reindex
+// The service:
+// 1. Deletes all existing chunks matching metadata.Source == documentFileName
+// 2. Re-ingests, re-chunks, re-embeds, and writes the new chunks
+// Result: no downtime — old chunks serve queries until new ones are written</code></pre>
+
+  <h2>Bulk Re-indexing Job</h2>
+  <pre><code>// POST /api/octopus/knowledge/{agentId}/reindex-all
+// Triggers a background job that re-indexes all documents:
+// Used when changing chunking config or embedding model
+
+public class BulkReindexJob : IHostedService
+{
+    public async Task StartAsync(CancellationToken ct)
+    {
+        var documents = await _docStore.GetAllAsync(agentId, ct);
+        var semaphore = new SemaphoreSlim(5);  // Max 5 concurrent indexing operations
+
+        var tasks = documents.Select(async doc =>
+        {
+            await semaphore.WaitAsync(ct);
+            try   { await _indexer.IndexAsync(doc.Stream, doc.Metadata, agentId, ct); }
+            finally { semaphore.Release(); }
+        });
+
+        await Task.WhenAll(tasks);
+    }
+}</code></pre>
+
+  <h2>Indexing Status Tracking</h2>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Pending</code></td><td>Document uploaded; indexing queued but not started</td></tr>
+      <tr><td><code>Indexing</code></td><td>Active — chunking, embedding, or writing in progress</td></tr>
+      <tr><td><code>Indexed</code></td><td>Complete — chunks available for retrieval immediately</td></tr>
+      <tr><td><code>Failed</code></td><td>Error during indexing — check error details and retry</td></tr>
+      <tr><td><code>Deleted</code></td><td>Document and all its chunks have been removed</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-embedding.html">&#8592; Embedding</a>
+    <a href="05-retrieval.html">Next: Retrieval &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

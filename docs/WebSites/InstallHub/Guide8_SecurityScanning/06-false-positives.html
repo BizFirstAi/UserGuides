@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Handling False Positives — Security Scanning | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Security Scanning</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-expression-injection.html">Expression Injection Detection</a>
+  <a href="02-sql-injection.html">SQL Injection Detection</a>
+  <a href="03-dependency-vulnerability.html">Dependency Vulnerability Scan</a>
+  <a href="04-content-policy.html">Content Policy Check</a>
+  <a href="05-scan-results.html">Scan Results</a>
+  <a href="06-false-positives.html" class="active">Handling False Positives</a>
+  <a href="07-manual-review.html">Manual Security Review</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Handling False Positives</h1>
+    <p class="lead">A false positive occurs when the scanner flags a legitimate pattern as a security issue. False positives can be reported through the scan exception request process, which routes the finding to a human security reviewer.</p>
+  </div>
+
+  <h2>Common False Positive Scenarios</h2>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>False Positive Scenario</th><th>Recommended Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Expression Injection</td><td>A RuleSet condition uses <code>env</code> as a field name (e.g., <code>record.env</code>), not an environment variable access</td><td>Rename the field to avoid the reserved prefix, or submit false positive with explanation</td></tr>
+      <tr><td>SQL Injection</td><td>A workflow node name contains "UNION" as a business term (e.g., "Union Dues Calculation")</td><td>Rename the node, or submit false positive — node names are not executed</td></tr>
+      <tr><td>Content Policy</td><td>A README example shows a placeholder that matches an API key pattern</td><td>Change to clearly labeled placeholder: <code>YOUR_API_KEY_HERE</code></td></tr>
+      <tr><td>Content Policy</td><td>A form field label in French triggers an English profanity match</td><td>Submit false positive with language explanation</td></tr>
+      <tr><td>Dependency Vulnerability</td><td>A CVE affects a code path in the dependency that your package never exercises</td><td>Submit false positive with explanation of which code path is affected and how your package avoids it</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Requesting a Scan Exception</h2>
+  <p>For marketplace submissions (Phase 3 — PENDING):</p>
+  <pre><code>POST /api/marketplace/submissions/{submissionId}/scan-exception
+Authorization: Bearer {publisherToken}
+{
+  "findingIndex":    0,                   // Index of the finding in the scan report
+  "explanation":     "The expression 'record.env' refers to an employee environment field in our HR data model (env = environment, as in 'work environment score'). It is not accessing Node.js process.env or any system environment variables. The expression evaluator in BizFirstGO does not have access to system environment variables.",
+  "evidence":        "The 'env' field is defined in our EntitySchema 'EmployeeRecord' as a numeric score field (type: number, range: 1-10)."
+}
+
+// Response:
+{
+  "exceptionId":      "exc-a1b2c3",
+  "status":           "UnderReview",
+  "reviewSLA":        "2 business days",
+  "reviewerAssigned": true
+}</code></pre>
+
+  <p>For direct imports (tenant administrator path):</p>
+  <pre><code>POST /api/installhub/imports/{importId}/scan-exception
+Authorization: Bearer {adminToken}
+{
+  "findingIndex":  0,
+  "explanation":   "...",
+  "justification": "This package is from a trusted internal source. The scan finding is a false positive."
+}
+
+// Requires: installhub:admin role
+// Effect: If approved, the import is requeued and proceeds past the flagged finding</code></pre>
+
+  <h2>Exception Review Process</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><h4>Exception Submitted</h4><p>Publisher or admin submits exception request with explanation and optional evidence. The request is logged with an immutable timestamp.</p></div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><h4>Assigned to Reviewer</h4><p>A BizFirstGO security team member is assigned. Marketplace exceptions are reviewed within 2 business days. Import exceptions (admin-initiated) are reviewed within 4 business hours.</p></div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><h4>Reviewer Decision</h4><p>The reviewer can: approve (proceed as if finding is absent), reject (finding stands — package remains blocked), or escalate (request additional information from the publisher).</p></div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body"><h4>Rule Update (if applicable)</h4><p>If the false positive reveals a systematic scanner issue, the security team updates the detection rule to reduce future false positives for similar patterns.</p></div>
+    </div>
+  </div>
+
+  <h2>Checking Exception Status</h2>
+  <pre><code>GET /api/marketplace/submissions/{submissionId}/scan-exception/{exceptionId}
+
+// Approved:
+{
+  "exceptionId": "exc-a1b2c3",
+  "status":      "Approved",
+  "decision":    "The 'env' field reference is consistent with the EntitySchema definition provided. Not an environment variable access. Finding dismissed.",
+  "reviewedBy":  "BizFirstGO Security Team",
+  "reviewedAt":  "2026-05-26T10:00:00Z",
+  "effect":      "Submission requeued for listing"
+}
+
+// Rejected:
+{
+  "exceptionId": "exc-a1b2c3",
+  "status":      "Rejected",
+  "decision":    "The expression 'process.env.SECRET' is unambiguous. This is not a false positive. Please remove this expression and resubmit.",
+  "reviewedAt":  "2026-05-26T10:00:00Z"
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Best Practice: Fix the Pattern</strong>
+    When possible, the fastest path forward is to fix the pattern rather than request an exception. Exception reviews take 2 business days; fixing and resubmitting typically results in listing within 15 minutes.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-scan-results.html">&#8592; Scan Results</a>
+    <a href="07-manual-review.html">Next: Manual Security Review &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

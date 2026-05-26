@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Using in Workflow Execution — Managed Identities | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Managed Identities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-creating.html">Creating a Managed Identity</a>
+  <a href="02-credentials.html">Managed Identity Credentials</a>
+  <a href="03-role-assignment.html">Assigning Roles and Permissions</a>
+  <a href="04-workflow-execution.html" class="active">Using in Workflow Execution</a>
+  <a href="05-service-calls.html">Using in Service-to-Service Calls</a>
+  <a href="06-credential-rotation.html">Credential Rotation</a>
+  <a href="07-audit.html">Managed Identity Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Using in Workflow Execution</h1>
+    <p class="lead">The <code>WorkflowScheduler</code> mints a managed identity token before each scheduled execution — all workflow actions run under the managed identity's identity, giving audit logs a clear non-human actor for every automated step.</p>
+  </div>
+
+  <h2>WorkflowScheduler Integration</h2>
+  <p>When a scheduled workflow trigger fires, the <code>WorkflowScheduler</code> follows this sequence before dispatching the execution:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Resolve Managed Identity</h4>
+        <p>The scheduler reads the <code>managedIdentityId</code> from the schedule configuration. It looks up the identity to verify it is enabled and retrieves its <code>clientId</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Retrieve Credential from Vault</h4>
+        <p>The <code>clientSecret</code> is not stored by the scheduler. It retrieves the secret from the configured secrets manager (Azure Key Vault, AWS Secrets Manager, or HashiCorp Vault) using the secret reference stored in the schedule config.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Mint Execution Token</h4>
+        <p>The scheduler performs the OAuth client credentials flow against <code>POST /passport/token</code>, obtaining a fresh access token. This token has a 1-hour lifetime — more than enough for any single workflow execution.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Inject IDInfo into Execution Context</h4>
+        <p>The token is exchanged for an <code>IDInfo</code> struct and injected into the workflow execution context. Every node in the workflow receives this IDInfo as its actor identity.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Execute Workflow</h4>
+        <p>The workflow runs. All API calls made by execution nodes carry the managed identity's token. All audit log entries reference the managed identity, not a human user.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Schedule Configuration</h2>
+  <pre><code">// Workflow schedule with managed identity reference
+POST /flowstudio/api/schedules
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "workflowId":        "wf-monthly-payroll",
+  "name":              "Monthly Payroll Run",
+  "cronExpression":    "0 6 25 * *",   // 06:00 on the 25th of every month
+  "timezone":          "UTC",
+  "managedIdentityId": "mi-guid-1234",
+  "secretReference": {
+    "provider":    "azure-key-vault",
+    "vaultUri":    "https://company-vault.vault.azure.net/",
+    "secretName":  "payroll-scheduler-client-secret"
+  },
+  "inputData": {
+    "payrollMonth": "{{schedule.triggerMonth}}"
+  },
+  "retryPolicy": {
+    "maxAttempts": 3,
+    "backoffSeconds": 60
+  }
+}</code></pre>
+
+  <h2>WorkflowScheduler Code Pattern</h2>
+  <pre><code">public class WorkflowScheduler : IWorkflowScheduler
+{
+    private readonly IManagedIdentityService   _identityService;
+    private readonly ISecretsManager           _secrets;
+    private readonly IPassportClient           _passport;
+    private readonly IWorkflowExecutionService _executor;
+
+    public async Task TriggerAsync(
+        ScheduleConfig schedule,
+        CancellationToken ct)
+    {
+        // 1. Verify managed identity is active
+        var identity = await _identityService.GetAsync(
+            schedule.ManagedIdentityId, ct)
+            ?? throw new InvalidOperationException(
+                $"Managed identity {schedule.ManagedIdentityId} not found");
+
+        if (!identity.IsEnabled)
+            throw new InvalidOperationException(
+                $"Managed identity '{identity.Name}' is disabled");
+
+        // 2. Retrieve secret from secrets manager
+        var clientSecret = await _secrets.GetSecretAsync(
+            schedule.SecretReference, ct);
+
+        // 3. Mint a short-lived token
+        var tokenResponse = await _passport.ClientCredentialsAsync(
+            identity.ClientId, clientSecret, ct);
+
+        // 4. Build IDInfo from the token
+        var actorContext = IDInfo.FromJwt(tokenResponse.AccessToken);
+
+        // 5. Dispatch the workflow execution
+        await _executor.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId   = schedule.WorkflowId,
+            ActorContext = actorContext,
+            InputData    = schedule.InputData,
+            TriggeredBy  = $"schedule:{schedule.Name}"
+        }, ct);
+    }
+}</code></pre>
+
+  <h2>Accessing Actor Identity Within a Node</h2>
+  <pre><code">// Inside any execution node — access the actor that triggered this workflow
+public class PayrollCalculationNode : BaseNodeExecutor
+{
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        NodeExecutionContext context,
+        CancellationToken ct)
+    {
+        // The IDInfo of the scheduling managed identity
+        var actor = context.ActorContext;
+
+        _logger.LogInformation(
+            "Payroll calculation triggered by {Actor} (service account: {IsService})",
+            actor.UserId,
+            actor.IsServiceAccount);
+
+        // All outbound API calls from within the node automatically carry
+        // the managed identity's token — no extra configuration needed
+        var payrollData = await _payrollService.CalculateAsync(
+            context.TenantId,
+            ct);
+
+        return NodeExecutionResult.Success(payrollData);
+    }
+}</code></pre>
+
+  <h2>ProcessAccessGuard for Managed Identities</h2>
+  <p>Before the scheduler can launch a workflow, <code>ProcessAccessGuard</code> checks that the managed identity has the <code>workflow.execute</code> permission and that the specific workflow's resource policy does not deny the managed identity. If either check fails, the schedule fires but the execution is rejected with a 403 — this appears in the audit log as an authorization failure.</p>
+  <pre><code">// ProcessAccessGuard checks — same pipeline for human and managed identity actors
+public class ProcessAccessGuard : IProcessAccessGuard
+{
+    public async Task&lt;AccessDecision&gt; CheckWorkflowExecutionAsync(
+        IDInfo actor,
+        string workflowId,
+        CancellationToken ct)
+    {
+        // Step 1: Role check — does the identity have workflow.execute?
+        if (!actor.Roles.Any(r => _rolePermissions[r].Contains("workflow.execute")))
+            return AccessDecision.Deny("Missing workflow.execute permission");
+
+        // Step 2: Resource policy check
+        var policy = await _policyStore.GetWorkflowPolicyAsync(workflowId, ct);
+        if (policy is not null)
+        {
+            var result = _policyEngine.Evaluate(actor, policy);
+            if (result.Effect == PolicyEffect.Deny)
+                return AccessDecision.Deny(result.Reason);
+        }
+
+        return AccessDecision.Allow();
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Token Lifetime and Long-Running Workflows</strong>
+    <p>The managed identity token issued at workflow start has a 1-hour lifetime. For workflows that run longer than 1 hour, the execution engine automatically refreshes the token using the same <code>clientId</code> + <code>clientSecret</code> pair before each node execution. The secret reference must remain valid for the duration of the workflow.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-role-assignment.html">&#8592; Assigning Roles and Permissions</a>
+    <a href="05-service-calls.html">Next: Using in Service-to-Service Calls &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signature Verification — Guide36 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Webhooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-inbound-trigger.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Inbound Trigger</a>
+  <a href="02-url-management.html"><i class="fa-solid fa-link"></i> URL Management</a>
+  <a href="03-signature-verification.html" class="active"><i class="fa-solid fa-key"></i> Signature Verification</a>
+  <a href="04-outbound-call.html"><i class="fa-solid fa-paper-plane"></i> Outbound Call</a>
+  <a href="05-retry-policy.html"><i class="fa-solid fa-rotate-right"></i> Retry Policy</a>
+  <a href="06-async-response.html"><i class="fa-solid fa-clock-rotate-left"></i> Async Response</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Signature Verification</h1>
+    <p class="lead">HMAC-SHA256 signature verification on inbound webhooks — computing the expected signature, validating the header, and rejection behavior.</p>
+  </div>
+
+  <h2>The X-Webhook-Signature Header</h2>
+  <p>Every inbound webhook request must include an <code>X-Webhook-Signature</code> header with an HMAC-SHA256 signature of the request body. The format is:</p>
+  <pre><code>X-Webhook-Signature: sha256={hex-encoded-HMAC}</code></pre>
+
+  <h2>Computing the Signature (Sender Side)</h2>
+  <p>The external system (e.g., Shopify, GitHub, your custom sender) must compute the signature using the shared secret:</p>
+  <pre><code class="language-python"># Python example for the sending system
+import hmac, hashlib
+
+secret = b"whs_sk_live_Xy9mQ3..."  # your webhook secret
+body = b'{"event":"order.created","orderId":"ord-001"}'
+
+signature = hmac.new(secret, body, hashlib.sha256).hexdigest()
+headers = {
+    "X-Webhook-Signature": f"sha256={signature}",
+    "Content-Type": "application/json"
+}</code></pre>
+
+  <pre><code class="language-javascript">// Node.js example
+const crypto = require('crypto');
+const secret = 'whs_sk_live_Xy9mQ3...';
+const body = JSON.stringify({ event: 'order.created', orderId: 'ord-001' });
+const sig = crypto.createHmac('sha256', secret).update(body).digest('hex');
+// Header: X-Webhook-Signature: sha256={sig}</code></pre>
+
+  <h2>Verification (BizFirstAI Side)</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Webhooks/WebhookSignatureVerifier.cs
+public class WebhookSignatureVerifier
+{
+    public bool Verify(string rawBody, string signatureHeader, string secret)
+    {
+        if (!signatureHeader.StartsWith("sha256="))
+            return false;
+
+        var receivedSig = signatureHeader["sha256=".Length..];
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var expectedSig = Convert.ToHexString(
+            hmac.ComputeHash(Encoding.UTF8.GetBytes(rawBody))
+        ).ToLowerInvariant();
+
+        // Constant-time comparison to prevent timing attacks
+        return CryptographicOperations.FixedTimeEquals(
+            Convert.FromHexString(receivedSig),
+            Convert.FromHexString(expectedSig)
+        );
+    }
+}</code></pre>
+
+  <h2>Rejection Behavior</h2>
+  <table>
+    <thead><tr><th>Condition</th><th>HTTP Response</th><th>Workflow</th></tr></thead>
+    <tbody>
+      <tr><td>Missing signature header</td><td>401 Unauthorized</td><td>Not started</td></tr>
+      <tr><td>Invalid signature</td><td>401 Unauthorized</td><td>Not started</td></tr>
+      <tr><td>Valid signature</td><td>200 OK (immediate mode)</td><td>Started</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-warning">
+    <strong>Use the raw body for verification.</strong> Parse the JSON AFTER verifying the signature, and always sign/verify the raw bytes — not the parsed/re-serialized JSON. Key ordering differences in serialization will cause signature mismatches.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-url-management.html">&#8592; URL Management</a>
+    <a href="04-outbound-call.html">Next: Outbound Call &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

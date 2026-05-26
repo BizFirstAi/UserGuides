@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scrape Configuration — Prometheus Metrics | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Prometheus Metrics</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Prometheus Overview</a>
+  <a href="01-deployment.html">Deploying Prometheus</a>
+  <a href="02-scrape-config.html" class="active">Scrape Configuration</a>
+  <a href="03-bizfirst-metrics.html">BizFirst Metrics Reference</a>
+  <a href="04-promql-basics.html">PromQL Basics</a>
+  <a href="05-promql-examples.html">PromQL for BizFirstGO</a>
+  <a href="06-recording-rules.html">Recording Rules</a>
+  <a href="07-alerting.html">Prometheus Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Scrape Configuration</h1>
+    <p class="lead">Prometheus discovers scrape targets via static configuration, Kubernetes service discovery, or other service discovery mechanisms. This page covers the complete scrape configuration for all BizFirstGO services, Node Exporter, cAdvisor, and the OTel Collector.</p>
+  </div>
+
+  <h2>Complete BizFirstGO Scrape Config</h2>
+  <pre><code"># prometheus.yml — scrape_configs section
+scrape_configs:
+
+  # ── Self-monitoring ──────────────────────────────────
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ── OTel Collector self-metrics ──────────────────────
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8888']
+
+  # ── BizFirstGO Application Services ─────────────────
+  - job_name: 'processengine'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['processengine:8080']
+        labels:
+          product: 'flow-studio'
+
+  - job_name: 'edgestream'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['edgestream:8081']
+
+  - job_name: 'octopus'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['octopus:8082']
+
+  - job_name: 'api-gateway'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['api-gateway:8083']
+
+  # ── Infrastructure ───────────────────────────────────
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          instance_type: 'host'
+
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          instance_type: 'container'
+
+  # ── Alertmanager ─────────────────────────────────────
+  - job_name: 'alertmanager'
+    static_configs:
+      - targets: ['alertmanager:9093']</code></pre>
+
+  <h2>Kubernetes Service Discovery</h2>
+  <p>In Kubernetes deployments, use annotation-based service discovery instead of static targets. Add annotations to BizFirstGO pod specs:</p>
+  <pre><code># kubernetes pod spec annotations
+metadata:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+
+# prometheus.yml — Kubernetes SD config
+scrape_configs:
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      # Only scrape pods with the annotation
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      # Use annotated port
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        target_label: __address__
+        regex: (.+)
+        replacement: ${1}
+      # Use annotated path
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      # Add pod namespace as label
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      # Add pod name as label
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod</code></pre>
+
+  <h2>Scrape Target Health</h2>
+  <p>Prometheus automatically tracks scrape target health. View target status at <code>http://prometheus:9090/targets</code>. The <code>up</code> metric is automatically created for each target:</p>
+  <pre><code># Check target health via PromQL
+up{job="processengine"}  # 1 = UP, 0 = DOWN
+
+# Alert when a service goes down
+- alert: ServiceDown
+  expr: up{job=~"processengine|edgestream|octopus"} == 0
+  for: 1m
+  labels:
+    severity: critical
+  annotations:
+    summary: "{{ $labels.job }} is DOWN"</code></pre>
+
+  <div class="callout info">
+    <strong>Metric Relabeling</strong>
+    <p>Use <code>metric_relabel_configs</code> (not <code>relabel_configs</code>) to drop high-cardinality metrics at scrape time — before they are stored in the TSDB. This is the most effective way to reduce metric storage costs. For example, drop per-request metrics that create too many series: <code>action: drop</code> with <code>source_labels: [__name__]</code> matching a regex for metrics you want to exclude.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-deployment.html">&#8592; Deploying Prometheus</a>
+    <a href="03-bizfirst-metrics.html">Next: BizFirst Metrics Reference &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

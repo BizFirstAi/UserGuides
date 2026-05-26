@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How Memory Types Interact — Memory Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory System Overview</a>
+  <a href="01-working.html">Working Memory</a>
+  <a href="02-episodic.html">Episodic Memory</a>
+  <a href="03-semantic.html">Semantic Memory</a>
+  <a href="04-procedural.html">Procedural Memory</a>
+  <a href="05-comparison.html">Comparison Table</a>
+  <a href="06-interaction.html" class="active">How Memory Types Interact</a>
+  <a href="07-config.html">Memory Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>How Memory Types Interact</h1>
+    <p class="lead">The four memory types do not operate independently — they are orchestrated together by <code>MemoryOrchestrator</code> before every LLM call, and the results all flow into working memory. Understanding the interaction order and write-back pattern is essential to debugging unexpected agent behaviour.</p>
+  </div>
+
+  <h2>The Read Phase: Pre-LLM Retrieval</h2>
+  <p>Before every LLM call, three of the four memory types are queried in parallel. Working memory is always built; it receives the results from the others:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>User Message Arrives</strong>
+        <span>The chat-app sends the user's message to the Octopus conversation API endpoint.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>MemoryOrchestrator.AssembleAsync (parallel)</strong>
+        <span>Three retrievals run simultaneously: episodic search (SQL), semantic search (vector DB), procedural match (regex + embedding). No dependency between them — <code>Task.WhenAll</code>.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>WorkingMemoryManager.BuildAsync</strong>
+        <span>Receives the MemoryAssembly result. Assembles system prompt + procedure + knowledge + episodes + history + current message into the LLM messages array.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Token Budget Check + Pruning</strong>
+        <span>If the assembled context exceeds MaxWorkingMemoryTokens, the pruner removes the oldest message history turns until within budget.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>LLM Call</strong>
+        <span>The assembled messages array is sent to the configured LLM provider. Streaming response flows back to the user.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>The Write Phase: Post-Response Storage</h2>
+  <p>After the LLM response is received, two write-back operations may occur:</p>
+  <table>
+    <thead>
+      <tr><th>Trigger</th><th>Memory Written</th><th>What Is Stored</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Every turn</td><td>Working memory (next turn)</td><td>The user message + assistant response are appended to the in-memory conversation history for the next turn's context</td></tr>
+      <tr><td>Session end</td><td>Episodic memory (SQL)</td><td>Conversation summary + key facts + embedding written as an episode row</td></tr>
+      <tr><td>Multi-step task completion (optional)</td><td>Procedural memory (SQL, pending)</td><td>If ProcedureCaptureService detects a completed multi-step task, it stores a new procedure in pending-approval state</td></tr>
+      <tr><td>Document ingestion (manual)</td><td>Semantic memory (vector DB)</td><td>Indexed chunks added to the agent's vector collection</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Context Assembly Order</h2>
+  <p>All four memory types contribute to working memory, assembled in this fixed order (highest-to-lowest model attention):</p>
+  <pre><code>┌─────────────────────────────────────────────────┐
+│ 1. System Prompt                                │  ← AgentComposite.SystemPrompt
+├─────────────────────────────────────────────────┤
+│ 2. Matched Procedure                            │  ← ProceduralMemory result
+│    Step 1: Ask for vendor name...               │
+│    Step 2: Call vendor_lookup...                │
+├─────────────────────────────────────────────────┤
+│ 3. Retrieved Knowledge                          │  ← SemanticMemory result
+│    Source: HR Policy 2025.pdf                   │
+│    Content: "Annual leave entitlement is..."    │
+├─────────────────────────────────────────────────┤
+│ 4. Past Conversation Snippets                   │  ← EpisodicMemory result
+│    2025-03-14: User asked about leave balance   │
+├─────────────────────────────────────────────────┤
+│ 5. Message History (pruned to budget)           │  ← WorkingMemory (turns 1..n-1)
+│    User: Hi, how many days do I have?           │
+│    Aria: You have 12 remaining.                 │
+├─────────────────────────────────────────────────┤
+│ 6. Current User Message                         │  ← Highest model attention
+│    User: Can I take 5 days in June?             │
+└─────────────────────────────────────────────────┘</code></pre>
+
+  <h2>Priority Conflicts: When Memory Types Contradict</h2>
+  <p>Because all memory types contribute to the same context window, conflicts can arise. The LLM resolves conflicts according to attention position — later content overrides earlier content for instruction-following. Design guidelines to avoid conflicts:</p>
+  <table>
+    <thead>
+      <tr><th>Conflict Scenario</th><th>Result</th><th>Recommended Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Procedure says "Step 1: ask for name" but semantic knowledge says "skip if internal user"</td><td>LLM may be confused</td><td>Add conditional logic in the procedure step definition</td></tr>
+      <tr><td>Episodic snippet says user has 12 days remaining; database now shows 8</td><td>LLM may quote stale data</td><td>Ensure live data queries (tools) override injected context — instruct in system prompt</td></tr>
+      <tr><td>Too many memory sources injected; message history pruned severely</td><td>Agent loses short-term context</td><td>Reduce SemanticTopK and EpisodicTopK to preserve more message history budget</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Monitoring Memory Interactions</strong>
+    <p>Use the Context Inspector (available to the <code>OctopusDebug</code> role) to inspect exactly what each memory type contributed to a specific turn. This is the fastest way to diagnose unexpected agent responses caused by conflicting memory content.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-comparison.html">&#8592; Comparison Table</a>
+    <a href="07-config.html">Next: Memory Configuration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

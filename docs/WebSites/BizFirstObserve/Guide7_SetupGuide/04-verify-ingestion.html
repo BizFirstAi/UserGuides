@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify Ingestion — Setup Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Setup Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Setup Overview</a>
+  <a href="01-prerequisites.html">Prerequisites</a>
+  <a href="02-install-stack.html">Install the Stack</a>
+  <a href="03-configure-services.html">Configure BizFirstGO Services</a>
+  <a href="04-verify-ingestion.html" class="active">Verify Ingestion</a>
+  <a href="05-import-dashboards.html">Import Pre-Built Dashboards</a>
+  <a href="06-configure-alerts.html">Configure Alerts</a>
+  <a href="07-validation-checklist.html">Validation Checklist</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Verify Ingestion</h1>
+    <p class="lead">After configuring BizFirstGO services, trigger one workflow execution and verify that all three signals (logs, metrics, traces) are appearing in the correct backends. This is the most important validation step before going to production.</p>
+  </div>
+
+  <h2>Step 1: Trigger a Test Execution</h2>
+  <pre><code># Trigger a minimal workflow execution via the ProcessEngine API:
+curl -X POST http://processengine:8080/api/workflow/execute \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: test-tenant" \
+  -d '{
+    "workflowId": "wf-test-observability",
+    "input": { "testMode": true }
+  }'
+
+# Note the executionId from the response:
+# {"executionId": "exec-a1b2c3d4", "status": "started"}
+
+# Save it for the queries below:
+export EXEC_ID="exec-a1b2c3d4"</code></pre>
+
+  <h2>Step 2: Verify Logs in Loki</h2>
+  <pre><code># Query Loki via API to verify log ingestion:
+curl -G "http://localhost:3100/loki/api/v1/query_range" \
+  --data-urlencode 'query={job="processengine"} |= "'"$EXEC_ID"'"' \
+  --data-urlencode 'start='"$(date -d '5 minutes ago' +%s)"'000000000' \
+  --data-urlencode 'end='"$(date +%s)"'000000000' \
+  | jq '.data.result | length'
+
+# Expected output: a number > 0 (the number of log streams with results)
+# If output is 0: no logs found — see troubleshooting below
+
+# In Grafana Explore:
+# 1. Select data source: Loki
+# 2. Enter query: {job="processengine"} |= "exec-a1b2c3d4"
+# 3. Time range: Last 5 minutes
+# Expected: Log lines showing execution start, node executions, completion</code></pre>
+
+  <h2>Step 3: Verify Metrics in Prometheus</h2>
+  <pre><code># Query Prometheus via API to verify metrics scraping:
+curl -G "http://localhost:9090/api/v1/query" \
+  --data-urlencode 'query=bizfirst_workflow_executions_total' \
+  | jq '.data.result | length'
+
+# Expected output: a number > 0 (metrics series exist)
+
+# Check that the processengine scrape target is healthy:
+curl -s http://localhost:9090/api/v1/targets | \
+  jq '.data.activeTargets[] | select(.labels.job == "processengine") | .health'
+
+# Expected output: "up"
+# If "down": the processengine /metrics endpoint is not reachable from Prometheus
+
+# In Grafana Explore:
+# 1. Select data source: Prometheus
+# 2. Enter query: rate(bizfirst_workflow_executions_total[5m])
+# Expected: A non-zero value after the test execution</code></pre>
+
+  <h2>Step 4: Verify Traces in Tempo</h2>
+  <pre><code># Search for traces from the test execution in Tempo via API:
+curl -G "http://localhost:3200/api/search" \
+  --data-urlencode 'tags=service.name=processengine' \
+  --data-urlencode 'start='"$(date -d '10 minutes ago' +%s)" \
+  --data-urlencode 'end='"$(date +%s)" \
+  | jq '.traces | length'
+
+# Expected output: a number > 0
+
+# Get a specific trace by ID (if you have the trace ID from logs):
+# Look for "traceId" field in Loki log output
+TRACE_ID="your-trace-id-from-logs"
+curl "http://localhost:3200/api/traces/$TRACE_ID" | jq '.batches | length'
+
+# In Grafana Explore:
+# 1. Select data source: Tempo
+# 2. Query mode: Search
+# 3. Service Name: processengine
+# Expected: Recent traces listed with duration and span counts</code></pre>
+
+  <h2>Common Ingestion Problems and Fixes</h2>
+  <table>
+    <thead>
+      <tr><th>Symptom</th><th>Likely Cause</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>No logs in Loki</td><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> unreachable</td><td>Check network connectivity from BizFirstGO container to otel-collector:4317. Check firewall rules.</td></tr>
+      <tr><td>Loki returns data but wrong job label</td><td>Inconsistent <code>OTEL_SERVICE_NAME</code></td><td>Verify env var is set; restart service after changing env vars.</td></tr>
+      <tr><td>Prometheus target shows "down"</td><td>/metrics endpoint blocked or wrong port</td><td>Check ProcessEngine exposes /metrics on the configured port. Verify Prometheus scrape_config job.</td></tr>
+      <tr><td>No traces in Tempo</td><td>Sampling too aggressive (0% rate)</td><td>Check <code>OTEL_TRACES_SAMPLER_ARG</code> — set to <code>1.0</code> for testing, then reduce.</td></tr>
+      <tr><td>OTel Collector logs show "dropped" spans</td><td>Tempo write path overloaded</td><td>Check Tempo container resources. Increase memory limit.</td></tr>
+      <tr><td>TraceId missing from log lines</td><td>OTel logging SDK not bridged to Serilog</td><td>Verify <code>ObservabilityServiceExtensions.cs</code> registers the OTel log bridge.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Checking the OTel Collector Pipeline</h2>
+  <pre><code># The OTel Collector exposes its own metrics on port 8888:
+curl -s http://localhost:8888/metrics | grep otelcol_receiver
+
+# Key metrics to check:
+# otelcol_receiver_accepted_spans_total{receiver="otlp"} — spans received
+# otelcol_receiver_accepted_metric_points_total             — metrics received
+# otelcol_receiver_accepted_log_records_total               — log records received
+# otelcol_exporter_sent_spans_total{exporter="otlp/tempo"}  — spans forwarded to Tempo
+# otelcol_exporter_send_failed_spans_total                  — failed exports (check for errors)
+
+# Check OTel Collector logs for pipeline errors:
+docker compose logs otel-collector --tail=50 | grep -E "error|warn|drop"</code></pre>
+
+  <div class="callout info">
+    <strong>Allow 30-60 Seconds After Restart</strong>
+    <p>After changing environment variables and restarting BizFirstGO services, allow 30-60 seconds before running verification queries. The OTel SDK buffers spans and batches them — the first batch may take up to 10 seconds to flush. Prometheus scraping runs on a 15-second interval, so the first metric data point appears within 15-30 seconds of service startup.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-configure-services.html">&#8592; Configure BizFirstGO Services</a>
+    <a href="05-import-dashboards.html">Next: Import Pre-Built Dashboards &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

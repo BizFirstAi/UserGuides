@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pruning Strategies — Working Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Working Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Working Memory Overview</a>
+  <a href="01-context-window.html">Context Window</a>
+  <a href="02-token-budget.html">Token Budget</a>
+  <a href="03-history-management.html">History Management</a>
+  <a href="04-pruning-strategies.html" class="active">Pruning Strategies</a>
+  <a href="05-knowledge-injection.html">Knowledge Injection</a>
+  <a href="06-tool-call-history.html">Tool Call History in Context</a>
+  <a href="07-context-inspector.html">Context Inspector</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Pruning Strategies</h1>
+    <p class="lead">Three pruning strategies are available in Octopus: FIFO (drop oldest messages), Summarize (condense old turns via a secondary LLM call), and SlidingWindow (keep only the last N message pairs). Each has different trade-offs between coherence, cost, and latency.</p>
+  </div>
+
+  <h2>Strategy 1: FIFO (First In, First Out)</h2>
+  <p>The simplest strategy — oldest messages are dropped when the budget is exceeded. Fast and deterministic.</p>
+  <pre><code>public class FIFOPruner : ContextPruner
+{
+    public override Task&lt;IReadOnlyList&lt;LLMMessage&gt;&gt; PruneAsync(
+        IReadOnlyList&lt;LLMMessage&gt; history,
+        int targetTokens,
+        CancellationToken ct)
+    {
+        var messages = history.ToList();
+        // Remove oldest user-assistant pairs until within budget
+        while (_tokenCounter.CountMessages(messages) > targetTokens
+               && messages.Count > _config.MinHistoryMessages)
+        {
+            // Remove oldest pair (indices 0 and 1)
+            messages.RemoveAt(0);
+            if (messages.Count > 0 && messages[0].Role == Role.Assistant)
+                messages.RemoveAt(0);
+        }
+        return Task.FromResult&lt;IReadOnlyList&lt;LLMMessage&gt;&gt;(messages);
+    }
+}
+
+// Best for: most agents — simple, no extra LLM calls
+// Drawback: early context is permanently lost — no recovery</code></pre>
+
+  <h2>Strategy 2: Summarize</h2>
+  <p>When old messages are pruned, a summary LLM call condenses them into a compact summary message that replaces the removed turns. The summary is prepended to the remaining history, preserving key information.</p>
+  <pre><code>public class SummarizePruner : ContextPruner
+{
+    public override async Task&lt;IReadOnlyList&lt;LLMMessage&gt;&gt; PruneAsync(
+        IReadOnlyList&lt;LLMMessage&gt; history,
+        int targetTokens, CancellationToken ct)
+    {
+        // Identify messages to prune (oldest 30%)
+        int pruneCount = (int)(history.Count * 0.3);
+        var toSummarize = history.Take(pruneCount).ToList();
+        var toKeep = history.Skip(pruneCount).ToList();
+
+        // Generate summary of pruned messages
+        var summaryPrompt = $"Summarize this conversation history concisely:\n{FormatMessages(toSummarize)}";
+        var summary = await _summaryLLM.CompleteAsync(
+            new[] { new LLMMessage(Role.User, summaryPrompt) },
+            tools: null, new LLMOptions { MaxOutputTokens = 300 }, ct);
+
+        // Prepend summary message to remaining history
+        var summaryMessage = new LLMMessage(Role.System,
+            $"[Earlier conversation summary]: {summary.Content}");
+
+        return new[] { summaryMessage }.Concat(toKeep).ToList();
+    }
+}
+
+// Best for: agents with tight budgets needing coherence over many turns
+// Drawback: extra LLM call cost + latency per pruning event</code></pre>
+
+  <h2>Strategy 3: SlidingWindow</h2>
+  <p>Always keeps only the last N user-assistant turn pairs, regardless of token count. Predictable and fast.</p>
+  <pre><code>public class SlidingWindowPruner : ContextPruner
+{
+    public override Task&lt;IReadOnlyList&lt;LLMMessage&gt;&gt; PruneAsync(
+        IReadOnlyList&lt;LLMMessage&gt; history,
+        int targetTokens, CancellationToken ct)
+    {
+        int windowTurns = _config.SlidingWindowTurns;  // e.g., 10 last turns
+        // Group messages into user-assistant pairs
+        var pairs = GroupIntoPairs(history);
+        var lastNPairs = pairs.TakeLast(windowTurns)
+            .SelectMany(p => new[] { p.User, p.Assistant })
+            .ToList();
+        return Task.FromResult&lt;IReadOnlyList&lt;LLMMessage&gt;&gt;(lastNPairs);
+    }
+}
+
+// Best for: short task agents where early context is irrelevant
+// Drawback: no awareness of anything before the last N turns</code></pre>
+
+  <h2>Comparison Table</h2>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>Cost</th><th>Latency</th><th>Context Retention</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>FIFO</td><td>Zero</td><td>~0ms</td><td>Recent turns only</td><td>General purpose</td></tr>
+      <tr><td>Summarize</td><td>1 extra LLM call</td><td>+200–500ms</td><td>Summary of past + recent turns</td><td>Long conversations requiring continuity</td></tr>
+      <tr><td>SlidingWindow</td><td>Zero</td><td>~0ms</td><td>Last N turns only</td><td>Task-focused short sessions</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-history-management.html">&#8592; History Management</a>
+    <a href="05-knowledge-injection.html">Next: Knowledge Injection &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

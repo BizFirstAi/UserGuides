@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Writing a Custom Handler — Form Action Libraries | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Action Libraries</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-action-context.html">FormActionContext Deep Dive</a>
+  <a href="02-custom-handler.html" class="active">Writing a Custom Handler</a>
+  <a href="03-registering-actions.html">Registering Actions</a>
+  <a href="04-action-repositories.html">Action Repositories</a>
+  <a href="05-action-scope.html">Action Scope</a>
+  <a href="06-distributing.html">Distributing Your Library</a>
+  <a href="07-testing.html">Testing Custom Actions</a>
+  <a href="08-examples.html">Complete Library Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Writing a Custom Action Handler</h1>
+    <p class="lead">A custom action handler is an async function that receives <code>FormActionContext</code> and must call either <code>complete()</code> or <code>fail()</code> before returning. This page covers the handler signature, async patterns, error handling, and common pitfalls.</p>
+  </div>
+
+  <h2>Handler Signature</h2>
+  <pre><code>import type { FormActionContext } from '@atlas-forms/types-js';
+
+// The required function signature
+type FormActionHandler = (context: FormActionContext) =&gt; Promise&lt;void&gt;;
+
+// Minimum valid handler
+const myHandler: FormActionHandler = async (ctx) =&gt; {
+  // ... do work ...
+  ctx.complete();
+};</code></pre>
+
+  <h2>Full Handler with Error Handling</h2>
+  <pre><code>import type { FormActionContext } from '@atlas-forms/types-js';
+import { approvalService } from '../services/approvalService';
+
+export const approveWorkflowHandler: FormActionHandler = async (ctx) =&gt; {
+  // 1. Validate first if needed
+  const isValid = await ctx.validate();
+  if (!isValid) {
+    ctx.fail('Please fix form errors before approving.');
+    return;
+  }
+
+  // 2. Extract values
+  const { formValues, tenantId, config } = ctx;
+  const workflowInstanceId = formValues['workflow-instance-id'];
+  const approverNotes = formValues['approver-notes'];
+  const transitionTo = config?.transitionTo ?? 'approved';
+
+  // 3. Guard — ensure we have required data
+  if (!workflowInstanceId) {
+    ctx.fail('No workflow ID found. Cannot approve.');
+    return;
+  }
+
+  try {
+    // 4. Call your service
+    await approvalService.approve({
+      workflowInstanceId,
+      tenantId,
+      notes: approverNotes,
+      status: transitionTo
+    });
+
+    // 5. Optionally update a field in the form to reflect new status
+    ctx.formEngine.setFieldValue('approval-status', transitionTo);
+
+    // 6. Signal success and navigate away
+    ctx.complete('Workflow approved successfully.');
+    ctx.navigate('/workdesk/inbox');
+
+  } catch (error) {
+    // 7. Always call fail() so the button resets
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    ctx.fail(`Approval failed: ${message}`);
+  }
+};</code></pre>
+
+  <h2>Async Patterns</h2>
+
+  <h3>Sequential Async Calls</h3>
+  <pre><code>const handler: FormActionHandler = async (ctx) =&gt; {
+  const step1 = await serviceA.doThing(ctx.formValues);
+  const step2 = await serviceB.doOther(step1.result);
+  ctx.complete(`Done: ${step2.summary}`);
+};</code></pre>
+
+  <h3>Parallel Async Calls</h3>
+  <pre><code>const handler: FormActionHandler = async (ctx) =&gt; {
+  const [result1, result2] = await Promise.all([
+    serviceA.save(ctx.formValues),
+    serviceB.notify(ctx.tenantId, ctx.formId)
+  ]);
+  ctx.complete();
+};</code></pre>
+
+  <h3>Conditional Async</h3>
+  <pre><code>const handler: FormActionHandler = async (ctx) =&gt; {
+  const { config, formValues } = ctx;
+
+  if (config?.requireApproval) {
+    await approvalQueue.enqueue(formValues);
+    ctx.complete('Sent for approval');
+  } else {
+    await directSubmit(formValues);
+    ctx.complete('Submitted directly');
+  }
+};</code></pre>
+
+  <h2>Common Pitfalls</h2>
+  <table>
+    <thead><tr><th>Pitfall</th><th>Symptom</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Not calling complete() or fail()</td><td>Button stuck in loading state forever</td><td>Always call one in every code path</td></tr>
+      <tr><td>Calling complete() after navigate()</td><td>May try to update unmounted component</td><td>Call navigate() after complete()</td></tr>
+      <tr><td>Throwing instead of calling fail()</td><td>Generic error shown, no message</td><td>Catch errors and call fail(message)</td></tr>
+      <tr><td>Using formValues after engine changes</td><td>Stale data</td><td>Use ctx.formEngine.getValues() for fresh snapshot</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-action-context.html">&#8592; FormActionContext Deep Dive</a>
+    <a href="03-registering-actions.html">Next: Registering Actions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

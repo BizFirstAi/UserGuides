@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trace Attribute Filtering — Sensitive Data Handling | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Sensitive Data Handling</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Sensitive Data Overview</a>
+  <a href="01-log-sanitization.html">Log Sanitization in BizFirstGO</a>
+  <a href="02-otel-redaction.html">OTel Collector Redaction</a>
+  <a href="03-label-hygiene.html">Label Hygiene</a>
+  <a href="04-trace-attributes.html" class="active">Trace Attribute Filtering</a>
+  <a href="05-loki-access.html">Loki Access Controls</a>
+  <a href="06-gdpr-deletion.html">GDPR Deletion</a>
+  <a href="07-audit.html">Observability Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Trace Attribute Filtering</h1>
+    <p class="lead">Trace spans carry attributes that describe what the span was doing — HTTP method, URL, database query, RPC method. Some of these attributes can contain PII (HTTP headers with tokens, database queries with user data, RPC payloads). The OTel Collector's attribute and redaction processors control what reaches Tempo.</p>
+  </div>
+
+  <h2>Common Sensitive Span Attributes</h2>
+  <table>
+    <thead>
+      <tr><th>Attribute</th><th>Risk</th><th>Action</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>http.request.header.authorization</code></td><td>Contains Bearer tokens or Basic auth credentials</td><td>Block entirely</td></tr>
+      <tr><td><code>http.request.header.cookie</code></td><td>Session tokens, tracking cookies</td><td>Block entirely</td></tr>
+      <tr><td><code>db.statement</code></td><td>SQL queries may contain WHERE clauses with user data</td><td>Block or truncate</td></tr>
+      <tr><td><code>http.url</code> / <code>url.full</code></td><td>Query parameters may contain tokens or user data</td><td>Strip query string</td></tr>
+      <tr><td><code>rpc.request.metadata</code></td><td>gRPC metadata may contain auth headers</td><td>Block entirely</td></tr>
+      <tr><td><code>exception.message</code></td><td>Stack traces may include user data from exceptions</td><td>Truncate to 500 chars</td></tr>
+    </tbody>
+  </table>
+
+  <h2>OTel Collector Attribute Filter for Traces</h2>
+  <pre><code># otel-collector-config.yaml — trace attribute filtering
+processors:
+  attributes/scrub-spans:
+    actions:
+      # Block sensitive HTTP headers:
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      - key: http.request.header.x-api-key
+        action: delete
+      - key: http.response.header.set-cookie
+        action: delete
+
+      # Remove SQL query content (keep db.system and db.name for context):
+      - key: db.statement
+        action: delete
+
+      # Remove full URL query params — keep path only:
+      # Replace "https://api/endpoint?token=abc&user=xyz" with "https://api/endpoint"
+      - key: url.full
+        action: extract
+        pattern: "^(?P&lt;url_path&gt;[^?]+)"
+      - key: url.full
+        from_attribute: url_path
+        action: insert
+      - key: url_path
+        action: delete
+
+      # Truncate exception messages to prevent data leakage in stack traces:
+      - key: exception.message
+        action: update
+        value: "exception.message truncated by policy"  # Or use transform processor</code></pre>
+
+  <h2>BizFirstGO Approved Span Attributes</h2>
+  <p>These attributes are safe and provide useful debugging context without PII risk:</p>
+  <pre><code># Safe span attributes set by BizFirstGO's OTel instrumentation:
+
+workflow.execute span:
+  - workflow.id          (internal GUID — not PII)
+  - workflow.type        (e.g., "approval-workflow")
+  - tenant.id            (internal tenant identifier)
+  - execution.id         (internal execution GUID)
+  - execution.status     (success/failed/cancelled)
+
+node.execute span:
+  - node.type            (e.g., "HttpRequestNode", "ApprovalNode")
+  - node.id              (internal GUID)
+  - node.name            (node label from workflow definition)
+  - duration.ms          (execution duration)
+
+hil.suspend span:
+  - hil.task_id          (internal GUID)
+  - hil.role_required    (e.g., "Manager")
+  - hil.timeout_hours    (numeric)
+  # NEVER: hil.assignee_email, hil.assignee_name</code></pre>
+
+  <div class="callout info">
+    <strong>Auto-Instrumentation Attributes Require Review</strong>
+    <p>The OTel SDK auto-instrumentation (ASP.NET Core, HttpClient, SqlClient) automatically captures many span attributes — including potentially sensitive ones like full HTTP URLs and SQL statements. Always review what auto-instrumentation is capturing and apply the attribute filter processor to block sensitive attributes before they reach Tempo.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-label-hygiene.html">&#8592; Label Hygiene</a>
+    <a href="05-loki-access.html">Next: Loki Access Controls &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

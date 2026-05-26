@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Using in Service-to-Service Calls — Managed Identities | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Managed Identities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-creating.html">Creating a Managed Identity</a>
+  <a href="02-credentials.html">Managed Identity Credentials</a>
+  <a href="03-role-assignment.html">Assigning Roles and Permissions</a>
+  <a href="04-workflow-execution.html">Using in Workflow Execution</a>
+  <a href="05-service-calls.html" class="active">Using in Service-to-Service Calls</a>
+  <a href="06-credential-rotation.html">Credential Rotation</a>
+  <a href="07-audit.html">Managed Identity Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Using in Service-to-Service Calls</h1>
+    <p class="lead">Use managed identities for direct service-to-service API calls — obtain a token using the client credentials flow, attach it as a Bearer token, and let the receiving service validate it via Passport's JWKS endpoint.</p>
+  </div>
+
+  <h2>Client Credentials Flow (Full Example)</h2>
+  <pre><code">// Step 1: Exchange clientId + clientSecret for a token
+POST /passport/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic base64("mi-payroll-scheduler-clientid:mics_sk_xxxxxxxxxxxxxxxxxxxxxxxx")
+
+grant_type=client_credentials
+&scope=openid%20roles
+
+// Response
+{
+  "access_token": "eyJhbGciOiJSUzI1NiJ9...",
+  "token_type":   "Bearer",
+  "expires_in":   3600
+}
+
+// Step 2: Use the token in API calls
+GET /bizfirstgo/api/payroll/records?month=2026-05
+Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...
+
+// The receiving service validates the token using Passport's JWKS:
+// GET https://passport.bizfirst.ai/.well-known/jwks.json</code></pre>
+
+  <h2>ManagedIdentityHttpClient</h2>
+  <p>Use the provided <code>ManagedIdentityHttpClient</code> helper to handle token acquisition, caching, and automatic refresh. It uses a token cache keyed on the <code>clientId</code> and refreshes when the token is within 60 seconds of expiry:</p>
+  <pre><code">namespace BizFirst.Essentials.Passport.ManagedIdentities;
+
+// Register in DI
+services.AddManagedIdentityHttpClient(options =>
+{
+    options.PassportBaseUrl = "https://passport.bizfirst.ai";
+    options.ClientId        = configuration["ManagedIdentity:ClientId"];
+    options.ClientSecretRef = configuration["ManagedIdentity:SecretReference"];
+    options.SecretProvider  = SecretProvider.AzureKeyVault;
+
+    // Token cache settings
+    options.CacheTokens      = true;
+    options.RefreshThreshold = TimeSpan.FromSeconds(60); // refresh 60s before expiry
+});
+
+// Usage — ManagedIdentityHttpClient automatically attaches Bearer token
+public class ErpSyncService
+{
+    private readonly ManagedIdentityHttpClient _http;
+
+    public ErpSyncService(ManagedIdentityHttpClient http)
+        => _http = http;
+
+    public async Task SyncAsync(CancellationToken ct)
+    {
+        // Token is automatically fetched and cached
+        // Refreshed transparently when nearing expiry
+        var response = await _http.GetAsync(
+            "/api/erp/accounts?since=2026-05-01", ct);
+
+        response.EnsureSuccessStatusCode();
+        var accounts = await response.Content.ReadFromJsonAsync&lt;AccountList&gt;(ct);
+        // ...
+    }
+}</code></pre>
+
+  <h2>Token Caching Strategy</h2>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Recommended Approach</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Single service instance</td><td>In-memory cache (MemoryCache)</td><td>Simple, fast, no external dependency</td></tr>
+      <tr><td>Multiple instances (scale-out)</td><td>Distributed cache (Redis)</td><td>Avoid thundering herd — all instances share one token</td></tr>
+      <tr><td>Serverless / short-lived functions</td><td>No cache — request per invocation</td><td>No warm state; 1-hour token is cheap to obtain</td></tr>
+      <tr><td>High-frequency micro-services</td><td>Sidecar token proxy</td><td>Centralize token management; reduce credential surface area</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Manual Token Acquisition (Without Helper)</h2>
+  <pre><code">// Direct implementation for custom environments
+public class ManualTokenService
+{
+    private readonly HttpClient       _http;
+    private readonly ISecretsManager  _secrets;
+
+    public async Task&lt;string&gt; GetTokenAsync(
+        string clientId,
+        string secretReference,
+        CancellationToken ct)
+    {
+        var clientSecret = await _secrets.GetAsync(secretReference, ct);
+
+        var credentials = Convert.ToBase64String(
+            Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, "https://passport.bizfirst.ai/passport/token");
+
+        request.Headers.Authorization =
+            new AuthenticationHeaderValue("Basic", credentials);
+
+        request.Content = new FormUrlEncodedContent(new[]
+        {
+            new KeyValuePair&lt;string,string&gt;("grant_type", "client_credentials"),
+            new KeyValuePair&lt;string,string&gt;("scope",      "openid roles")
+        });
+
+        var response = await _http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        var json  = await response.Content.ReadFromJsonAsync&lt;TokenResponse&gt;(ct);
+        return json!.AccessToken;
+    }
+}</code></pre>
+
+  <h2>Receiving Service — Token Validation</h2>
+  <p>The receiving service does not need special handling for managed identity tokens. Standard Passport token validation applies — the token is validated against the JWKS endpoint. The only difference is the presence of <code>is_service_account: true</code> in the payload.</p>
+  <pre><code">// AddPassportAuthentication() in the receiving service — no changes needed
+builder.Services.AddPassportAuthentication(options =>
+{
+    options.Authority = "https://passport.bizfirst.ai";
+    options.Audience  = "bizfirstgo-api";
+    // Managed identity tokens are validated identically to user tokens
+});
+
+// Optional: restrict an endpoint to service accounts only
+[HttpPost("internal/sync")]
+[RequireServiceAccount]  // custom attribute checking IDInfo.IsServiceAccount
+public async Task&lt;IActionResult&gt; InternalSync(
+    [FromServices] IDInfo caller,
+    CancellationToken ct)
+{
+    if (!caller.IsServiceAccount)
+        return Forbid("Endpoint is restricted to service accounts");
+
+    // ...process
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Do Not Share Managed Identity Credentials Across Services</strong>
+    <p>Create a dedicated managed identity for each service that needs to make authenticated calls. Sharing credentials between services means you cannot revoke access for one service without affecting the other, and audit logs cannot distinguish which service made which calls.</p>
+  </div>
+
+  <div class="callout info">
+    <strong>Propagating Identity vs Using Managed Identity</strong>
+    <p>When Service A (acting on behalf of User X) calls Service B, there are two patterns: (1) propagate the user's token to Service B — Service B sees User X as the caller; (2) use Service A's managed identity token — Service B sees the service account. Use pattern 1 when Service B needs to apply user-level permissions. Use pattern 2 for background system calls where no user context exists.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-workflow-execution.html">&#8592; Using in Workflow Execution</a>
+    <a href="06-credential-rotation.html">Next: Credential Rotation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

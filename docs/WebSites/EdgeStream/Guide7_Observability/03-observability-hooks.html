@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>observability-hooks-js — Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observability Overview</a>
+  <a href="01-hooks-monitor.html">HooksMonitor</a>
+  <a href="02-subscribers-monitor.html">SubscribersMonitor</a>
+  <a href="03-observability-hooks.html" class="active">observability-hooks-js</a>
+  <a href="04-observability-react.html">observability-react Package</a>
+  <a href="05-mobile-dashboard.html">Mobile Dashboard</a>
+  <a href="06-integrating.html">Integrating into Your App</a>
+  <a href="07-devtools.html">EdgeStream Dev Tools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>observability-hooks-js Package</h1>
+    <p class="lead">The <code>@edge-stream/observability-hooks-js</code> package provides hook implementations that forward pipeline events to external observability platforms: Splunk, Elasticsearch, Datadog, New Relic, Sumo Logic, Graylog, and any REST endpoint via <code>WebMcpHook</code>.</p>
+  </div>
+
+  <h2>Available Hooks</h2>
+  <table>
+    <thead>
+      <tr><th>Hook</th><th>Destination</th><th>Config Key</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SplunkLogHook</code></td><td>Splunk HEC</td><td><code>hecUrl</code>, <code>hecToken</code>, <code>sourcetype</code></td></tr>
+      <tr><td><code>ElasticsearchHook</code></td><td>Elasticsearch</td><td><code>url</code>, <code>index</code>, <code>apiKey</code></td></tr>
+      <tr><td><code>DatadogHook</code></td><td>Datadog Logs API</td><td><code>apiKey</code>, <code>site</code></td></tr>
+      <tr><td><code>NewRelicHook</code></td><td>New Relic Logs API</td><td><code>licenseKey</code>, <code>region</code></td></tr>
+      <tr><td><code>SumoLogicHook</code></td><td>Sumo Logic HTTP Source</td><td><code>collectorUrl</code></td></tr>
+      <tr><td><code>GraylogHook</code></td><td>Graylog GELF HTTP</td><td><code>url</code>, <code>port</code></td></tr>
+      <tr><td><code>WebMcpHook</code></td><td>Any REST endpoint</td><td><code>endpoint</code>, <code>headers</code>, <code>retries</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>BaseLogHook Batching Pattern</h2>
+  <p>All platform hooks extend <code>BaseLogHook</code> which implements automatic batching with configurable flush intervals:</p>
+  <pre><code>abstract class BaseLogHook&lt;T&gt; extends BaseHook {
+  // Accumulates log records in a batch
+  // Flushes when: batchSize is reached OR flushInterval expires
+  protected async batchFlush(doc: T): Promise&lt;void&gt;;
+
+  // Subclass sends the batch to the platform
+  protected abstract sendBatch(docs: T[]): Promise&lt;void&gt;;
+}
+
+// Defaults:
+// batchSize: 100 documents
+// flushInterval: 5000ms (5 seconds)</code></pre>
+
+  <h2>Splunk Integration</h2>
+  <pre><code>import { SplunkLogHook } from '@edge-stream/observability-hooks-js';
+
+const server = stream.server('bas')!;
+
+server.incomingPipeline.addHook(new SplunkLogHook({
+  hecUrl: 'https://splunk.company.com:8088/services/collector',
+  hecToken: process.env.SPLUNK_HEC_TOKEN!,
+  sourcetype: 'edgestream:pipeline',
+  batchSize: 100,
+  flushInterval: 5000,   // flush at least every 5 seconds
+}));</code></pre>
+
+  <h2>Datadog Integration</h2>
+  <pre><code>import { DatadogHook } from '@edge-stream/observability-hooks-js';
+
+server.incomingPipeline.addHook(new DatadogHook({
+  apiKey: process.env.DATADOG_API_KEY!,
+  site: 'datadoghq.com',   // or 'datadoghq.eu', 'us3.datadoghq.com', etc.
+  batchSize: 50,
+  flushInterval: 3000,
+}));</code></pre>
+
+  <h2>Generic REST Endpoint (WebMcpHook)</h2>
+  <pre><code>import { WebMcpHook } from '@edge-stream/observability-hooks-js';
+
+// Forward every pipeline event to a custom webhook
+server.incomingPipeline.addHook(new WebMcpHook({
+  endpoint: 'https://internal-monitoring.company.com/webhook',
+  headers: {
+    'X-API-Key': process.env.MONITORING_KEY!,
+    'Content-Type': 'application/json',
+  },
+  retries: 3,
+}));</code></pre>
+
+  <h2>HookActivityLogger (from edge-stream-js)</h2>
+  <p>The in-process observability hook — feeds <code>HooksMonitor</code> and <code>SubscribersMonitor</code>. Unlike the external platform hooks, it writes to the local <code>LoggingService</code> ring buffer instead of a remote endpoint:</p>
+  <pre><code>import { HookActivityLogger } from 'edge-stream-js';
+// (also re-exported as LogHook from @edge-stream/observability-hooks-js)
+
+server.incomingPipeline.addHook(new HookActivityLogger()); // priority 5
+
+// Respects LogSettings.isHookLoggingEnabled()
+// Use getLogSettings().setHookLoggingEnabled(false) to disable at runtime</code></pre>
+
+  <h2>Combining Multiple Observability Hooks</h2>
+  <pre><code>// Development: in-process monitor only
+if (import.meta.env.DEV) {
+  server.incomingPipeline.addHook(new HookActivityLogger()); // local UI monitor
+}
+
+// Production: external platform logging
+if (import.meta.env.PROD) {
+  server.incomingPipeline.addHook(new DatadogHook({
+    apiKey: env.DATADOG_KEY,
+    site: 'datadoghq.com',
+    batchSize: 100,
+    flushInterval: 5000,
+  }));
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="02-subscribers-monitor.html">&#8592; SubscribersMonitor</a>
+    <a href="04-observability-react.html">Next: observability-react Package &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

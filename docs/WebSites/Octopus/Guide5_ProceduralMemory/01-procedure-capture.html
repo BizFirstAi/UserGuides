@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Capturing Procedures — Procedural Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Procedural Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Procedural Memory Overview</a>
+  <a href="01-procedure-capture.html" class="active">Capturing Procedures</a>
+  <a href="02-procedure-storage.html">Procedure Storage</a>
+  <a href="03-procedure-recall.html">Recalling Procedures</a>
+  <a href="04-procedure-execution.html">Executing a Recalled Procedure</a>
+  <a href="05-skill-library.html">Skill Library</a>
+  <a href="06-editing-procedures.html">Editing and Approving Procedures</a>
+  <a href="07-procedure-scope.html">Procedure Scope</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Capturing Procedures</h1>
+    <p class="lead">Procedural auto-capture records successful multi-step tool call sequences as candidate procedures. When an agent completes a complex task involving multiple tool calls, Octopus can extract a generalized procedure template from that tool call sequence and flag it for human review.</p>
+  </div>
+
+  <h2>Auto-Capture Trigger</h2>
+  <p>Auto-capture is triggered when all of these conditions are met:</p>
+  <ul>
+    <li>A conversation session ends with a positive outcome (user says "thank you", "perfect", or similar positive signals)</li>
+    <li>The session contained 3 or more tool calls in a sequential pattern</li>
+    <li>No existing approved procedure matches this task pattern (would be a duplicate)</li>
+    <li><code>MemoryConfig.ProceduralEnabled = true</code> for this agent</li>
+    <li><code>MemoryConfig.AutoCaptureEnabled = true</code> (opt-in per agent)</li>
+  </ul>
+
+  <h2>Procedure Extraction</h2>
+  <pre><code>public class ProcedureCaptureService
+{
+    public async Task CaptureIfEligibleAsync(
+        Episode episode,
+        AgentComposite agent,
+        CancellationToken ct = default)
+    {
+        if (!agent.MemoryConfig.AutoCaptureEnabled) return;
+        if (episode.ToolCalls.Count &lt; 3) return;
+        if (!IsPositiveOutcome(episode)) return;
+
+        // Generalize the tool call sequence — extract parameter patterns
+        var steps = GeneralizeProcedure(episode.ToolCalls, episode.Messages);
+
+        var candidate = new Procedure
+        {
+            Name = await _llm.GenerateProcedureNameAsync(episode, ct),
+            Description = await _llm.GenerateProcedureDescriptionAsync(episode, ct),
+            TriggerPattern = await _llm.ExtractTriggerPatternAsync(episode.Messages, ct),
+            Steps = steps,
+            AgentId = agent.Id,
+            TenantId = agent.TenantId,
+            IsApproved = false,  // requires human approval
+            CreatedBy = "agent"
+        };
+
+        await _store.StoreAsync(candidate, ct);
+
+        // Notify admin that a new procedure candidate is awaiting review
+        await _notifier.NotifyProcedureCandidateAsync(candidate);
+    }
+
+    private List&lt;ProcedureStep&gt; GeneralizeProcedure(
+        List&lt;ToolCallRecord&gt; toolCalls,
+        List&lt;LLMMessage&gt; messages)
+    {
+        return toolCalls.Select((tc, i) => new ProcedureStep
+        {
+            Order = i + 1,
+            ToolName = tc.ToolName,
+            // Replace specific values with {{parameter}} placeholders
+            ToolArgumentTemplate = Generalize(tc.Input),
+            Instruction = ExtractInstruction(messages, tc)
+        }).ToList();
+    }
+}</code></pre>
+
+  <h2>Parameter Generalization</h2>
+  <p>The capture service replaces specific values from the conversation with typed placeholders:</p>
+  <pre><code>// Original tool call from the conversation:
+{ "vendor_name": "TechCorp", "contact": "john@techcorp.com", "contract": "CTR-2025-001" }
+
+// Generalized template (specific values replaced with placeholders):
+{ "vendor_name": "{{vendor_name}}", "contact": "{{contact_email}}", "contract": "{{contract_ref}}" }
+
+// The generalization uses heuristics:
+// - Known person names → {{person_name}}
+// - Email patterns → {{email_address}}
+// - ID patterns (CTR-YYYY-NNN) → {{contract_ref}}</code></pre>
+
+  <div class="callout warning">
+    <strong>Auto-Capture is a Starting Point, Not an End Point</strong>
+    <p>Auto-captured procedures are always unapproved initially. They require an administrator to review, edit, and approve before they become active. The auto-capture is meant to reduce the effort of writing procedures from scratch — not to create untested automation.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Procedural Memory Overview</a>
+    <a href="02-procedure-storage.html">Next: Procedure Storage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

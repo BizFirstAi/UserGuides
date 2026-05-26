@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenTelemetry Traces — Node Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structured-logs.html">Structured Logs</a>
+  <a href="02-node-metrics.html">Node Metrics</a>
+  <a href="03-otel-traces.html" class="active">OpenTelemetry Traces</a>
+  <a href="04-correlation-ids.html">Correlation IDs</a>
+  <a href="05-custom-logs.html">Emitting Custom Logs</a>
+  <a href="06-custom-metrics.html">Emitting Custom Metrics</a>
+  <a href="07-observer-panel.html">Observer Panel Display</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>OpenTelemetry Traces</h1>
+    <p class="lead">Each node execution is an OpenTelemetry span, nested under the parent workflow execution span. Trace context is propagated via HTTP headers when executors make outbound calls. Spans are exported to BizFirst Observe (Tempo) for distributed trace visualization.</p>
+  </div>
+
+  <h2>Span Hierarchy</h2>
+  <pre><code">[Trace: exec-abc-123]
+  └─ [Span: WorkflowExecution]           ← parent span for the full run
+       ├─ [Span: ApprovalNode/node-1]     ← per-node span
+       │    └─ [Span: HILSuspend]         ← sub-span for suspension
+       └─ [Span: EmailNode/node-2]        ← per-node span
+            └─ [Span: HTTP POST /send]    ← outbound HTTP call span</code></pre>
+
+  <h2>Accessing the Current Span</h2>
+  <pre><code">// ctx.Observability.Span gives you the active Activity (OTel span)
+public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx, CancellationToken ct)
+{
+    // Add custom span attributes
+    ctx.Observability.Span?.SetTag("order.id", orderId);
+    ctx.Observability.Span?.SetTag("order.amount", amount.ToString());
+
+    // Make an HTTP call — trace context is propagated automatically
+    var response = await _httpClient.PostAsync("/api/payments", content, ct);
+    // The HTTP call becomes a child span under the node span
+}</code></pre>
+
+  <h2>Trace Context Propagation</h2>
+  <p>When an executor makes an outbound HTTP call, the OpenTelemetry SDK automatically injects the trace context into the request headers (<code>traceparent</code>, <code>tracestate</code>). Downstream services that support OTel will create child spans linked to the node's span.</p>
+  <pre><code">// Headers added automatically by OTel HttpClientInstrumentation:
+// traceparent: 00-{traceId}-{spanId}-01
+// tracestate: bfai={tenantId}
+
+// Any HttpClient registered with AddHttpClient() automatically participates
+// No manual header injection needed</code></pre>
+
+  <h2>Spans in BizFirst Observe (Tempo)</h2>
+  <pre><code"># Find traces for a specific execution in Tempo (TraceQL):
+{ resource.nodeId = "node-approval-1" &amp;&amp; resource.executionId = "exec-abc-123" }
+
+# Find all slow node executions (> 5s) across all executions:
+{ resource.nodeType = "ApprovalNode" } | duration > 5s</code></pre>
+
+  <div class="callout info">
+    <strong>ctx.Observability.Span may be null</strong> if OTel is not configured in the environment (e.g., local development without Tempo). Always use the null-conditional operator: <code>ctx.Observability.Span?.SetTag(...)</code> — never assume the span exists.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-node-metrics.html">&#8592; Node Metrics</a>
+    <a href="04-correlation-ids.html">Next: Correlation IDs &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

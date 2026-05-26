@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hybrid Mode — Bring Your Own IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Bring Your Own IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-external-token-validation.html">External Token Validation</a>
+  <a href="02-okta.html">Okta Integration</a>
+  <a href="03-azure-ad.html">Azure AD Integration</a>
+  <a href="04-auth0.html">Auth0 Integration</a>
+  <a href="05-keycloak.html">Keycloak Integration</a>
+  <a href="06-claims-mapping.html">Claims Mapping</a>
+  <a href="07-hybrid-mode.html" class="active">Hybrid Mode</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Hybrid Mode</h1>
+    <p class="lead">Run Passport and external IdPs simultaneously — per-tenant IdP selection enables gradual migration, A/B testing of identity providers, and mixed enterprise/external user scenarios.</p>
+  </div>
+
+  <h2>What Is Hybrid Mode?</h2>
+  <p>In hybrid mode, BizFirstGO accepts tokens from both Passport and one or more external IdPs at the same time. The <code>iss</code> (issuer) claim in each token determines which validator is used. This enables:</p>
+  <ul>
+    <li><strong>Gradual migration</strong> — move users from Passport to Azure AD in batches, without a big-bang cutover</li>
+    <li><strong>Mixed user populations</strong> — enterprise users on Azure AD, external partners on Passport</li>
+    <li><strong>Per-tenant IdP selection</strong> — some tenants use Okta, others use Passport</li>
+    <li><strong>IdP comparison</strong> — run both for a period to validate the external IdP before full switchover</li>
+  </ul>
+
+  <h2>How Issuer Routing Works</h2>
+  <pre><code">// When a token arrives, Passport reads the "iss" claim (without validating the token)
+// and routes to the matching IExternalTokenProvider
+
+// Registered providers:
+{
+  "https://passport.bizfirst.ai"                      → PassportTokenProvider (built-in)
+  "https://company.okta.com/oauth2/default"           → OktaTokenProvider
+  "https://login.microsoftonline.com/{tid}/v2.0"      → AzureADTokenProvider
+  "https://your-tenant.auth0.com/"                    → Auth0TokenProvider
+  "https://keycloak.company.com/realms/company"       → KeycloakTokenProvider
+}
+
+// Unknown issuer → reject token immediately (no provider found)</code></pre>
+
+  <h2>Per-Tenant IdP Configuration</h2>
+  <pre><code">// Configure which IdP is the primary for a tenant
+POST /passport/admin/tenants/{tenantId}/identity-config
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "primaryProvider": "azure-ad",      // tokens from this provider are accepted for this tenant
+  "fallbackProviders": ["passport"],  // also accept Passport tokens (for admin/break-glass)
+  "allowedIssuers": [
+    "https://login.microsoftonline.com/{aad-tenant-id}/v2.0",
+    "https://passport.bizfirst.ai"
+  ]
+}</code></pre>
+
+  <h2>Migration Pattern (Passport → External IdP)</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Phase 1 — Register External IdP (Parallel Mode)</h4>
+        <p>Register Azure AD / Okta as an additional provider. Both Passport and external IdP tokens are accepted. No users are migrated yet. Validate that token validation and claims mapping work correctly.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Phase 2 — Pilot Migration (Batch)</h4>
+        <p>Migrate a pilot group of users to the external IdP. Update their authentication to use Azure AD. Their tokens now carry Azure AD <code>iss</code>. Other users still use Passport tokens. Monitor for issues.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Phase 3 — Full Migration</h4>
+        <p>Migrate all users to the external IdP. Set the external IdP as the primary provider for the tenant.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Phase 4 — Decommission Passport Tokens (Optional)</h4>
+        <p>Remove Passport from the allowed issuers for this tenant. Only external IdP tokens are now accepted. Passport admin tokens may still be retained for emergency access.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Issuer Conflict Detection</h2>
+  <p>A user may have identities in both Passport and an external IdP. BizFirstGO resolves this using the email address as the stable anchor:</p>
+  <pre><code">// Conflict resolution strategy
+{
+  "conflictResolution": "external-wins",  // prefer external IdP token over Passport
+  // or:
+  "conflictResolution": "issuer-order",   // prefer based on registration order
+  // or:
+  "conflictResolution": "reject"          // reject if user exists in multiple issuers
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Audit During Migration</strong>
+    <p>Enable enhanced audit logging during migration to track which issuer is being used for each authentication event. This helps identify users who have not yet switched to the new IdP and detects any unexpected issuer patterns. Use <code>GET /passport/admin/audit?filter=issuer</code> to query by issuer.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-claims-mapping.html">&#8592; Claims Mapping</a>
+    <span class="spacer"></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>App Config Storage — AI Extension Data Layer | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>AI Extension Data Layer</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-why-no-db.html">Why No Direct Database Access</a>
+  <a href="02-service-api.html">AIExtension.Service API</a>
+  <a href="03-app-config-storage.html" class="active">App Config Storage</a>
+  <a href="04-widget-data-storage.html">Widget Data Storage</a>
+  <a href="05-extending.html">Extending the Service Layer</a>
+  <a href="06-caching.html">Service Layer Caching</a>
+  <a href="07-audit.html">Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>App Config Storage</h1>
+    <p class="lead">App Studio app definitions are stored in the AIExtension database tables — not in the main application database. The AIExtension schema uses a hybrid approach: structured columns for indexed metadata and a JSON column for the full app definition. This balances queryability with schema flexibility.</p>
+  </div>
+
+  <h2>Storage Strategy</h2>
+  <p>The full app definition (including all pages, panes, navigation, and variable declarations) is stored as JSON in a single column. Key metadata fields are promoted to indexed columns for efficient querying:</p>
+  <pre><code>-- AIExtension database: AppDefinitions table (conceptual)
+CREATE TABLE AIExt_AppDefinitions (
+    Id            BIGINT          PRIMARY KEY,
+    TenantId      NVARCHAR(100)   NOT NULL,       -- Indexed for tenant scoping
+    AppId         NVARCHAR(100)   NOT NULL,       -- Indexed for lookup
+    AppName       NVARCHAR(255)   NOT NULL,       -- For listing without deserializing
+    IsActive      BIT             NOT NULL DEFAULT 1,
+    CreatedAt     DATETIME2       NOT NULL,
+    CreatedBy     NVARCHAR(100)   NOT NULL,
+    UpdatedAt     DATETIME2       NOT NULL,
+    UpdatedBy     NVARCHAR(100)   NOT NULL,
+    DefinitionJson NVARCHAR(MAX)  NOT NULL,       -- Full JSON definition
+    UNIQUE (TenantId, AppId)
+);
+</code></pre>
+
+  <h2>Why JSON Column for the Full Definition</h2>
+  <p>App Studio app definitions are deeply nested and evolve frequently. Storing the full definition as JSON avoids schema migration cost for every new widget type, new config field, or new action type. The service layer serializes/deserializes the JSON — callers work with typed C# objects:</p>
+  <pre><code>// Service layer handles serialization transparently:
+public async Task<AppDefinition?> GetAppAsync(string tenantId, string appId)
+{
+    var entity = await _db.AppDefinitions
+        .Where(a => a.TenantId == tenantId && a.AppId == appId && a.IsActive)
+        .FirstOrDefaultAsync();
+
+    if (entity == null) return null;
+
+    // Deserialize JSON → typed AppDefinition object
+    return JsonSerializer.Deserialize<AppDefinition>(entity.DefinitionJson);
+}
+
+public async Task<AppDefinition> SaveAppAsync(string tenantId, AppDefinition app, string userId)
+{
+    var json = JsonSerializer.Serialize(app);
+    // ... upsert with the serialized JSON
+}
+</code></pre>
+
+  <h2>Promoted Columns for Listing</h2>
+  <p>The <code>AppName</code>, <code>TenantId</code>, and <code>IsActive</code> columns are promoted out of the JSON so that listing APIs can run without deserializing the full definition for every row:</p>
+  <pre><code>// Fast listing — no JSON deserialization
+public async Task<IList<AppSummary>> GetAppsAsync(string tenantId)
+{
+    return await _db.AppDefinitions
+        .Where(a => a.TenantId == tenantId && a.IsActive)
+        .Select(a => new AppSummary
+        {
+            AppId = a.AppId,
+            AppName = a.AppName,
+            UpdatedAt = a.UpdatedAt,
+            UpdatedBy = a.UpdatedBy
+        })
+        .ToListAsync();
+    // DefinitionJson NOT loaded — efficient list query
+}
+</code></pre>
+
+  <h2>Pages Storage</h2>
+  <p>Pages (AppPages) are stored both embedded within the full <code>DefinitionJson</code> AND in a separate <code>AIExt_AppPages</code> table for individual page-level operations (get single page, update single page without replacing the full app):</p>
+  <pre><code>-- AIExt_AppPages — for granular page operations
+CREATE TABLE AIExt_AppPages (
+    Id            BIGINT          PRIMARY KEY,
+    TenantId      NVARCHAR(100)   NOT NULL,
+    AppId         NVARCHAR(100)   NOT NULL,
+    PageId        NVARCHAR(100)   NOT NULL,
+    Route         NVARCHAR(500)   NOT NULL,       -- Indexed for route matching
+    RequiredRoles NVARCHAR(MAX),                  -- JSON array of role strings
+    PageJson      NVARCHAR(MAX)   NOT NULL,       -- Full page config JSON
+    UNIQUE (TenantId, AppId, PageId)
+);
+</code></pre>
+
+  <div class="page-nav">
+    <a href="02-service-api.html">&#8592; AIExtension.Service API</a>
+    <a href="04-widget-data-storage.html">Next: Widget Data Storage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

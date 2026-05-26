@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Explorer — DevTools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>DevTools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Dev Tools Overview</a>
+  <a href="01-node-explorer.html" class="active">Node Explorer</a>
+  <a href="02-action-invoker.html">Action Invoker</a>
+  <a href="03-ancp-view.html">ANCP Protocol View</a>
+  <a href="04-hooks-panel.html">Hooks Panel</a>
+  <a href="05-subscribers-panel.html">Subscribers Panel</a>
+  <a href="06-mobile-dashboard.html">Mobile Dashboard</a>
+  <a href="07-running.html">Running Dev Tools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Node Explorer (ANCP)</h1>
+    <p class="lead">The Node Explorer at <code>/ancp</code> connects directly to ANCP-enabled nodes — independent of the EdgeStream SignalR pipeline. It lets you ping nodes, discover capabilities, invoke actions, and monitor streaming tasks all from a single panel-based UI.</p>
+  </div>
+
+  <h2>Route and Component</h2>
+  <pre><code>// Route in App.tsx
+&lt;Route path="/ancp" element={&lt;AncpPage /&gt;} /&gt;
+
+// AncpPage source: packages/app-pages-react/src/AncpPage.tsx
+// Uses @bizfirst/ancp-react hooks + AncpProvider</code></pre>
+
+  <h2>Three-Panel Layout</h2>
+  <p>AncpPage renders three stacked panels. Panels B and C appear only once a connection is established (Panel A).</p>
+  <table>
+    <thead>
+      <tr><th>Panel</th><th>Name</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>A</td><td>Node Connection</td><td>Enter Base URL, Node ID, auth mode, and timeout. Click Connect to establish an ANCP session.</td></tr>
+      <tr><td>B</td><td>Node Info</td><td>Ping status, capability table (actions + patterns + pricing), and raw Discovery JSON viewer.</td></tr>
+      <tr><td>C</td><td>Action Invoker</td><td>Select action + pattern, enter payload JSON, send and view the response or stream.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Panel A — Node Connection</h2>
+  <pre><code>// AncpClientOptions supplied to AncpProvider:
+interface AncpClientOptions {
+  baseUrl:  string;   // e.g. 'https://server2.bizfirst.internal'
+  nodeId:   number;   // integer node ID
+  auth?:    { jwtToken?: string } | { apiKey?: string } | { didProof?: string };
+  timeout?: number;   // default 30000 ms
+}
+
+// Auth modes supported: None | JWT | ApiKey | DID
+// Selecting a mode reveals a text field for the credential.
+
+// Once Connect is clicked, AncpProvider wraps Panels B and C:
+&lt;AncpProvider options={ancpOptions}&gt;
+  &lt;NodeInfoPanel /&gt;
+  &lt;ActionInvokerPanel /&gt;
+&lt;/AncpProvider&gt;</code></pre>
+
+  <h2>Panel B — Node Info</h2>
+  <pre><code>// Hooks used in NodeInfoPanel:
+import {
+  useAncpPing,          // fires ping on mount, returns { response, isLoading, isReachable, error }
+  useAncpCapabilities,  // fetches capability list, returns { actions, isLoading, error, refresh }
+  useAncpClient,        // raw ANCP client for custom calls
+} from '@bizfirst/ancp-react';
+
+// Ping response fields:
+// { nodeId, tenantId, status, timestamp }
+
+// Capability table columns:
+// Action | Pattern | Description | Price (USDC)
+// Each row is an AncpActionDescriptor:
+interface AncpActionDescriptor {
+  action:          string;           // e.g. 'get-order-status'
+  pattern:         AncpMessagePattern;
+  description?:    string;
+  requiresPayment: boolean;
+  priceUsdc?:      number;
+}
+
+// Discovery JSON: client.discover() fetches full capability document
+const doc = await client.discover();  // shown in JsonViewer</code></pre>
+
+  <div class="callout info">
+    <strong>ANCP vs EdgeStream</strong>
+    The Node Explorer connects to ANCP nodes directly via REST/HTTP — it does not use the EdgeStream SignalR hub. ANCP nodes expose their own HTTP endpoint separate from the EdgeStream hub URL.
+  </div>
+
+  <h2>Panel C — Action Invoker (ANCP)</h2>
+  <p>The Action Invoker in the ANCP panel supports all four ANCP message patterns. This is different from the Demo page Action Invoker, which sends EdgeStream messages. The ANCP Action Invoker sends directly to the node's HTTP endpoint.</p>
+  <pre><code>// AncpMessagePattern type:
+type AncpMessagePattern =
+  | 'request-reply'    // synchronous: send + await response
+  | 'fire-and-forget'  // async: POST returns 202 Accepted
+  | 'streaming'        // chunked SSE stream: collect chunks until done
+  | 'task-start';      // long-running: returns taskId, then poll status
+
+// Hooks used per pattern:
+const invokeHook = useAncpInvoke(actionName);  // request-reply
+const streamHook = useAncpStream(actionName);  // streaming
+const taskHook   = useAncpTask(actionName);    // task-start
+// fire-and-forget: client.fireAndForget(action, payload)
+
+// Pattern: request-reply
+invokeHook.invoke(payload, { timeout: 5000 });
+// Response shown in JsonViewer
+
+// Pattern: streaming
+streamHook.start(payload);
+// streamHook.chunks[] grows as server sends chunks
+// streamHook.isDone === true when stream ends
+
+// Pattern: task-start
+taskHook.start(payload);
+// taskHook.taskId = 'task-abc-123'
+// taskHook.status = { state: 'Running' | 'Completed' | 'Failed' | 'Cancelled', result?, error? }
+// Poll: taskHook.refresh() (auto-polled every 1500ms while Running)
+// Cancel: taskHook.cancel()</code></pre>
+
+  <h2>Streaming Log Display</h2>
+  <pre><code>// Chunk display format in the streaming log:
+[0] {"type":"partial","text":"Hello"}
+[1] {"type":"partial","text":" world"}
+[2] [last] {"type":"done","text":""}
+
+// Auto-scrolls as chunks arrive:
+useEffect(() =&gt; {
+  if (streamLogRef.current) {
+    streamLogRef.current.scrollTop = streamLogRef.current.scrollHeight;
+  }
+}, [streamHook.chunks.length]);</code></pre>
+
+  <h2>Task Status Badges</h2>
+  <table>
+    <thead>
+      <tr><th>State</th><th>Badge Color</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Running</td><td>Blue</td><td>Task is executing — polling active every 1500ms (configurable)</td></tr>
+      <tr><td>Completed</td><td>Green</td><td>Task finished — result available in taskHook.status.result</td></tr>
+      <tr><td>Failed</td><td>Red</td><td>Task errored — message in taskHook.status.error</td></tr>
+      <tr><td>Cancelled</td><td>Gray</td><td>Task was cancelled via Cancel Task button</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Use Case: Debugging Agent Nodes</strong>
+    The Node Explorer is the primary tool for verifying that an ANCP-enabled agent node is reachable, advertising the correct capabilities, and responding to actions with the right payload shapes — without writing any client code.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Dev Tools Overview</a>
+    <a href="02-action-invoker.html">Next: Action Invoker &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

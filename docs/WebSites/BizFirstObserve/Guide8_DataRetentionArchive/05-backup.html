@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backup Strategies — Data Retention & Archive | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Data Retention &amp; Archive</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Data Retention Overview</a>
+  <a href="01-loki-retention.html">Loki Log Retention</a>
+  <a href="02-prometheus-retention.html">Prometheus Metric Retention</a>
+  <a href="03-tempo-retention.html">Tempo Trace Retention</a>
+  <a href="04-archiving.html">Archiving to Cold Storage</a>
+  <a href="05-backup.html" class="active">Backup Strategies</a>
+  <a href="06-compliance.html">Compliance Retention</a>
+  <a href="07-cost-optimization.html">Cost Optimization</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Backup Strategies</h1>
+    <p class="lead">When Loki and Tempo use S3 as the primary storage backend, the data itself is protected by S3's 11-nines durability — no additional backup of the log/trace data is needed. What does need backing up is Grafana's configuration database (dashboards, alert rules, users) and Prometheus configuration files.</p>
+  </div>
+
+  <h2>What to Back Up</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>What to Back Up</th><th>How Often</th><th>Method</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Grafana</td><td>SQLite/PostgreSQL database (dashboards, users, alert rules, API keys)</td><td>Daily</td><td>Database snapshot or filesystem backup</td></tr>
+      <tr><td>Prometheus Config</td><td>prometheus.yml, alert rules YAML, recording rules YAML</td><td>On every change</td><td>Git version control</td></tr>
+      <tr><td>Loki Config</td><td>loki-config.yaml, runtime config</td><td>On every change</td><td>Git version control</td></tr>
+      <tr><td>OTel Collector Config</td><td>otel-collector-config.yaml</td><td>On every change</td><td>Git version control</td></tr>
+      <tr><td>Log Data (Loki)</td><td>Already in S3 — no additional backup needed</td><td>-</td><td>S3 versioning (optional)</td></tr>
+      <tr><td>Trace Data (Tempo)</td><td>Already in S3 — no additional backup needed</td><td>-</td><td>-</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Grafana Database Backup</h2>
+  <pre><code># Grafana uses SQLite by default (grafana.db file).
+# Back it up daily while Grafana is stopped, or use the Grafana API for live export.
+
+# Method 1: Filesystem backup (requires brief Grafana stop)
+docker compose stop grafana
+cp -r data/grafana/grafana.db backups/grafana-$(date +%Y%m%d).db
+docker compose start grafana
+
+# Method 2: Grafana API export (no downtime)
+# Export all dashboards:
+for DASH_UID in $(curl -s http://admin:admin@localhost:3000/api/search | jq -r '.[].uid'); do
+  curl -s http://admin:admin@localhost:3000/api/dashboards/uid/$DASH_UID \
+    > backups/dashboards/$DASH_UID.json
+done
+
+# Export alert rules:
+curl -s http://admin:admin@localhost:3000/api/ruler/grafana/api/v1/rules \
+  > backups/alert-rules-$(date +%Y%m%d).yaml
+
+# Method 3: Use PostgreSQL as Grafana database (recommended for production)
+# PostgreSQL has native backup tools (pg_dump) and supports replication.
+# Configure in grafana.ini:
+[database]
+type = postgres
+host = postgres:5432
+name = grafana
+user = grafana
+password = ${GRAFANA_DB_PASSWORD}</code></pre>
+
+  <h2>Prometheus Data Backup (TSDB Snapshot)</h2>
+  <pre><code># Prometheus supports creating a TSDB snapshot via its API:
+# (Requires --web.enable-lifecycle or --web.enable-admin-api flag)
+
+# Create a snapshot:
+curl -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot
+# Response: {"status":"success","data":{"name":"20250525T120000Z-abc123"}}
+
+# The snapshot is stored at:
+ls /var/lib/prometheus/snapshots/20250525T120000Z-abc123/
+
+# Copy the snapshot to backup storage:
+aws s3 sync /var/lib/prometheus/snapshots/20250525T120000Z-abc123/ \
+  s3://bizfirst-backups/prometheus/$(date +%Y%m%d)/
+
+# Restore from snapshot:
+# 1. Stop Prometheus
+# 2. Replace /var/lib/prometheus/data/ with the snapshot contents
+# 3. Start Prometheus</code></pre>
+
+  <h2>Configuration Backup via Git</h2>
+  <pre><code># All configuration files should be in your BizFirstGO infrastructure repository:
+bizfirstgo/infrastructure/observe/
+  ├── docker-compose.yml
+  ├── otel-collector-config.yaml
+  ├── loki-config.yaml
+  ├── prometheus.yml
+  ├── tempo-config.yaml
+  ├── alertmanager.yml
+  ├── grafana-provisioning/
+  │   ├── datasources/
+  │   ├── dashboards/
+  │   └── alerting/
+  └── dashboards/
+      ├── flow-studio-overview.json
+      └── ... (all 10 dashboard JSON files)
+
+# This git repository IS the backup for all configuration.
+# Restoring from scratch: git clone + docker compose up = full stack restored.
+# Never manage configuration outside of git.</code></pre>
+
+  <div class="callout info">
+    <strong>S3 Versioning for Loki (Optional)</strong>
+    <p>Enable S3 versioning on the Loki bucket to protect against accidental deletion of chunks. With versioning, deleting an object creates a delete marker — the original object is still recoverable. The cost overhead is minimal and the protection is high. Enable via: <code>aws s3api put-bucket-versioning --bucket bizfirst-loki-logs --versioning-configuration Status=Enabled</code></p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-archiving.html">&#8592; Archiving to Cold Storage</a>
+    <a href="06-compliance.html">Next: Compliance Retention &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

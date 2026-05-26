@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Approval Inbox — Multi-Party Approval | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Multi-Party Approval</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-approval-node-config.html">Approval Node Configuration</a>
+  <a href="02-strategies.html">Approval Strategies</a>
+  <a href="03-approval-state.html">Approval State Tracking</a>
+  <a href="04-approval-inbox.html" class="active">Approval Inbox</a>
+  <a href="05-rejection-handling.html">Handling Rejection</a>
+  <a href="06-timeout-escalation.html">Timeout and Escalation</a>
+  <a href="07-audit-trail.html">Approval Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Approval Inbox</h1>
+    <p class="lead">The approval inbox is a UI component (typically in WorkDesk) that shows each actor their pending approval tasks. Actors can see task details, approve, reject, and add comments from the inbox.</p>
+  </div>
+
+  <h2>Inbox API</h2>
+  <pre><code>// List pending approval tasks for the current user
+GET /api/approvals/pending
+Authorization: Bearer {userToken}
+
+Response:
+[
+  {
+    "taskId"      : "task-guid-001",
+    "executionId" : "exec-abc",
+    "processId"   : "proc-xyz",
+    "processName" : "Vendor Contract Approval",
+    "nodeId"      : "approvalNode1",
+    "title"       : "Vendor Contract Approval",
+    "instruction" : "Review and approve the vendor contract attached.",
+    "strategy"    : "All",
+    "totalApprovers"    : 3,
+    "decisionsReceived" : 1,
+    "createdAt"   : "2026-05-25T09:00:00Z",
+    "expiresAt"   : "2026-05-26T09:00:00Z",
+    "payload"     : { ... }  // context data from the workflow
+  }
+]</code></pre>
+
+  <h2>Submit a Decision</h2>
+  <pre><code>POST /api/approvals/{taskId}/decide
+Authorization: Bearer {userToken}
+Content-Type: application/json
+
+{
+  "decision": "Approved",   // "Approved" | "Rejected"
+  "comment" : "Looks good — terms are acceptable."
+}</code></pre>
+
+  <h2>Approval Task Detail</h2>
+  <pre><code>GET /api/approvals/{taskId}
+Authorization: Bearer {userToken}
+
+Response includes:
+- fullPayload: the complete context data (e.g., document to review)
+- currentDecisions: what other actors have decided so far
+- approvers: the full list of assigned approvers</code></pre>
+
+  <h2>Notification Integration</h2>
+  <p>When a new approval task is created, the engine publishes a <code>WorkflowPaused</code> event (via the event bus). An event handler should send notification emails or Slack messages to the assigned approvers.</p>
+  <pre><code">public class ApprovalNotificationHandler : IWorkflowEventHandler&lt;WorkflowPaused&gt;
+{
+    public async Task HandleAsync(WorkflowPaused @event, CancellationToken ct)
+    {
+        // Fetch the approval task details and notify assigned actors
+        var task = await _approvalRepo.GetByExecutionAsync(@event.ExecutionId, @event.SuspendedNodeId);
+        foreach (var approver in task.Approvers)
+        {
+            await _notificationService.SendApprovalRequestAsync(approver.ActorId, task);
+        }
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Inbox location:</strong> The approval inbox is a separate UI from Flow Studio's canvas. It lives in the WorkDesk application or can be embedded via the WorkDesk widget in any web app. The API (/api/approvals/pending) is the integration point.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-approval-state.html">&#8592; Approval State Tracking</a>
+    <a href="05-rejection-handling.html">Next: Handling Rejection &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

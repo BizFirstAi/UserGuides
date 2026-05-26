@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMS — Guide40 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Messaging</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-slack.html"><i class="fa-brands fa-slack"></i> Slack</a>
+  <a href="02-email.html"><i class="fa-solid fa-envelope"></i> Email</a>
+  <a href="03-sms.html" class="active"><i class="fa-solid fa-mobile-alt"></i> SMS</a>
+  <a href="04-push.html"><i class="fa-solid fa-bell"></i> Push Notifications</a>
+  <a href="05-channel-adapter.html"><i class="fa-solid fa-plug"></i> Channel Adapter</a>
+  <a href="06-credentials.html"><i class="fa-solid fa-key"></i> Credentials</a>
+  <a href="07-templating.html"><i class="fa-solid fa-code"></i> Templating</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>SMS</h1>
+    <p class="lead">Configuring the <code>SendSMS</code> node — phone number, message body, Twilio/Vonage credential resolution, and delivery status tracking.</p>
+  </div>
+
+  <h2>Node Configuration</h2>
+  <pre><code class="language-json">{
+  "nodeType": "SendSMS",
+  "name": "sendApprovalSms",
+  "config": {
+    "credentialId": 15,
+    "provider": "twilio",
+    "from": "+15551234567",
+    "to": "$output.fetchEmployee.mobilePhone",
+    "body": "Action required: Invoice $output.createInvoice.invoiceNumber needs your approval. Log in at $context.appUrl",
+    "statusCallbackUrl": null,
+    "retryCount": 2,
+    "retryDelayMs": 3000
+  }
+}</code></pre>
+
+  <h2>Configuration Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>credentialId</code></td><td>int</td><td>Yes</td><td>Twilio Account SID + Auth Token pair, stored via <code>ICredentialResolver</code></td></tr>
+      <tr><td><code>provider</code></td><td>twilio | vonage</td><td>Yes</td><td>SMS provider. Determines which adapter is resolved from DI.</td></tr>
+      <tr><td><code>from</code></td><td>string</td><td>Yes</td><td>Sender phone number in E.164 format (<code>+15551234567</code>). Must be a purchased Twilio number.</td></tr>
+      <tr><td><code>to</code></td><td>string / expr</td><td>Yes</td><td>Recipient phone number in E.164 format. Expressions allowed.</td></tr>
+      <tr><td><code>body</code></td><td>string / expr</td><td>Yes</td><td>SMS body text. Max 1600 characters (multi-segment). Expression syntax supported.</td></tr>
+      <tr><td><code>statusCallbackUrl</code></td><td>string</td><td>No</td><td>Twilio delivery status webhook URL for delivery receipts.</td></tr>
+      <tr><td><code>retryCount</code></td><td>int</td><td>No</td><td>Retry attempts on transient error. Default: 2.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Twilio Credential Storage</h2>
+  <p>Twilio requires two values: Account SID and Auth Token. These are stored as a JSON object in the credential store and retrieved atomically:</p>
+  <pre><code class="language-csharp">// Stored credential value (JSON string)
+// { "accountSid": "ACxxxxx", "authToken": "token-value" }
+
+var rawCredential = await _credentials.GetPasswordAsync(config.CredentialId, ct);
+var twilioAuth = JsonSerializer.Deserialize&lt;TwilioCredential&gt;(rawCredential);
+
+TwilioClient.Init(twilioAuth.AccountSid, twilioAuth.AuthToken);
+var message = await MessageResource.CreateAsync(
+    to: new PhoneNumber(config.To),
+    from: new PhoneNumber(config.From),
+    body: evaluatedBody
+);</code></pre>
+
+  <h2>SMSChannelAdapter</h2>
+  <pre><code class="language-csharp">public class SMSChannelAdapter : IMessagingChannelAdapter
+{
+    public string ChannelType => "SMS";
+
+    public async Task&lt;MessagingResult&gt; SendAsync(
+        MessagingMessage message,
+        MessagingConfig config,
+        CancellationToken ct)
+    {
+        var rawCredential = await _credentials.GetPasswordAsync(config.CredentialId, ct);
+        var auth = JsonSerializer.Deserialize&lt;TwilioCredential&gt;(rawCredential)!;
+
+        TwilioClient.Init(auth.AccountSid, auth.AuthToken);
+
+        var msg = await MessageResource.CreateAsync(
+            to: new PhoneNumber(message.To),
+            from: new PhoneNumber(config.From),
+            body: message.Body,
+            statusCallback: config.StatusCallbackUrl != null
+                ? new Uri(config.StatusCallbackUrl)
+                : null
+        );
+
+        return new MessagingResult
+        {
+            MessageId = msg.Sid,
+            Channel = "sms",
+            Recipient = message.To,
+            SentAt = DateTimeOffset.UtcNow,
+            Status = msg.Status.ToString().ToLower()
+        };
+    }
+}</code></pre>
+
+  <h2>Node Output</h2>
+  <pre><code class="language-json">{
+  "messageId": "SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "channel": "sms",
+  "sentAt": "2026-05-25T10:00:00Z",
+  "status": "queued",
+  "recipient": "+447700900123"
+}</code></pre>
+
+  <div class="callout callout-warning">
+    <strong>Character limits:</strong> Standard GSM SMS messages are 160 characters. Unicode messages (emoji, non-Latin characters) are 70 characters per segment. Twilio automatically splits long messages into multiple segments, each billed separately. Keep body expressions concise or check length before sending.
+  </div>
+
+  <div class="callout callout-tip">
+    <strong>E.164 format:</strong> Always store and pass phone numbers in E.164 format (<code>+{country code}{number}</code>). Use an expression to normalise if numbers from your data source may vary: <code>"$output.fetchEmployee.mobilePhone.replace(/[^+\d]/g, '')"</code>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-email.html">&#8592; Email</a>
+    <a href="04-push.html">Next: Push Notifications &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

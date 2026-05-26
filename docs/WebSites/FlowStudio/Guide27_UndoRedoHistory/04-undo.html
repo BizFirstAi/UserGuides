@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Undo (Ctrl+Z) — Undo/Redo History | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Undo/Redo History</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-history-middleware.html">History Middleware</a>
+  <a href="02-tracked-actions.html">Tracked Actions</a>
+  <a href="03-untracked-actions.html">Untracked Actions</a>
+  <a href="04-undo.html" class="active">Undo (Ctrl+Z)</a>
+  <a href="05-redo.html">Redo (Ctrl+Y)</a>
+  <a href="06-stack-limits.html">Stack Depth Limits</a>
+  <a href="07-custom-actions.html">Making Custom Actions Undoable</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Undo (Ctrl+Z)</h1>
+    <p class="lead">Pressing Ctrl+Z pops the top entry from the undo stack, saves the current graph state to the redo stack, and restores the nodes and edges from the popped snapshot. If the undo stack is empty, the keypress is a no-op.</p>
+  </div>
+
+  <h2>Undo Implementation</h2>
+  <pre><code">undo: () => {
+    const { undoStack, redoStack, nodes, edges } = get();
+
+    if (undoStack.length === 0) return;  // Nothing to undo
+
+    // Pop the top snapshot from undo stack
+    const [previous, ...remainingUndo] = undoStack;
+
+    // Push current state to redo stack
+    const currentSnapshot: HistorySnapshot = {
+        nodes: JSON.parse(JSON.stringify(nodes)),
+        edges: JSON.parse(JSON.stringify(edges))
+    };
+
+    // Restore the graph to the snapshot state
+    set({
+        nodes    : previous.nodes,
+        edges    : previous.edges,
+        undoStack: remainingUndo,
+        redoStack: [currentSnapshot, ...redoStack]
+    });
+}</code></pre>
+
+  <h2>Keyboard Binding</h2>
+  <pre><code">// useKeyboardShortcuts.ts
+useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+        const isMod = e.metaKey || e.ctrlKey;
+
+        if (isMod &amp;&amp; e.key === 'z' &amp;&amp; !e.shiftKey) {
+            e.preventDefault();
+            useWorkflowStore.getState().undo();
+        }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+}, []);</code></pre>
+
+  <h2>Undo Button in Toolbar</h2>
+  <pre><code">function UndoButton() {
+    const { undo, undoStack } = useWorkflowStore(
+        state => ({ undo: state.undo, undoStack: state.undoStack }),
+        shallow
+    );
+
+    return (
+        &lt;button onClick={undo} disabled={undoStack.length === 0}&gt;
+            &lt;i className="fa-solid fa-rotate-left" /&gt;
+            Undo
+        &lt;/button&gt;
+    );
+}</code></pre>
+
+  <h2>After Undo</h2>
+  <table>
+    <thead><tr><th>Before Undo</th><th>After Undo</th></tr></thead>
+    <tbody>
+      <tr><td>undoStack: [A, B, C]</td><td>undoStack: [B, C]</td></tr>
+      <tr><td>redoStack: []</td><td>redoStack: [current]</td></tr>
+      <tr><td>Canvas shows: current state</td><td>Canvas shows: state A</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-untracked-actions.html">&#8592; Untracked Actions</a>
+    <a href="05-redo.html">Next: Redo (Ctrl+Y) &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Creating a Server — Servers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Servers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Server Overview</a>
+  <a href="01-creating.html" class="active">Creating a Server</a>
+  <a href="02-attaching-transport.html">Attaching a Transport</a>
+  <a href="03-registering-hooks.html">Registering Hooks</a>
+  <a href="04-starting.html">Starting the Server</a>
+  <a href="05-stopping.html">Stopping the Server</a>
+  <a href="06-multi-server.html">Multi-Server Patterns</a>
+  <a href="07-error-handling.html">Server Error Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Creating a Server</h1>
+    <p class="lead">Servers are created via <code>edgeStream.registerServer(registration)</code> — never directly. The registration object combines identity, URL, type, and transport configuration.</p>
+  </div>
+
+  <h2>IServerRegistration</h2>
+  <pre><code>export interface IServerRegistration {
+  id: string;                        // unique ID in this EdgeStream instance
+  type: ServerType;                  // 'bas' | 'chat'
+  name?: string;                     // human-readable display name
+  url: string;                       // server/hub URL
+  transportConfig: TransportConfig;  // which transport + connection settings
+}</code></pre>
+
+  <h2>Registration Examples</h2>
+
+  <h3>SignalR Server (Recommended for Browser Apps)</h3>
+  <pre><code>edgeStream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  name: 'BizFirstGO Application Server',
+  url: 'https://app.bizfirst.com/edge-stream-hub',
+  transportConfig: {
+    type: 'signalr',
+    url: 'https://app.bizfirst.com/edge-stream-hub',
+    accessToken: authService.getToken,  // string or () =&gt; string | Promise&lt;string&gt;
+    reconnect: {
+      maxAttempts: 0,          // 0 = infinite retries
+      initialDelayMs: 1000,    // wait 1s before first retry
+      maxDelayMs: 60000,       // cap backoff at 60 seconds
+      backoffMultiplier: 2,    // double the delay each attempt
+    },
+    timeoutMs: 30000,          // connection timeout
+  }
+});</code></pre>
+
+  <h3>WebSocket Server (Performance-Critical)</h3>
+  <pre><code>edgeStream.registerServer({
+  id: 'chat',
+  type: 'chat',
+  url: 'wss://chat.bizfirst.com/ws',
+  transportConfig: {
+    type: 'websocket',
+    url: 'wss://chat.bizfirst.com/ws',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'X-Tenant-Id': tenantId,
+    },
+    reconnect: { maxAttempts: 5, initialDelayMs: 500, maxDelayMs: 5000, backoffMultiplier: 2 },
+  }
+});</code></pre>
+
+  <h3>SSE Server (Server Push Only)</h3>
+  <pre><code>edgeStream.registerServer({
+  id: 'events',
+  type: 'bas',
+  url: '/api/edge-stream/events',
+  transportConfig: {
+    type: 'sse',
+    url: '/api/edge-stream/events',
+    queryParams: {
+      tenantId: currentTenantId,
+      userId: currentUserId,
+    },
+  }
+});</code></pre>
+
+  <h2>Accessing the Registered Server</h2>
+  <pre><code>// After registration
+const server = edgeStream.server('bas');   // returns IServer | undefined
+if (!server) {
+  throw new Error('Server bas not registered');
+}
+
+// Non-null assertion (when you know it's registered)
+const server = edgeStream.server('bas')!;
+console.log(server.id);      // 'bas'
+console.log(server.type);    // 'bas'
+console.log(server.status);  // 'disconnected' (until start() is called)</code></pre>
+
+  <h2>Preventing Double Registration</h2>
+  <p>Calling <code>registerServer</code> with an ID that already exists logs a warning and returns — it does not overwrite the existing server:</p>
+  <pre><code>// Internal behavior (from EdgeStream.ts)
+registerServer(registration: IServerRegistration): void {
+  if (this.servers.has(registration.id)) {
+    this.logger.warn(`Server ${registration.id} already registered`);
+    return; // silently skip — does not replace existing server
+  }
+  // ... create and store server
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Server Overview</a>
+    <a href="02-attaching-transport.html">Next: Attaching a Transport &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

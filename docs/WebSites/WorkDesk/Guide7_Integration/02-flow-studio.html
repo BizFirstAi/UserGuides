@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flow Studio Integration — Integration | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.dir-badge{display:inline-block;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:4px;margin-left:8px;}
+.dir-in{background:rgba(108,140,255,0.15);color:#6c8cff;}
+.dir-out{background:rgba(60,210,130,0.15);color:#3cd282;}
+.dir-bi{background:rgba(255,180,0,0.15);color:#ffb400;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Integration</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Integration Overview</a>
+  <a href="01-atlas-forms.html">Atlas Forms</a>
+  <a href="02-flow-studio.html" class="active">Flow Studio</a>
+  <a href="03-octopus.html">Octopus</a>
+  <a href="04-app-studio.html">App Studio</a>
+  <a href="05-edgestream.html">EdgeStream</a>
+  <a href="06-passport.html">Passport</a>
+  <a href="07-extension-points.html">Extension Points</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Flow Studio Integration</h1>
+    <p class="lead">Flow Studio is the workflow engine that drives WorkDesk's task inbox. When a workflow reaches a HIL (Human-in-the-Loop) node, Flow Studio suspends execution and writes a task record that WorkDesk detects and displays. When the employee acts, WorkDesk resumes the workflow via the Flow Studio resume API.</p>
+  </div>
+
+  <h2>Integration Direction</h2>
+  <p>The Flow Studio integration is bidirectional: <span class="dir-badge dir-bi">Bidirectional</span></p>
+  <ul>
+    <li><strong>Flow Studio → WorkDesk:</strong> HIL node suspension creates a record in <code>Process_HILTasks</code> that WorkDesk's sync service detects.</li>
+    <li><strong>WorkDesk → Flow Studio:</strong> Employee action (approve/submit/acknowledge) triggers WorkDesk to POST to the Flow Studio resume API, resuming the suspended workflow execution.</li>
+  </ul>
+
+  <h2>How Flow Studio Creates HIL Tasks</h2>
+  <p>When a workflow execution reaches a HIL node in Flow Studio, the process engine:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>HIL Node Reached</h4>
+        <p>The Flow Studio process engine evaluates the HIL node. Actor assignment is resolved — either a specific <code>userId</code>, a role, or a dynamic expression that evaluates to a user at runtime.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Execution Suspended</h4>
+        <p>The execution is moved to <code>status = "suspended"</code>. The engine serializes the current data context (all workflow variables) and saves it alongside the task record.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Process_HILTasks Record Written</h4>
+        <p>A row is inserted into <code>Process_HILTasks</code> with the task type, assigned actor, form ID (if form task), initial values (from data context), due date, and execution ID.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>WorkDesk Detects Task</h4>
+        <p><code>HILTaskSyncService</code> detects the new row, creates a WorkDesk task record, and publishes an EdgeStream event to notify the assigned user's browser.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Process_HILTasks Schema</h2>
+  <p>The <code>Process_HILTasks</code> table is the handoff point between Flow Studio and WorkDesk. WorkDesk reads from this table but never writes to it — only the Flow Studio process engine writes HIL task records.</p>
+  <table>
+    <thead><tr><th>Column</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>Id</code></td><td>uniqueidentifier</td><td>Primary key — HIL task ID</td></tr>
+      <tr><td><code>ExecutionId</code></td><td>uniqueidentifier</td><td>FK to the suspended workflow execution</td></tr>
+      <tr><td><code>TenantId</code></td><td>uniqueidentifier</td><td>Tenant isolation</td></tr>
+      <tr><td><code>NodeId</code></td><td>nvarchar(100)</td><td>The HIL node's ID in the workflow graph</td></tr>
+      <tr><td><code>TaskType</code></td><td>nvarchar(50)</td><td><code>approval</code> | <code>form</code> | <code>review</code></td></tr>
+      <tr><td><code>AssignedActorId</code></td><td>uniqueidentifier</td><td>User ID of the assigned employee</td></tr>
+      <tr><td><code>FormId</code></td><td>nvarchar(100)</td><td>Atlas Form ID (form tasks only; null for approval/review)</td></tr>
+      <tr><td><code>InitialValues</code></td><td>nvarchar(max)</td><td>JSON map of field → value from the workflow data context</td></tr>
+      <tr><td><code>ReviewContent</code></td><td>nvarchar(max)</td><td>JSON content for review tasks (null for approval/form)</td></tr>
+      <tr><td><code>Title</code></td><td>nvarchar(500)</td><td>Human-readable task title from HIL node config</td></tr>
+      <tr><td><code>DueAt</code></td><td>datetime2</td><td>Optional deadline from HIL node config</td></tr>
+      <tr><td><code>CreatedAt</code></td><td>datetime2</td><td>When the task was created (execution suspended)</td></tr>
+      <tr><td><code>Status</code></td><td>nvarchar(50)</td><td><code>pending</code> | <code>claimed</code> | <code>completed</code></td></tr>
+      <tr><td><code>CompletedAt</code></td><td>datetime2</td><td>When WorkDesk posted the resume response</td></tr>
+    </tbody>
+  </table>
+
+  <h2>HILTaskSyncService</h2>
+  <p>WorkDesk's backend service that monitors <code>Process_HILTasks</code> and creates corresponding WorkDesk task records:</p>
+
+  <pre><code>// HILTaskSyncService.cs — simplified polling loop
+public class HILTaskSyncService : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var newHilTasks = await _hilTaskRepo.GetNewTasksSinceAsync(
+                _lastSyncCursor,
+                tenantIds: _tenantRegistry.ActiveTenantIds,
+                ct: stoppingToken);
+
+            foreach (var hilTask in newHilTasks)
+            {
+                // Create WorkDesk task record
+                var workdeskTask = new WorkDeskTask
+                {
+                    Id             = Guid.NewGuid(),
+                    HilTaskId      = hilTask.Id,
+                    ExecutionId    = hilTask.ExecutionId,
+                    ActorId        = hilTask.AssignedActorId,
+                    TenantId       = hilTask.TenantId,
+                    Type           = hilTask.TaskType,
+                    Title          = hilTask.Title,
+                    FormId         = hilTask.FormId,
+                    InitialValues  = hilTask.InitialValues,
+                    ReviewContent  = hilTask.ReviewContent,
+                    DueAt          = hilTask.DueAt,
+                    Status         = TaskStatus.Pending,
+                    CreatedAt      = DateTime.UtcNow
+                };
+
+                await _workdeskTaskRepo.InsertAsync(workdeskTask, stoppingToken);
+
+                // Notify the user via EdgeStream
+                await _edgeStream.PublishAsync(
+                    topic: $"tasks.{hilTask.AssignedActorId}",
+                    payload: new TaskAssignedEvent { Task = workdeskTask },
+                    ct: stoppingToken);
+            }
+
+            _lastSyncCursor = newHilTasks.LastOrDefault()?.CreatedAt ?? _lastSyncCursor;
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); // poll every 5s
+        }
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Polling vs. Event-Driven</strong>
+    <p>The current <code>HILTaskSyncService</code> uses a 5-second polling loop against <code>Process_HILTasks</code>. This is intentional — it avoids tight coupling between the Flow Studio process engine and WorkDesk. The maximum task visibility delay is 5 seconds, which is acceptable for HIL workflows.</p>
+  </div>
+
+  <h2>Resume API — WorkDesk to Flow Studio</h2>
+  <p>When an employee completes a task in WorkDesk, the frontend calls the WorkDesk backend which in turn calls the Flow Studio resume API:</p>
+
+  <pre><code>// WorkDesk Backend — Resume workflow after HIL task completion
+POST /api/executions/{executionId}/resume
+Authorization: Bearer {service-token}   // machine-to-machine token
+Content-Type: application/json
+
+// Request body — approval task
+{
+  "nodeId":   "hil-approval-node-1",
+  "decision": "approved",              // "approved" | "rejected"
+  "comment":  "Looks good, approved.", // optional
+  "actorId":  "user-guid-here"
+}
+
+// Request body — form task
+{
+  "nodeId":    "hil-form-node-2",
+  "formData":  {                       // submitted form field values
+    "expenseAmount": 1200.00,
+    "category":      "travel",
+    "description":   "Q2 conference travel"
+  },
+  "actorId":   "user-guid-here"
+}
+
+// Request body — review task
+{
+  "nodeId":    "hil-review-node-3",
+  "acknowledged": true,
+  "actorId":   "user-guid-here"
+}
+
+// Response — 200 OK
+{
+  "executionId": "exec-guid",
+  "status":      "running",   // execution resumed and is now running
+  "resumedAt":   "2026-05-25T14:32:00Z"
+}</code></pre>
+
+  <h2>What Happens After Resume</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>WorkDesk Receives Employee Action</h4>
+        <p>Employee submits approval/form/review in WorkDesk UI. WorkDesk backend validates the payload and marks the WorkDesk task as <code>completed</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Flow Studio Resume Called</h4>
+        <p>WorkDesk backend POSTs to <code>POST /api/executions/{id}/resume</code> with the decision payload. The service-to-service call uses a machine-to-machine JWT.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Execution Resumes</h4>
+        <p>Flow Studio injects the employee's response into the workflow data context. Conditional branches (e.g., "if approved → next node, if rejected → notify manager") are evaluated and the workflow continues.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Process_HILTasks Updated</h4>
+        <p>Flow Studio marks the <code>Process_HILTasks</code> row as <code>status = "completed"</code> with a <code>CompletedAt</code> timestamp. WorkDesk reflects this in the task history view.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body">
+        <h4>Workflow Continues or Ends</h4>
+        <p>Execution proceeds through subsequent nodes (automated steps, further HIL nodes, or terminal nodes). The execution status in WorkDesk history updates in real-time via EdgeStream.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Execution History Linkage</h2>
+  <p>WorkDesk's workflow history view links directly to Flow Studio's execution records. An employee can see:</p>
+  <ul>
+    <li>All executions they triggered (initiator view)</li>
+    <li>All executions they participated in as a HIL respondent (participant view)</li>
+    <li>The Observer Panel — a read-only drill-down into execution status, node list, and logs — powered by Flow Studio's execution detail API</li>
+  </ul>
+
+  <pre><code>// WorkDesk calls Flow Studio execution detail API for Observer Panel
+GET /api/executions/{executionId}
+Authorization: Bearer {userToken}
+
+// Response includes
+{
+  "executionId": "...",
+  "workflowName": "Expense Approval Flow",
+  "status": "running",
+  "startedAt": "...",
+  "nodes": [
+    { "nodeId": "node-1", "name": "Start", "status": "completed", "duration": 12 },
+    { "nodeId": "hil-1",  "name": "Manager Approval", "status": "completed", "duration": 86400 },
+    { "nodeId": "node-3", "name": "Send Notification", "status": "running",  "duration": null }
+  ],
+  "dataContext": { ... },    // only visible to workflow owner
+  "hilTasks": [ ... ]        // HIL tasks associated with this execution
+}</code></pre>
+
+  <h2>Error Handling</h2>
+  <table>
+    <thead><tr><th>Error Scenario</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Resume API returns 404 (execution not found)</td><td>WorkDesk shows error: "This workflow execution no longer exists — it may have been cancelled or expired"</td></tr>
+      <tr><td>Resume API returns 409 (already resumed)</td><td>WorkDesk shows: "Another user already completed this task" — task marked read-only</td></tr>
+      <tr><td>Resume API timeout (&gt;30s)</td><td>WorkDesk retries once after 5s; if second attempt fails, shows manual retry button</td></tr>
+      <tr><td>HILTaskSyncService can't reach Process_HILTasks DB</td><td>Sync pauses; resumes automatically when connectivity is restored; no task loss (cursor-based sync)</td></tr>
+      <tr><td>Machine-to-machine token expired</td><td>WorkDesk backend refreshes service token from Passport on next request; transparent to user</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-atlas-forms.html">&#8592; Atlas Forms</a>
+    <a href="03-octopus.html">Next: Octopus &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

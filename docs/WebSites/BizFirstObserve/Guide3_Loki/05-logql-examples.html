@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LogQL for BizFirstGO — Loki Log Aggregation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Loki Log Aggregation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Loki Overview</a>
+  <a href="01-deployment.html">Deploying Loki</a>
+  <a href="02-ingestion.html">Log Ingestion from BizFirstGO</a>
+  <a href="03-label-strategy.html">Label Strategy</a>
+  <a href="04-logql-basics.html">LogQL Basics</a>
+  <a href="05-logql-examples.html" class="active">LogQL for BizFirstGO</a>
+  <a href="06-retention.html">Log Retention in Loki</a>
+  <a href="07-alerts.html">Loki Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>LogQL for BizFirstGO</h1>
+    <p class="lead">Ready-to-use LogQL queries for the most common BizFirstGO observability scenarios. Copy these into Grafana Explore or use them as starting points for dashboard panels and alert rules.</p>
+  </div>
+
+  <h2>Workflow Execution Queries</h2>
+  <pre><code># All logs for a specific workflow execution
+{job="processengine", environment="production"} |= "executionId=exec-d1e2f3a4"
+
+# All error logs for a specific workflow execution
+{job="processengine", environment="production", level="error"} |= "executionId=exec-d1e2f3a4"
+
+# All logs from a specific workflow definition
+{job="processengine"} | json | workflowId="wf-8a4c2f91"
+
+# Workflow executions that timed out in the last hour
+{job="processengine", level="error"} |= "timeout" | json | workflowId != ""
+
+# All logs for a specific tenant in production
+{job="processengine", tenant_id="tenant-abc-123", environment="production"}</code></pre>
+
+  <h2>Node Execution Queries</h2>
+  <pre><code># All error logs from a specific node type
+{job="processengine", level="error"} | json | nodeType="DataFetchNode"
+
+# All logs from a specific node key (in any workflow)
+{job="processengine"} | json | nodeKey="approval-node-01"
+
+# Slowest node executions (duration_ms > 5000)
+{job="processengine"} | json | duration_ms > 5000
+
+# Node execution failures by node type (metric query — for alert)
+sum(rate({job="processengine", level="error"} | json | nodeType != "" [5m])) by (nodeType)</code></pre>
+
+  <h2>HIL (Human-in-the-Loop) Queries</h2>
+  <pre><code># All HIL suspension events
+{job="processengine"} | json | message=~"(?i)suspended"
+
+# HIL tasks awaiting approval for more than 24 hours (log-based)
+{job="processengine"} |= "hil.suspend" |= "overdue"
+
+# HIL approval events with outcome
+{job="processengine"} | json | message=~"(?i)resumed" | hilOutcome != ""
+
+# HIL timeout events (SLA breach)
+{job="processengine", level="warn"} | json | hilOutcome="timeout"</code></pre>
+
+  <h2>Error Analysis Queries</h2>
+  <pre><code># All unhandled exceptions in production
+{job="processengine", environment="production", level="error"} |= "Exception"
+
+# Error rate by tenant (metric query)
+sum(rate({job="processengine", level="error"}[5m])) by (tenant_id)
+
+# Top error messages (use with count_over_time)
+topk(10, sum(count_over_time({job="processengine", level="error"} | json [5m])) by (message))
+
+# Find a specific error message across all services
+{environment="production", level="error"} |= "Connection refused"
+
+# Find logs related to a specific trace (from alert notification)
+{job="processengine"} |= "4bf92f3577b34da6a3ce929d0e0e4736"</code></pre>
+
+  <h2>EdgeStream Queries</h2>
+  <pre><code># All EdgeStream errors
+{job="edgestream", level="error"}
+
+# Message delivery failures for a specific topic
+{job="edgestream"} | json | topic="workflow.events" | message=~"(?i)fail|error"
+
+# EdgeStream throughput by topic (metric query)
+sum(rate({job="edgestream"} | json | topic != "" [1m])) by (topic)</code></pre>
+
+  <h2>Octopus Agent Queries</h2>
+  <pre><code># All Octopus LLM call logs
+{job="octopus"} | json | message=~"(?i)llm|ai call"
+
+# Octopus errors with context
+{job="octopus", level="error"} | json
+
+# Memory access events
+{job="octopus"} | json | message=~"(?i)memory"</code></pre>
+
+  <h2>Log Volume Dashboard Queries</h2>
+  <pre><code># Total log ingestion rate by service (for capacity planning)
+sum(rate({environment="production"}[5m])) by (job)
+
+# Error log rate across all production services
+sum(rate({environment="production", level="error"}[5m]))
+
+# Log volume by level (stacked bar chart)
+sum(count_over_time({environment="production"}[5m])) by (level)</code></pre>
+
+  <div class="page-nav">
+    <a href="04-logql-basics.html">&#8592; LogQL Basics</a>
+    <a href="06-retention.html">Next: Log Retention in Loki &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

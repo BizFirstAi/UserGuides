@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alert Management — Grafana Dashboards | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Grafana Dashboards</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Grafana Overview</a>
+  <a href="01-data-sources.html">Connecting Data Sources</a>
+  <a href="02-pre-built.html">Pre-Built BizFirstGO Dashboards</a>
+  <a href="03-importing.html">Importing Dashboards</a>
+  <a href="04-building.html">Building Custom Dashboards</a>
+  <a href="05-explore.html">Grafana Explore</a>
+  <a href="06-alerts.html" class="active">Alert Management</a>
+  <a href="07-access-control.html">Grafana Access Control</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Alert Management</h1>
+    <p class="lead">Grafana Unified Alerting provides a single interface for creating, managing, and routing alerts across all three data sources — Loki, Prometheus, and Tempo. Contact points (Slack, email, PagerDuty) and notification policies control where alerts are sent.</p>
+  </div>
+
+  <h2>Alert Lifecycle</h2>
+  <table>
+    <thead>
+      <tr><th>State</th><th>Meaning</th><th>Color</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Normal</strong></td><td>Alert condition is not met</td><td>Green</td></tr>
+      <tr><td><strong>Pending</strong></td><td>Condition met but <code>for</code> duration not yet elapsed</td><td>Yellow</td></tr>
+      <tr><td><strong>Firing</strong></td><td>Condition met for the full <code>for</code> duration — notification sent</td><td>Red</td></tr>
+      <tr><td><strong>Resolved</strong></td><td>Was firing, now returned to Normal — resolution notification sent</td><td>Green</td></tr>
+      <tr><td><strong>No Data</strong></td><td>Query returns no data (possible if service is down)</td><td>Gray</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Configuring Contact Points</h2>
+  <pre><code># Grafana alerting provisioning — contact points
+# grafana-provisioning/alerting/contact-points.yaml
+apiVersion: 1
+contactPoints:
+  - name: slack-platform
+    receivers:
+      - uid: slack-platform-uid
+        type: slack
+        settings:
+          url: "${SLACK_WEBHOOK_URL}"
+          channel: "#platform-alerts"
+          title: |
+            {{ if eq .Status "firing" }}🔴{{ else }}✅{{ end }} {{ .CommonLabels.alertname }}
+          text: |
+            {{ range .Alerts }}
+            *Summary:* {{ .Annotations.summary }}
+            *Description:* {{ .Annotations.description }}
+            *Severity:* {{ .Labels.severity }}
+            {{ end }}
+
+  - name: pagerduty-critical
+    receivers:
+      - uid: pagerduty-uid
+        type: pagerduty
+        settings:
+          integrationKey: "${PAGERDUTY_KEY}"
+          class: "BizFirstGO"
+
+  - name: email-platform
+    receivers:
+      - uid: email-uid
+        type: email
+        settings:
+          addresses: "platform@bizfirstai.com"</code></pre>
+
+  <h2>Notification Policies</h2>
+  <pre><code># grafana-provisioning/alerting/notification-policies.yaml
+apiVersion: 1
+policies:
+  - orgId: 1
+    receiver: email-platform    # Default receiver
+    group_by: ['alertname', 'team']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: pagerduty-critical
+        matchers:
+          - severity = critical
+        continue: false
+      - receiver: slack-platform
+        matchers:
+          - team = platform
+        continue: true</code></pre>
+
+  <h2>Creating a Silence (Maintenance Window)</h2>
+  <p>During planned maintenance, silence alerts to prevent noise:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Navigate to Alerting → Silences</h4>
+        <p>Click "Add silence" in the Grafana Alerting section.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Set matchers and duration</h4>
+        <p>Add matchers to scope the silence: e.g., <code>environment = staging</code> to silence all staging alerts. Set start and end time for the maintenance window.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Add a comment</h4>
+        <p>Add "Reason" and your name. Required by compliance — creates an audit trail of why this silence was created.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <strong>Silences Are Not Alert Resolutions</strong>
+    <p>A silence suppresses alert notifications — it does not resolve the alert. When the silence expires, if the alert is still firing, notifications resume immediately. Always verify the underlying issue is resolved before letting a silence expire on a critical alert.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-explore.html">&#8592; Grafana Explore</a>
+    <a href="07-access-control.html">Next: Grafana Access Control &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

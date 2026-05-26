@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transport Overview — Transports | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Transports</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Transport Overview</a>
+  <a href="01-signalr.html">SignalR Transport</a>
+  <a href="02-websocket.html">WebSocket Transport</a>
+  <a href="03-sse.html">SSE Transport</a>
+  <a href="04-choosing.html">Choosing a Transport</a>
+  <a href="05-connection-lifecycle.html">Connection Lifecycle</a>
+  <a href="06-custom-transport.html">Custom Transport</a>
+  <a href="07-multiple-transports.html">Multiple Transports</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Transport Overview</h1>
+    <p class="lead">EdgeStream supports four transports: SignalR, WebSocket, SSE, and HTTP Polling. Each wraps the same <code>ITransport</code> interface so the pipeline above is identical regardless of the wire protocol underneath.</p>
+  </div>
+
+  <h2>The Four Transports</h2>
+  <table>
+    <thead>
+      <tr><th>Transport</th><th>Type</th><th>Direction</th><th>Reconnect</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>'signalr'</code></td><td>SignalRTransport</td><td>Bidirectional</td><td>Automatic (exponential)</td><td>Browser apps on ASP.NET backends</td></tr>
+      <tr><td><code>'websocket'</code></td><td>RawWebSocketTransport</td><td>Bidirectional</td><td>Automatic (exponential)</td><td>Mobile, server-to-server, non-ASP.NET</td></tr>
+      <tr><td><code>'sse'</code></td><td>SseTransport</td><td>Server → Client only</td><td>Automatic (exponential)</td><td>Read-only dashboards, notification streams</td></tr>
+      <tr><td><code>'http-polling'</code></td><td>HttpPollingTransport</td><td>Bidirectional</td><td>Adaptive backoff</td><td>Firewalled environments, legacy proxies</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Default Recommendation</h2>
+  <p>For BizFirstGO browser applications connecting to ASP.NET Core SignalR hubs, use <code>'signalr'</code>. It handles WebSocket, SSE, and long-polling fallback internally so you do not need to configure fallbacks manually:</p>
+  <pre><code>stream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  url: '/hubs/edge-stream',
+  transportConfig: {
+    type: 'signalr',
+    url: '/hubs/edge-stream',
+    accessToken: () => authStore.getToken(),
+  }
+});</code></pre>
+
+  <h2>ITransport Interface</h2>
+  <p>Every transport implements the same interface. This is how EdgeStream remains transport-agnostic:</p>
+  <pre><code>interface ITransport {
+  readonly id: string;
+  readonly type: 'signalr' | 'websocket' | 'sse' | 'http-polling';
+  readonly status: TransportStatus;  // 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'
+  readonly lastError?: Error;
+
+  connect(): Promise&lt;void&gt;;
+  disconnect(): Promise&lt;void&gt;;
+  send(data: string | ArrayBuffer): Promise&lt;void&gt;;
+
+  onMessage(handler: (raw: string | ArrayBuffer) =&gt; void): () =&gt; void;
+  onStatusChange(handler: (status: TransportStatus) =&gt; void): () =&gt; void;
+  onError(handler: (error: Error) =&gt; void): () =&gt; void;
+}</code></pre>
+
+  <h2>Auto-Detection</h2>
+  <p><code>createAutoTransport()</code> picks the best available transport for the current environment:</p>
+  <pre><code>import { createAutoTransport, detectBestTransport } from 'edge-stream-js';
+
+// Detect without creating
+const type = detectBestTransport();
+// 'websocket' if WebSocket supported, 'sse' if EventSource supported, 'http-polling' fallback
+
+// Create with auto-detection
+const transport = createAutoTransport('wss://example.com/ws');
+
+// Create with preferred type (falls back if unavailable)
+const preferred = createAutoTransport('wss://example.com/ws', 'websocket');</code></pre>
+
+  <h2>Transport Status Values</h2>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>'disconnected'</code></td><td>Not connected — initial state or after explicit disconnect</td></tr>
+      <tr><td><code>'connecting'</code></td><td>Connection attempt in progress</td></tr>
+      <tr><td><code>'connected'</code></td><td>Ready to send and receive messages</td></tr>
+      <tr><td><code>'reconnecting'</code></td><td>Lost connection, attempting automatic reconnect</td></tr>
+      <tr><td><code>'error'</code></td><td>Unrecoverable error — manual reconnect required</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Transport vs Server</strong>
+    A transport handles the wire protocol. A server owns a transport and manages the message pipeline. You configure the transport via <code>transportConfig</code> when registering the server — you do not create transports directly.
+  </div>
+
+  <div class="page-nav">
+    <a href="../Guide5_Servers/07-error-handling.html">&#8592; Previous Guide: Servers</a>
+    <a href="01-signalr.html">Next: SignalR Transport &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

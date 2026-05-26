@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Working Memory Overview — Working Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Working Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Working Memory Overview</a>
+  <a href="01-context-window.html">Context Window</a>
+  <a href="02-token-budget.html">Token Budget</a>
+  <a href="03-history-management.html">History Management</a>
+  <a href="04-pruning-strategies.html">Pruning Strategies</a>
+  <a href="05-knowledge-injection.html">Knowledge Injection</a>
+  <a href="06-tool-call-history.html">Tool Call History in Context</a>
+  <a href="07-context-inspector.html">Context Inspector</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Working Memory</h1>
+    <p class="lead">Working memory is the content of the LLM context window at the moment of generation. It is the agent's "consciousness" — everything it is aware of right now. Unlike the other memory types, working memory is transient: it exists only within a single LLM call.</p>
+  </div>
+
+  <h2>What Goes Into Working Memory</h2>
+  <p>Working memory is assembled by the <code>WorkingMemoryManager</code> before every LLM call. It contains, in priority order:</p>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Source</th><th>Priority</th><th>Typical Size</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>System Prompt</strong></td><td>AgentComposite.SystemPrompt</td><td>1 (highest)</td><td>500–3000 tokens</td></tr>
+      <tr><td><strong>Procedure</strong></td><td>Procedural memory (if matched)</td><td>2</td><td>100–500 tokens</td></tr>
+      <tr><td><strong>Retrieved Knowledge</strong></td><td>Semantic memory retrieval</td><td>3</td><td>500–2000 tokens</td></tr>
+      <tr><td><strong>Episode Snippets</strong></td><td>Episodic memory recall</td><td>4</td><td>100–500 tokens</td></tr>
+      <tr><td><strong>Message History</strong></td><td>Current session messages (pruned)</td><td>5</td><td>Remainder of budget</td></tr>
+      <tr><td><strong>Current Message</strong></td><td>User's latest input</td><td>6 (last added)</td><td>20–500 tokens</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Token Budget</h2>
+  <p>The total context window size is constrained by the LLM's maximum context length. The <code>MaxWorkingMemoryTokens</code> setting defines the usable portion (leaving headroom for the output):</p>
+  <pre><code>// Token budget allocation
+int totalBudget = agent.MemoryConfig.MaxWorkingMemoryTokens; // e.g., 150,000
+
+int systemPromptTokens  = CountTokens(agent.SystemPrompt);   // ~1,200
+int procedureTokens     = matchedProcedure != null ? CountTokens(procedure) : 0; // ~300
+int knowledgeTokens     = CountTokens(retrievedChunks);      // ~1,500
+int episodeTokens       = CountTokens(episodeSnippets);       // ~400
+int reservedForCurrent  = 500;  // current message + tool call results
+
+int historyBudget = totalBudget
+    - systemPromptTokens - procedureTokens
+    - knowledgeTokens - episodeTokens
+    - reservedForCurrent;
+// Remaining budget allocated to message history</code></pre>
+
+  <h2>WorkingMemoryManager</h2>
+  <pre><code>public class WorkingMemoryManager
+{
+    public async Task&lt;WorkingMemoryContext&gt; BuildAsync(
+        AgentComposite agent,
+        ConversationComposite conversation,
+        string currentUserMessage,
+        CancellationToken ct = default)
+    {
+        var messages = new List&lt;LLMMessage&gt;();
+
+        // 1. System prompt (always first)
+        messages.Add(new LLMMessage(Role.System, agent.SystemPrompt));
+
+        // 2. Procedural memory (if task matches)
+        var procedure = await _proceduralStore
+            .FindMatchAsync(currentUserMessage, agent.Id, agent.TenantId, ct);
+        if (procedure != null)
+            messages.Add(new LLMMessage(Role.System,
+                FormatProcedure(procedure)));
+
+        // 3. Semantic memory retrieval
+        var retrieved = await _semanticService
+            .RetrieveAsync(agent, currentUserMessage, ct);
+        if (retrieved.HasContent)
+            messages.Add(new LLMMessage(Role.Context,
+                retrieved.FormattedContext));
+
+        // 4. Episodic memory snippets
+        var episodes = await _episodicStore
+            .SearchAsync(agent.Id, conversation.UserId, currentUserMessage, topK: 3, ct);
+        if (episodes.Any())
+            messages.Add(new LLMMessage(Role.Context,
+                FormatEpisodes(episodes)));
+
+        // 5. Message history (pruned to remaining budget)
+        var historyBudget = CalculateHistoryBudget(agent, messages);
+        var history = await _pruner.PruneAsync(
+            conversation.Messages, historyBudget, agent.MemoryConfig.PruningStrategy);
+        messages.AddRange(history);
+
+        // 6. Current user message
+        messages.Add(new LLMMessage(Role.User, currentUserMessage));
+
+        return new WorkingMemoryContext { Messages = messages };
+    }
+}</code></pre>
+
+  <h2>Why Working Memory is Not Persisted</h2>
+  <p>Working memory is intentionally ephemeral. The LLM context window is rebuilt fresh on every turn from the persistent stores (episodic, semantic, procedural). This design means:</p>
+  <ul>
+    <li>Crashes don't lose working memory — it's reconstructed from the durable stores</li>
+    <li>No in-memory state to synchronize across horizontally-scaled API servers</li>
+    <li>The composition is dynamic — if new knowledge is indexed between turns, it appears in the next turn's retrieval</li>
+  </ul>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-context-window.html">Next: Context Window &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

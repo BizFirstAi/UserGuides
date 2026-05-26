@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calling a Service — Guide37 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Business Services</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-service-registry.html"><i class="fa-solid fa-list"></i> Service Registry</a>
+  <a href="02-calling-a-service.html" class="active"><i class="fa-solid fa-phone"></i> Calling a Service</a>
+  <a href="03-authentication.html"><i class="fa-solid fa-lock"></i> Authentication</a>
+  <a href="04-response-mapping.html"><i class="fa-solid fa-arrows-left-right"></i> Response Mapping</a>
+  <a href="05-error-handling.html"><i class="fa-solid fa-triangle-exclamation"></i> Error Handling</a>
+  <a href="06-custom-service.html"><i class="fa-solid fa-plus-circle"></i> Custom Service</a>
+  <a href="07-testing.html"><i class="fa-solid fa-flask"></i> Testing</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Calling a Business Service</h1>
+    <p class="lead">The <code>BusinessServiceCallNode</code> config — <code>serviceId</code>, <code>operationId</code>, <code>inputMap</code>, and path parameter substitution.</p>
+  </div>
+
+  <h2>Full Node Config</h2>
+  <pre><code class="language-json">{
+  "nodeType": "BusinessServiceCall",
+  "config": {
+    "serviceId": "hr-service",
+    "operationId": "updateLeaveBalance",
+    "inputMap": {
+      "employeeId": "$output.fetchEmployee.employeeId",
+      "leaveType": "$json.leaveType",
+      "daysToDeduct": "$output.approvalResult.approvedDays",
+      "reason": "\"Approved leave request\""
+    },
+    "pathParams": {
+      "employeeId": "$output.fetchEmployee.employeeId"
+    },
+    "timeoutSeconds": 15
+  }
+}</code></pre>
+
+  <h2>Input Map Evaluation</h2>
+  <p>The <code>inputMap</code> values are expressions evaluated in the parent context before the service call. The result is the request body sent to the service:</p>
+  <pre><code class="language-csharp">[NodeCapability(CapabilityType.BusinessService)]
+public class BusinessServiceCallExecutor : BaseNodeExecutor
+{
+    public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(NodeExecutionContext ctx)
+    {
+        var config = ctx.GetConfig&lt;BusinessServiceCallConfig&gt;();
+
+        // Resolve endpoint
+        var endpoint = await _registry.ResolveEndpointAsync(config.ServiceId, config.OperationId);
+
+        // Substitute path params
+        foreach (var (key, expr) in config.PathParams ?? new())
+            endpoint = endpoint.Replace($"{{{key}}}", ctx.EvaluateExpression&lt;string&gt;(expr));
+
+        // Build request body from inputMap
+        var body = config.InputMap.ToDictionary(
+            kv => kv.Key,
+            kv => ctx.EvaluateExpression&lt;object&gt;(kv.Value));
+
+        // Get auth headers
+        var auth = await _authProvider.GetAuthHeadersAsync(config.ServiceId);
+
+        // Make the call
+        var response = await _httpClient.PostAsJsonAsync(endpoint, body, auth);
+        var result = await response.Content.ReadFromJsonAsync&lt;object&gt;();
+
+        return NodeExecutionResult.Success(result);
+    }
+}</code></pre>
+
+  <h2>GET Operations with Path Params</h2>
+  <p>For GET operations, the <code>inputMap</code> becomes query parameters and <code>pathParams</code> are substituted in the URL:</p>
+  <pre><code class="language-json">{
+  "serviceId": "hr-service",
+  "operationId": "getPayHistory",
+  "pathParams": {
+    "employeeId": "$output.fetchEmployee.employeeId"
+  },
+  "inputMap": {
+    "fromDate": "$json.fromDate",
+    "toDate": "$json.toDate",
+    "limit": "10"
+  }
+}
+// Resolves to: GET /api/v2/employees/emp-001/pay-history?fromDate=...&toDate=...&limit=10</code></pre>
+
+  <div class="page-nav">
+    <a href="01-service-registry.html">&#8592; Service Registry</a>
+    <a href="03-authentication.html">Next: Authentication &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

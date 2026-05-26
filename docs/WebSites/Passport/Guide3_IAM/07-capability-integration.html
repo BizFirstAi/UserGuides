@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Integration with Node Capabilities — IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">IAM Overview</a>
+  <a href="01-roles.html">Roles</a>
+  <a href="02-permissions.html">Permissions</a>
+  <a href="03-policy-evaluation.html">Policy Evaluation</a>
+  <a href="04-resource-policies.html">Resource-Level Policies</a>
+  <a href="05-groups.html">User Groups</a>
+  <a href="06-runtime-checks.html">Runtime Permission Checks</a>
+  <a href="07-capability-integration.html" class="active">Integration with Node Capabilities</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Integration with Node Capabilities</h1>
+    <p class="lead">NodeCapabilityPolicy uses Passport IAM to restrict which roles can design or execute workflows containing specific capability types — preventing unauthorized access to sensitive integrations.</p>
+  </div>
+
+  <h2>What Is NodeCapabilityPolicy?</h2>
+  <p>In Flow Studio, every execution node has a <strong>capability type</strong> — the category of integration it performs (Webhook, Form, Messaging, Identity, DIDComm, MCP, etc.). <code>NodeCapabilityPolicy</code> is a Passport-backed security policy that restricts which roles can include nodes of a given capability type in a workflow design, and which roles can execute workflows containing those nodes.</p>
+
+  <h2>NodeCapabilityPolicy Model</h2>
+  <pre><code>// From ProcessSecurity module
+public class NodeCapabilityPolicy
+{
+    public required string PolicyId         { get; init; }
+    public required string CapabilityType   { get; init; }  // e.g., "DIDComm", "MCP", "Identity"
+    public required string TenantId         { get; init; }
+    public required string[] AllowedRoles   { get; init; }  // roles that can USE this capability
+    public required string[] DesignRoles    { get; init; }  // roles that can DESIGN with it
+    public bool RequireMfa                  { get; init; }  // MFA required for execution
+    public string? AuditLevel               { get; init; }  // "standard" or "enhanced"
+}
+
+// Example policy: only admins can design with DIDComm nodes
+// only admins and managers can execute workflows containing DIDComm
+{
+  "capabilityType": "DIDComm",
+  "allowedRoles":   ["admin", "manager"],
+  "designRoles":    ["admin"],
+  "requireMfa":     true,
+  "auditLevel":     "enhanced"
+}</code></pre>
+
+  <h2>Capability Types and Default Policies</h2>
+  <table>
+    <thead>
+      <tr><th>Capability Type</th><th>Default Allowed Roles</th><th>Default Design Roles</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Webhook</td><td>admin, manager, user</td><td>admin, manager</td><td>Standard integration — broad access</td></tr>
+      <tr><td>Form</td><td>admin, manager, user</td><td>admin, manager</td><td>Form rendering/submission nodes</td></tr>
+      <tr><td>Messaging</td><td>admin, manager</td><td>admin, manager</td><td>Slack/Email execution nodes</td></tr>
+      <tr><td>Identity</td><td>admin, manager</td><td>admin</td><td>Passport identity operations — restricted</td></tr>
+      <tr><td>BusinessServices</td><td>admin, manager, user</td><td>admin, manager</td><td>ERP/CRM integration nodes</td></tr>
+      <tr><td>Datasources</td><td>admin, manager</td><td>admin</td><td>Database access nodes — data sensitivity</td></tr>
+      <tr><td>DIDComm</td><td>admin</td><td>admin</td><td>Decentralized identity — high privilege</td></tr>
+      <tr><td>MCP</td><td>admin</td><td>admin</td><td>Model Context Protocol — AI tool access</td></tr>
+      <tr><td>Processes</td><td>admin, manager</td><td>admin, manager</td><td>Sub-workflow invocation</td></tr>
+    </tbody>
+  </table>
+
+  <h2>How the Check Works at Runtime</h2>
+  <pre><code>// During workflow execution — ProcessSecurity checks capability access
+public sealed class NodeCapabilityGuard(
+    IPassportClient passport,
+    INodeCapabilityPolicyRepository policyRepo)
+{
+    public async Task&lt;bool&gt; CanExecuteCapabilityAsync(
+        string capabilityType,
+        IDInfo actor,
+        CancellationToken ct)
+    {
+        // 1. Load policy for this capability type
+        var policy = await policyRepo.GetPolicyAsync(capabilityType, actor.TenantId, ct);
+        if (policy is null) return true;  // no policy = allow
+
+        // 2. Check if actor's roles include any allowed role
+        var actorRoles = new HashSet&lt;string&gt;(actor.Roles, StringComparer.OrdinalIgnoreCase);
+        var allowed    = policy.AllowedRoles.Any(r =&gt; actorRoles.Contains(r));
+
+        if (!allowed)
+        {
+            await AuditDenyAsync(capabilityType, actor, policy, ct);
+            return false;
+        }
+
+        // 3. If MFA required, verify MFA claim in token
+        if (policy.RequireMfa)
+        {
+            var hasMfa = actor.Claims.Any(c =&gt; c.Type == "amr" && c.Value == "mfa");
+            if (!hasMfa) return false;
+        }
+
+        return true;
+    }
+}</code></pre>
+
+  <h2>Creating a Custom Capability Policy</h2>
+  <pre><code>POST /passport/admin/node-capability-policies
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "capabilityType": "DIDComm",
+  "tenantId":       "tenant-abc",
+  "allowedRoles":   ["admin"],
+  "designRoles":    ["admin"],
+  "requireMfa":     true,
+  "auditLevel":     "enhanced",
+  "description":    "DIDComm nodes are restricted to administrators with MFA"
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Protect High-Privilege Capability Types</strong>
+    <p>Capabilities like DIDComm, MCP, and Identity nodes have access to sensitive systems. Always restrict design roles to <code>admin</code> only and require MFA for execution. A workflow designer with access to DIDComm could exfiltrate identity data — capability policies are the last line of defense at the workflow layer.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-runtime-checks.html">&#8592; Runtime Permission Checks</a>
+    <span class="spacer"></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

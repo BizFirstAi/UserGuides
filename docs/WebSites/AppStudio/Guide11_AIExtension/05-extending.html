@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Extending the Service Layer — AI Extension Data Layer | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>AI Extension Data Layer</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-why-no-db.html">Why No Direct Database Access</a>
+  <a href="02-service-api.html">AIExtension.Service API</a>
+  <a href="03-app-config-storage.html">App Config Storage</a>
+  <a href="04-widget-data-storage.html">Widget Data Storage</a>
+  <a href="05-extending.html" class="active">Extending the Service Layer</a>
+  <a href="06-caching.html">Service Layer Caching</a>
+  <a href="07-audit.html">Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Extending the Service Layer</h1>
+    <p class="lead">Adding a new data operation to App Studio requires exactly three steps: add the method signature to <code>IAppStudioService</code>, implement it in <code>AIExtension.Service.AppStudioDataService</code>, and add the controller endpoint that calls the service. No other changes are needed.</p>
+  </div>
+
+  <h2>The Three-Step Pattern</h2>
+  <div class="steps">
+    <div class="step">
+      <span class="step-num">1</span>
+      <div><strong>Add the method to IAppStudioService</strong> — defines the contract</div>
+    </div>
+    <div class="step">
+      <span class="step-num">2</span>
+      <div><strong>Implement it in AppStudioDataService</strong> — provides multi-tenancy, caching, and audit</div>
+    </div>
+    <div class="step">
+      <span class="step-num">3</span>
+      <div><strong>Add the controller endpoint</strong> — exposes it over HTTP and calls the service</div>
+    </div>
+  </div>
+
+  <h2>Step 1: Add to IAppStudioService</h2>
+  <pre><code>// AppStudio/Services/IAppStudioService.cs
+public interface IAppStudioService
+{
+    // ... existing methods ...
+
+    // NEW: Get app usage statistics
+    Task<AppUsageStats> GetAppUsageStatsAsync(string tenantId, string appId,
+                                               DateRange dateRange);
+}
+</code></pre>
+
+  <h2>Step 2: Implement in AppStudioDataService</h2>
+  <pre><code>// AIExtension/Services/AppStudioDataService.cs
+public class AppStudioDataService : IAppStudioService
+{
+    // ... existing implementations ...
+
+    public async Task<AppUsageStats> GetAppUsageStatsAsync(
+        string tenantId, string appId, DateRange dateRange)
+    {
+        // Always scope to tenantId — this is non-negotiable
+        var stats = await _db.AppAuditLogs
+            .Where(l => l.TenantId == tenantId
+                     && l.AppId == appId
+                     && l.Timestamp >= dateRange.Start
+                     && l.Timestamp <= dateRange.End)
+            .GroupBy(l => l.Action)
+            .Select(g => new { Action = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        return new AppUsageStats
+        {
+            AppId = appId,
+            TenantId = tenantId,
+            Period = dateRange,
+            ActionCounts = stats.ToDictionary(s => s.Action, s => s.Count)
+        };
+    }
+}
+</code></pre>
+
+  <h2>Step 3: Add Controller Endpoint</h2>
+  <pre><code>// AppStudio/Controllers/AppStatsController.cs
+[ApiController]
+[Route("api/tenants/{tenantId}/apps/{appId}/stats")]
+public class AppStatsController : ControllerBase
+{
+    private readonly IAppStudioService _service;
+
+    public AppStatsController(IAppStudioService service) => _service = service;
+
+    [HttpGet]
+    public async Task<IActionResult> GetUsageStats(
+        string tenantId, string appId,
+        [FromQuery] DateTime from, [FromQuery] DateTime to)
+    {
+        // TenantId from route is validated against JWT by middleware
+        var stats = await _service.GetAppUsageStatsAsync(
+            tenantId, appId, new DateRange(from, to));
+        return Ok(stats);
+    }
+}
+</code></pre>
+
+  <h2>What NOT to Do</h2>
+  <pre><code>// ❌ WRONG — do not inject DbContext into App Studio controllers
+public class AppStatsController : ControllerBase
+{
+    private readonly AIExtDbContext _db;  // ❌ Forbidden
+
+    public async Task<IActionResult> GetStats(string tenantId, string appId)
+    {
+        // This bypasses multi-tenancy enforcement, caching, and audit
+        var data = await _db.AppAuditLogs
+            .Where(l => l.AppId == appId)  // ❌ Missing tenantId scoping
+            .ToListAsync();
+    }
+}
+
+// ❌ WRONG — do not add repositories to the App Studio project
+// ❌ WRONG — do not use HttpClient to call a separate App Studio service
+// ✅ CORRECT — IAppStudioService is the only allowed data access point
+</code></pre>
+
+  <div class="callout callout-info">
+    <strong>Interface-first discipline</strong>
+    Always define the method in <code>IAppStudioService</code> first — before writing the implementation. This keeps the contract explicit and allows mocking in unit tests without depending on the AIExtension.Service implementation.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-widget-data-storage.html">&#8592; Widget Data Storage</a>
+    <a href="06-caching.html">Next: Service Layer Caching &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enrichment Pipeline Pattern — Data Enrichment &amp; Enhancement | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Data Enrichment &amp; Enhancement</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enrichment-pipeline.html" class="active">Enrichment Pipeline Pattern</a>
+  <a href="02-ai-enhancement.html">AI-Driven Enhancement</a>
+  <a href="03-embedding-generation.html">Embedding Generation</a>
+  <a href="04-ai-ready-database.html">Building an AI-Ready Database</a>
+  <a href="05-data-lineage.html">Data Lineage</a>
+  <a href="06-compliance.html">Compliance and PII</a>
+  <a href="07-speed-benefits.html">AI Speed Benefits</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Enrichment Pipeline Pattern</h1>
+    <p class="lead">The standard enrichment workflow: a trigger fires when a new record arrives, downstream AI nodes classify, summarize, and embed the content, and the results are written back to the SQL record — all asynchronously without blocking the creating user.</p>
+  </div>
+
+  <h2>The Core Pattern</h2>
+  <p>All enrichment workflows follow the same four-stage pattern, regardless of which table they enrich or which AI operations they perform:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Trigger</h4>
+        <p>An event fires that a new or updated record needs enrichment. This can be an async sub-workflow call from a CRUD workflow, a scheduled scan for un-enriched rows, or an event message from EdgeStream.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Read Raw Data</h4>
+        <p>A SqlQueryNode reads the current state of the record. This retrieves all text fields that will be processed: notes, descriptions, names, free-form content.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>AI Enhancement (parallel)</h4>
+        <p>One or more AI nodes process the raw content in parallel: classification node, summarization node, embedding generation node, sentiment node. Each runs concurrently to minimize total enrichment latency.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Write Enriched Fields</h4>
+        <p>A SqlUpdateNode writes all AI-generated fields back to the record: ClassificationLabel, SummaryText, SentimentScore, EmbeddingRef, AiProcessedAt, AiModelVersion.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body">
+        <h4>Record Lineage</h4>
+        <p>A SqlUpdateNode inserts a row into the DataLineage table recording what was enriched, by which model, at what time, with what input/output hash — for audit and GDPR compliance.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Trigger Patterns</h2>
+  <p>Three patterns for triggering enrichment workflows:</p>
+
+  <h3>Pattern A: Async Sub-Workflow (Recommended)</h3>
+  <p>The CRUD create workflow triggers the enrichment workflow asynchronously as its final step. The create workflow returns success to the user immediately — enrichment runs in parallel without delaying the response:</p>
+  <pre><code>// In lead-create workflow — final step after INSERT:
+{
+  "nodeType": "WorkflowTriggerNode",
+  "nodeId": "trigger-enrichment",
+  "workflowId": "lead-enrich",
+  "triggerMode": "async",    // Fire and forget — do not wait for completion
+  "inputs": {
+    "leadId": "{{variables.insertResult.generatedId}}",
+    "tenantId": "{{workflow.tenantId}}"
+  }
+}</code></pre>
+
+  <h3>Pattern B: Scheduled Batch Scan</h3>
+  <p>A scheduled workflow runs on a cron schedule and finds all records with <code>AiProcessedAt IS NULL</code>, then enriches them in batches:</p>
+  <pre><code>// Scheduled enrichment batch workflow
+// Step 1: Find un-enriched records
+SqlQueryNode: SELECT TOP 100 LeadId FROM Lead
+  WHERE TenantId = @tenantId AND AiProcessedAt IS NULL AND IsDeleted = 0
+  ORDER BY CreatedAt ASC
+
+// Step 2: Loop through results
+// For each leadId → trigger lead-enrich async
+
+// Configured schedule: "0 */6 * * *" (every 6 hours)</code></pre>
+
+  <h3>Pattern C: EdgeStream Event</h3>
+  <p>The enrichment workflow subscribes to an EdgeStream data channel. When a new record event is published to the channel, the workflow fires immediately:</p>
+  <pre><code>// Workflow trigger: EdgeStream subscription
+{
+  "triggerType": "EdgeStream",
+  "channel": "data-ocean-events",
+  "eventFilter": {
+    "eventType": "lead.created lead.updated",
+    "condition": "event.data.hasNotes == true"
+  }
+}</code></pre>
+
+  <h2>Idempotency</h2>
+  <p>Enrichment workflows must be <strong>idempotent</strong> — running the same enrichment twice on the same record must be safe. Achieve this by checking <code>AiProcessedAt</code> at the start of the workflow:</p>
+  <pre><code>// Enrichment workflow — idempotency check
+SqlQueryNode: SELECT AiProcessedAt FROM Lead
+  WHERE TenantId = @tenantId AND LeadId = @leadId
+
+// Condition Node:
+// If AiProcessedAt IS NOT NULL AND DATEDIFF(HOUR, AiProcessedAt, GETUTCDATE()) < 24
+//   → Exit workflow (already enriched recently)
+// Else
+//   → Proceed with enrichment</code></pre>
+
+  <h2>Error Handling</h2>
+  <p>Enrichment failures must not affect the business data. Enrich workflows handle errors by:</p>
+  <ul>
+    <li>Catching AI node failures (model API errors, rate limits, timeouts) with a catch/finally pattern</li>
+    <li>Writing partial enrichment results even if some nodes fail — a classification without an embedding is better than no enrichment at all</li>
+    <li>Logging enrichment failures to an <code>EnrichmentError</code> table for the scheduled batch scan to retry</li>
+    <li>Never leaving a record in a partial state visible to users — all AI column updates happen in a single SqlUpdateNode</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Enrichment Does Not Block Business Operations</strong>
+    <p>A record is fully usable — queryable, displayed in forms, passed to other workflows — before enrichment completes. The AI columns are all nullable. Application code must handle null AI columns gracefully (e.g., display "Pending classification" instead of a null ClassificationLabel).</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-ai-enhancement.html">Next: AI-Driven Enhancement &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

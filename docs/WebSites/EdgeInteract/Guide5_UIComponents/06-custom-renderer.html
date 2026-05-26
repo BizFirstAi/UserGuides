@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Interaction Renderer — UI Components | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>UI Components</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Components Overview</a>
+  <a href="01-approval-component.html">Approval Component</a>
+  <a href="02-confirmation-component.html">Confirmation Component</a>
+  <a href="03-form-component.html">Form Component</a>
+  <a href="04-picker-component.html">Picker Component</a>
+  <a href="05-notification-component.html">Notification Component</a>
+  <a href="06-custom-renderer.html" class="active">Custom Interaction Renderer</a>
+  <a href="07-interaction-container.html">InteractionContainer</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Custom Interaction Renderer</h1>
+    <p class="lead">Custom interaction types require custom renderer components. Define your own interaction type key, implement a React component that receives the payload and calls <code>respond()</code>, then register it with <code>registerInteractionRenderer</code>.</p>
+  </div>
+
+  <h2>Step 1 — Define Your Interaction Type Key</h2>
+  <p>Custom type keys must be namespaced to avoid collision with built-in types. Use a reverse-domain prefix:</p>
+  <pre><code">// Your custom type key
+export const SPECIAL_REVIEW_TYPE = 'com.acme/special-review';
+</code></pre>
+
+  <h2>Step 2 — Define Payload and Response Types</h2>
+  <pre><code">// TypeScript types for your custom interaction
+export interface SpecialReviewPayload {
+  entityId: string;
+  entityType: string;
+  reviewCriteria: string[];
+  attachmentUrls: string[];
+}
+
+export interface SpecialReviewResponseData {
+  decision: 'approved-with-changes' | 'approved' | 'declined';
+  requiredChanges?: string[];
+  reviewNotes: string;
+}
+</code></pre>
+
+  <h2>Step 3 — Implement the Renderer Component</h2>
+  <pre><code">import { InteractionComponentProps } from 'edge-interact-core';
+import { useState } from 'react';
+
+export function SpecialReviewComponent({
+  interaction,
+  respond
+}: InteractionComponentProps&lt;SpecialReviewPayload&gt;) {
+  const { payload } = interaction;
+  const [decision, setDecision] = useState&lt;string&gt;('');
+  const [notes, setNotes] = useState('');
+  const [changes, setChanges] = useState&lt;string[]&gt;([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async () =&gt; {
+    if (!decision) return;
+    setIsSubmitting(true);
+    try {
+      await respond(decision, {
+        decision,
+        requiredChanges: decision === 'approved-with-changes' ? changes : undefined,
+        reviewNotes: notes
+      } as SpecialReviewResponseData);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    &lt;div className="special-review-component"&gt;
+      &lt;h3&gt;{interaction.title}&lt;/h3&gt;
+      &lt;p&gt;Entity: {payload.entityType} — {payload.entityId}&lt;/p&gt;
+      &lt;ul&gt;
+        {payload.reviewCriteria.map(c =&gt; &lt;li key={c}&gt;{c}&lt;/li&gt;)}
+      &lt;/ul&gt;
+      {/* ... render attachments, decision selector, notes input ... */}
+      &lt;div&gt;
+        &lt;button onClick={() =&gt; setDecision('approved')}&gt;Approve&lt;/button&gt;
+        &lt;button onClick={() =&gt; setDecision('approved-with-changes')}&gt;Approve with Changes&lt;/button&gt;
+        &lt;button onClick={() =&gt; setDecision('declined')}&gt;Decline&lt;/button&gt;
+      &lt;/div&gt;
+      &lt;textarea value={notes} onChange={e =&gt; setNotes(e.target.value)}
+        placeholder="Review notes..." /&gt;
+      &lt;button onClick={handleSubmit} disabled={!decision || isSubmitting}&gt;
+        {isSubmitting ? 'Submitting...' : 'Submit Review'}
+      &lt;/button&gt;
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+
+  <h2>Step 4 — Register the Renderer</h2>
+  <pre><code">// Register before the app renders (e.g., in main.tsx or App.tsx)
+import { registerInteractionRenderer } from 'edge-interact-ui';
+import { SpecialReviewComponent } from './interactions/SpecialReviewComponent';
+import { SPECIAL_REVIEW_TYPE } from './interactions/types';
+
+// Register at module load time — not inside a component
+registerInteractionRenderer(SPECIAL_REVIEW_TYPE, SpecialReviewComponent);
+</code></pre>
+
+  <h2>Step 5 — Register a Server-Side Validator</h2>
+  <pre><code">// Register custom response validator on the server
+builder.Services.AddInteractionTypeValidator&lt;SpecialReviewValidator&gt;(SPECIAL_REVIEW_TYPE);
+</code></pre>
+
+  <h2>Custom Type Checklist</h2>
+  <table>
+    <thead><tr><th>Item</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Namespaced type key (reverse-domain prefix)</td><td>Required</td></tr>
+      <tr><td>TypeScript payload interface</td><td>Required</td></tr>
+      <tr><td>TypeScript response data interface</td><td>Required</td></tr>
+      <tr><td>React renderer component (receives <code>interaction</code> + <code>respond</code>)</td><td>Required</td></tr>
+      <tr><td><code>registerInteractionRenderer(typeKey, Component)</code></td><td>Required (client)</td></tr>
+      <tr><td>Server-side response validator</td><td>Strongly recommended</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-notification-component.html">&#8592; Notification Component</a>
+    <a href="07-interaction-container.html">Next: InteractionContainer &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

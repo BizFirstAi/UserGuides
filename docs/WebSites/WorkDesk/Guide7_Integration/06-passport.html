@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Passport Integration — Integration | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.token-field{display:flex;margin-bottom:6px;}
+.token-field .tf-name{width:130px;flex-shrink:0;font-size:0.78rem;font-weight:600;color:var(--text-muted);padding-top:2px;}
+.token-field .tf-val{font-family:monospace;font-size:0.78rem;background:var(--surface2);padding:2px 8px;border-radius:4px;flex:1;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Integration</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Integration Overview</a>
+  <a href="01-atlas-forms.html">Atlas Forms</a>
+  <a href="02-flow-studio.html">Flow Studio</a>
+  <a href="03-octopus.html">Octopus</a>
+  <a href="04-app-studio.html">App Studio</a>
+  <a href="05-edgestream.html">EdgeStream</a>
+  <a href="06-passport.html" class="active">Passport</a>
+  <a href="07-extension-points.html">Extension Points</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Passport Integration</h1>
+    <p class="lead">Passport is BizFirstGO's SSO and identity platform. WorkDesk delegates all authentication and authorization to Passport — it never stores passwords, manages sessions locally, or implements its own login UI. Every API call WorkDesk makes carries a Passport-issued JWT bearer token.</p>
+  </div>
+
+  <h2>Integration Direction</h2>
+  <p><strong>WorkDesk consumes Passport</strong> — Passport is the authority for identity. WorkDesk redirects unauthenticated users to Passport's login page, receives the JWT on successful login, and attaches it to every subsequent API call.</p>
+
+  <h2>Login Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>User Navigates to WorkDesk</h4>
+        <p>Browser loads the WorkDesk React SPA. <code>authStore.ts</code> checks for an existing valid JWT in memory (or secure cookie). If none exists, the user is not authenticated.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Redirect to Passport</h4>
+        <p>WorkDesk redirects to <code>https://passport.bizfirstai.com/login?return={encodedWorkDeskUrl}</code>. Passport handles the login UI — LDAP, SSO, MFA, social login, etc.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Passport Issues JWT</h4>
+        <p>On successful authentication, Passport issues a signed JWT containing the user's claims and redirects back to WorkDesk with the token.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Token Stored in authStore</h4>
+        <p>WorkDesk stores the JWT in <code>authStore</code> (Zustand). The Axios interceptor picks it up immediately and attaches it to all subsequent API calls as <code>Authorization: Bearer {token}</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body">
+        <h4>User Reaches WorkDesk</h4>
+        <p>WorkDesk loads the inbox, notifications, and dashboard — all API calls are automatically authenticated. The original URL the user requested is restored from the <code>return</code> parameter.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>JWT Claims Used by WorkDesk</h2>
+  <p>WorkDesk reads the following claims from the Passport JWT to scope all queries and enforce data isolation:</p>
+
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;">
+    <div class="token-field"><div class="tf-name">sub</div><div class="tf-val">user-guid — the actorId used in all WorkDesk queries</div></div>
+    <div class="token-field"><div class="tf-name">tid</div><div class="tf-val">tenant-guid — tenantId; scopes all data to the user's organization</div></div>
+    <div class="token-field"><div class="tf-name">email</div><div class="tf-val">user@example.com — displayed in WorkDesk profile header</div></div>
+    <div class="token-field"><div class="tf-name">name</div><div class="tf-val">Full Name — displayed in avatar and greeting</div></div>
+    <div class="token-field"><div class="tf-name">roles</div><div class="tf-val">["employee", "manager"] — determines WorkDesk navigation items and admin access</div></div>
+    <div class="token-field"><div class="tf-name">locale</div><div class="tf-val">en-US — drives FormRenderer field formatting and date display</div></div>
+    <div class="token-field"><div class="tf-name">exp</div><div class="tf-val">Unix timestamp — token expiry; triggers silent refresh before deadline</div></div>
+    <div class="token-field"><div class="tf-name">iss</div><div class="tf-val">https://passport.bizfirstai.com — validated by WorkDesk backend on every request</div></div>
+  </div>
+
+  <h2>Axios Interceptor — Auth Token Attachment</h2>
+  <p>WorkDesk attaches the JWT to every outbound HTTP request through a central Axios request interceptor. This means no individual API call in WorkDesk ever needs to manually set the <code>Authorization</code> header:</p>
+
+  <pre><code>// authInterceptor.ts — attaches JWT to all WorkDesk API calls
+import axios from 'axios';
+import { authStore } from './authStore';
+import { refreshToken } from './passportClient';
+
+// Request interceptor — attach token
+axios.interceptors.request.use(async (config) => {
+  let token = authStore.getState().token;
+
+  // Proactively refresh if token expires within 60 seconds
+  const exp = authStore.getState().expiresAt;
+  if (exp && Date.now() / 1000 > exp - 60) {
+    token = await refreshToken();
+    authStore.getState().setToken(token);
+  }
+
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor — handle 401 (token expired or invalid)
+axios.interceptors.response.use(
+  response => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      // Token is invalid — redirect to Passport login
+      authStore.getState().clearToken();
+      window.location.href = `/login?return=${encodeURIComponent(window.location.pathname)}`;
+    }
+    return Promise.reject(error);
+  }
+);</code></pre>
+
+  <h2>authStore — Identity State</h2>
+  <p>The <code>authStore.ts</code> Zustand store is the single source of truth for identity state in WorkDesk:</p>
+
+  <pre><code>// authStore.ts — Zustand identity store
+interface AuthState {
+  token:      string | null;
+  userId:     string | null;   // = JWT sub claim
+  tenantId:   string | null;   // = JWT tid claim
+  name:       string | null;
+  email:      string | null;
+  roles:      string[];
+  locale:     string;
+  expiresAt:  number | null;   // Unix timestamp
+
+  setToken: (token: string) => void;
+  clearToken: () => void;
+}
+
+export const useAuthStore = create&lt;AuthState&gt;((set) => ({
+  token:     null,
+  userId:    null,
+  tenantId:  null,
+  name:      null,
+  email:     null,
+  roles:     [],
+  locale:    'en-US',
+  expiresAt: null,
+
+  setToken: (token) => {
+    const claims = parseJwt(token); // decode without verifying — verification is server-side
+    set({
+      token,
+      userId:    claims.sub,
+      tenantId:  claims.tid,
+      name:      claims.name,
+      email:     claims.email,
+      roles:     claims.roles ?? [],
+      locale:    claims.locale ?? 'en-US',
+      expiresAt: claims.exp,
+    });
+  },
+
+  clearToken: () => set({ token: null, userId: null, tenantId: null }),
+}));</code></pre>
+
+  <h2>Server-Side Token Validation</h2>
+  <p>WorkDesk's ASP.NET Core backend validates the Passport JWT on every request. Client-side parsing is only for reading claims — the backend is the security boundary:</p>
+
+  <pre><code>// WorkDesk backend — JWT validation configuration (Program.cs)
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+  .AddJwtBearer(options =>
+  {
+      options.Authority = "https://passport.bizfirstai.com";
+      options.TokenValidationParameters = new TokenValidationParameters
+      {
+          ValidateIssuer           = true,
+          ValidIssuer              = "https://passport.bizfirstai.com",
+          ValidateAudience         = true,
+          ValidAudience            = "workdesk-api",
+          ValidateLifetime         = true,
+          ClockSkew                = TimeSpan.FromSeconds(30),
+          ValidateIssuerSigningKey = true,
+          // Signing key fetched from Passport JWKS endpoint automatically
+      };
+  });
+
+// All WorkDesk controllers require authentication by default
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});</code></pre>
+
+  <h2>Token Refresh Strategy</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Token expires within 60 seconds</td><td>Axios request interceptor proactively calls Passport refresh endpoint before sending the request</td></tr>
+      <tr><td>Refresh token itself is expired</td><td>User is redirected to Passport login page; current URL saved as <code>return</code> parameter</td></tr>
+      <tr><td>401 response from WorkDesk API</td><td>Immediate redirect to login — no retry (token is invalid, not just expired)</td></tr>
+      <tr><td>Multiple concurrent requests during refresh</td><td>All requests are queued; token is refreshed once; all queued requests proceed with new token</td></tr>
+      <tr><td>User is idle for extended period</td><td>Token expires naturally; next API call triggers 401 → login redirect</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Tenant Isolation Enforcement</h2>
+  <p>The <code>tenantId</code> claim from the JWT is extracted server-side and applied as a mandatory filter condition on every database query WorkDesk executes. This is not optional — it is enforced at the repository layer:</p>
+
+  <pre><code>// WorkDeskTaskRepository.cs — tenant isolation
+public async Task&lt;IReadOnlyList&lt;WorkDeskTask&gt;&gt; GetPendingTasksAsync(
+    Guid actorId,
+    Guid tenantId,   // always passed from JWT — never from request body
+    CancellationToken ct)
+{
+    return await _db.WorkDeskTasks
+        .Where(t => t.TenantId == tenantId   // enforced at repo layer
+                 &amp;&amp; t.ActorId  == actorId
+                 &amp;&amp; t.Status   == TaskStatus.Pending)
+        .OrderBy(t => t.DueAt)
+        .ToListAsync(ct);
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>tenantId is Never Trusted from the Client</strong>
+    <p>WorkDesk backend never reads tenantId from the request body, query string, or headers provided by the client. It is always extracted exclusively from the validated JWT claims. This ensures tenant isolation cannot be bypassed by a malicious or misconfigured client.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-edgestream.html">&#8592; EdgeStream</a>
+    <a href="07-extension-points.html">Next: Extension Points &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

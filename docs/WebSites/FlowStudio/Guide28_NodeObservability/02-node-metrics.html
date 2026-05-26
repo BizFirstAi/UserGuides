@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Metrics — Node Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-structured-logs.html">Structured Logs</a>
+  <a href="02-node-metrics.html" class="active">Node Metrics</a>
+  <a href="03-otel-traces.html">OpenTelemetry Traces</a>
+  <a href="04-correlation-ids.html">Correlation IDs</a>
+  <a href="05-custom-logs.html">Emitting Custom Logs</a>
+  <a href="06-custom-metrics.html">Emitting Custom Metrics</a>
+  <a href="07-observer-panel.html">Observer Panel Display</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Node Metrics</h1>
+    <p class="lead">BaseNodeExecutor automatically emits three metrics for every node execution: executionDurationMs, retryCount, and resultStatus. Executors do not need to time themselves or track retries — this is handled by the base class.</p>
+  </div>
+
+  <h2>Auto-Emitted Metrics</h2>
+  <table>
+    <thead><tr><th>Metric Name</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>node.execution.duration_ms</code></td><td>Histogram</td><td>Time from start to completion (including retries)</td></tr>
+      <tr><td><code>node.execution.retry_count</code></td><td>Counter</td><td>Number of retries before success or final failure</td></tr>
+      <tr><td><code>node.execution.result</code></td><td>Counter</td><td>Incremented with label: success | failed | skipped</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Metric Tags (Labels)</h2>
+  <p>All auto-emitted metrics include these tags for filtering in Prometheus / Grafana:</p>
+  <pre><code">// Tags on every auto-emitted metric:
+{
+  "nodeType"  : "ApprovalNode",
+  "nodeId"    : "node-approval-1",
+  "processId" : "proc-xyz",
+  "tenantId"  : "tenant-001",
+  "result"    : "success"  // on node.execution.result only
+}</code></pre>
+
+  <h2>BaseNodeExecutor — Metric Emission Points</h2>
+  <pre><code">// BaseNodeExecutor.cs (simplified)
+public async Task&lt;NodeExecutionResult&gt; ExecuteAsync(NodeExecutionContext ctx, CancellationToken ct)
+{
+    var sw = Stopwatch.StartNew();
+    NodeExecutionResult result;
+
+    try
+    {
+        result = await RunWithRetryAsync(ctx, ct);  // calls subclass ExecuteAsync
+    }
+    catch (Exception ex)
+    {
+        result = NodeExecutionResult.Fail(ex);
+    }
+    finally
+    {
+        sw.Stop();
+
+        // Auto-emit after execution:
+        ctx.Observability.Metrics.RecordHistogram(
+            "node.execution.duration_ms", sw.ElapsedMilliseconds,
+            GetTags(ctx));
+
+        ctx.Observability.Metrics.IncrementCounter(
+            "node.execution.result",
+            GetTags(ctx, ("result", result.IsSuccess ? "success" : "failed")));
+    }
+
+    return result;
+}</code></pre>
+
+  <h2>Grafana Dashboard Queries</h2>
+  <pre><code"># Average node execution duration by node type (Prometheus PromQL)
+avg(node_execution_duration_ms{processId="proc-xyz"}) by (nodeType)
+
+# Failure rate by node type
+sum(rate(node_execution_result{result="failed"}[5m])) by (nodeType)</code></pre>
+
+  <div class="callout info">
+    <strong>Executors do not need to time themselves.</strong> Do not add Stopwatch or DateTime.Now code inside your executor's ExecuteAsync method to measure duration — BaseNodeExecutor measures the full execution time including retries. Your manual timing would be redundant and potentially inaccurate (it would not include retry delay time).
+  </div>
+
+  <div class="page-nav">
+    <a href="01-structured-logs.html">&#8592; Structured Logs</a>
+    <a href="03-otel-traces.html">Next: OpenTelemetry Traces &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

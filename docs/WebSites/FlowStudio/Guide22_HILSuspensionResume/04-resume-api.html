@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resume API — HIL Suspension & Resume | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Suspension &amp; Resume</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-suspending.html">Triggering Suspension</a>
+  <a href="02-state-persistence.html">Persisting Execution State</a>
+  <a href="03-correlation-token.html">Correlation Tokens</a>
+  <a href="04-resume-api.html" class="active">Resume API</a>
+  <a href="05-resume-data.html">Injecting Resume Data</a>
+  <a href="06-continuation.html">Resuming the Engine</a>
+  <a href="07-failure-modes.html">Failure Modes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Resume API</h1>
+    <p class="lead">The single endpoint for resuming a suspended workflow. Any channel — web UI, Slack bot, email link, custom app — calls this endpoint with the actor's response data and the correlation token.</p>
+  </div>
+
+  <h2>Endpoint</h2>
+  <pre><code">POST /api/executions/{executionResId}/resume
+Authorization: Bearer {actorToken}
+Content-Type: application/json
+
+{
+  // Response data — structure depends on HIL task type:
+  // Approval: { "decision": "Approved"|"Rejected", "comment": "..." }
+  // UserForm: { field1: value1, field2: value2, ... }
+  // Review:   { "acknowledged": true, "comment": "..." }
+}</code></pre>
+
+  <h2>Response Codes</h2>
+  <table>
+    <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>202 Accepted</td><td>Resume accepted — execution restarted asynchronously</td></tr>
+      <tr><td>400 Bad Request</td><td>Invalid response data (e.g., missing required fields for a form)</td></tr>
+      <tr><td>401 Unauthorized</td><td>No valid JWT</td></tr>
+      <tr><td>403 Forbidden</td><td>Actor's tenant does not match the suspension's tenant</td></tr>
+      <tr><td>404 Not Found</td><td>ExecutionResId not found</td></tr>
+      <tr><td>409 Conflict</td><td>Token already consumed — execution already resumed</td></tr>
+      <tr><td>410 Gone</td><td>Token expired — suspension exceeded its deadline</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Approval Resume Example</h2>
+  <pre><code">POST /api/executions/3f9c4b2a-7e8d-4c1f-a3b6-9d0e1f2a3b4c/resume
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{
+  "decision": "Approved",
+  "comment" : "Reviewed the contract — terms are acceptable for Q3."
+}
+
+// Response: 202 Accepted
+// { "executionId": "exec-123", "status": "Resuming" }</code></pre>
+
+  <h2>Form Resume Example</h2>
+  <pre><code">POST /api/executions/a1b2c3d4-.../resume
+
+{
+  "employeeName" : "Jane Doe",
+  "department"   : "Engineering",
+  "startDate"    : "2026-06-01",
+  "salary"       : 90000,
+  "notes"        : "Senior engineer — approve relocation package"
+}</code></pre>
+
+  <h2>Asynchronous Continuation</h2>
+  <p>The API returns 202 immediately after validating the token and response data. The actual engine continuation (re-loading memory, continuing the workflow) happens asynchronously on a background task. The actor's channel does not need to wait for the workflow to complete.</p>
+  <p>To track execution progress after resume, use the SignalR execution hub (Guide6) or poll <code>GET /api/executions/{executionId}/status</code>.</p>
+
+  <div class="page-nav">
+    <a href="03-correlation-token.html">&#8592; Correlation Tokens</a>
+    <a href="05-resume-data.html">Next: Injecting Resume Data &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

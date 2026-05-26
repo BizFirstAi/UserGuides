@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connecting Data Sources — Grafana Dashboards | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Grafana Dashboards</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Grafana Overview</a>
+  <a href="01-data-sources.html" class="active">Connecting Data Sources</a>
+  <a href="02-pre-built.html">Pre-Built BizFirstGO Dashboards</a>
+  <a href="03-importing.html">Importing Dashboards</a>
+  <a href="04-building.html">Building Custom Dashboards</a>
+  <a href="05-explore.html">Grafana Explore</a>
+  <a href="06-alerts.html">Alert Management</a>
+  <a href="07-access-control.html">Grafana Access Control</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Connecting Data Sources</h1>
+    <p class="lead">Grafana connects to Loki, Prometheus, and Tempo via data source plugins. The connection is configured once — either via the Grafana UI or via provisioning YAML files — and then available for all dashboards, Explore sessions, and alert rules.</p>
+  </div>
+
+  <h2>Provisioning via YAML (Recommended)</h2>
+  <p>Configure data sources as YAML provisioning files so Grafana starts up fully configured without manual UI steps. Place these files in <code>/etc/grafana/provisioning/datasources/</code>:</p>
+  <pre><code># grafana-provisioning/datasources/bizfirst-observe.yaml
+apiVersion: 1
+
+datasources:
+
+  # ── Loki ────────────────────────────────────────────
+  - name: Loki
+    uid: loki-uid
+    type: loki
+    url: http://loki:3100
+    access: proxy
+    isDefault: false
+    jsonData:
+      maxLines: 5000
+      timeout: 60
+      derivedFields:
+        - name: TraceID
+          matcherRegex: '"traceId":"(\w+)"'
+          url: '${__value.raw}'
+          datasourceName: Tempo
+          datasourceUid: tempo-uid
+
+  # ── Prometheus ──────────────────────────────────────
+  - name: Prometheus
+    uid: prometheus-uid
+    type: prometheus
+    url: http://prometheus:9090
+    access: proxy
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+      queryTimeout: 60s
+      httpMethod: POST
+      exemplarTraceIdDestinations:
+        - name: traceID
+          datasourceUid: tempo-uid
+
+  # ── Tempo ────────────────────────────────────────────
+  - name: Tempo
+    uid: tempo-uid
+    type: tempo
+    url: http://tempo:3200
+    access: proxy
+    isDefault: false
+    jsonData:
+      tracesToLogs:
+        datasourceName: Loki
+        datasourceUid: loki-uid
+        tags: ['service.name', 'job']
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+      tracesToMetrics:
+        datasourceName: Prometheus
+        datasourceUid: prometheus-uid
+        tags:
+          - key: service.name
+            value: job
+      serviceMap:
+        datasourceUid: prometheus-uid
+      search:
+        hide: false
+      nodeGraph:
+        enabled: true</code></pre>
+
+  <h2>Verifying Data Source Connections</h2>
+  <p>After provisioning or manual configuration, verify each data source:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Loki — Check label values are returning</h4>
+        <p>Go to Explore → select Loki → Label Browser → confirm that <code>job</code>, <code>environment</code>, <code>tenant_id</code> labels are populated with BizFirstGO service names.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Prometheus — Check targets are UP</h4>
+        <p>Go to Explore → select Prometheus → enter <code>up</code> → run query → confirm all BizFirstGO service targets show value 1.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Tempo — Check trace search works</h4>
+        <p>Go to Explore → select Tempo → Search tab → select Service Name: processengine → run search → confirm traces appear in results.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Common Data Source Issues</h2>
+  <table>
+    <thead>
+      <tr><th>Issue</th><th>Data Source</th><th>Likely Cause</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Label browser empty</td><td>Loki</td><td>No logs ingested yet, or wrong URL</td><td>Check Collector is running and sending to Loki</td></tr>
+      <tr><td><code>up</code> shows 0 for services</td><td>Prometheus</td><td>Services not reachable on scrape port</td><td>Check network connectivity and /metrics endpoint</td></tr>
+      <tr><td>Trace search returns no results</td><td>Tempo</td><td>No traces ingested, or retention expired</td><td>Check OTel Collector Tempo exporter; trigger a workflow</td></tr>
+      <tr><td>TraceId links don't work</td><td>Loki → Tempo</td><td>Derived Fields regex doesn't match log format</td><td>Adjust matcherRegex to match your actual log format</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Grafana Overview</a>
+    <a href="02-pre-built.html">Next: Pre-Built BizFirstGO Dashboards &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resetting for New Execution — Observer Stores | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Observer Stores</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-panel-store.html">flowObserverPanelStore</a>
+  <a href="02-execution-store.html">executionStore</a>
+  <a href="03-node-statuses.html">Node Statuses</a>
+  <a href="04-logs.html">Log Entries</a>
+  <a href="05-node-inspector.html">Node Inspector Data</a>
+  <a href="06-subscribing.html">Subscribing in Tab Components</a>
+  <a href="07-resetting.html" class="active">Resetting for New Execution</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Resetting for New Execution</h1>
+    <p class="lead">resetExecutionStore() must be called at the start of each new execution to clear all stale data from the previous run. Without a reset, logs, statuses, and inspector data from the old run would bleed into the new one.</p>
+  </div>
+
+  <h2>resetExecutionStore Implementation</h2>
+  <pre><code">resetExecutionStore: () => set({
+    executionId       : null,
+    status            : null,
+    nodeStatuses      : {},
+    logs              : [],
+    selectedNodeId    : null,
+    nodeInspectorData : null,
+    startedAt         : null,
+    completedAt       : null,
+    durationMs        : null,
+    errorMessage      : null
+})</code></pre>
+
+  <h2>When to Call It</h2>
+  <pre><code">// Call resetExecutionStore BEFORE starting a new execution
+async function handleRunWorkflow() {
+    // 1. Reset both stores
+    useExecutionStore.getState().resetExecutionStore();
+    useDesignerModeStore.getState().exitExecutionMode();
+
+    // 2. Start the execution
+    const { executionId } = await processApiClient.startExecution(processId);
+
+    // 3. Enter execution mode
+    useDesignerModeStore.getState().enterExecutionMode(executionId);
+    useExecutionStore.getState().setExecutionId(executionId);
+
+    // 4. SignalR events begin populating the store in real time
+}</code></pre>
+
+  <h2>When NOT to Call It</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Call resetExecutionStore?</th></tr></thead>
+    <tbody>
+      <tr><td>User clicks Run (new execution)</td><td>Yes — clear previous run data</td></tr>
+      <tr><td>User opens a past execution</td><td>Yes — clear current run data before bulk-loading past data</td></tr>
+      <tr><td>User switches tab within the Observer Panel</td><td>No — tab switch should not clear data</td></tr>
+      <tr><td>User resizes the panel</td><td>No — panel UI change only</td></tr>
+      <tr><td>Node status update arrives for current run</td><td>No — update in place, do not reset</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Clearing on Navigation Away</h2>
+  <pre><code">// When user navigates away from the canvas (e.g., to a different module),
+// call reset to free memory occupied by large log arrays
+useEffect(() => {
+    return () => {
+        useExecutionStore.getState().resetExecutionStore();
+        useDesignerModeStore.getState().exitExecutionMode();
+    };
+}, []);</code></pre>
+
+  <div class="callout warning">
+    <strong>forgetting to reset causes log contamination.</strong> If a user runs the workflow twice without a reset, the logs array accumulates entries from both runs — the Logs tab will show mixed output from two different executions. Always reset before starting a new execution.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-subscribing.html">&#8592; Subscribing in Tab Components</a>
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top">Back to Portal &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

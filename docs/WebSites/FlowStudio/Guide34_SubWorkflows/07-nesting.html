@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nested Sub-Workflows — Guide34_SubWorkflows | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Sub-Workflows</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-subworkflow-node.html"><i class="fa-solid fa-sitemap"></i> SubWorkflow Node</a>
+  <a href="02-input-mapping.html"><i class="fa-solid fa-right-to-bracket"></i> Input Mapping</a>
+  <a href="03-output-mapping.html"><i class="fa-solid fa-right-from-bracket"></i> Output Mapping</a>
+  <a href="04-sync-mode.html"><i class="fa-solid fa-hourglass-half"></i> Synchronous Mode</a>
+  <a href="05-async-mode.html"><i class="fa-solid fa-bolt"></i> Async Mode</a>
+  <a href="06-error-propagation.html"><i class="fa-solid fa-triangle-exclamation"></i> Error Propagation</a>
+  <a href="07-nesting.html" class="active"><i class="fa-solid fa-layer-group"></i> Nested Sub-Workflows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Nested Sub-Workflows</h1>
+    <p class="lead">Sub-workflows calling sub-workflows — depth limits, cycle detection, and practical nesting patterns for hierarchical workflow architectures.</p>
+  </div>
+
+  <h2>Depth Limit</h2>
+  <p>The engine enforces a maximum nesting depth of <strong>5 levels</strong>. A depth counter is tracked on each execution record via the <code>SubWorkflowDepth</code> field. When a SubWorkflow node attempts to start a child, the engine checks:</p>
+  <pre><code class="language-csharp">if (parentExecution.SubWorkflowDepth >= 5)
+{
+    throw new SubWorkflowDepthExceededException(
+        $"Cannot nest sub-workflows deeper than 5 levels. Current depth: {parentExecution.SubWorkflowDepth}");
+}</code></pre>
+
+  <h2>Cycle Detection</h2>
+  <p>The engine prevents circular sub-workflow references at <strong>load time</strong> when a process is published. It builds a dependency graph of all processes and their sub-workflow references, then checks for cycles using DFS:</p>
+  <pre><code>
+Process A → calls Process B → calls Process C → calls Process A  [CYCLE DETECTED]
+Process A → calls Process B → calls Process C                    [OK]
+  </code></pre>
+  <p>A process with a circular dependency cannot be published. The designer shows a validation error indicating which process creates the cycle.</p>
+
+  <h2>The Ancestry Chain</h2>
+  <p>Each execution record stores its full ancestry chain:</p>
+  <pre><code class="language-json">{
+  "executionId": "exec-103",
+  "parentExecutionId": "exec-102",
+  "rootExecutionId": "exec-100",
+  "subWorkflowDepth": 3,
+  "ancestorExecutionIds": ["exec-100", "exec-101", "exec-102"]
+}</code></pre>
+  <p>This ancestry chain enables the observer panel to display the full parent/child execution hierarchy.</p>
+
+  <h2>Practical Nesting Example</h2>
+  <pre><code>
+Depth 0: PurchaseOrderApproval
+    └── Depth 1: FinanceApproval (sync)
+            └── Depth 2: DelegateApproval (sync)
+                    └── Depth 3: SendApprovalNotification (async)
+  </code></pre>
+  <p>This 4-level hierarchy is well within the limit. The root workflow <code>PurchaseOrderApproval</code> calls <code>FinanceApproval</code>, which delegates to <code>DelegateApproval</code>, which fires an async notification workflow.</p>
+
+  <div class="callout callout-tip">
+    <strong>Design guidance:</strong> Avoid nesting more than 3 levels in most production workflows. Deep nesting makes debugging harder (more execution records to trace through) and increases end-to-end latency in sync mode. Consider flattening deep hierarchies by using async patterns with status polling.
+  </div>
+
+  <h2>Cross-Tenant Sub-Workflows</h2>
+  <p>Sub-workflows always run within the same tenant as the parent. Cross-tenant invocation is blocked at the engine level — the <code>tenantId</code> is inherited from the parent execution and cannot be overridden by the SubWorkflow node config.</p>
+
+  <div class="page-nav">
+    <a href="06-error-propagation.html">&#8592; Error Propagation</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vector Storage — Memory Storage | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Storage</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory Storage Overview</a>
+  <a href="01-sql-tables.html">SQL Tables</a>
+  <a href="02-vector-storage.html" class="active">Vector Storage</a>
+  <a href="03-working-storage.html">Working Memory Storage</a>
+  <a href="04-tenant-isolation.html">Tenant Isolation</a>
+  <a href="05-retention.html">Data Retention</a>
+  <a href="06-backup.html">Backup and Restore</a>
+  <a href="07-migration.html">Migration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Vector Storage</h1>
+    <p class="lead">Semantic memory (the knowledge base) is stored in a vector database — either Qdrant or PGVector. This page covers collection structure, Qdrant configuration, PGVector setup, point/record format, and indexing performance considerations.</p>
+  </div>
+
+  <h2>Collection Naming</h2>
+  <p>Each agent has its own vector collection, named using a deterministic convention to enforce knowledge isolation:</p>
+  <pre><code>// Collection name convention
+string collectionName = $"agent_{agentId:N}";
+// Example: "agent_7f3a8b2c4d5e6f7a8b9c0d1e2f3a4b5c"
+
+// This means:
+// - Agent A's knowledge is in collection "agent_AAAA..."
+// - Agent B's knowledge is in collection "agent_BBBB..."
+// - No cross-collection queries possible — complete isolation by design</code></pre>
+
+  <h2>Qdrant — Production Backend</h2>
+  <p>Qdrant is the recommended vector backend for production deployments. It is a dedicated vector database with native support for filtering, snapshots, and distributed deployments:</p>
+  <pre><code>// appsettings.json — Qdrant configuration
+{
+  "Octopus": {
+    "VectorStore": {
+      "Backend":   "Qdrant",
+      "QdrantUrl": "http://qdrant:6333",
+      "ApiKey":    null  // Set for cloud-hosted Qdrant
+    },
+    "Embedding": {
+      "Provider":    "OpenAI",
+      "Model":       "text-embedding-3-small",
+      "Dimensions":  1536,
+      "CredentialId": 42
+    }
+  }
+}
+
+// Collection creation (called automatically on first use):
+PUT http://qdrant:6333/collections/agent_{agentId}
+{
+  "vectors": {
+    "size":     1536,
+    "distance": "Cosine"
+  },
+  "optimizers_config": {
+    "indexing_threshold": 20000
+  }
+}</code></pre>
+
+  <h2>Qdrant Point Structure</h2>
+  <p>Each indexed document chunk is stored as a Qdrant point with a vector and a payload:</p>
+  <pre><code>{
+  "id":     "550e8400-e29b-41d4-a716-446655440000",
+  "vector": [0.012, -0.034, 0.091, ...],   // 1536 floats
+  "payload": {
+    "content":   "Annual leave entitlement is 20 days per calendar year...",
+    "source":    "HR Policy 2025.pdf",
+    "chunkIndex": 3,
+    "pageNumber": 12,
+    "category":  "Leave",
+    "agentId":   "7f3a8b2c...",
+    "tenantId":  "tenant_acme",
+    "indexedAt": "2025-03-01T08:00:00Z"
+  }
+}</code></pre>
+
+  <h2>PGVector — PostgreSQL Backend</h2>
+  <p>PGVector is a PostgreSQL extension that adds native vector similarity search. It uses the existing PostgreSQL instance — no additional infrastructure required:</p>
+  <pre><code>-- Enable the extension (once per database)
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Per-agent knowledge table
+CREATE TABLE octopus_knowledge_agent_{agentId} (
+    id          UUID           NOT NULL DEFAULT gen_random_uuid(),
+    content     TEXT           NOT NULL,
+    embedding   vector(1536)   NOT NULL,
+    source      TEXT           NULL,
+    chunk_index INT            NULL,
+    category    TEXT           NULL,
+    tenant_id   TEXT           NOT NULL,
+    indexed_at  TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (id)
+);
+
+-- IVFFlat index for approximate nearest-neighbour search
+CREATE INDEX ON octopus_knowledge_agent_{agentId}
+    USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);
+
+-- Search query
+SELECT content, source, 1 - (embedding &lt;=&gt; $1::vector) AS score
+FROM   octopus_knowledge_agent_{agentId}
+WHERE  tenant_id = $2
+  AND  1 - (embedding &lt;=&gt; $1::vector) >= $3  -- minScore
+ORDER BY embedding &lt;=&gt; $1::vector
+LIMIT  $4;</code></pre>
+
+  <h2>Backend Comparison</h2>
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>Qdrant</th><th>PGVector</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Infrastructure</td><td>Separate container/service</td><td>PostgreSQL extension (no extra service)</td></tr>
+      <tr><td>Max vector dimensions</td><td>65,536</td><td>2,000 (practical), 16,000 (with half-precision)</td></tr>
+      <tr><td>Filtered search</td><td>Payload filters (native)</td><td>SQL WHERE clauses</td></tr>
+      <tr><td>Distributed / sharding</td><td>Built-in cluster mode</td><td>Via Citus extension</td></tr>
+      <tr><td>Snapshots / backup</td><td>Native snapshot API</td><td>Standard pg_dump</td></tr>
+      <tr><td>Best for</td><td>Large knowledge bases (&gt;100k chunks), production scale</td><td>Small-medium deployments, PostgreSQL-first teams</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Embedding Dimension Lock-In</strong>
+    <p>Once a collection is created with a specific vector dimension (e.g. 1536 for text-embedding-3-small), you cannot change the embedding model without re-indexing all documents. Choose your embedding model before indexing production data. Mixing models in the same collection produces incorrect similarity results.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-sql-tables.html">&#8592; SQL Tables</a>
+    <a href="03-working-storage.html">Next: Working Memory Storage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

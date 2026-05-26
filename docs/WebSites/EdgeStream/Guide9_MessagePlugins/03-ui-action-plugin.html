@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UI Action Plugin — Message Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Plugins</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Message Plugins Overview</a>
+  <a href="01-workflow-event-plugin.html">Workflow Event Plugin</a>
+  <a href="02-agent-message-plugin.html">Agent Message Plugin</a>
+  <a href="03-ui-action-plugin.html" class="active">UI Action Plugin</a>
+  <a href="04-system-event-plugin.html">System Event Plugin</a>
+  <a href="05-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="06-plugin-registry.html">Plugin Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>UI Action Plugin</h1>
+    <p class="lead">The UI Action Plugin owns the <code>ui.*</code> topic namespace. It carries UI interaction events from the server to client or between clients — server-driven UI updates, form rendering instructions, and interactive dialog triggers.</p>
+  </div>
+
+  <h2>Topic Namespace</h2>
+  <pre><code>ui.render.form         // Server instructs client to render a form
+ui.render.dialog       // Server instructs client to show a dialog
+ui.render.notification // Server instructs client to show a notification
+ui.action.navigate     // Server instructs client to navigate to a URL/route
+ui.action.refresh      // Server instructs client to refresh a component/page
+ui.interaction.formSubmit   // Client reports a form was submitted
+ui.interaction.buttonClick  // Client reports a button was clicked</code></pre>
+
+  <h2>Server-Driven Form Rendering</h2>
+  <p>The <code>ui.render.form</code> topic is the key message type for HIL (Human in the Loop) workflows. When a workflow is suspended awaiting user input, the server sends a <code>ui.render.form</code> message that causes the client to display the appropriate Atlas Form:</p>
+  <pre><code>// Message format: ui.render.form
+interface UiRenderFormMessage {
+  formId: string;          // Atlas Form ID to render
+  formVersion?: number;
+  contextData?: Record&lt;string, unknown&gt;;  // Pre-filled data
+  submissionTopic: string; // Topic to publish the response to
+  expiresAt?: string;      // Form expires after this time
+  targetUserId?: string;   // Who should see this form
+}
+
+// Subscribe to form rendering instructions
+stream.subscribe('bas', 'ui.render.form', (envelope) =&gt; {
+  const { formId, contextData, submissionTopic } = envelope.body;
+
+  // Render the form in a modal or panel
+  uiStore.openForm({
+    formId,
+    data: contextData,
+    onSubmit: async (formData) =&gt; {
+      await stream.send('bas', submissionTopic, formData);
+    },
+  });
+});</code></pre>
+
+  <h2>Server-Driven Navigation</h2>
+  <pre><code>// ui.action.navigate — server redirects the client
+interface UiNavigateMessage {
+  url?: string;       // absolute URL
+  route?: string;     // app router route (e.g., '/workflow/exec-123')
+  params?: Record&lt;string, string&gt;;
+  replace?: boolean;  // replace history entry (no back button)
+}
+
+stream.subscribe('bas', 'ui.action.navigate', (envelope) =&gt; {
+  const { route, params, replace } = envelope.body;
+
+  if (replace) {
+    router.replace(route, { params });
+  } else {
+    router.push(route, { params });
+  }
+});</code></pre>
+
+  <h2>Server-Driven Notifications</h2>
+  <pre><code>// ui.render.notification
+interface UiNotificationMessage {
+  type: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  message: string;
+  duration?: number;   // ms before auto-dismiss (0 = persistent)
+  action?: {
+    label: string;
+    topic: string;    // publish to this topic when action clicked
+  };
+}
+
+stream.subscribe('bas', 'ui.render.notification', (envelope) =&gt; {
+  const { type, title, message, duration } = envelope.body;
+  toastService.show({ type, title, message, duration });
+});</code></pre>
+
+  <h2>IUiQueryHook Integration</h2>
+  <p>The <code>IUiQueryHook</code> interface in the pipeline is the hook-level counterpart to the UI Action Plugin. It works with <code>IPipelineContext.pause()</code> to suspend the pipeline while waiting for user input:</p>
+  <pre><code>// UiQueryHook pauses the pipeline — sends ui.render.form, awaits response
+class UiQueryHook implements IUiQueryHook {
+  readonly name = 'UiQueryHook';
+  readonly priority = 150;  // processing stage
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    if (!this.requiresUserInput(context.body)) {
+      return { continue: true };
+    }
+
+    // Pause the pipeline — delivers the form to the user
+    const pause = context.pause({
+      id: generateId(),
+      type: 'form',
+      message: 'Approval required',
+      payload: { formId: 'approval-form-001', data: context.body },
+      timeoutMs: 300000, // 5 minute timeout
+    });
+
+    // Pipeline is frozen here until resume() or reject() is called
+    const response = await pause.resume;
+
+    // Continue with user's response in context
+    context.body = { ...context.body, userResponse: response };
+    return { continue: true };
+  }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="02-agent-message-plugin.html">&#8592; Agent Message Plugin</a>
+    <a href="04-system-event-plugin.html">Next: System Event Plugin &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

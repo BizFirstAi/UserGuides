@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Find Logs for an Execution — Using the Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Using the Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Using the Tools Overview</a>
+  <a href="01-find-execution-logs.html" class="active">Find Logs for an Execution</a>
+  <a href="02-trace-slow-node.html">Trace a Slow Node</a>
+  <a href="03-error-analysis.html">Error Analysis Workflow</a>
+  <a href="04-hil-backlog.html">Monitoring HIL Backlog</a>
+  <a href="05-alert-response.html">Responding to Alerts</a>
+  <a href="06-tenant-isolation.html">Querying as a Tenant Admin</a>
+  <a href="07-common-queries.html">Common Query Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Find Logs for an Execution</h1>
+    <p class="lead">The most common debugging task: a workflow execution failed (or is behaving unexpectedly) and you need to find all log lines associated with that specific execution — across all services and nodes. This page walks through the complete LogQL query pattern for BizFirstGO executions.</p>
+  </div>
+
+  <h2>Step-by-Step: Find Execution Logs</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Get the execution ID</h4>
+        <p>The execution ID is in the error report, the Slack alert message, or the user's bug report. Format: <code>exec-a1b2c3d4</code> or a UUID. If you only have the workflow ID, start with step 2b instead.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Open Grafana Explore → Select Loki</h4>
+        <p>Navigate to Grafana Explore. Select data source: Loki. Set time range to cover the incident period (start with "Last 1 hour" and widen if needed).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Run the execution ID query</h4>
+        <pre><code># Query all log lines containing the execution ID across all BizFirstGO services:
+{job=~"processengine|edgestream|octopus|flow-studio-api"} |= "exec-a1b2c3d4"
+
+# Or narrow to just the ProcessEngine:
+{job="processengine", environment="production"} |= "exec-a1b2c3d4"
+
+# Scope to a specific tenant:
+{job="processengine", tenant_id="tenant-abc"} |= "exec-a1b2c3d4"</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Parse the JSON log lines</h4>
+        <pre><code># Parse log body as JSON to get structured fields in the log viewer:
+{job="processengine"} |= "exec-a1b2c3d4" | json
+
+# Now you can filter by specific fields:
+{job="processengine"} |= "exec-a1b2c3d4" | json | level = "error"
+
+# Find which node failed:
+{job="processengine"} |= "exec-a1b2c3d4" | json | nodeType != ""</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Find the TraceId in the log output</h4>
+        <p>Click on a log line to expand it. Look for the <code>traceId</code> field. Click the TraceId Derived Field link — it opens the trace in a split view (Tempo). Now you can see both the log context and the trace waterfall simultaneously.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Finding by Workflow ID Instead of Execution ID</h2>
+  <pre><code># If you only know the workflow definition ID (not the specific execution):
+{job="processengine", environment="production"} |= "workflowId=wf-payroll-approval"
+  | json
+  | line_format "{{.executionId}} {{.level}} {{.message}}"
+
+# This shows you all recent executions of that workflow.
+# Find the failing execution ID from the results, then use the query above.</code></pre>
+
+  <h2>Reading the Execution Log Timeline</h2>
+  <pre><code># Order logs chronologically and view the execution lifecycle:
+{job="processengine"} |= "exec-a1b2c3d4" | json
+  | line_format "{{.timestamp}} [{{.level}}] {{.nodeType}}: {{.message}}"
+
+# Expected log sequence for a successful execution:
+# 2025-05-25T10:00:00Z [info]  ProcessEngine: Execution started
+# 2025-05-25T10:00:01Z [info]  HttpRequestNode: Making HTTP call to external API
+# 2025-05-25T10:00:02Z [info]  HttpRequestNode: Response received (200 OK)
+# 2025-05-25T10:00:02Z [info]  ApprovalNode: Suspending for HIL approval
+# 2025-05-25T10:05:00Z [info]  ApprovalNode: Approval received from Manager
+# 2025-05-25T10:05:01Z [info]  ProcessEngine: Execution completed
+
+# For a failed execution:
+# 2025-05-25T10:00:00Z [info]  ProcessEngine: Execution started
+# 2025-05-25T10:00:01Z [info]  HttpRequestNode: Making HTTP call
+# 2025-05-25T10:00:31Z [error] HttpRequestNode: Timeout after 30000ms
+# 2025-05-25T10:00:31Z [error] ProcessEngine: Execution failed: node timeout</code></pre>
+
+  <div class="callout info">
+    <strong>If No Logs Are Found</strong>
+    <p>If the query returns no results: (1) Check the time range — widen it. (2) Verify the execution ID format matches what is in the logs — try partial match: <code>|= "a1b2c3d4"</code> (without the "exec-" prefix). (3) Check that the job label is correct for your deployment. (4) Confirm Loki ingestion is working by running a simpler query like <code>{job="processengine"} | limit 10</code>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Using the Tools Overview</a>
+    <a href="02-trace-slow-node.html">Next: Trace a Slow Node &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

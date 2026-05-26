@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timeout and Escalation — Multi-Party Approval | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Multi-Party Approval</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-approval-node-config.html">Approval Node Configuration</a>
+  <a href="02-strategies.html">Approval Strategies</a>
+  <a href="03-approval-state.html">Approval State Tracking</a>
+  <a href="04-approval-inbox.html">Approval Inbox</a>
+  <a href="05-rejection-handling.html">Handling Rejection</a>
+  <a href="06-timeout-escalation.html" class="active">Timeout and Escalation</a>
+  <a href="07-audit-trail.html">Approval Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Timeout and Escalation</h1>
+    <p class="lead">Configure a deadline for the approval. If consensus is not reached by the deadline, the engine takes one of three configurable actions: escalate to a senior actor, auto-decide, or fail the workflow.</p>
+  </div>
+
+  <h2>Timeout Configuration Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Example</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>timeoutDuration</code></td><td>ISO 8601 duration</td><td><code>PT4H</code>, <code>P1D</code>, <code>P3D</code></td><td>Time from suspension until timeout fires</td></tr>
+      <tr><td><code>timeoutBehavior</code></td><td>enum</td><td><code>Escalate</code></td><td>What happens on timeout: Escalate / AutoApprove / AutoReject / Fail</td></tr>
+      <tr><td><code>escalationActorId</code></td><td>string</td><td><code>user-ceo</code></td><td>Actor to reassign to on Escalate — required if behavior is Escalate</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Escalation Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>HILTimeoutJob detects expired row</h4><p>Background job scans Process_SuspendedExecutions for rows where ExpiresAt &lt; UtcNow.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Escalation actor assigned</h4><p>HILEscalationService creates a new HIL task for the escalationActorId. Remaining original tasks are cancelled. ExpiresAt is reset (escalation gets a fresh deadline).</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div><div class="line"></div></div>
+      <div class="body"><h4>Escalation actor decides</h4><p>Escalation actor's decision is evaluated against the original strategy.</p></div>
+    </div>
+  </div>
+
+  <h2>Auto-Decision on Timeout</h2>
+  <pre><code>// timeoutBehavior: "AutoApprove" — engine injects a synthetic Approved decision
+// timeoutBehavior: "AutoReject"  — engine injects a synthetic Rejected decision
+
+// The synthetic decision is recorded in Process_ApprovalDecisions as:
+{
+  "actorId"  : "SYSTEM:AutoDecide",
+  "decision" : "Approved",   // or Rejected
+  "comment"  : "Auto-decided on timeout",
+  "decidedAt": "..."
+}</code></pre>
+
+  <h2>Fail on Timeout</h2>
+  <p>If <code>timeoutBehavior = "Fail"</code>, the engine throws a <code>HILTimeoutException</code>, which causes the workflow to fail with a <code>TimeoutError</code> state. The rejected port is NOT used — the workflow fails entirely.</p>
+
+  <div class="callout warning">
+    <strong>Timeout on the timeout port:</strong> If <code>timeoutBehavior = "Escalate"</code> and the escalation actor also times out, the timeout port on the node fires. Connect the timeout port to a fallback node if you want to handle double-timeout gracefully.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-rejection-handling.html">&#8592; Handling Rejection</a>
+    <a href="07-audit-trail.html">Next: Approval Audit Trail &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

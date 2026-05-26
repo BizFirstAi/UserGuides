@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Testing Custom IAM — Custom IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Custom IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom IAM Overview</a>
+  <a href="01-custom-resolver.html">Custom Permission Resolver</a>
+  <a href="02-custom-role-provider.html">Custom Role Provider</a>
+  <a href="03-attribute-conditions.html">Attribute-Based Conditions</a>
+  <a href="04-combining.html">Combining with Built-In IAM</a>
+  <a href="05-registration.html">Registering Custom Extensions</a>
+  <a href="06-testing.html" class="active">Testing Custom IAM</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Testing Custom IAM</h1>
+    <p class="lead">Unit test patterns for custom permission resolvers and role providers — mock the user context, inject test data, and assert the expected Allow/Deny/Defer outcome.</p>
+  </div>
+
+  <h2>Unit Testing a Permission Resolver</h2>
+  <pre><code">using Xunit;
+using NSubstitute;
+using BizFirst.Essentials.Passport.IAM;
+
+public class DepartmentPayrollResolverTests
+{
+    private readonly IUserProfileService _profiles = Substitute.For&lt;IUserProfileService&gt;();
+    private readonly DepartmentBasedPayrollResolver _sut;
+
+    public DepartmentPayrollResolverTests()
+    {
+        _sut = new DepartmentBasedPayrollResolver(_profiles);
+    }
+
+    [Fact]
+    public async Task Finance_Employee_Can_Access_Payroll()
+    {
+        // Arrange
+        _profiles.GetAsync("user-1", Arg.Any&lt;CancellationToken&gt;())
+                 .Returns(new UserProfile { Department = "Finance", EmployeeType = "employee" });
+
+        var context = BuildContext(userId: "user-1", resourceType: "payroll",
+                                   permission: "workflow.initiate");
+
+        // Act
+        var result = await _sut.ResolveAsync(context, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(PermissionResolution.Allow, result);
+    }
+
+    [Fact]
+    public async Task Contractor_Cannot_Access_Payroll()
+    {
+        // Arrange
+        _profiles.GetAsync("user-2", Arg.Any&lt;CancellationToken&gt;())
+                 .Returns(new UserProfile { Department = "Finance", EmployeeType = "contractor" });
+
+        var context = BuildContext(userId: "user-2", resourceType: "payroll",
+                                   permission: "workflow.initiate");
+
+        // Act
+        var result = await _sut.ResolveAsync(context, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(PermissionResolution.Deny, result);
+    }
+
+    [Fact]
+    public async Task Non_Payroll_Resource_Returns_Defer()
+    {
+        // Arrange — no profile needed; should defer immediately
+        var context = BuildContext(userId: "user-1", resourceType: "form",
+                                   permission: "form.submit");
+
+        // Act
+        var result = await _sut.ResolveAsync(context, CancellationToken.None);
+
+        // Assert — resolver doesn't apply to non-payroll resources
+        Assert.Equal(PermissionResolution.Defer, result);
+        await _profiles.DidNotReceive().GetAsync(Arg.Any&lt;string&gt;(), Arg.Any&lt;CancellationToken&gt;());
+    }
+
+    private static PermissionContext BuildContext(
+        string userId, string resourceType, string permission,
+        bool baseAllowed = true)
+    {
+        return new PermissionContext
+        {
+            User = new IDInfo
+            {
+                UserId   = userId,
+                TenantId = "tenant-abc",
+                Email    = $"{userId}@example.com",
+                Roles    = ["manager"]
+            },
+            Permission   = permission,
+            ResourceType = resourceType,
+            BaseAllowed  = baseAllowed,
+            Environment  = new EnvironmentContext
+            {
+                Now          = new DateTimeOffset(2026, 5, 25, 10, 0, 0, TimeSpan.Zero),
+                IsMfaVerified= true
+            }
+        };
+    }
+}</code></pre>
+
+  <h2>Unit Testing a Role Provider</h2>
+  <pre><code">public class ProjectRoleProviderTests
+{
+    private readonly IProjectRepository _projects = Substitute.For&lt;IProjectRepository&gt;();
+    private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
+    private readonly ProjectRoleProvider _sut;
+
+    public ProjectRoleProviderTests()
+    {
+        _sut = new ProjectRoleProvider(_projects, _cache, NullLogger&lt;ProjectRoleProvider&gt;.Instance);
+    }
+
+    [Fact]
+    public async Task Active_Project_Manager_Gets_ProjectManager_Role()
+    {
+        _projects.GetUserAssignmentsAsync("user-1", "tenant-abc", Arg.Any&lt;CancellationToken&gt;())
+                 .Returns([new ProjectAssignment { Role = "ProjectManager", IsActive = true }]);
+
+        var roles = await _sut.GetRolesAsync("user-1", "tenant-abc", CancellationToken.None);
+
+        Assert.Contains("project-manager", roles);
+        Assert.Contains("project-member", roles);
+    }
+
+    [Fact]
+    public async Task No_Active_Assignments_Returns_Empty()
+    {
+        _projects.GetUserAssignmentsAsync("user-2", "tenant-abc", Arg.Any&lt;CancellationToken&gt;())
+                 .Returns([]);
+
+        var roles = await _sut.GetRolesAsync("user-2", "tenant-abc", CancellationToken.None);
+
+        Assert.Empty(roles);
+    }
+
+    [Fact]
+    public async Task External_Service_Failure_Returns_Empty_Not_Exception()
+    {
+        _projects.GetUserAssignmentsAsync(Arg.Any&lt;string&gt;(), Arg.Any&lt;string&gt;(), Arg.Any&lt;CancellationToken&gt;())
+                 .ThrowsAsync(new HttpRequestException("Service unavailable"));
+
+        // Should not throw — returns empty list on failure
+        var roles = await _sut.GetRolesAsync("user-3", "tenant-abc", CancellationToken.None);
+        Assert.Empty(roles);
+    }
+}</code></pre>
+
+  <h2>Integration Test with Full Pipeline</h2>
+  <pre><code">// Integration test — uses the full evaluation pipeline
+public class CustomIAMIntegrationTests : IClassFixture&lt;WebApplicationFactory&lt;Program&gt;&gt;
+{
+    [Fact]
+    public async Task Finance_Contractor_Cannot_Access_Payroll_Endpoint()
+    {
+        // Arrange — create a JWT token for a contractor in Finance
+        var token = TestJwtBuilder.Create()
+            .WithUserId("contractor-1")
+            .WithRole("manager")
+            .WithCustomAttribute("department", "Finance")
+            .WithCustomAttribute("employeeType", "contractor")
+            .Build();
+
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+
+        // Act
+        var response = await client.PostAsync("/api/workflows/payroll-workflow/execute", null);
+
+        // Assert — 403 Forbidden even though role is "manager"
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="05-registration.html">&#8592; Registering Custom Extensions</a>
+    <a href="07-examples.html">Next: Examples &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

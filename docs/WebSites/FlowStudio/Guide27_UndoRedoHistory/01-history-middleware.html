@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>History Middleware — Undo/Redo History | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Undo/Redo History</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-history-middleware.html" class="active">History Middleware</a>
+  <a href="02-tracked-actions.html">Tracked Actions</a>
+  <a href="03-untracked-actions.html">Untracked Actions</a>
+  <a href="04-undo.html">Undo (Ctrl+Z)</a>
+  <a href="05-redo.html">Redo (Ctrl+Y)</a>
+  <a href="06-stack-limits.html">Stack Depth Limits</a>
+  <a href="07-custom-actions.html">Making Custom Actions Undoable</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>History Middleware</h1>
+    <p class="lead">historyMiddleware is a Zustand middleware that wraps workflowStore. It intercepts calls to tracked actions, takes a snapshot before the mutation, and manages two stacks (undo and redo) alongside the main store state.</p>
+  </div>
+
+  <h2>Middleware Structure</h2>
+  <pre><code">// historyMiddleware.ts
+import { StateCreator, StoreMutatorIdentifier } from 'zustand';
+
+type HistorySnapshot = {
+    nodes : WorkflowNode[];
+    edges : WorkflowEdge[];
+};
+
+// The middleware adds three fields to the store:
+type HistoryExtension = {
+    undoStack   : HistorySnapshot[];
+    redoStack   : HistorySnapshot[];
+    historyAction: (fn: () => void) => void;
+};
+
+export const historyMiddleware = &lt;T extends WorkflowState&gt;(
+    config: StateCreator&lt;T &amp; HistoryExtension&gt;
+): StateCreator&lt;T &amp; HistoryExtension&gt; =>
+(set, get, api) => ({
+    ...config(set, get, api),
+    undoStack   : [],
+    redoStack   : [],
+
+    historyAction: (fn: () => void) => {
+        const { nodes, edges, undoStack } = get();
+
+        // Take snapshot of graph before mutation
+        const snapshot: HistorySnapshot = {
+            nodes: JSON.parse(JSON.stringify(nodes)),
+            edges: JSON.parse(JSON.stringify(edges))
+        };
+
+        // Push to undo stack (cap at HISTORY_STACK_SIZE)
+        const newUndoStack = [snapshot, ...undoStack].slice(0, HISTORY_STACK_SIZE);
+
+        // Apply mutation and clear redo stack
+        set({ undoStack: newUndoStack, redoStack: [] } as any);
+        fn();
+    }
+});</code></pre>
+
+  <h2>How workflowStore Uses It</h2>
+  <pre><code">// workflowStore.ts — tracked actions call historyAction
+export const useWorkflowStore = create&lt;WorkflowState &amp; HistoryExtension&gt;()(
+    historyMiddleware(
+        (set, get) => ({
+            nodes: [], edges: [],
+
+            addNode: (node) => {
+                get().historyAction(() => {
+                    set(state => ({ nodes: [...state.nodes, node] }));
+                });
+            },
+
+            removeNode: (id) => {
+                get().historyAction(() => {
+                    set(state => ({
+                        nodes: state.nodes.filter(n => n.id !== id),
+                        edges: state.edges.filter(e => e.source !== id &amp;&amp; e.target !== id)
+                    }));
+                });
+            },
+            // ...
+        })
+    )
+);</code></pre>
+
+  <h2>Middleware vs. Separate Store</h2>
+  <p>History is a middleware (not a separate store) because it needs to intercept mutations at the moment they happen — before the state changes. A separate store would receive notifications after the fact and would miss the pre-mutation snapshot.</p>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-tracked-actions.html">Next: Tracked Actions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

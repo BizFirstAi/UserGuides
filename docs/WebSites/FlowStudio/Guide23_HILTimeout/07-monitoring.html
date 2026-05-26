@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitoring Timeouts — HIL Timeout | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Timeout</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-timeout-config.html">Configuring Timeout</a>
+  <a href="02-timeout-job.html">The Timeout Background Job</a>
+  <a href="03-escalation.html">Escalation</a>
+  <a href="04-auto-decision.html">Auto-Decision</a>
+  <a href="05-timeout-port.html">Timeout Output Port</a>
+  <a href="06-no-action.html">No Action (Fail)</a>
+  <a href="07-monitoring.html" class="active">Monitoring Timeouts</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Monitoring Timeouts</h1>
+    <p class="lead">Every HIL timeout fires an HILExpiredEvent on the workflow event bus. The Observer Panel surfaces these events in real time. Audit log entries capture the full timeout record for compliance and retrospective analysis.</p>
+  </div>
+
+  <h2>HILExpiredEvent</h2>
+  <p>Regardless of the configured timeout behavior (Escalate, AutoApprove, AutoReject, or Fail), the dispatcher always publishes an <code>HILExpiredEvent</code> after handling the timeout:</p>
+  <pre><code>public class HILExpiredEvent : IWorkflowEvent
+{
+    public string   ExecutionResId  { get; init; }
+    public Guid     ExecutionId     { get; init; }
+    public string   TenantId        { get; init; }
+    public string   NodeId          { get; init; }
+    public string   TimeoutBehavior { get; init; }  // Escalate | AutoApprove | AutoReject | Fail
+    public DateTimeOffset ExpiredAt { get; init; }
+    public string   OriginalActorId { get; init; }
+    public string?  EscalationActorId { get; init; }  // set only for Escalate
+}
+
+// Published in HILTimeoutDispatcher after every behavior handler runs
+await _eventBus.PublishAsync(new HILExpiredEvent { ... }, ct);</code></pre>
+
+  <h2>Observer Panel — Timeout Events</h2>
+  <p>The flowObserverPanelStore subscribes to HIL events streamed via SignalR and renders them in the Observer Panel timeline:</p>
+  <pre><code">// flowObserverPanelStore.ts
+connection.on("HILExpired", (event: HILExpiredEvent) => {
+    useFlowObserverPanelStore.getState().addEvent({
+        type      : "hil-timeout",
+        nodeId    : event.nodeId,
+        timestamp : event.expiredAt,
+        label     : `HIL timeout — ${event.timeoutBehavior}`,
+        actor     : event.originalActorId,
+        severity  : event.timeoutBehavior === "Fail" ? "error" : "warning"
+    });
+});</code></pre>
+
+  <h2>Audit Log Entry Schema</h2>
+  <p>Timeout events are written to <code>Process_AuditLog</code> alongside the suspension record:</p>
+  <pre><code">// AuditLog entry written by HILTimeoutDispatcher
+{
+  "auditId"        : "7a3e2b1c-...",
+  "tenantId"       : "tenant-001",
+  "executionId"    : "exec-abc",
+  "executionResId" : "wf-run-xyz",
+  "nodeId"         : "node-approval-1",
+  "eventType"      : "HILTimeout",
+  "behavior"       : "Escalate",
+  "originalActor"  : "user-john",
+  "escalationActor": "user-manager",
+  "expiredAt"      : "2026-05-25T18:00:00Z",
+  "recordedAt"     : "2026-05-25T18:00:01Z"
+}</code></pre>
+
+  <h2>Suspended Executions — Monitoring Query</h2>
+  <p>Operations teams can query the suspended executions table to surface overdue and at-risk tasks before timeout fires:</p>
+  <pre><code">-- Find tasks expiring within the next hour (at-risk)
+SELECT ExecutionResId, SuspendedNodeId, ActorId, ExpiresAt,
+       DATEDIFF(MINUTE, GETUTCDATE(), ExpiresAt) AS MinutesRemaining
+FROM   Process_SuspendedExecutions
+WHERE  Status   = 0   -- Pending
+  AND  ExpiresAt BETWEEN GETUTCDATE() AND DATEADD(HOUR, 1, GETUTCDATE())
+ORDER BY ExpiresAt ASC;
+
+-- Find tasks that have already timed out but not yet processed
+SELECT ExecutionResId, SuspendedNodeId, ActorId, ExpiresAt,
+       TimeoutBehavior
+FROM   Process_SuspendedExecutions
+WHERE  Status   = 0   -- still Pending
+  AND  ExpiresAt &lt; GETUTCDATE()
+ORDER BY ExpiresAt ASC;</code></pre>
+
+  <h2>Timeout Metrics</h2>
+  <p>The node observability layer emits timeout counters via <code>INodeMetrics</code>:</p>
+  <pre><code">// Recorded in HILTimeoutDispatcher
+_metrics.IncrementCounter(
+    "hil.timeout.total",
+    tags: new Dictionary&lt;string, string&gt;
+    {
+        ["behavior"] = suspension.TimeoutBehavior,
+        ["nodeId"]   = suspension.SuspendedNodeId,
+        ["tenantId"] = suspension.TenantId
+    });
+
+// Key metrics to alert on:
+// hil.timeout.total{behavior="Fail"}     — terminal failures
+// hil.timeout.total{behavior="Escalate"} — escalation volume
+// hil.timeout.job.batch_size             — job processing throughput
+// hil.timeout.job.duration_ms            — job execution latency</code></pre>
+
+  <h2>Alerting Recommendations</h2>
+  <table>
+    <thead><tr><th>Metric / Condition</th><th>Alert Threshold</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>hil.timeout.total{behavior="Fail"} rate</td><td>&gt; 5/hour</td><td>Ops review — workflows terminating unexpectedly</td></tr>
+      <tr><td>Pending suspensions past expiry</td><td>&gt; 0 for &gt; 15 min</td><td>Check HILTimeoutJob is running (Hangfire)</td></tr>
+      <tr><td>hil.timeout.job.duration_ms</td><td>&gt; 10 s</td><td>BatchSize may be too large; reduce in config</td></tr>
+      <tr><td>HILExpiredEvent rate spike</td><td>3x baseline</td><td>Review actor availability and deadline settings</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Hangfire Job Health</h2>
+  <p>The <code>HILTimeoutJob</code> runs on a schedule via Hangfire. Verify it is running from the Hangfire dashboard:</p>
+  <pre><code">// Hangfire registration — typical recurrence
+RecurringJob.AddOrUpdate&lt;HILTimeoutJob&gt;(
+    "hil-timeout-scan",
+    job => job.ExecuteAsync(CancellationToken.None),
+    Cron.Minutely());
+
+// If the job is missing from Hangfire recurring jobs list,
+// re-register by restarting the API or calling the admin endpoint:
+// POST /admin/jobs/hil-timeout/register</code></pre>
+
+  <div class="callout info">
+    <strong>Observer Panel shortcut:</strong> In Flow Studio, open the Observer Panel (keyboard shortcut <kbd>Shift+O</kbd>) and filter by event type <strong>hil-timeout</strong> to see all timeout events for the current execution. Each event shows the node, behavior taken, actor, and timestamp.
+  </div>
+
+  <div class="callout warning">
+    <strong>Cascading timeouts:</strong> If a workflow has multiple HIL nodes in series and all actors are unresponsive, you may see a cascade of timeout events. Set up a composite alert that fires when the same execution emits more than one HILExpiredEvent within a short window — this signals a systemic actor availability problem rather than an isolated incident.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-no-action.html">&#8592; No Action (Fail)</a>
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top">Back to Portal &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

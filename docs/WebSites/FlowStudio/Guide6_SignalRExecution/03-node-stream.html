@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Per-Node Log Streaming — Real-Time Execution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Real-Time Execution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">SignalR Overview</a>
+  <a href="01-connection.html">Establishing Connection</a>
+  <a href="02-event-types.html">Execution Event Types</a>
+  <a href="03-node-stream.html" class="active">Per-Node Log Streaming</a>
+  <a href="04-workflow-stream.html">Workflow-Level Events</a>
+  <a href="05-state-sync.html">Syncing to UI State</a>
+  <a href="06-polling-fallback.html">Polling Fallback</a>
+  <a href="07-reconnection.html">Reconnection Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Per-Node Log Streaming</h1>
+    <p class="lead">All log events arrive on the single execution subscription, but <code>subscribeToNodeStream()</code> provides a filtered view — delivering only the logs for a specific node. This powers the Logs tab's "Filter by Node" feature and the Node Inspector's log section.</p>
+  </div>
+
+  <h2>subscribeToNodeStream()</h2>
+  <pre><code>// Available on the useExecutionSignalR hook return
+const { subscribeToNodeStream, unsubscribeFromNodeStream } = useExecutionSignalR(executionId);
+
+// Subscribe to logs for a specific node
+const unsubscribe = subscribeToNodeStream('node-httpReq1', (log) => {
+  console.log(`[${log.level.toUpperCase()}] ${log.message}`);
+  appendToNodeLogBuffer(log);
+});
+
+// Cleanup when component unmounts or node changes
+return () => unsubscribe();</code></pre>
+
+  <h2>Log Buffering</h2>
+  <p>All incoming <code>NodeLogEmitted</code> events are buffered in memory in the <code>flowObserverPanelStore</code>. The buffer is:</p>
+  <ul>
+    <li>Capped at <strong>10,000 entries</strong> per execution (oldest entries are dropped when the cap is reached)</li>
+    <li>Persisted for the duration of the browser session — logs from earlier in the execution are still available even if you opened the Observer Panel late</li>
+    <li>Cleared when a new execution starts</li>
+  </ul>
+
+  <h2>Real-Time Log Architecture</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Executor Logs</h4>
+        <p>Backend executor calls <code>ctx.Logger.LogInformation("message", data)</code></p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>SignalR Emit</h4>
+        <p>Log provider intercepts the log entry and emits <code>NodeLogEmitted</code> to the execution group</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Client Receives</h4>
+        <p><code>useExecutionSignalR</code> handler receives the event and dispatches to all <code>subscribeToNodeStream</code> listeners</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Logs Tab Updates</h4>
+        <p>New log entry appended to virtual scroll list. Sanitization runs before display.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-event-types.html">&#8592; Execution Event Types</a>
+    <a href="04-workflow-stream.html">Next: Workflow-Level Events &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploying Tempo — Distributed Traces | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Distributed Traces</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Tempo Overview</a>
+  <a href="01-deployment.html" class="active">Deploying Tempo</a>
+  <a href="02-trace-ingestion.html">Trace Ingestion</a>
+  <a href="03-trace-structure.html">BizFirstGO Trace Structure</a>
+  <a href="04-trace-search.html">Searching Traces</a>
+  <a href="05-traceql.html">TraceQL Basics</a>
+  <a href="06-log-correlation.html">Trace-to-Log Correlation</a>
+  <a href="07-exemplars.html">Metrics Exemplars</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Deploying Tempo</h1>
+    <p class="lead">Tempo runs as a single binary in single-binary mode (monolithic deployment) or as multiple components in microservices mode. Single-binary mode is sufficient for most BizFirstGO deployments and is significantly simpler to operate.</p>
+  </div>
+
+  <h2>Single-Binary Configuration</h2>
+  <pre><code># tempo-config.yaml — single-binary mode
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317   # Receives traces from OTel Collector
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m          # Flush to storage after 5 minutes
+  trace_idle_period: 10s
+
+storage:
+  trace:
+    backend: local                  # Use 's3' for production
+    local:
+      path: /tmp/tempo/blocks
+    wal:
+      path: /tmp/tempo/wal          # Write-Ahead Log
+
+querier:
+  frontend_worker:
+    frontend_address: 127.0.0.1:9095
+
+compactor:
+  compaction:
+    block_retention: 168h           # 7 days
+
+metrics_generator:
+  registry:
+    collection_interval: 15s
+  storage:
+    path: /tmp/tempo/generator/wal
+  remote_write:
+    - url: http://prometheus:9090/api/v1/write  # Write span metrics to Prometheus
+
+overrides:
+  metrics_generator_processors: [service-graphs, span-metrics]</code></pre>
+
+  <h2>Production Configuration with S3</h2>
+  <pre><code># tempo-config.yaml — production with S3 backend
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: my-bizfirst-tempo-bucket
+      endpoint: s3.us-east-1.amazonaws.com
+      region: us-east-1
+      access_key: "${AWS_ACCESS_KEY_ID}"
+      secret_key: "${AWS_SECRET_ACCESS_KEY}"
+    pool:
+      max_workers: 100
+      queue_depth: 10000
+    wal:
+      path: /var/tempo/wal          # Local WAL (SSD recommended)
+
+compactor:
+  compaction:
+    block_retention: 168h           # 7 days hot; S3 lifecycle handles cold storage</code></pre>
+
+  <h2>Resource Requirements</h2>
+  <table>
+    <thead>
+      <tr><th>Trace Volume</th><th>CPU</th><th>RAM</th><th>Local WAL Disk</th><th>Object Storage</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>&lt;1,000 traces/day</td><td>0.5 vCPU</td><td>512 MB</td><td>5 GB SSD</td><td>&lt;1 GB/week</td></tr>
+      <tr><td>1,000–50,000 traces/day</td><td>1–2 vCPU</td><td>2–4 GB</td><td>20 GB SSD</td><td>5–50 GB/week</td></tr>
+      <tr><td>50,000–500,000 traces/day</td><td>4–8 vCPU</td><td>8–16 GB</td><td>100 GB SSD</td><td>50–500 GB/week</td></tr>
+      <tr><td>500,000+ traces/day</td><td>Microservices mode</td><td>Per-component</td><td>Per-component</td><td>500+ GB/week</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Metrics Generator</h2>
+  <p>Tempo's built-in metrics generator can compute service graph metrics and span metrics from ingested traces and write them to Prometheus via remote write. This enables span-derived RED metrics (Rate, Error, Duration) without any additional instrumentation:</p>
+  <pre><code># Service graph metrics generated by Tempo:
+# traces_service_graph_request_total{client,server}
+# traces_service_graph_request_failed_total{client,server}
+# traces_service_graph_request_server_seconds_bucket{client,server,le}
+
+# Span metrics:
+# traces_spanmetrics_calls_total{service,operation,status_code}
+# traces_spanmetrics_latency_bucket{service,operation,le}</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Tempo Overview</a>
+    <a href="02-trace-ingestion.html">Next: Trace Ingestion &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

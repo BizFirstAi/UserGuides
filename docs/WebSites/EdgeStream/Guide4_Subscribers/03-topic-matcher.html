@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TopicMatcher — Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-subscribing.html">Creating a Subscription</a>
+  <a href="02-topic-patterns.html">Topic Patterns</a>
+  <a href="03-topic-matcher.html" class="active">TopicMatcher</a>
+  <a href="04-subscription-manager.html">SubscriptionManager</a>
+  <a href="05-subscription-registry.html">SubscriptionRegistry</a>
+  <a href="06-callback-patterns.html">Callback Patterns</a>
+  <a href="07-unsubscribing.html">Unsubscribing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>TopicMatcher</h1>
+    <p class="lead">TopicMatcher is the matching engine behind EdgeStream subscriptions. It evaluates patterns against topics using string operations — no regex compilation per call, designed for high-frequency invocation during message delivery.</p>
+  </div>
+
+  <h2>Implementation Overview</h2>
+  <p><code>TopicMatcher</code> implements <code>ITopicMatcher</code> and provides four methods:</p>
+  <pre><code>export interface ITopicMatcher {
+  matches(pattern: string, topic: string): boolean;
+  getParts(pattern: string): { prefix: string; isWildcard: boolean; level: number };
+  validate(pattern: string): void;  // throws on invalid pattern
+  getMatchingPatterns(topic: string, patterns: string[]): string[];
+}</code></pre>
+
+  <h2>The matches() Algorithm</h2>
+  <pre><code>// From source — efficient string-based matching
+matches(pattern: string, topic: string): boolean {
+  if (!pattern || !topic) return false;
+
+  // 1. Exact match
+  if (pattern === topic) return true;
+
+  // 2. Wildcard match: pattern ends with .*
+  if (pattern.endsWith('.*')) {
+    const prefix = pattern.slice(0, -2); // remove .*
+    // topic must start with prefix + '.' + at least one character
+    return topic.startsWith(`${prefix}.`) &amp;&amp; topic.length &gt; prefix.length + 1;
+  }
+
+  return false;
+}
+
+// Examples:
+matcher.matches('workflow.*', 'workflow.started')    // → true
+matcher.matches('workflow.*', 'workflow.')           // → false (empty segment)
+matcher.matches('workflow.*', 'workflow')            // → false (no dot after prefix)
+matcher.matches('workflow.*', 'workflow.node.done')  // → false (two levels)
+matcher.matches('workflow.started', 'workflow.started') // → true (exact)</code></pre>
+
+  <h2>getParts()</h2>
+  <pre><code>const matcher = new TopicMatcher();
+
+matcher.getParts('workflow.*');
+// → { prefix: 'workflow', isWildcard: true, level: 1 }
+
+matcher.getParts('workflow.execution.*');
+// → { prefix: 'workflow.execution', isWildcard: true, level: 2 }
+
+matcher.getParts('workflow.started');
+// → { prefix: 'workflow.started', isWildcard: false, level: 1 }</code></pre>
+
+  <h2>getMatchingPatterns()</h2>
+  <p>Useful for finding which subscriptions should receive a given topic — used internally by SubscriptionManager:</p>
+  <pre><code>const patterns = ['workflow.*', 'agent.*', 'workflow.started', 'notifications.*'];
+const matching = matcher.getMatchingPatterns('workflow.started', patterns);
+// → ['workflow.*', 'workflow.started']</code></pre>
+
+  <h2>Using TopicMatcher Directly</h2>
+  <pre><code>import { TopicMatcher } from 'edge-stream-js';
+
+const matcher = new TopicMatcher();
+
+// Validate before using as a subscription topic
+try {
+  matcher.validate('workflow.*');        // OK
+  matcher.validate('workflow.*.events'); // Throws: wildcard not at end
+} catch (e) {
+  console.error('Invalid topic pattern:', e.message);
+}
+
+// Check a match
+const isMatch = matcher.matches('workflow.*', 'workflow.completed');
+console.log(isMatch); // true
+
+// Find matching subscriptions
+const activePatterns = ['workflow.*', 'hil.*', 'notifications.*'];
+const matched = matcher.getMatchingPatterns('workflow.completed', activePatterns);
+console.log(matched); // ['workflow.*']</code></pre>
+
+  <div class="callout info">
+    <strong>Design: No Regex</strong>
+    TopicMatcher intentionally avoids regex to prevent per-call regex compilation overhead. For high-throughput servers processing thousands of messages per second, the string-based approach is significantly faster. If you need more complex matching (multi-level wildcards, negation), implement a custom filter hook instead of relying on the subscription pattern.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-topic-patterns.html">&#8592; Topic Patterns</a>
+    <a href="04-subscription-manager.html">Next: SubscriptionManager &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

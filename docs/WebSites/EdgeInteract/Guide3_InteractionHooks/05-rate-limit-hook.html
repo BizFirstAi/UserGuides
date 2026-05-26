@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rate Limit Hook — Interaction Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-pre-send.html">Pre-Send Hook</a>
+  <a href="02-post-receive.html">Post-Receive Hook</a>
+  <a href="03-response-validation.html">Response Validation Hook</a>
+  <a href="04-audit-hook.html">Audit Hook</a>
+  <a href="05-rate-limit-hook.html" class="active">Rate Limit Hook</a>
+  <a href="06-custom.html">Custom Interaction Hooks</a>
+  <a href="07-order.html">Hook Execution Order</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Rate Limit Hook</h1>
+    <p class="lead">The <code>RateLimitInteractionHook</code> prevents flooding a user's inbox with too many simultaneous interactions. It enforces per-user rate limits on both the number of interactions per minute and the maximum concurrent pending interactions.</p>
+  </div>
+
+  <h2>Rate Limits Enforced</h2>
+  <table>
+    <thead><tr><th>Limit</th><th>Default</th><th>Configuration Key</th></tr></thead>
+    <tbody>
+      <tr><td>Interactions per minute per user</td><td>5</td><td><code>RateLimiting.MaxPerMinutePerUser</code></td></tr>
+      <tr><td>Concurrent pending interactions per user</td><td>10</td><td><code>RateLimiting.MaxConcurrentPerUser</code></td></tr>
+      <tr><td>Burst allowance (above the per-minute limit)</td><td>2</td><td><code>RateLimiting.BurstAllowance</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Configuration</h2>
+  <pre><code>// appsettings.json
+{
+  "EdgeInteract": {
+    "RateLimiting": {
+      "MaxPerMinutePerUser": 5,
+      "MaxConcurrentPerUser": 10,
+      "BurstAllowance": 2,
+      "ExemptTypes": ["notification"]
+    }
+  }
+}
+
+// Registration
+builder.Services.AddInteractionHook&lt;RateLimitInteractionHook&gt;();
+</code></pre>
+
+  <h2>What Happens When the Limit Is Hit</h2>
+  <p>When a publish attempt exceeds a rate limit, the hook throws <code>InteractionRateLimitException</code>:</p>
+  <pre><code>// Thrown by RateLimitInteractionHook
+public class InteractionRateLimitException : InteractionBlockedException
+{
+    public string UserId { get; }
+    public string LimitType { get; } // "per_minute" | "concurrent"
+    public int CurrentCount { get; }
+    public int Limit { get; }
+    public TimeSpan RetryAfter { get; }
+}
+</code></pre>
+  <p>The pipeline catches this and returns a <code>429 Too Many Requests</code>-equivalent error to the caller of <code>PublishAndWaitAsync()</code>.</p>
+
+  <h2>Exempt Interaction Types</h2>
+  <p>Some interaction types (e.g., <code>notification</code>) are typically lower-priority and higher-volume. You can exempt specific types from rate limiting:</p>
+  <pre><code>options.AuditLog.ExemptTypes = ["notification", "my-company/info-banner"];
+</code></pre>
+
+  <h2>High-Priority Override</h2>
+  <p>Interactions with <code>priority: "high"</code> are granted additional burst allowance equal to the <code>BurstAllowance</code> setting. This allows critical approvals to break through a high-volume inbox without completely bypassing rate limits.</p>
+
+  <div class="callout info">
+    <strong>Custom Rate Limit Logic</strong>
+    If you need more complex rate limiting (e.g., per-requester limits, per-type limits, tenant-level limits), implement a custom <code>IInteractionHook</code> with your own logic and register it before <code>RateLimitInteractionHook</code>. See the Custom Hooks page for the implementation pattern.
+  </div>
+
+  <h2>Distributed Rate Limiting</h2>
+  <p>In multi-instance deployments, the rate limit counters are backed by a distributed cache (Redis by default when available, in-memory otherwise). This ensures the limit is applied globally across all server instances, not per-instance:</p>
+  <pre><code>// Configuration for Redis-backed distributed rate limiting
+builder.Services.AddStackExchangeRedisCache(options =&gt; {
+    options.Configuration = "redis-host:6379";
+});
+
+builder.Services.AddInteractionHook&lt;RateLimitInteractionHook&gt;(); // auto-uses Redis if registered
+</code></pre>
+
+  <div class="page-nav">
+    <a href="04-audit-hook.html">&#8592; Audit Hook</a>
+    <a href="06-custom.html">Next: Custom Interaction Hooks &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

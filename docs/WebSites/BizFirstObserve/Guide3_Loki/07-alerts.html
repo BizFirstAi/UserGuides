@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loki Alert Rules — Loki Log Aggregation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Loki Log Aggregation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Loki Overview</a>
+  <a href="01-deployment.html">Deploying Loki</a>
+  <a href="02-ingestion.html">Log Ingestion from BizFirstGO</a>
+  <a href="03-label-strategy.html">Label Strategy</a>
+  <a href="04-logql-basics.html">LogQL Basics</a>
+  <a href="05-logql-examples.html">LogQL for BizFirstGO</a>
+  <a href="06-retention.html">Log Retention in Loki</a>
+  <a href="07-alerts.html" class="active">Loki Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Loki Alert Rules</h1>
+    <p class="lead">Loki's built-in ruler component evaluates LogQL metric queries on a schedule and fires alerts when thresholds are crossed. Loki alerts integrate with Alertmanager (same as Prometheus alerts) and Grafana Unified Alerting.</p>
+  </div>
+
+  <h2>Ruler Configuration</h2>
+  <pre><code># loki-config.yaml — enable the ruler
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules-temp
+  alertmanager_url: http://alertmanager:9093
+  ring:
+    kvstore:
+      store: inmemory
+  enable_api: true</code></pre>
+
+  <h2>BizFirstGO Alert Rules</h2>
+  <pre><code"># /loki/rules/bizfirst/alert-rules.yaml
+groups:
+  - name: bizfirst-workflow-alerts
+    interval: 1m
+    rules:
+
+      # Alert: High error rate in production
+      - alert: BizFirstHighErrorRate
+        expr: |
+          (
+            sum(rate({job="processengine", environment="production", level="error"}[5m]))
+            /
+            sum(rate({job="processengine", environment="production"}[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High error rate in ProcessEngine"
+          description: "Error rate is {{ printf \"%.1f\" $value | humanize }}% (threshold: 5%)"
+
+      # Alert: Error spike (absolute count)
+      - alert: BizFirstErrorSpike
+        expr: |
+          sum(count_over_time({job="processengine", level="error"}[1m])) > 50
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Error spike detected in ProcessEngine"
+
+      # Alert: Node execution failures
+      - alert: BizFirstNodeFailures
+        expr: |
+          sum by (nodeType) (
+            rate({job="processengine", level="error"} | json | nodeType != "" [5m])
+          ) > 0.1
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High failure rate for node type {{ $labels.nodeType }}"
+
+      # Alert: HIL timeout detected in logs
+      - alert: BizFirstHILTimeout
+        expr: |
+          sum(count_over_time({job="processengine"} |= "hil.timeout" [5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          team: operations
+        annotations:
+          summary: "HIL task timeout detected"
+          description: "A workflow HIL suspension has timed out without human action"
+
+      # Alert: Critical exception (immediate)
+      - alert: BizFirstCriticalException
+        expr: |
+          sum(count_over_time({job="processengine", level="fatal"}[1m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Fatal exception in ProcessEngine"</code></pre>
+
+  <h2>Alert Routing via Alertmanager</h2>
+  <pre><code># alertmanager.yml — routing for BizFirstGO log-based alerts
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'team']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: 'default'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'pagerduty-critical'
+    - match:
+        team: operations
+      receiver: 'slack-operations'
+    - match:
+        team: platform
+      receiver: 'slack-platform'
+
+receivers:
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - service_key: "${PAGERDUTY_KEY}"
+
+  - name: 'slack-platform'
+    slack_configs:
+      - api_url: "${SLACK_WEBHOOK_URL}"
+        channel: '#platform-alerts'
+        text: '{{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+
+  - name: 'default'
+    email_configs:
+      - to: 'platform@bizfirstai.com'</code></pre>
+
+  <div class="callout success">
+    <strong>Prefer Prometheus Alerts for Metrics, Loki Alerts for Log Patterns</strong>
+    <p>Use Loki alert rules for patterns that are only detectable in log content — specific error messages, security events, or business logic violations. Use Prometheus alert rules for metric thresholds — error rates, latency percentiles, queue depths. Both feed into the same Alertmanager instance, so routing and deduplication works identically for both sources.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-retention.html">&#8592; Log Retention in Loki</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

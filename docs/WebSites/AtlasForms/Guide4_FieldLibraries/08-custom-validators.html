@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adding Custom Validators — Field Libraries | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Field Libraries</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-control-plugin.html">The ControlPlugin Interface</a>
+  <a href="02-react-plugin.html">ReactControlPlugin</a>
+  <a href="03-edit-component.html">Building the EditComponent</a>
+  <a href="04-view-component.html">Building the ViewComponent</a>
+  <a href="05-design-component.html">Building the DesignComponent</a>
+  <a href="06-project-structure.html">Project Structure</a>
+  <a href="07-registering.html">Registering Your Library</a>
+  <a href="08-custom-validators.html" class="active">Adding Custom Validators</a>
+  <a href="09-distributing.html">Distributing the Library</a>
+  <a href="10-checklist.html">Pre-Publish Checklist</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Adding Custom Validators</h1>
+    <p class="lead">Custom validators are registered separately from custom controls using <code>registerValidator(name, fn)</code>. They become available in form schemas via the <code>customRule</code> validation property. Pack validators alongside your controls in the same library.</p>
+  </div>
+
+  <h2>Validator Function Signature</h2>
+  <pre><code>type ValidatorFunction = (
+  value: any,
+  options?: Record&lt;string, any&gt;
+) =&gt; { valid: boolean; message?: string };
+
+// Or async
+type AsyncValidatorFunction = (
+  value: any,
+  options?: Record&lt;string, any&gt;
+) =&gt; Promise&lt;{ valid: boolean; message?: string }&gt;;</code></pre>
+
+  <h2>Phone Number Validator</h2>
+  <pre><code>// src/validators/phoneValidator.ts
+export const phoneValidator = (value: any): { valid: boolean; message?: string } =&gt; {
+  if (!value) return { valid: true };  // Let 'required' handle empty values
+
+  // E.164 format: +[country][number], 7-15 digits
+  const e164 = /^\+[1-9]\d{6,14}$/;
+  // Common formats: (555) 000-0000, 555-000-0000, 5550000000
+  const national = /^[\d\s\-\(\)]{7,15}$/;
+
+  if (e164.test(value) || national.test(value)) {
+    return { valid: true };
+  }
+
+  return { valid: false, message: 'Please enter a valid phone number' };
+};</code></pre>
+
+  <h2>Async Validator — Email Availability</h2>
+  <pre><code>// src/validators/emailAvailableValidator.ts
+export const emailAvailableValidator = async (
+  value: any
+): Promise&lt;{ valid: boolean; message?: string }&gt; =&gt; {
+  if (!value || typeof value !== 'string') return { valid: true };
+
+  const response = await fetch(`/api/auth/check-email?email=${encodeURIComponent(value)}`);
+  const data = await response.json();
+
+  return data.available
+    ? { valid: true }
+    : { valid: false, message: 'This email is already registered' };
+};</code></pre>
+
+  <h2>Registering Validators</h2>
+  <pre><code>import { registerValidator } from '@atlas-forms/validation-js';
+import { phoneValidator } from './validators/phoneValidator';
+import { postalCodeValidator } from './validators/postalCodeValidator';
+import { emailAvailableValidator } from './validators/emailAvailableValidator';
+
+export function registerContactControls(): void {
+  // Register controls...
+  // Register validators
+  registerValidator('phone', phoneValidator);
+  registerValidator('postalCode', postalCodeValidator);
+  registerValidator('emailAvailable', emailAvailableValidator);
+}</code></pre>
+
+  <h2>Using in Form Schema</h2>
+  <pre><code>{
+  "id": "phone-number",
+  "type": "myorg:phone-input",
+  "label": "Phone Number",
+  "validation": {
+    "required": true,
+    "customRule": "phone",
+    "message": "Please enter a valid phone number"
+  }
+}</code></pre>
+
+  <h2>Declaring Supported Validators on the Plugin</h2>
+  <p>To make the Form Studio property panel show the correct validator options for your control, declare which validators it supports:</p>
+  <pre><code>export const phoneInputPlugin: ReactControlPlugin = {
+  type: 'myorg:phone-input',
+  label: 'Phone Number',
+  group: 'input',
+  supportedValidators: ['required', 'phone', 'postalCode'],
+  // ...
+};</code></pre>
+
+  <div class="page-nav">
+    <a href="07-registering.html">&#8592; Registering Your Library</a>
+    <a href="09-distributing.html">Next: Distributing the Library &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

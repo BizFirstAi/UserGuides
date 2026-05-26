@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscribing to Events — Workflow Event Bus | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Event Bus</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interface.html">IWorkflowEventBus</a>
+  <a href="02-built-in-events.html">Built-In Workflow Events</a>
+  <a href="03-event-schema.html">WorkflowEvent Schema</a>
+  <a href="04-publishing.html">Publishing from a Node</a>
+  <a href="05-subscribing.html" class="active">Subscribing to Events</a>
+  <a href="06-custom-events.html">Defining Custom Events</a>
+  <a href="07-delivery-guarantees.html">Delivery Guarantees</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Subscribing to Events</h1>
+    <p class="lead">Implement IWorkflowEventHandler&lt;TEvent&gt; and register in DI. The dispatcher resolves all handlers at publish time — no manual wiring required.</p>
+  </div>
+
+  <h2>Implementing a Handler</h2>
+  <pre><code>public class WorkflowAuditHandler : IWorkflowEventHandler&lt;WorkflowStarted&gt;
+{
+    private readonly IWorkflowAuditRepository _repo;
+
+    public WorkflowAuditHandler(IWorkflowAuditRepository repo) => _repo = repo;
+
+    public async Task HandleAsync(WorkflowStarted @event, CancellationToken ct)
+    {
+        await _repo.InsertAsync(new WorkflowAuditRecord
+        {
+            EventId     = @event.EventId,
+            ExecutionId = @event.ExecutionId,
+            ProcessId   = @event.ProcessId,
+            TenantId    = @event.TenantId,
+            Event       = "WorkflowStarted",
+            TriggeredBy = @event.TriggeredBy,
+            OccurredAt  = @event.OccurredAt
+        }, ct);
+    }
+}</code></pre>
+
+  <h2>Registering the Handler</h2>
+  <pre><code>// Register for a specific event type
+builder.Services.AddTransient&lt;
+    IWorkflowEventHandler&lt;WorkflowStarted&gt;,
+    WorkflowAuditHandler&gt;();
+
+// One class can handle multiple event types
+builder.Services.AddTransient&lt;
+    IWorkflowEventHandler&lt;WorkflowCompleted&gt;,
+    WorkflowAuditHandler&gt;();
+builder.Services.AddTransient&lt;
+    IWorkflowEventHandler&lt;WorkflowFailed&gt;,
+    WorkflowAuditHandler&gt;();</code></pre>
+
+  <h2>Handler That Implements Multiple Event Types</h2>
+  <pre><code>public class WorkflowLifecycleAuditHandler :
+    IWorkflowEventHandler&lt;WorkflowStarted&gt;,
+    IWorkflowEventHandler&lt;WorkflowCompleted&gt;,
+    IWorkflowEventHandler&lt;WorkflowFailed&gt;,
+    IWorkflowEventHandler&lt;WorkflowPaused&gt;,
+    IWorkflowEventHandler&lt;WorkflowResumed&gt;
+{
+    private readonly IWorkflowAuditRepository _repo;
+
+    public WorkflowLifecycleAuditHandler(IWorkflowAuditRepository repo) => _repo = repo;
+
+    public Task HandleAsync(WorkflowStarted @event, CancellationToken ct)
+        => WriteAsync(@event.EventId, @event.ExecutionId, @event.TenantId, "started", ct);
+
+    public Task HandleAsync(WorkflowCompleted @event, CancellationToken ct)
+        => WriteAsync(@event.EventId, @event.ExecutionId, @event.TenantId, "completed", ct);
+
+    public Task HandleAsync(WorkflowFailed @event, CancellationToken ct)
+        => WriteAsync(@event.EventId, @event.ExecutionId, @event.TenantId, "failed", ct);
+
+    public Task HandleAsync(WorkflowPaused @event, CancellationToken ct)
+        => WriteAsync(@event.EventId, @event.ExecutionId, @event.TenantId, "paused", ct);
+
+    public Task HandleAsync(WorkflowResumed @event, CancellationToken ct)
+        => WriteAsync(@event.EventId, @event.ExecutionId, @event.TenantId, "resumed", ct);
+
+    private async Task WriteAsync(string eventId, string executionId,
+        string tenantId, string eventName, CancellationToken ct)
+    {
+        await _repo.InsertAsync(new WorkflowAuditRecord
+        {
+            EventId     = eventId,
+            ExecutionId = executionId,
+            TenantId    = tenantId,
+            Event       = eventName,
+            OccurredAt  = DateTimeOffset.UtcNow
+        }, ct);
+    }
+}</code></pre>
+
+  <h2>Handler Execution Order</h2>
+  <p>When multiple handlers are registered for the same event type, they execute in DI registration order. All handlers run regardless of whether earlier handlers fail (exceptions are isolated).</p>
+
+  <div class="callout info">
+    <strong>Scoped vs. Transient:</strong> Use Transient unless your handler needs a scoped service (e.g., EF DbContext). The bus resolves handlers fresh for each event publish, so Transient is the safest default.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-publishing.html">&#8592; Publishing from a Node</a>
+    <a href="06-custom-events.html">Next: Defining Custom Events &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

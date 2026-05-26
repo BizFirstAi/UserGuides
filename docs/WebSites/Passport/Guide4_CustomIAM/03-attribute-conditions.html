@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attribute-Based Conditions — Custom IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Custom IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom IAM Overview</a>
+  <a href="01-custom-resolver.html">Custom Permission Resolver</a>
+  <a href="02-custom-role-provider.html">Custom Role Provider</a>
+  <a href="03-attribute-conditions.html" class="active">Attribute-Based Conditions</a>
+  <a href="04-combining.html">Combining with Built-In IAM</a>
+  <a href="05-registration.html">Registering Custom Extensions</a>
+  <a href="06-testing.html">Testing Custom IAM</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Attribute-Based Conditions</h1>
+    <p class="lead">Design ABAC conditions based on user attributes (department, clearance, employment type), resource attributes (owner, classification), and environment (time, location, MFA status).</p>
+  </div>
+
+  <h2>Attribute Sources</h2>
+  <table>
+    <thead>
+      <tr><th>Attribute Category</th><th>Source</th><th>Context Property</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>User identity</td><td>JWT claims + IDInfo</td><td><code>context.User.UserId</code>, <code>context.User.Email</code>, <code>context.User.Roles</code></td></tr>
+      <tr><td>User profile</td><td>Custom user attributes (external system)</td><td>Loaded by resolver from <code>IUserProfileService</code></td></tr>
+      <tr><td>Resource metadata</td><td>Resource registry or database</td><td><code>context.Resource.OwnerId</code>, <code>context.Resource.Classification</code>, <code>context.Resource.Department</code></td></tr>
+      <tr><td>Environment</td><td>HTTP request context</td><td><code>context.Environment.Now</code>, <code>context.Environment.RequestIp</code>, <code>context.Environment.IsMfaVerified</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Condition Patterns</h2>
+
+  <h3>Department Match</h3>
+  <pre><code">// Pattern: access restricted to users in a specific department
+public async Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+{
+    var profile = await _profiles.GetAsync(ctx.User.UserId, ct);
+
+    // Rule: Finance resources require Finance department membership
+    if (ctx.ResourceType == "finance-report")
+    {
+        return profile?.Department == "Finance"
+            ? PermissionResolution.Allow
+            : PermissionResolution.Deny;
+    }
+    return PermissionResolution.Defer;
+}</code></pre>
+
+  <h3>Clearance Level</h3>
+  <pre><code">// Pattern: resource requires minimum clearance level
+public async Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+{
+    if (ctx.Resource?.Classification is not string classification)
+        return PermissionResolution.Defer;
+
+    int requiredLevel = classification switch
+    {
+        "CONFIDENTIAL"  =&gt; 2,
+        "SECRET"        =&gt; 3,
+        "TOP_SECRET"    =&gt; 4,
+        _               =&gt; 0
+    };
+
+    if (requiredLevel == 0) return PermissionResolution.Defer;
+
+    var profile = await _profiles.GetAsync(ctx.User.UserId, ct);
+    int userLevel = profile?.ClearanceLevel ?? 0;
+
+    return userLevel &gt;= requiredLevel
+        ? PermissionResolution.Allow
+        : PermissionResolution.Deny;
+}</code></pre>
+
+  <h3>Geographic Restriction</h3>
+  <pre><code">// Pattern: restrict access by country (e.g., data residency requirements)
+public Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+{
+    // Only apply to regulated-data resources
+    if (ctx.ResourceType != "regulated-data")
+        return Task.FromResult(PermissionResolution.Defer);
+
+    var country = ctx.Environment.Country;
+
+    // GDPR-regulated data: EU countries only
+    var euCountries = new HashSet&lt;string&gt; { "DE", "FR", "NL", "BE", "AT", "SE", "DK", "FI", "IT", "ES" };
+
+    return Task.FromResult(
+        country != null &amp;&amp; euCountries.Contains(country)
+            ? PermissionResolution.Allow
+            : PermissionResolution.Deny);
+}</code></pre>
+
+  <h3>Employment Type</h3>
+  <pre><code">// Pattern: contractors cannot access PII or financial data
+public async Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+{
+    var sensitiveResources = new[] { "payroll", "hr-record", "customer-pii" };
+    if (!sensitiveResources.Contains(ctx.ResourceType))
+        return PermissionResolution.Defer;
+
+    var profile = await _profiles.GetAsync(ctx.User.UserId, ct);
+
+    return profile?.EmployeeType == "contractor"
+        ? PermissionResolution.Deny
+        : PermissionResolution.Defer;
+}</code></pre>
+
+  <h2>Combining Multiple Conditions</h2>
+  <pre><code">// Pattern: multiple conditions combined in one resolver
+// Finance manager + Finance department + business hours + MFA verified
+public async Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+{
+    if (ctx.Permission != "workflow.initiate" || ctx.ResourceType != "payroll-workflow")
+        return PermissionResolution.Defer;
+
+    // Condition 1: Must have MFA verified
+    if (!ctx.Environment.IsMfaVerified)
+        return PermissionResolution.Deny;
+
+    // Condition 2: Must be during business hours
+    var hour = ctx.Environment.Now.Hour;
+    if (hour &lt; 9 || hour &gt;= 17)
+        return PermissionResolution.Deny;
+
+    // Condition 3: Must be Finance department employee (not contractor)
+    var profile = await _profiles.GetAsync(ctx.User.UserId, ct);
+    if (profile?.Department != "Finance" || profile?.EmployeeType == "contractor")
+        return PermissionResolution.Deny;
+
+    return PermissionResolution.Allow;
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Audit Every ABAC Decision</strong>
+    <p>Log the attributes evaluated and the decision outcome for every ABAC rule invocation. Unlike RBAC (where the role assignment log explains every decision), ABAC decisions are context-dependent and may be difficult to reconstruct from audit data alone. Include the relevant attribute values in your log entries.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-custom-role-provider.html">&#8592; Custom Role Provider</a>
+    <a href="04-combining.html">Next: Combining with Built-In IAM &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

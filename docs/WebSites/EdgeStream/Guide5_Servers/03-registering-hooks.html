@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registering Hooks — Servers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Servers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Server Overview</a>
+  <a href="01-creating.html">Creating a Server</a>
+  <a href="02-attaching-transport.html">Attaching a Transport</a>
+  <a href="03-registering-hooks.html" class="active">Registering Hooks</a>
+  <a href="04-starting.html">Starting the Server</a>
+  <a href="05-stopping.html">Stopping the Server</a>
+  <a href="06-multi-server.html">Multi-Server Patterns</a>
+  <a href="07-error-handling.html">Server Error Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Registering Hooks</h1>
+    <p class="lead">Hooks are added to a server's pipelines before <code>start()</code> is called. Add incoming hooks to <code>server.incomingPipeline</code> and outgoing hooks to <code>server.outgoingPipeline</code>. The pipeline automatically sorts by priority.</p>
+  </div>
+
+  <h2>Standard Hook Setup</h2>
+  <pre><code>import { createEdgeStream, NormalizationHook } from 'edge-stream-js';
+import { HookActivityLogger } from 'observability-hooks-js';
+
+const stream = createEdgeStream({ logLevel: 'debug' });
+
+stream.registerServer({
+  id: 'bas', type: 'bas',
+  url: '/hubs/edge-stream',
+  transportConfig: { type: 'signalr', url: '/hubs/edge-stream', ... }
+});
+
+// Get the server reference
+const server = stream.server('bas')!;
+
+// ── Incoming hooks (messages from transport → subscribers) ──
+server.incomingPipeline.addHook(new HookActivityLogger());    // priority 5
+server.incomingPipeline.addHook(new NormalizationHook());     // priority 110
+server.incomingPipeline.addHook(new TenantFilterHook());      // priority 130
+server.incomingPipeline.addHook(new WorkflowMapper());        // priority 200
+server.incomingPipeline.addHook(new AuditLogHook());          // priority 300
+
+// ── Outgoing hooks (app → transport) ──
+server.outgoingPipeline.addHook(new HookActivityLogger());    // shared logger
+server.outgoingPipeline.addHook(new AuthHeaderHook());        // priority 50
+server.outgoingPipeline.addHook(new HmacSignatureHook());     // priority 60
+
+// ── Start after hooks are configured ──
+await stream.start();</code></pre>
+
+  <h2>Hook Priority Sorting</h2>
+  <p>Hooks are sorted by <code>priority</code> when <code>start()</code> is called. You can add hooks in any order — the pipeline guarantees execution order by priority:</p>
+  <pre><code>// These register in any order — priority determines execution order
+server.incomingPipeline.addHook(new AuditLogHook());          // priority 300
+server.incomingPipeline.addHook(new NormalizationHook());     // priority 110
+server.incomingPipeline.addHook(new HookActivityLogger());    // priority 5
+server.incomingPipeline.addHook(new TenantFilterHook());      // priority 130
+
+// Execution order: HookActivityLogger → NormalizationHook → TenantFilterHook → AuditLogHook</code></pre>
+
+  <h2>Conditional Hook Registration</h2>
+  <pre><code>// Development: add observability and verbose logging
+if (import.meta.env.DEV) {
+  server.incomingPipeline.addHook(new HookActivityLogger());
+  server.incomingPipeline.addHook(new VerboseMessageLogHook());
+}
+
+// Production: add auth and security
+if (import.meta.env.PROD) {
+  server.incomingPipeline.addHook(new JwtVerificationHook());
+  server.incomingPipeline.addHook(new RateLimitHook({ maxPerSecond: 100 }));
+}
+
+// Always: normalization and tenant filtering
+server.incomingPipeline.addHook(new NormalizationHook());
+server.incomingPipeline.addHook(new TenantBoundaryHook(tenantId));</code></pre>
+
+  <div class="callout warning">
+    <strong>Register Hooks Before start()</strong>
+    Hook registration should happen between <code>registerServer()</code> and <code>stream.start()</code>. Adding hooks after start may cause messages received during hook setup to bypass the new hook.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-attaching-transport.html">&#8592; Attaching a Transport</a>
+    <a href="04-starting.html">Next: Starting the Server &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

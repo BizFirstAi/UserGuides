@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exposing Data as an API — Application Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Application Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema-design.html">Designing the Data Schema</a>
+  <a href="02-ai-form-generation.html">AI-Generated Forms</a>
+  <a href="03-crud-workflows.html">CRUD Workflow Patterns</a>
+  <a href="04-data-api.html" class="active">Exposing Data as an API</a>
+  <a href="05-data-visualization.html">Data Visualization</a>
+  <a href="06-access-control.html">Access Control</a>
+  <a href="07-example.html">End-to-End Example</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Exposing Data as an API</h1>
+    <p class="lead">How a Flow Studio workflow with a REST trigger becomes a real REST API endpoint — authentication, URL structure, response shaping, and integration with external systems.</p>
+  </div>
+
+  <h2>Workflows as REST API Endpoints</h2>
+  <p>Every Flow Studio workflow that uses a <strong>REST trigger</strong> is automatically exposed as an HTTP endpoint through the BizFirstGO API gateway. There is no separate API controller to write — the workflow IS the API endpoint.</p>
+  <p>The URL pattern for workflow triggers:</p>
+  <pre><code>-- Synchronous (waits for workflow to complete and returns the result)
+POST   https://your-bfgo-instance/api/workflows/{workflowId}/trigger
+GET    https://your-bfgo-instance/api/workflows/{workflowId}/trigger?queryParam=value
+
+-- Asynchronous (fires the workflow and returns an execution ID immediately)
+POST   https://your-bfgo-instance/api/workflows/{workflowId}/trigger-async</code></pre>
+
+  <h2>CRUD API Endpoint Mapping</h2>
+  <p>Map your four CRUD workflows to conventional REST endpoint semantics using HTTP method routing:</p>
+  <table>
+    <thead>
+      <tr><th>Operation</th><th>HTTP Method</th><th>URL Pattern</th><th>Workflow</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Create</td><td>POST</td><td><code>/api/workflows/lead-create/trigger</code></td><td>lead-create</td></tr>
+      <tr><td>Get by ID</td><td>GET</td><td><code>/api/workflows/lead-read/trigger?leadId={id}</code></td><td>lead-read</td></tr>
+      <tr><td>List</td><td>GET</td><td><code>/api/workflows/lead-list/trigger?status=&offset=&pageSize=</code></td><td>lead-list</td></tr>
+      <tr><td>Update</td><td>POST</td><td><code>/api/workflows/lead-update/trigger</code> (body: leadId + fields)</td><td>lead-update</td></tr>
+      <tr><td>Delete</td><td>POST</td><td><code>/api/workflows/lead-delete/trigger</code> (body: leadId)</td><td>lead-delete</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Note on HTTP Methods</strong>
+    <p>The workflow trigger endpoint accepts POST by default for all workflow types. For standard REST semantics (GET for reads, PUT for updates, DELETE for deletes), use the workflow alias routing feature in the API gateway to map conventional HTTP verbs to the appropriate workflow triggers.</p>
+  </div>
+
+  <h2>Authentication</h2>
+  <p>All workflow trigger endpoints require a valid BizFirstGO bearer token:</p>
+  <pre><code>curl -X POST https://your-bfgo-instance/api/workflows/lead-create/trigger \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "Jane Smith",
+    "email": "jane.smith@acme.com",
+    "companyName": "Acme Corp",
+    "source": "Conference",
+    "status": "New"
+  }'</code></pre>
+
+  <p>Token acquisition: Use the BizFirstGO OAuth2 token endpoint. For service-to-service integrations, use the <strong>Client Credentials</strong> flow (no user interaction required). For user-context API calls, use the Authorization Code flow.</p>
+
+  <h2>Response Shaping</h2>
+  <p>The workflow's final node determines the API response. Use a <strong>Response Formatter Node</strong> to shape the output:</p>
+  <pre><code>// Response Formatter Node configuration
+{
+  "nodeType": "ResponseFormatterNode",
+  "nodeId": "format-response",
+  "statusCode": 200,
+  "body": {
+    "success": true,
+    "data": "{{variables.lead}}",
+    "meta": {
+      "tenantId": "{{workflow.tenantId}}",
+      "requestId": "{{workflow.executionId}}"
+    }
+  }
+}
+
+// Resulting API response:
+{
+  "success": true,
+  "data": {
+    "leadId": "550e8400-e29b-41d4-a716-446655440000",
+    "fullName": "Jane Smith",
+    "email": "jane.smith@acme.com",
+    "status": "New",
+    "createdAt": "2026-05-25T10:30:00Z"
+  },
+  "meta": {
+    "tenantId": 42,
+    "requestId": "exec_abc123"
+  }
+}</code></pre>
+
+  <h2>Error Response Pattern</h2>
+  <pre><code>// Use a Condition Node to check for validation errors or not-found:
+// If lead is null → return 404
+{
+  "nodeType": "ResponseFormatterNode",
+  "nodeId": "not-found-response",
+  "statusCode": 404,
+  "body": {
+    "success": false,
+    "error": "Lead not found",
+    "leadId": "{{input.leadId}}"
+  }
+}
+
+// If validation fails → return 400
+{
+  "statusCode": 400,
+  "body": {
+    "success": false,
+    "errors": "{{variables.validationErrors}}"
+  }
+}</code></pre>
+
+  <h2>Rate Limiting and Throttling</h2>
+  <p>Configure rate limiting on workflow trigger endpoints in the API gateway settings:</p>
+  <table>
+    <thead>
+      <tr><th>Limit Type</th><th>Recommended Default</th><th>Configuration Location</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Per-tenant rate limit</td><td>1000 req/min</td><td>Tenant API quota settings</td></tr>
+      <tr><td>Per-workflow rate limit</td><td>200 req/min</td><td>Workflow trigger settings</td></tr>
+      <tr><td>Burst allowance</td><td>50 req/sec</td><td>API gateway configuration</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="03-crud-workflows.html">&#8592; CRUD Workflow Patterns</a>
+    <a href="05-data-visualization.html">Next: Data Visualization &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

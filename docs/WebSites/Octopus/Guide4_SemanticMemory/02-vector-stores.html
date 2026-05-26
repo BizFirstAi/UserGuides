@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vector Store Backends — Semantic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Semantic Memory Overview</a>
+  <a href="01-embedding.html">Embedding Knowledge</a>
+  <a href="02-vector-stores.html" class="active">Vector Store Backends</a>
+  <a href="03-indexing.html">Knowledge Indexing</a>
+  <a href="04-retrieval.html">Retrieval at Query Time</a>
+  <a href="05-hybrid-search.html">Hybrid Search</a>
+  <a href="06-reranking.html">Reranking Results</a>
+  <a href="07-per-agent.html">Per-Agent Knowledge Scoping</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Vector Store Backends</h1>
+    <p class="lead">Octopus supports two production-grade vector store backends — Qdrant (recommended for high performance) and PGVector (for teams with an existing PostgreSQL stack). Both implement the <code>ISemanticMemoryStore</code> interface.</p>
+  </div>
+
+  <h2>Qdrant (Recommended)</h2>
+  <p>Qdrant is a purpose-built vector database with native HNSW indexing, payload filtering, and horizontal scaling. It is the recommended backend for production Octopus deployments with large knowledge bases.</p>
+  <pre><code>// Qdrant configuration
+{
+  "Octopus": {
+    "VectorStore": {
+      "Backend": "Qdrant",
+      "Qdrant": {
+        "Host": "qdrant-server",
+        "Port": 6333,
+        "ApiKey": null,        // use ICredentialResolver if auth required
+        "CredentialId": 44,    // optional — for Qdrant Cloud
+        "VectorSize": 1536,    // must match embedding model dimensions
+        "Distance": "Cosine",  // Cosine, Dot, Euclid
+        "ReplicationFactor": 2,
+        "WriteConsistencyFactor": 1
+      }
+    }
+  }
+}</code></pre>
+
+  <pre><code>// QdrantVectorStore implementation
+public class QdrantVectorStore : ISemanticMemoryStore
+{
+    public async Task&lt;IReadOnlyList&lt;MemoryRecord&gt;&gt; SearchAsync(
+        string collection, float[] queryEmbedding, int topK, float minScore,
+        MemoryFilter? filter, CancellationToken ct)
+    {
+        var request = new SearchRequest
+        {
+            Vector = queryEmbedding,
+            Limit = (ulong)topK,
+            ScoreThreshold = minScore,
+            Filter = BuildQdrantFilter(filter),    // tenant + agent filter
+            WithPayload = true
+        };
+
+        var results = await _qdrantClient.SearchAsync(collection, request, ct);
+
+        return results.Select(r => new MemoryRecord
+        {
+            Id = r.Id.ToString(),
+            Collection = collection,
+            Content = r.Payload["content"].StringValue,
+            Metadata = DeserializeMetadata(r.Payload)
+        }).ToList();
+    }
+}</code></pre>
+
+  <h2>PGVector (PostgreSQL Extension)</h2>
+  <p>PGVector adds vector similarity search to PostgreSQL. Use this backend if you already operate a PostgreSQL cluster and want to avoid a separate infrastructure component:</p>
+  <pre><code>-- PGVector table (created by OctopusDbContext migration)
+CREATE TABLE octopus_semantic_memory (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    collection  VARCHAR(200) NOT NULL,
+    content     TEXT NOT NULL,
+    embedding   vector(1536),   -- dimension must match embedding model
+    metadata    JSONB NOT NULL,
+    tenant_id   VARCHAR(100) NOT NULL,
+    agent_id    UUID NOT NULL,
+    indexed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ON octopus_semantic_memory USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);
+CREATE INDEX ON octopus_semantic_memory (collection, tenant_id, agent_id);</code></pre>
+
+  <h2>Backend Comparison</h2>
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>Qdrant</th><th>PGVector</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Index type</td><td>HNSW (fast approximate)</td><td>IVFFlat (slower exact)</td></tr>
+      <tr><td>Max vectors</td><td>Billions (with sharding)</td><td>~10M practical limit</td></tr>
+      <tr><td>Payload filtering</td><td>Native, fast</td><td>SQL WHERE — slower at scale</td></tr>
+      <tr><td>Infrastructure</td><td>Separate service (Docker)</td><td>PostgreSQL extension</td></tr>
+      <tr><td>Managed cloud</td><td>Qdrant Cloud</td><td>Supabase, Neon, any PG host</td></tr>
+      <tr><td>Backup</td><td>Qdrant snapshots + S3</td><td>Standard PostgreSQL backup</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-embedding.html">&#8592; Embedding Knowledge</a>
+    <a href="03-indexing.html">Next: Knowledge Indexing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Real-Time Delivery — Notifications | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Notifications</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Notifications Overview</a>
+  <a href="01-types.html">Notification Types</a>
+  <a href="02-delivery.html" class="active">Real-Time Delivery</a>
+  <a href="03-notification-bell.html">Notification Bell</a>
+  <a href="04-notification-panel.html">Notification Panel</a>
+  <a href="05-read-state.html">Read/Unread State</a>
+  <a href="06-preferences.html">Notification Preferences</a>
+  <a href="07-history.html">Notification History</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Real-Time Delivery</h1>
+    <p class="lead">WorkDesk notifications are delivered via EdgeStream — a push-based messaging system. When a notification is published by the backend, it arrives in the browser within milliseconds via the active EdgeStream subscription, with no polling required.</p>
+  </div>
+
+  <h2>EdgeStream Topic Architecture</h2>
+  <p>Each user has a dedicated EdgeStream topic for notifications: <code>notifications.{userId}</code>. When WorkDesk's <code>NotificationService</code> creates a notification for a user, it publishes the event payload to this topic. The user's connected browser session receives it immediately.</p>
+
+  <pre><code>// Topic naming pattern
+notifications.usr-001     // user usr-001's notification topic
+notifications.usr-002     // user usr-002's notification topic
+// ... fully isolated per user</code></pre>
+
+  <h2>Subscription Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>User Logs In</h4>
+        <p>WorkDesk authenticates via Passport and receives a JWT. The JWT contains the user's <code>userId</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>WorkDesk Shell Subscribes</h4>
+        <p>The <code>WorkDeskShell</code> component subscribes to <code>notifications.{userId}</code> and <code>tasks.{userId}</code> EdgeStream topics on mount.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Connection Maintained</h4>
+        <p>EdgeStream maintains a persistent WebSocket or SSE connection. If the connection drops, the EdgeStream client reconnects automatically and re-subscribes.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>Events Received in Real Time</h4>
+        <p>Notifications published to the topic arrive via the subscription callback. The Zustand notification store is updated, triggering a React re-render of the bell badge and notification panel.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>React Subscription Code</h2>
+  <pre><code>import { useSubscription } from '@bizfirstai/edge-stream-react';
+import { useNotificationStore } from '../stores/notificationStore';
+
+// WorkDeskShell — subscribes once on mount
+export function WorkDeskShell({ children }: { children: React.ReactNode }) {
+  const userId = useCurrentUser().id;
+  const { addNotification, incrementUnread } = useNotificationStore();
+
+  // Subscribe to user's notification topic
+  useSubscription(`notifications.${userId}`, (event: EdgeStreamEvent) => {
+    const notification: Notification = {
+      id: event.payload.notificationId,
+      type: event.payload.type,
+      title: event.payload.title,
+      body: event.payload.body,
+      priority: event.payload.priority,
+      linkedUrl: event.payload.linkedUrl,
+      createdAt: event.payload.createdAt,
+      isRead: false,
+    };
+    addNotification(notification);
+    incrementUnread();
+
+    // Show browser toast for high-priority notifications
+    if (event.payload.priority === 'urgent' || event.payload.priority === 'high') {
+      showToast(notification);
+    }
+  });
+
+  return &lt;div className="workdesk-shell"&gt;{children}&lt;/div&gt;;
+}</code></pre>
+
+  <h2>EdgeStream Event Payload</h2>
+  <pre><code>// Full notification event payload from EdgeStream
+interface NotificationEvent {
+  notificationId: string;        // unique notification ID
+  type: 'hil_task_assigned'
+      | 'workflow_completed'
+      | 'hil_task_overdue'
+      | 'system_alert';
+  title: string;                 // short notification title
+  body: string;                  // full notification body text
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  linkedUrl: string;             // deep-link to the relevant resource
+  createdAt: string;             // ISO 8601 UTC
+  metadata: {
+    taskId?: string;
+    executionId?: string;
+    workflowName?: string;
+    workflowId?: string;
+  };
+}</code></pre>
+
+  <h2>Reconnection and Missed Events</h2>
+  <p>If the browser session is closed and reopened (e.g., employee shuts laptop and returns the next day), EdgeStream's reconnection window may not replay missed events. WorkDesk handles this by loading recent unread notifications from the REST API on every session start, ensuring no notifications are missed even after a disconnection.</p>
+
+  <pre><code>// On session start — load recent unread notifications from API
+// (in case EdgeStream missed events while offline)
+GET /api/workdesk/notifications?isRead=false&limit=50&sortBy=createdAt&sortDir=desc</code></pre>
+
+  <div class="callout info">
+    <strong>Zero Polling Guarantee</strong>
+    <p>Once the EdgeStream subscription is established, WorkDesk never polls for notifications. All subsequent updates arrive via push. The initial REST load on session start is the only non-push operation in the notification system.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-types.html">&#8592; Notification Types</a>
+    <a href="03-notification-bell.html">Next: Notification Bell &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

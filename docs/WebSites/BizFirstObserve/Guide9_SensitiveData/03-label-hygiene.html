@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Label Hygiene — Sensitive Data Handling | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Sensitive Data Handling</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Sensitive Data Overview</a>
+  <a href="01-log-sanitization.html">Log Sanitization in BizFirstGO</a>
+  <a href="02-otel-redaction.html">OTel Collector Redaction</a>
+  <a href="03-label-hygiene.html" class="active">Label Hygiene</a>
+  <a href="04-trace-attributes.html">Trace Attribute Filtering</a>
+  <a href="05-loki-access.html">Loki Access Controls</a>
+  <a href="06-gdpr-deletion.html">GDPR Deletion</a>
+  <a href="07-audit.html">Observability Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Label Hygiene</h1>
+    <p class="lead">Loki labels and Prometheus labels are indexed — they define the cardinality of your observability data. Labels must never contain PII or high-cardinality values. A label with an email address value means every unique email address becomes its own indexed stream, exposing PII at the infrastructure level.</p>
+  </div>
+
+  <h2>BizFirstGO Approved Loki Labels</h2>
+  <p>These are the only labels that should appear on BizFirstGO log streams. All other fields belong in the log body (structured JSON), not as labels:</p>
+  <table>
+    <thead>
+      <tr><th>Label</th><th>Example Values</th><th>Why It's Safe</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>job</code></td><td>processengine, edgestream, octopus</td><td>Bounded set (service names)</td></tr>
+      <tr><td><code>tenant_id</code></td><td>tenant-abc, tenant-xyz</td><td>Internal IDs — not PII; bounded by tenant count</td></tr>
+      <tr><td><code>environment</code></td><td>production, staging, development</td><td>Bounded set (3-5 values max)</td></tr>
+      <tr><td><code>level</code></td><td>info, warn, error, debug</td><td>Bounded set (5 values)</td></tr>
+      <tr><td><code>region</code></td><td>us-east-1, eu-west-1</td><td>Bounded set (cloud region names)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Labels That Must Never Appear</h2>
+  <table>
+    <thead>
+      <tr><th>Forbidden Label</th><th>Risk</th><th>Safe Alternative</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>user_id</code> (as label)</td><td>PII — user IDs may be email addresses or SSOs</td><td>Put userId in log body as a JSON field</td></tr>
+      <tr><td><code>email</code></td><td>PII — email address directly in label index</td><td>Never log email as label or body (use opaque ID)</td></tr>
+      <tr><td><code>execution_id</code></td><td>High cardinality — millions of unique executions</td><td>Put executionId in log body as a JSON field</td></tr>
+      <tr><td><code>request_id</code></td><td>High cardinality</td><td>Put requestId in log body</td></tr>
+      <tr><td><code>ip_address</code></td><td>PII in some jurisdictions + high cardinality</td><td>Never log IP addresses; or log hashed/truncated</td></tr>
+    </tbody>
+  </table>
+
+  <h2>OTel Collector Label Control</h2>
+  <pre><code># otel-collector-config.yaml — control which attributes become Loki labels
+processors:
+  resource/bizfirst-labels:
+    attributes:
+      # Approved labels — set from OTel resource attributes:
+      - key: job
+        value: ${SERVICE_NAME}
+        action: insert
+      - key: tenant_id
+        from_attribute: tenant.id
+        action: insert
+      - key: environment
+        from_attribute: deployment.environment
+        action: insert
+
+      # REMOVE any accidentally included PII attributes:
+      - key: user.email
+        action: delete
+      - key: user.id
+        action: delete
+      - key: http.client_ip
+        action: delete
+
+exporters:
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    labels:
+      # ONLY these OTel resource attributes become Loki labels:
+      resource_labels:
+        - job
+        - tenant_id
+        - environment
+        - level
+      # Everything else goes into the log body's structured metadata</code></pre>
+
+  <h2>Prometheus Label Hygiene</h2>
+  <pre><code># Prometheus metric label rules — enforced at the service level (MetricsRegistry.cs):
+
+# GOOD: bounded labels
+bizfirst_workflow_executions_total{
+  status="success",         # bounded: success/failed/cancelled
+  workflow_type="approval", # bounded: known workflow types
+  tenant_id="tenant-abc"   # bounded: internal tenant identifier
+}
+
+# BAD: unbounded labels that would appear in Prometheus
+# These create a new time series per unique value:
+bizfirst_workflow_executions_total{
+  user_email="user@company.com",  # FORBIDDEN — PII + unbounded
+  execution_id="exec-abc123"      # FORBIDDEN — unbounded cardinality
+}
+
+# To audit label cardinality in Prometheus:
+# Query: topk(20, count by (__name__)({__name__=~".+"}))
+# Shows the 20 metric families with the most series</code></pre>
+
+  <div class="callout warning">
+    <strong>Label Mistakes Are Hard to Fix</strong>
+    <p>If a high-cardinality or PII label is accidentally added to Prometheus metrics, removing it requires dropping the entire metric family and restarting. Prometheus does not support renaming labels retroactively. Similarly in Loki, removing a label from existing streams requires deleting and re-ingesting — which is not practical. Define your label set in advance and enforce it at code review.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-otel-redaction.html">&#8592; OTel Collector Redaction</a>
+    <a href="04-trace-attributes.html">Next: Trace Attribute Filtering &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

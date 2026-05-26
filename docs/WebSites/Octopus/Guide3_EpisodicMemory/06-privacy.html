@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy and PII — Episodic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Episodic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Episodic Memory Overview</a>
+  <a href="01-episode-structure.html">Episode Structure</a>
+  <a href="02-storage.html">Episode Storage</a>
+  <a href="03-recall.html">Recalling Past Episodes</a>
+  <a href="04-episode-boundaries.html">Episode Boundaries</a>
+  <a href="05-long-term.html">Long-Term Episode Retention</a>
+  <a href="06-privacy.html" class="active">Privacy and PII</a>
+  <a href="07-api.html">Episodic Memory API</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Privacy and PII in Episodic Memory</h1>
+    <p class="lead">Conversation messages may contain personally identifiable information (PII). Octopus provides PII detection, redaction at storage time, per-user data deletion, and tenant-scoped isolation to meet privacy obligations.</p>
+  </div>
+
+  <h2>PII Detection and Redaction</h2>
+  <p>When PII detection is enabled, each message is scanned before storage. Detected PII entities are replaced with typed placeholders:</p>
+  <pre><code>// PII detector processes messages at episode closure
+public class PIIDetector
+{
+    public async Task&lt;PIIDetectionResult&gt; DetectAndRedactAsync(string content)
+    {
+        // Named entity recognition for PII types
+        var entities = await _nerModel.ExtractAsync(content);
+
+        var redacted = content;
+        foreach (var entity in entities.OrderByDescending(e => e.StartIndex))
+        {
+            redacted = redacted
+                .Remove(entity.StartIndex, entity.Length)
+                .Insert(entity.StartIndex, $"[{entity.Type}]");
+            // e.g., "John Smith" → "[PERSON_NAME]"
+            // "078-123-4567" → "[PHONE_NUMBER]"
+            // "SSN 123-45-6789" → "SSN [US_SSN]"
+        }
+
+        return new PIIDetectionResult
+        {
+            OriginalContent = content,
+            RedactedContent = redacted,
+            DetectedEntities = entities,
+            ContainsPII = entities.Any()
+        };
+    }
+}</code></pre>
+
+  <h2>PII Entity Types Detected</h2>
+  <table>
+    <thead>
+      <tr><th>Entity Type</th><th>Example</th><th>Placeholder</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Person Name</td><td>John Smith</td><td>[PERSON_NAME]</td></tr>
+      <tr><td>Email Address</td><td>john@example.com</td><td>[EMAIL]</td></tr>
+      <tr><td>Phone Number</td><td>+1-800-555-0100</td><td>[PHONE_NUMBER]</td></tr>
+      <tr><td>US SSN</td><td>123-45-6789</td><td>[US_SSN]</td></tr>
+      <tr><td>Credit Card</td><td>4111 1111 1111 1111</td><td>[CREDIT_CARD]</td></tr>
+      <tr><td>Date of Birth</td><td>born 1985-03-15</td><td>[DATE_OF_BIRTH]</td></tr>
+      <tr><td>Address</td><td>123 Main Street, NY</td><td>[ADDRESS]</td></tr>
+    </tbody>
+  </table>
+
+  <h2>User Right to Erasure (GDPR/CCPA)</h2>
+  <pre><code>// Data erasure endpoint — hard-deletes all episodes for a user
+public async Task EraseUserDataAsync(Guid userId, string tenantId)
+{
+    await _db.Episodes
+        .Where(e => e.UserId == userId && e.TenantId == tenantId)
+        .ExecuteDeleteAsync();
+
+    // Also clear from vector store if summary embeddings were stored there
+    await _vectorStore.DeleteByFilterAsync(
+        collection: $"episodic_{tenantId}",
+        filter: $"userId == '{userId}'");
+
+    _logger.LogAudit("User data erased", userId, tenantId);
+}</code></pre>
+
+  <h2>Tenant Isolation Enforcement</h2>
+  <p>All episodic memory queries include a mandatory <code>TenantId</code> filter enforced by the EF Core global query filter. There is no API endpoint that allows cross-tenant episode access. Episode IDs from one tenant cannot be used to access data in another tenant — even if the episode ID is guessed.</p>
+
+  <div class="callout danger">
+    <strong>PII in LLM Summaries</strong>
+    <p>If PII detection is disabled, the auto-generated episode summary may contain PII from the conversation. If you enable LLM-generated summaries, ensure your LLM provider agreement covers the data privacy requirements of your jurisdiction. Consider applying PII redaction to messages <em>before</em> sending to the summary LLM.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-long-term.html">&#8592; Long-Term Episode Retention</a>
+    <a href="07-api.html">Next: Episodic Memory API &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

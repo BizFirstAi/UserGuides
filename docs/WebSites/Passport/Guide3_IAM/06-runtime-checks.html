@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Runtime Permission Checks — IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">IAM Overview</a>
+  <a href="01-roles.html">Roles</a>
+  <a href="02-permissions.html">Permissions</a>
+  <a href="03-policy-evaluation.html">Policy Evaluation</a>
+  <a href="04-resource-policies.html">Resource-Level Policies</a>
+  <a href="05-groups.html">User Groups</a>
+  <a href="06-runtime-checks.html" class="active">Runtime Permission Checks</a>
+  <a href="07-capability-integration.html">Integration with Node Capabilities</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Runtime Permission Checks</h1>
+    <p class="lead">How execution nodes, services, and workflow orchestrators check permissions at runtime — using <code>IPassportClient.CheckPermissionAsync()</code> with resource-scoped evaluation.</p>
+  </div>
+
+  <h2>IPassportClient.CheckPermissionAsync()</h2>
+  <pre><code>public interface IPassportClient
+{
+    /// &lt;summary&gt;
+    /// Check if the user identified by userId has the specified permission
+    /// on the optional resource. Returns true = Allow, false = Deny.
+    ///
+    /// Permission: "workflow.execute", "form.submit", etc.
+    /// ResourceId: optional GUID of the specific resource to check (enables resource-level policies).
+    /// &lt;/summary&gt;
+    Task&lt;bool&gt; CheckPermissionAsync(
+        string userId,
+        string permission,
+        string? resourceId = null,
+        CancellationToken ct = default);
+
+    /// &lt;summary&gt;
+    /// Bulk permission check — evaluates multiple permissions in one call.
+    /// More efficient than multiple individual calls.
+    /// &lt;/summary&gt;
+    Task&lt;IReadOnlyDictionary&lt;string, bool&gt;&gt; CheckPermissionsAsync(
+        string userId,
+        IReadOnlyList&lt;string&gt; permissions,
+        string? resourceId = null,
+        CancellationToken ct = default);
+}</code></pre>
+
+  <h2>Usage in Execution Nodes</h2>
+  <pre><code>// In a BaseNodeExecutor — check permission before executing
+public abstract class SecureBaseNodeExecutor : BaseNodeExecutor
+{
+    private readonly IPassportClient _passport;
+
+    protected async Task&lt;bool&gt; RequirePermissionAsync(
+        string permission,
+        IDInfo actor,
+        string? resourceId = null)
+    {
+        var allowed = await _passport.CheckPermissionAsync(
+            userId:     actor.UserId,
+            permission: permission,
+            resourceId: resourceId);
+
+        if (!allowed)
+        {
+            Logger.LogWarning(
+                "Permission denied: user={UserId} permission={Permission} resource={ResourceId}",
+                actor.UserId, permission, resourceId);
+        }
+
+        return allowed;
+    }
+}
+
+// In a workflow execution node
+public sealed class PayrollWorkflowNode : SecureBaseNodeExecutor
+{
+    public override async Task ExecuteAsync(NodeExecutionContext ctx)
+    {
+        var allowed = await RequirePermissionAsync(
+            permission: "workflow.initiate",
+            actor:      ctx.Actor,
+            resourceId: ctx.WorkflowDefinitionId.ToString());
+
+        if (!allowed)
+        {
+            ctx.SetOutput("result", "access-denied");
+            return;
+        }
+
+        // ... execute payroll logic
+    }
+}</code></pre>
+
+  <h2>ProcessAccessGuard</h2>
+  <p><code>ProcessAccessGuard</code> is the IAM integration layer in Flow Studio's execution engine. Every workflow execution request passes through it before any nodes are invoked:</p>
+  <pre><code">// ProcessAccessGuard checks before workflow execution begins
+public sealed class ProcessAccessGuard(IPassportClient passport)
+{
+    public async Task&lt;AccessResult&gt; GuardWorkflowExecutionAsync(
+        WorkflowExecutionRequest request,
+        CancellationToken ct)
+    {
+        // Check initiation permission
+        var canInitiate = await passport.CheckPermissionAsync(
+            userId:     request.Actor.UserId,
+            permission: "workflow.initiate",
+            resourceId: request.WorkflowId.ToString(),
+            ct:         ct);
+
+        if (!canInitiate)
+            return AccessResult.Deny("workflow.initiate", request.WorkflowId);
+
+        // Check tenant isolation
+        if (request.Actor.TenantId != request.WorkflowTenantId)
+            return AccessResult.Deny("cross-tenant-access", request.WorkflowId);
+
+        return AccessResult.Allow();
+    }
+}</code></pre>
+
+  <h2>Bulk Permission Check for UI</h2>
+  <pre><code">// Check multiple permissions for UI rendering (show/hide elements)
+var permissions = await _passport.CheckPermissionsAsync(
+    userId: idInfo.UserId,
+    permissions: [
+        "workflow.design",
+        "workflow.initiate",
+        "form.create",
+        "iam.user.manage",
+        "audit.read"
+    ]);
+
+// permissions = {
+//   "workflow.design":  true,
+//   "workflow.initiate": true,
+//   "form.create":       false,
+//   "iam.user.manage":   false,
+//   "audit.read":        true
+// }
+
+// Use in React props
+return &lt;NavBar
+  showDesigner={permissions["workflow.design"]}
+  showUsers={permissions["iam.user.manage"]}
+  showAudit={permissions["audit.read"]}
+/&gt;;</code></pre>
+
+  <h2>API Endpoint Guard (Attribute)</h2>
+  <pre><code">// Custom authorization attribute using Passport IAM
+[AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]
+public class RequirePassportPermissionAttribute(string permission, string? resourceParam = null)
+    : Attribute, IAsyncActionFilter
+{
+    public async Task OnActionExecutionAsync(ActionExecutingContext ctx, ActionExecutionDelegate next)
+    {
+        var passport = ctx.HttpContext.RequestServices.GetRequiredService&lt;IPassportClient&gt;();
+        var idInfo   = ctx.HttpContext.GetIDInfo();
+
+        if (idInfo is null)
+        {
+            ctx.Result = new UnauthorizedResult();
+            return;
+        }
+
+        string? resourceId = resourceParam is not null
+            ? ctx.ActionArguments.GetValueOrDefault(resourceParam)?.ToString()
+            : null;
+
+        var allowed = await passport.CheckPermissionAsync(idInfo.UserId, permission, resourceId);
+        if (!allowed)
+        {
+            ctx.Result = new ForbidResult();
+            return;
+        }
+
+        await next();
+    }
+}
+
+// Usage on a controller action
+[HttpPost("{workflowId}/execute")]
+[RequirePassportPermission("workflow.initiate", resourceParam: "workflowId")]
+public Task&lt;IActionResult&gt; ExecuteWorkflow(Guid workflowId) { ... }</code></pre>
+
+  <div class="page-nav">
+    <a href="05-groups.html">&#8592; User Groups</a>
+    <a href="07-capability-integration.html">Next: Integration with Node Capabilities &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

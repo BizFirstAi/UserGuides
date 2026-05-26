@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Outbound Webhook Call — Guide36 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Webhooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-inbound-trigger.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Inbound Trigger</a>
+  <a href="02-url-management.html"><i class="fa-solid fa-link"></i> URL Management</a>
+  <a href="03-signature-verification.html"><i class="fa-solid fa-key"></i> Signature Verification</a>
+  <a href="04-outbound-call.html" class="active"><i class="fa-solid fa-paper-plane"></i> Outbound Call</a>
+  <a href="05-retry-policy.html"><i class="fa-solid fa-rotate-right"></i> Retry Policy</a>
+  <a href="06-async-response.html"><i class="fa-solid fa-clock-rotate-left"></i> Async Response</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Outbound Webhook Call</h1>
+    <p class="lead">The <code>WebhookCallNode</code> — sending HTTP requests to external URLs, capturing response body/status/headers as node output.</p>
+  </div>
+
+  <h2>Node Config</h2>
+  <pre><code class="language-json">{
+  "nodeType": "WebhookCall",
+  "config": {
+    "url": "https://partner.example.com/api/notify",
+    "method": "POST",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Api-Key": "$env.PARTNER_API_KEY"
+    },
+    "body": {
+      "orderId": "$output.createOrder.orderId",
+      "status": "confirmed",
+      "total": "$output.calculateTotal.total"
+    },
+    "timeoutSeconds": 30,
+    "followRedirects": true,
+    "validateStatusCodes": [200, 201, 202]
+  }
+}</code></pre>
+
+  <h2>Node Output Shape</h2>
+  <pre><code class="language-json">{
+  "statusCode": 200,
+  "statusText": "OK",
+  "body": { "accepted": true, "referenceId": "ref-xyz" },
+  "headers": {
+    "content-type": "application/json",
+    "x-request-id": "req-abc"
+  },
+  "elapsedMs": 145
+}</code></pre>
+
+  <p>Access in downstream expressions:</p>
+  <pre><code class="language-javascript">$output.notifyPartner.statusCode          // → 200
+$output.notifyPartner.body.referenceId    // → "ref-xyz"
+$output.notifyPartner.headers["x-request-id"]  // → "req-abc"</code></pre>
+
+  <h2>Executor</h2>
+  <pre><code class="language-csharp">[NodeCapability(CapabilityType.Webhook)]
+public class WebhookCallExecutor : BaseNodeExecutor
+{
+    private readonly IHttpClientFactory _httpFactory;
+
+    public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(NodeExecutionContext ctx)
+    {
+        var config = ctx.GetConfig&lt;WebhookCallConfig&gt;();
+        var url = ctx.EvaluateExpression&lt;string&gt;(config.Url);
+        var body = ctx.EvaluateExpression&lt;object&gt;(config.Body);
+        var headers = config.Headers.ToDictionary(
+            h => h.Key,
+            h => ctx.EvaluateExpression&lt;string&gt;(h.Value));
+
+        var client = _httpFactory.CreateClient("webhook");
+        var sw = Stopwatch.StartNew();
+        var response = await client.SendAsync(BuildRequest(url, config.Method, headers, body));
+        sw.Stop();
+
+        var responseBody = await response.Content.ReadFromJsonAsync&lt;object&gt;();
+        var output = new
+        {
+            statusCode = (int)response.StatusCode,
+            statusText = response.ReasonPhrase,
+            body = responseBody,
+            headers = response.Headers.ToDictionary(h => h.Key.ToLower(), h => h.Value.First()),
+            elapsedMs = (int)sw.ElapsedMilliseconds
+        };
+
+        if (config.ValidateStatusCodes?.Contains((int)response.StatusCode) == false)
+            return NodeExecutionResult.Success(output, portKey: "error");
+
+        return NodeExecutionResult.Success(output);
+    }
+}</code></pre>
+
+  <h2>Status Code Routing</h2>
+  <p>The <code>validateStatusCodes</code> config defines which status codes are treated as success. Any other status code routes to the <code>error</code> port (with the full response still available in output for inspection).</p>
+
+  <div class="page-nav">
+    <a href="03-signature-verification.html">&#8592; Signature Verification</a>
+    <a href="05-retry-policy.html">Next: Retry Policy &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

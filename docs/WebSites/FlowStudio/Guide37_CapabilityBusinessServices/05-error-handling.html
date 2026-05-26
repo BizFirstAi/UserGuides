@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Error Handling — Guide37 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Business Services</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-service-registry.html"><i class="fa-solid fa-list"></i> Service Registry</a>
+  <a href="02-calling-a-service.html"><i class="fa-solid fa-phone"></i> Calling a Service</a>
+  <a href="03-authentication.html"><i class="fa-solid fa-lock"></i> Authentication</a>
+  <a href="04-response-mapping.html"><i class="fa-solid fa-arrows-left-right"></i> Response Mapping</a>
+  <a href="05-error-handling.html" class="active"><i class="fa-solid fa-triangle-exclamation"></i> Error Handling</a>
+  <a href="06-custom-service.html"><i class="fa-solid fa-plus-circle"></i> Custom Service</a>
+  <a href="07-testing.html"><i class="fa-solid fa-flask"></i> Testing</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Error Handling &amp; Circuit Breaker</h1>
+    <p class="lead">How service errors surface as node error ports, retry configuration, and the circuit breaker pattern that protects the platform from cascading failures.</p>
+  </div>
+
+  <h2>Error Port Routing</h2>
+  <p>Non-2xx responses from a business service route to the <code>error</code> port by default. The error output contains:</p>
+  <pre><code class="language-json">{
+  "statusCode": 503,
+  "errorCode": "SERVICE_UNAVAILABLE",
+  "message": "Payroll service is temporarily unavailable",
+  "serviceId": "payroll-service",
+  "operationId": "calculatePayslip",
+  "retryAfterSeconds": 30
+}</code></pre>
+
+  <h2>Status Code Port Mapping</h2>
+  <p>Configure specific status codes to route to named ports instead of the generic error port:</p>
+  <pre><code class="language-json">{
+  "statusCodePorts": {
+    "404": "notFound",
+    "409": "conflict",
+    "422": "validationError",
+    "503": "serviceDown"
+  }
+}</code></pre>
+  <p>This allows the workflow to handle different error scenarios with specific recovery paths rather than a single error handler.</p>
+
+  <h2>Circuit Breaker</h2>
+  <p>The circuit breaker prevents cascading failures when a service is down. It operates in three states:</p>
+  <table>
+    <thead><tr><th>State</th><th>Behavior</th><th>Transition</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Closed</strong></td><td>Calls pass through normally</td><td>→ Open after N consecutive failures</td></tr>
+      <tr><td><strong>Open</strong></td><td>Calls fail immediately without hitting the service</td><td>→ Half-Open after timeout (default 30s)</td></tr>
+      <tr><td><strong>Half-Open</strong></td><td>One probe call allowed through</td><td>→ Closed (success) or Open (failure)</td></tr>
+    </tbody>
+  </table>
+  <pre><code class="language-csharp">// Circuit breaker config per service
+new CircuitBreakerPolicy
+{
+    FailureThreshold = 5,        // 5 consecutive failures → Open
+    SamplingDurationSeconds = 60,
+    OpenDurationSeconds = 30,
+    SuccessThresholdInHalfOpen = 1
+}</code></pre>
+
+  <div class="callout callout-warning">
+    <strong>Circuit breaker fires error port.</strong> When the circuit is Open, the node immediately routes to the error port with <code>errorCode: "CIRCUIT_OPEN"</code>. Connect an error port edge that either retries later (via a WaitNode + SubWorkflow) or provides a graceful degraded response.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-response-mapping.html">&#8592; Response Mapping</a>
+    <a href="06-custom-service.html">Next: Custom Service &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

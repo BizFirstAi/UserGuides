@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Querying as a Tenant Admin — Using the Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Using the Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Using the Tools Overview</a>
+  <a href="01-find-execution-logs.html">Find Logs for an Execution</a>
+  <a href="02-trace-slow-node.html">Trace a Slow Node</a>
+  <a href="03-error-analysis.html">Error Analysis Workflow</a>
+  <a href="04-hil-backlog.html">Monitoring HIL Backlog</a>
+  <a href="05-alert-response.html">Responding to Alerts</a>
+  <a href="06-tenant-isolation.html" class="active">Querying as a Tenant Admin</a>
+  <a href="07-common-queries.html">Common Query Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Querying as a Tenant Admin</h1>
+    <p class="lead">Tenant administrators need to scope all observability queries to their tenant's data. This page covers how to use dashboard template variables and direct LogQL/PromQL queries to see only your tenant's executions, logs, metrics, and HIL backlog.</p>
+  </div>
+
+  <h2>Using Dashboard Variables for Tenant Scoping</h2>
+  <p>All pre-built BizFirstGO dashboards include a <code>$tenant</code> template variable in the top bar:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Open any BizFirstGO dashboard</h4>
+        <p>Navigate to Dashboards → BizFirstGO folder → Flow Studio Overview (or any other dashboard).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Set the $tenant variable</h4>
+        <p>In the top bar, find the <code>tenant</code> dropdown. Click it and select your tenant ID (e.g., "tenant-abc"). All panels immediately refresh to show only your tenant's data.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Set the $environment variable</h4>
+        <p>Select your environment (production, staging) from the environment dropdown. For a tenant admin, this is typically always "production".</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Tenant-Scoped LogQL Queries</h2>
+  <pre><code># All queries must include tenant_id label to see only your tenant's data:
+
+# Find all error logs for your tenant in the last hour:
+{job="processengine", tenant_id="tenant-abc", level="error"} | json
+
+# Find all executions for your tenant:
+{job="processengine", tenant_id="tenant-abc"} | json | message =~ ".*Execution.*"
+
+# Find your tenant's HIL pending tasks:
+{job="processengine", tenant_id="tenant-abc"} | json | hilStatus = "pending"
+
+# Count your tenant's log volume over time:
+sum(count_over_time({tenant_id="tenant-abc"}[5m]))</code></pre>
+
+  <h2>Tenant-Scoped PromQL Queries</h2>
+  <pre><code># All metric queries should filter by tenant_id:
+
+# Your tenant's current workflow execution rate:
+sum(rate(bizfirst_workflow_executions_total{tenant_id="tenant-abc"}[5m]))
+
+# Your tenant's error rate:
+sum(rate(bizfirst_workflow_executions_total{tenant_id="tenant-abc", status="failed"}[5m]))
+  /
+sum(rate(bizfirst_workflow_executions_total{tenant_id="tenant-abc"}[5m]))
+* 100
+
+# Your tenant's HIL backlog:
+bizfirst_hil_pending_count{tenant_id="tenant-abc"}
+
+# Your tenant's P99 workflow execution latency:
+histogram_quantile(0.99,
+  sum(rate(bizfirst_workflow_executions_duration_seconds_bucket{tenant_id="tenant-abc"}[5m]))
+  by (le)
+)</code></pre>
+
+  <h2>What Tenant Admins Cannot See</h2>
+  <table>
+    <thead>
+      <tr><th>Data</th><th>Accessible to Tenant Admin?</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Other tenants' log streams</td><td>No</td><td>Loki multi-tenancy enforcement (X-Scope-OrgID)</td></tr>
+      <tr><td>Other tenants' metrics</td><td>No (with Grafana access control)</td><td>Tenant-scoped Grafana data source or dashboard folder access control</td></tr>
+      <tr><td>Platform-level metrics (CPU, memory)</td><td>No</td><td>Infrastructure dashboard restricted to platform-team role</td></tr>
+      <tr><td>Other tenants' traces</td><td>No</td><td>Tempo does not natively support multi-tenancy; span attributes contain tenant_id for post-query filtering</td></tr>
+      <tr><td>Grafana audit logs</td><td>No</td><td>Admin-only data source</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Save Your Tenant-Scoped View as a Bookmark</strong>
+    <p>Grafana dashboard URLs include the current variable state. After setting <code>$tenant=tenant-abc</code> and <code>$environment=production</code>, copy the browser URL and save it as a bookmark. Sharing this URL with your team opens the dashboard pre-scoped to your tenant — no manual variable selection required.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-alert-response.html">&#8592; Responding to Alerts</a>
+    <a href="07-common-queries.html">Next: Common Query Reference &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

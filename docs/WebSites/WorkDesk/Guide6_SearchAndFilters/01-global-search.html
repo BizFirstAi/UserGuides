@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Global Search — Search and Filters | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Search &amp; Filters</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-global-search.html" class="active">Global Search</a>
+  <a href="02-task-filters.html">Task Inbox Filters</a>
+  <a href="03-history-filters.html">Workflow History Filters</a>
+  <a href="04-notification-filters.html">Notification Filters</a>
+  <a href="05-saved-filters.html">Saved Filters</a>
+  <a href="06-search-api.html">Search API</a>
+  <a href="07-performance.html">Search Performance</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Global Search</h1>
+    <p class="lead">The global search bar in WorkDesk's top navigation searches across tasks, workflow history, and notifications simultaneously. Results are grouped by section and sorted by relevance. Press Ctrl+K to focus the search bar from anywhere.</p>
+  </div>
+
+  <h2>Activating Global Search</h2>
+  <ul>
+    <li>Click the search bar in the top navigation</li>
+    <li>Press <code>Ctrl+K</code> (or <code>Cmd+K</code> on macOS) from anywhere in WorkDesk</li>
+    <li>Click the search icon <i class="fa-solid fa-magnifying-glass"></i> in the top bar</li>
+  </ul>
+
+  <h2>Search Behavior</h2>
+  <table>
+    <thead><tr><th>Behavior</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Minimum query length</td><td>2 characters — shorter queries are ignored</td></tr>
+      <tr><td>Debounce delay</td><td>300ms after last keystroke — prevents excessive API calls</td></tr>
+      <tr><td>Results per section</td><td>Default: top 5 per section — expandable to 20</td></tr>
+      <tr><td>Result ranking</td><td>Exact title match > partial title match > body/description match</td></tr>
+      <tr><td>Empty query</td><td>Clears results — shows recent searches if any</td></tr>
+      <tr><td>Loading state</td><td>Spinner shown while API call is in progress (typically &lt;200ms)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>React Component Implementation</h2>
+  <pre><code>import { useState, useCallback } from 'react';
+import { useDebouncedCallback } from 'use-debounce';
+import { useSearchStore } from '../stores/searchStore';
+
+function GlobalSearch() {
+  const [query, setQuery] = useState('');
+  const { results, setResults, isLoading, setLoading } = useSearchStore();
+
+  const search = useDebouncedCallback(async (q: string) => {
+    if (q.length &lt; 2) { setResults(null); return; }
+    setLoading(true);
+    try {
+      const data = await api.get(`/workdesk/search?q=${encodeURIComponent(q)}&limit=5`);
+      setResults(data);
+    } finally {
+      setLoading(false);
+    }
+  }, 300);
+
+  const handleChange = (e: React.ChangeEvent&lt;HTMLInputElement&gt;) => {
+    setQuery(e.target.value);
+    search(e.target.value);
+  };
+
+  return (
+    &lt;div className="global-search"&gt;
+      &lt;input
+        type="text"
+        placeholder="Search tasks, workflows, notifications..."
+        value={query}
+        onChange={handleChange}
+      /&gt;
+      {isLoading &amp;&amp; &lt;Spinner /&gt;}
+      {results &amp;&amp; &lt;SearchResults results={results} query={query} /&gt;}
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Result Navigation</h2>
+  <p>Clicking a search result navigates directly to that item:</p>
+  <ul>
+    <li><strong>Task result</strong> → opens the task detail page: <code>/workdesk/inbox/task/{taskId}</code></li>
+    <li><strong>Execution result</strong> → opens the execution in Observer Panel: <code>/workdesk/history/{executionId}</code></li>
+    <li><strong>Notification result</strong> → navigates to the <code>linkedUrl</code> from the notification payload</li>
+  </ul>
+
+  <h2>Scoped Search</h2>
+  <p>Global search can be scoped to a single section by appending a section parameter. This is useful when you know the result is in a specific section:</p>
+  <pre><code>// Scope to tasks only
+GET /api/workdesk/search?q=budget+review&amp;section=tasks
+
+// Scope to history only
+GET /api/workdesk/search?q=payroll&amp;section=history
+
+// All sections (default)
+GET /api/workdesk/search?q=budget+review</code></pre>
+
+  <div class="callout info">
+    <strong>Recent Searches</strong>
+    <p>WorkDesk stores the last 10 search queries in localStorage and shows them as suggestions when the search bar is focused with an empty query. This makes re-running recent searches one click away.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-task-filters.html">Next: Task Inbox Filters &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

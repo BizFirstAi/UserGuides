@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Actions — Form Actions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Actions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-action-schema.html">Action Schema Reference</a>
+  <a href="02-submit-action.html">Submit Action</a>
+  <a href="03-cancel-action.html">Cancel Action</a>
+  <a href="04-reset-action.html">Reset Action</a>
+  <a href="05-navigate-action.html">Navigate Action</a>
+  <a href="06-link-action.html">Link Action</a>
+  <a href="07-data-actions.html">addQuickItems &amp; deleteSelected</a>
+  <a href="08-custom-action.html" class="active">Custom Actions</a>
+  <a href="09-action-visibility.html">Action Visibility Rules</a>
+  <a href="10-examples.html">Complete Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Custom Actions</h1>
+    <p class="lead">Custom actions let you add any business logic to a form's action bar. You register a handler function with a unique type key. The form schema references that key. When the user clicks the button, the handler receives a rich <code>FormActionContext</code> and does whatever your application needs.</p>
+  </div>
+
+  <h2>FormActionContext Interface</h2>
+  <p>Your custom handler receives this context object:</p>
+  <pre><code>interface FormActionContext {
+  // Current form state
+  formId: string;
+  tenantId: string;
+  formValues: Record&lt;string, any&gt;;
+  formEngine: FormEngine;
+
+  // Application services
+  apiClient: FormDefinitionApiClient;
+
+  // Navigation
+  navigate: (url: string) => void;
+
+  // Completion signals
+  complete: () => void;           // Signal success — hides loading state
+  fail: (reason?: string) => void; // Signal failure — shows error, hides loading
+
+  // Action config from schema
+  config?: Record&lt;string, any&gt;;
+
+  // Validation
+  validate: () => Promise&lt;boolean&gt;;
+}</code></pre>
+
+  <h2>Registering a Custom Action</h2>
+  <pre><code>import { registerFormAction } from '@atlas-forms/control-registry-js';
+
+registerFormAction('export-to-pdf', async (context: FormActionContext) => {
+  try {
+    const { formValues, formId, tenantId } = context;
+
+    // Validate first if needed
+    const isValid = await context.validate();
+    if (!isValid) {
+      context.fail('Please fix validation errors before exporting.');
+      return;
+    }
+
+    // Call your custom service
+    const pdfBlob = await pdfService.generatePDF(formId, formValues, tenantId);
+    downloadBlob(pdfBlob, `form-${formId}.pdf`);
+
+    context.complete(); // Signal success
+  } catch (err) {
+    context.fail('PDF export failed. Please try again.');
+  }
+});</code></pre>
+
+  <h2>Using in the Form Schema</h2>
+  <pre><code>{
+  "type": "custom",
+  "label": "Export PDF",
+  "variant": "secondary",
+  "icon": "file-pdf",
+  "config": {
+    "handlerType": "export-to-pdf",
+    "handlerConfig": {
+      "template": "detailed",
+      "includeSignature": true
+    }
+  }
+}</code></pre>
+  <p>The <code>handlerConfig</code> is available in your handler as <code>context.config</code>, allowing the same handler to behave differently based on the form that uses it.</p>
+
+  <h2>Handler Lifecycle</h2>
+  <p>When the user clicks a custom action button:</p>
+  <ol>
+    <li>Button enters loading state (spinner visible)</li>
+    <li>Your async handler is called with <code>FormActionContext</code></li>
+    <li>If you call <code>context.complete()</code> — button exits loading, success toast shown</li>
+    <li>If you call <code>context.fail(reason)</code> — button exits loading, error toast shown</li>
+    <li>If your handler throws — treated as <code>fail()</code> with generic error message</li>
+  </ol>
+
+  <div class="callout warning">
+    <strong>Always Call complete() or fail()</strong>
+    If your handler exits without calling either, the button stays in loading state indefinitely. Always call one of them in every code path, including error handlers.
+  </div>
+
+  <h2>Accessing Other Services</h2>
+  <p>Custom action handlers can import any service from your application. The <code>context.apiClient</code> gives you the Atlas Forms API client. For other services (your own APIs, EdgeStream, workflow engine), import them directly in the handler file.</p>
+
+  <div class="page-nav">
+    <a href="07-data-actions.html">&#8592; addQuickItems &amp; deleteSelected</a>
+    <a href="09-action-visibility.html">Next: Action Visibility Rules &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>React Flow Sync — Workflow Store | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Store</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-state-shape.html">Store State Shape</a>
+  <a href="02-node-actions.html">Node Actions</a>
+  <a href="03-edge-actions.html">Edge Actions</a>
+  <a href="04-viewport-actions.html">Viewport Actions</a>
+  <a href="05-subscribing.html">Subscribing to Slices</a>
+  <a href="06-persistence.html">Persistence</a>
+  <a href="07-react-flow-sync.html" class="active">React Flow Sync</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>React Flow Sync</h1>
+    <p class="lead">workflowStore is the master. React Flow renders whatever the store says. User interactions on the canvas (drag, connect, delete) write back to workflowStore via React Flow's callback props — completing the sync loop.</p>
+  </div>
+
+  <h2>The Sync Architecture</h2>
+  <pre><code">[workflowStore] ──(nodes, edges, viewport)──► [ReactFlow component renders]
+      ▲                                                    │
+      │                                                    │ User interaction
+      │                                          (drag, connect, delete, pan)
+      │                                                    ▼
+      └────────────── (onNodesChange, onEdgesChange, onConnect, onMoveEnd) ─────</code></pre>
+
+  <h2>WorkflowCanvas — The Sync Bridge</h2>
+  <pre><code">// WorkflowCanvas.tsx (simplified)
+import ReactFlow, { useReactFlow } from 'reactflow';
+import { useWorkflowStore } from '@flow-studio/services';
+
+export function WorkflowCanvas() {
+    const { nodes, edges, moveNode, addEdge, removeNode, setViewport } =
+        useWorkflowStore(state => ({
+            nodes     : state.nodes,
+            edges     : state.edges,
+            moveNode  : state.moveNode,
+            addEdge   : state.addEdge,
+            removeNode: state.removeNode,
+            setViewport: state.setViewport
+        }), shallow);
+
+    return (
+        &lt;ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodeDragStop={(_, node) => moveNode(node.id, node.position)}
+            onConnect={connection => addEdge({
+                id: crypto.randomUUID(),
+                source: connection.source!, sourceHandle: connection.sourceHandle!,
+                target: connection.target!, targetHandle: connection.targetHandle!
+            })}
+            onNodesDelete={nodes => nodes.forEach(n => removeNode(n.id))}
+            onEdgesDelete={edges => edges.forEach(e => removeEdge(e.id))}
+            onMoveEnd={(_, viewport) => setViewport(viewport)}
+        /&gt;
+    );
+}</code></pre>
+
+  <h2>Why workflowStore is the Master</h2>
+  <p>React Flow has its own internal state. If we let React Flow be the source of truth, the store would need to read from React Flow — creating an inverted dependency. Instead:</p>
+  <ul>
+    <li>workflowStore is the single source of truth — always.</li>
+    <li>React Flow receives <code>nodes</code> and <code>edges</code> as props — it renders whatever the store says.</li>
+    <li>When the user interacts, React Flow fires callbacks — we write those changes to the store.</li>
+    <li>The store update triggers a React re-render — React Flow re-renders with the new state.</li>
+  </ul>
+
+  <h2>Controlled vs. Uncontrolled React Flow</h2>
+  <table>
+    <thead><tr><th>Mode</th><th>Source of Truth</th><th>Used in Flow Studio?</th></tr></thead>
+    <tbody>
+      <tr><td>Uncontrolled</td><td>React Flow internal state</td><td>No</td></tr>
+      <tr><td>Controlled</td><td>External state (workflowStore)</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Do not mix controlled and uncontrolled patterns.</strong> If you pass <code>nodes</code> as a prop (controlled) but also call React Flow's internal <code>setNodes</code> directly, you will get state divergence — the canvas will show different nodes than the store holds. Always go through workflowStore actions.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-persistence.html">&#8592; Persistence</a>
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top">Back to Portal &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

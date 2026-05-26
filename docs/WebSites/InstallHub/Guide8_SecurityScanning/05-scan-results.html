@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan Results — Security Scanning | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Security Scanning</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-expression-injection.html">Expression Injection Detection</a>
+  <a href="02-sql-injection.html">SQL Injection Detection</a>
+  <a href="03-dependency-vulnerability.html">Dependency Vulnerability Scan</a>
+  <a href="04-content-policy.html">Content Policy Check</a>
+  <a href="05-scan-results.html" class="active">Scan Results</a>
+  <a href="06-false-positives.html">Handling False Positives</a>
+  <a href="07-manual-review.html">Manual Security Review</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Scan Results</h1>
+    <p class="lead">The scanner consolidates findings from all checks into a single overall result: PASS, WARN, or FAIL. The overall result determines whether an import proceeds and what trust badge a marketplace package receives.</p>
+  </div>
+
+  <h2>Overall Result Determination</h2>
+  <p>The overall result is determined by the highest-severity finding across all checks:</p>
+  <table>
+    <thead>
+      <tr><th>Highest Finding Severity</th><th>Overall Result</th><th>Import Action</th><th>Marketplace Action</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>None (zero findings)</td><td><span class="badge badge-green">PASS</span></td><td>Proceeds normally</td><td>Listed with green shield badge</td></tr>
+      <tr><td>Low or Medium only</td><td><span class="badge badge-yellow">WARN</span></td><td>Proceeds with warning recorded in audit log</td><td>Listed with yellow shield badge; warning count shown</td></tr>
+      <tr><td>High or Critical</td><td><span class="badge badge-red">FAIL</span></td><td>Blocked — package not installed, rollback if partially applied</td><td>Rejected — not listed; publisher notified</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Complete Scan Report Structure</h2>
+  <pre><code>// GET /api/installhub/imports/{importId}/scan-report
+// GET /api/marketplace/submissions/{submissionId}/scan-report
+
+{
+  "packageId":     "mkt-pkg-a1b2c3",
+  "version":       "3.0.0",
+  "overallResult": "WARN",
+  "scannedAt":     "2026-05-25T14:05:22Z",
+  "durationMs":    2847,
+  "checkResults": [
+    {
+      "check":    "ExpressionInjection",
+      "result":   "PASS",
+      "findings": []
+    },
+    {
+      "check":    "SqlInjection",
+      "result":   "PASS",
+      "findings": []
+    },
+    {
+      "check":    "DependencyVulnerability",
+      "result":   "WARN",
+      "findings": [
+        {
+          "artifactType": "PackageDependency",
+          "artifactName": "acme-corp/form-utils",
+          "field":        "packageDependencies",
+          "value":        "acme-corp/form-utils@1.0.0",
+          "rule":         "CVE-2026-12345",
+          "severity":     "Medium",
+          "message":      "Dependency 'acme-corp/form-utils@1.0.0' has CVE-2026-12345 (CVSS 5.4, Medium). Update to 1.0.1 or later."
+        }
+      ]
+    },
+    {
+      "check":    "ContentPolicy",
+      "result":   "PASS",
+      "findings": []
+    }
+  ],
+  "summary": {
+    "totalFindings": 1,
+    "critical": 0,
+    "high":     0,
+    "medium":   1,
+    "low":      0
+  }
+}</code></pre>
+
+  <h2>How WARN Is Presented to Importers</h2>
+  <p>When an import completes with a WARN scan result, the import response includes the scan report and a warning message. The import is not blocked but the warning is permanently recorded in the import audit log:</p>
+  <pre><code>{
+  "status":       "Success",
+  "importId":     "imp-f9a2c1e8",
+  "scanResult":   "WARN",
+  "scanWarnings": 1,
+  "scanReportUrl": "/api/installhub/imports/imp-f9a2c1e8/scan-report",
+  "message":      "Import completed successfully. 1 security warning was detected — review the scan report before deploying this package in production."
+}</code></pre>
+
+  <h2>How FAIL Is Reported</h2>
+  <pre><code>// Import blocked by FAIL:
+{
+  "status":      "Failed",
+  "stage":       "SecurityScan",
+  "scanResult":  "FAIL",
+  "error":       "SecurityScanFailed",
+  "message":     "Import blocked — security scan returned FAIL. The package was not installed. Review the scan report for details.",
+  "rolledBack":  true,
+  "scanReportUrl": "/api/installhub/imports/imp-f9a2c1e8/scan-report"
+}</code></pre>
+
+  <h2>Scan Result Persistence</h2>
+  <p>Scan reports are stored permanently as part of the import or submission record. They cannot be deleted or modified after generation. The scan report is available for auditors and security teams through the API and in the InstallHub admin console.</p>
+
+  <h2>Scan Timeout</h2>
+  <p>The scanner has a maximum execution time of 120 seconds per package. If the scan does not complete within this limit (rare — typically only occurs with very large packages or database connectivity issues), the import is put in a <code>ScanTimeout</code> state and retried automatically up to 3 times before failing with a <code>ScanError</code> result.</p>
+  <pre><code>{
+  "status":  "Failed",
+  "stage":   "SecurityScan",
+  "error":   "ScanError",
+  "message": "Security scan failed after 3 attempts due to scanner service timeout. Contact support if this persists.",
+  "supportTicketUrl": "https://support.bizfirstai.com/new"
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="04-content-policy.html">&#8592; Content Policy Check</a>
+    <a href="06-false-positives.html">Next: Handling False Positives &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

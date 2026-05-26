@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GDPR Deletion — Sensitive Data Handling | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Sensitive Data Handling</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Sensitive Data Overview</a>
+  <a href="01-log-sanitization.html">Log Sanitization in BizFirstGO</a>
+  <a href="02-otel-redaction.html">OTel Collector Redaction</a>
+  <a href="03-label-hygiene.html">Label Hygiene</a>
+  <a href="04-trace-attributes.html">Trace Attribute Filtering</a>
+  <a href="05-loki-access.html">Loki Access Controls</a>
+  <a href="06-gdpr-deletion.html" class="active">GDPR Deletion</a>
+  <a href="07-audit.html">Observability Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>GDPR Deletion</h1>
+    <p class="lead">GDPR's "right to erasure" (Article 17) requires that personal data be deleted upon request. Loki provides a Delete API for targeted log deletion without removing entire log streams. This page covers the procedure for processing erasure requests for BizFirstGO log data.</p>
+  </div>
+
+  <h2>Prerequisites for GDPR Deletion</h2>
+  <pre><code># loki-config.yaml — enable the delete API
+compactor:
+  working_directory: /loki/compactor
+  shared_store: s3
+  retention_enabled: true         # Must be true
+  retention_delete_delay: 2h
+
+# Enable deletes in limits_config:
+limits_config:
+  allow_deletes: true             # Required to use the delete API
+
+# Note: The delete API is available at /loki/api/v1/delete
+# It requires admin-level access — protect with authentication.</code></pre>
+
+  <h2>GDPR Erasure Procedure</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Receive and document the erasure request</h4>
+        <p>When a user submits a GDPR erasure request, record: user ID, date of request, scope of data (which tenant, which time period). GDPR requires processing within 30 days — start the clock immediately.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Identify which logs contain the user's data</h4>
+        <pre><code># Query Loki to find all logs referencing the user:
+# (Requires knowing which field contains the user identifier)
+
+{job=~"processengine|edgestream|octopus", tenant_id="tenant-abc"}
+  |= "userId=user-12345"
+
+# Note the time range where logs exist (start and end timestamp).
+# Narrow to minimize deletion scope — do not delete more than required.</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Submit the delete request</h4>
+        <pre><code># Submit delete request via Loki API:
+curl -g -X POST \
+  "http://localhost:3100/loki/api/v1/delete" \
+  --data-urlencode 'query={job=~"processengine|edgestream|octopus", tenant_id="tenant-abc"} |= "userId=user-12345"' \
+  --data-urlencode 'start=2024-01-01T00:00:00Z' \
+  --data-urlencode 'end=2025-12-31T23:59:59Z' \
+  -H "X-Scope-OrgID: tenant-abc"
+
+# Response (deletion queued):
+# {"requestId": "del-abc123"}</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Monitor deletion status</h4>
+        <pre><code># Check delete request status:
+curl -g "http://localhost:3100/loki/api/v1/delete" \
+  -H "X-Scope-OrgID: tenant-abc" \
+  | jq '.[] | select(.requestId == "del-abc123")'
+
+# Status values:
+# "received" — request queued
+# "processed" — deletion complete
+
+# Deletion timing: the compactor processes delete requests during its next
+# compaction cycle (every 10 minutes). Actual chunk rewriting may take hours.</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Verify deletion and document completion</h4>
+        <p>After deletion is complete, re-run the original LogQL query. It should return no results. Document: deletion request ID, completion timestamp, and verification query result. Retain this documentation for GDPR accountability (Article 5(2)).</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <strong>Cold Storage Deletion Is Separate</strong>
+    <p>The Loki delete API only deletes from Loki's active storage (hot tier). If logs have already transitioned to S3 Glacier via lifecycle rules, you must also delete them from Glacier using <code>aws s3 rm</code> for the specific chunk objects. This requires knowing which S3 objects contain the user's data — which requires log chunk metadata from Loki's index. Document your cold storage deletion procedure before logs reach Glacier tier.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-loki-access.html">&#8592; Loki Access Controls</a>
+    <a href="07-audit.html">Next: Observability Audit Log &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Examples — Custom IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Custom IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom IAM Overview</a>
+  <a href="01-custom-resolver.html">Custom Permission Resolver</a>
+  <a href="02-custom-role-provider.html">Custom Role Provider</a>
+  <a href="03-attribute-conditions.html">Attribute-Based Conditions</a>
+  <a href="04-combining.html">Combining with Built-In IAM</a>
+  <a href="05-registration.html">Registering Custom Extensions</a>
+  <a href="06-testing.html">Testing Custom IAM</a>
+  <a href="07-examples.html" class="active">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Custom IAM Examples</h1>
+    <p class="lead">Real-world custom IAM scenarios — finance-only access, time-of-day restrictions, geographic ABAC, and dynamic project roles — with complete resolver implementations.</p>
+  </div>
+
+  <h2>Example 1 — Finance-Only Payroll Access</h2>
+  <p>Scenario: Only permanent Finance employees can initiate payroll workflows. Contractors and users from other departments are denied even if they have the <code>manager</code> role.</p>
+  <pre><code">public sealed class FinancePayrollAccessResolver(
+    IUserProfileService profiles, IMemoryCache cache) : ICustomPermissionResolver
+{
+    public async Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+    {
+        if (ctx.ResourceType != "payroll") return PermissionResolution.Defer;
+
+        var profile = await cache.GetOrCreateAsync($"profile:{ctx.User.UserId}", async e =&gt; {
+            e.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2);
+            return await profiles.GetAsync(ctx.User.UserId, ct);
+        });
+
+        if (profile is null)                          return PermissionResolution.Deny;
+        if (profile.EmployeeType == "contractor")     return PermissionResolution.Deny;
+        if (profile.Department    != "Finance")       return PermissionResolution.Deny;
+
+        return PermissionResolution.Allow;
+    }
+}</code></pre>
+
+  <h2>Example 2 — Time-of-Day Restrictions</h2>
+  <p>Scenario: Live payment execution is only allowed during business hours (09:00-17:00 UTC, Monday-Friday). Scheduled (non-real-time) payments are unrestricted.</p>
+  <pre><code">public sealed class LivePaymentHoursResolver : ICustomPermissionResolver
+{
+    private static readonly HashSet&lt;DayOfWeek&gt; Weekdays =
+    [
+        DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
+        DayOfWeek.Thursday, DayOfWeek.Friday
+    ];
+
+    public Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+    {
+        // Only applies to live payment execution
+        if (ctx.ResourceType != "live-payment" || ctx.Permission != "workflow.initiate")
+            return Task.FromResult(PermissionResolution.Defer);
+
+        var now = ctx.Environment.Now;
+        bool isWeekday    = Weekdays.Contains(now.DayOfWeek);
+        bool isBusinessHr = now.Hour &gt;= 9 &amp;&amp; now.Hour &lt; 17;
+
+        return Task.FromResult(
+            isWeekday &amp;&amp; isBusinessHr
+                ? PermissionResolution.Defer   // business hours → let RBAC decide
+                : PermissionResolution.Deny);  // outside hours → deny always
+    }
+}</code></pre>
+
+  <h2>Example 3 — Geographic ABAC (GDPR Data Residency)</h2>
+  <p>Scenario: EU-regulated data can only be accessed from EU countries. Access from outside the EU is denied regardless of role.</p>
+  <pre><code">public sealed class EuDataResidencyResolver(
+    IGeoIpService geoIp) : ICustomPermissionResolver
+{
+    private static readonly HashSet&lt;string&gt; EuCountries =
+        ["DE", "FR", "NL", "BE", "AT", "SE", "DK", "FI", "IT", "ES",
+         "PL", "PT", "IE", "LU", "HR", "BG", "RO", "HU", "SK", "SI"];
+
+    public async Task&lt;PermissionResolution&gt; ResolveAsync(PermissionContext ctx, CancellationToken ct)
+    {
+        if (ctx.Resource?.Classification != "EU_REGULATED")
+            return PermissionResolution.Defer;
+
+        var ip      = ctx.Environment.RequestIp;
+        var country = ip is not null
+            ? await geoIp.GetCountryAsync(ip, ct)
+            : null;
+
+        return country is not null &amp;&amp; EuCountries.Contains(country)
+            ? PermissionResolution.Defer    // EU country → let RBAC decide
+            : PermissionResolution.Deny;    // non-EU or unknown → deny
+    }
+}</code></pre>
+
+  <h2>Example 4 — Project-Based Dynamic Roles</h2>
+  <p>Scenario: Users get the <code>project-lead</code> role only when they have an active project assignment as lead. This role grants design access to project-specific workflow templates.</p>
+  <pre><code">public sealed class ProjectLeadRoleProvider(
+    IProjectRepository projects, IMemoryCache cache) : ICustomRoleProvider
+{
+    public async Task&lt;IReadOnlyList&lt;string&gt;&gt; GetRolesAsync(
+        string userId, string tenantId, CancellationToken ct)
+    {
+        var key = $"project-lead:{userId}:{tenantId}";
+
+        return await cache.GetOrCreateAsync(key, async entry =&gt;
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(3);
+
+            bool isLead = await projects.HasActiveLeadRoleAsync(userId, tenantId, ct);
+            return isLead
+                ? (IReadOnlyList&lt;string&gt;)["project-lead"]
+                : Array.Empty&lt;string&gt;();
+        }) ?? [];
+    }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Checklist Before Deploying Custom IAM</strong>
+    <ul>
+      <li>All resolvers return Defer (not Deny) for resources/permissions they don't apply to</li>
+      <li>External calls are cached with appropriate TTLs</li>
+      <li>Resolvers catch and log exceptions, returning Defer (not throwing)</li>
+      <li>Unit tests cover Allow, Deny, and Defer scenarios</li>
+      <li>Integration test confirms end-to-end behavior in the full pipeline</li>
+      <li>Audit logging is in place for every Deny decision with reason</li>
+      <li>Performance tested under load (resolver should not add &gt;10ms to p99)</li>
+    </ul>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-testing.html">&#8592; Testing Custom IAM</a>
+    <span class="spacer"></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

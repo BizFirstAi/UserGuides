@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Role-Based Expression — Permissions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Permissions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Permissions Overview</a>
+  <a href="01-app-access.html">App-Level Access</a>
+  <a href="02-page-visibility.html">Page Visibility</a>
+  <a href="03-widget-visibility.html">Widget Visibility</a>
+  <a href="04-role-expression.html" class="active">Role-Based Expression</a>
+  <a href="05-data-scoping.html">Data Scoping</a>
+  <a href="06-passport-integration.html">Passport IAM Integration</a>
+  <a href="07-audit.html">Permissions Audit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Role-Based Expression</h1>
+    <p class="lead">Token expressions evaluate against the live <code>context</code> object to produce visibility decisions. The full JavaScript expression syntax is available — roles, user identity, data values, and logical operators can all be combined in a single expression.</p>
+  </div>
+
+  <h2>context.roles Available Expressions</h2>
+  <pre><code>// Basic role check
+{{ context.roles.includes('admin') }}
+
+// OR — user has sales OR manager role
+{{ context.roles.includes('sales') || context.roles.includes('manager') }}
+
+// AND — user must be both admin AND regional-lead
+{{ context.roles.includes('admin') && context.roles.includes('regional-lead') }}
+
+// NOT — visible to everyone except viewers
+{{ !context.roles.includes('viewer') }}
+
+// Some — user has at least one of several roles (array intersection)
+{{ ['admin', 'manager', 'supervisor'].some(r => context.roles.includes(r)) }}
+</code></pre>
+
+  <h2>Combining Role Checks with Data Values</h2>
+  <pre><code>// Button visible to admins, OR to the record's owner
+{{ context.roles.includes('admin') || row.assignedUserId === context.userId }}
+
+// Panel visible only when user is admin AND record is in 'review' status
+{{ context.roles.includes('admin') && variables.currentStatus === 'review' }}
+
+// Action visible during business hours for managers only
+{{ context.roles.includes('manager') && new Date().getHours() >= 9 && new Date().getHours() < 17 }}
+</code></pre>
+
+  <h2>context Object Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Token</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>context.userId</code></td><td>string</td><td>Authenticated user's unique ID from Passport</td></tr>
+      <tr><td><code>context.tenantId</code></td><td>string</td><td>The tenant this session belongs to</td></tr>
+      <tr><td><code>context.roles</code></td><td>string[]</td><td>Array of role names granted to this user in this tenant</td></tr>
+      <tr><td><code>context.displayName</code></td><td>string</td><td>User's display name for UI greetings</td></tr>
+      <tr><td><code>context.email</code></td><td>string</td><td>User's email address</td></tr>
+      <tr><td><code>context.claims</code></td><td>object</td><td>Full set of custom claims from the Passport JWT</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Using visibilityExpression on Different Elements</h2>
+  <pre><code>// AppPage — hides the entire page from non-admins
+{
+  "pageId": "admin-panel",
+  "visibilityExpression": "{{ context.roles.includes('admin') }}"
+}
+
+// NavItem in sidebar
+{
+  "type": "item",
+  "label": "Admin Panel",
+  "targetPageId": "admin-panel",
+  "visibilityExpression": "{{ context.roles.includes('admin') }}"
+}
+
+// Widget placement
+{
+  "widgetId": "delete-button",
+  "type": "Button",
+  "visibilityExpression": "{{ context.roles.includes('admin') }}"
+}
+
+// DataGrid column
+{
+  "field": "salary",
+  "header": "Salary",
+  "visibilityExpression": "{{ context.roles.includes('hr') || context.roles.includes('admin') }}"
+}
+</code></pre>
+
+  <h2>Expression Evaluation Rules</h2>
+  <ul>
+    <li>Expressions must return a boolean (truthy/falsy values are coerced)</li>
+    <li>Expressions are evaluated at render time, not at compile time</li>
+    <li>If an expression throws an error, the widget defaults to <strong>hidden</strong> (fail-closed)</li>
+    <li>Expressions have access to: <code>context</code>, <code>variables</code>, <code>route</code>, <code>row</code> (inside grids), <code>modal</code> (inside modals)</li>
+    <li>Do not make async calls inside visibility expressions — they are synchronous</li>
+  </ul>
+
+  <div class="callout callout-warning">
+    <strong>Fail-closed on error</strong>
+    If a visibility expression evaluates to an error (e.g., accessing a property on undefined), the widget is hidden rather than shown. This is the safe default — always test expressions with the State Inspector before publishing.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-widget-visibility.html">&#8592; Widget Visibility</a>
+    <a href="05-data-scoping.html">Next: Data Scoping &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

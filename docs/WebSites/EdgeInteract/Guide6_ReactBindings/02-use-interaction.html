@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>useInteraction — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html">InteractionProvider</a>
+  <a href="02-use-interaction.html" class="active">useInteraction</a>
+  <a href="03-use-receiver.html">useInteractionReceiver</a>
+  <a href="04-use-callback.html">useInteractionCallback</a>
+  <a href="05-use-interaction-history.html">useInteractionHistory</a>
+  <a href="06-cleanup.html">Cleanup and Lifecycle</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>useInteraction</h1>
+    <p class="lead"><code>useInteraction()</code> is the hook for <em>sending</em> an interaction from a React component. It returns a <code>sendInteraction</code> function that publishes the request and returns a Promise that resolves with the response (or rejects on timeout or block).</p>
+  </div>
+
+  <h2>Signature</h2>
+  <pre><code">function useInteraction&lt;TPayload = unknown, TData = unknown&gt;(): {
+  sendInteraction: (
+    request: Omit&lt;InteractionRequest&lt;TPayload&gt;, 'interactionId'&gt;
+  ) =&gt; Promise&lt;InteractionResponse&lt;TData&gt;&gt;;
+  isSending: boolean;
+  lastError: Error | null;
+}
+</code></pre>
+
+  <h2>Basic Usage</h2>
+  <pre><code">import { useInteraction } from 'edge-interact-react';
+
+function SendApprovalButton({ invoiceId, managerId }: Props) {
+  const { sendInteraction, isSending, lastError } = useInteraction();
+
+  const handleRequest = async () =&gt; {
+    try {
+      const response = await sendInteraction({
+        type: 'approval',
+        targetUserId: managerId,
+        title: 'Invoice Approval Required',
+        payload: {
+          context: `Invoice ${invoiceId} requires approval.`,
+          fields: [{ key: 'id', label: 'Invoice', value: invoiceId }]
+        },
+        timeoutMs: 86_400_000
+      });
+
+      if (response.outcome === 'approved') {
+        toast.success(`Approved by ${response.respondedBy}`);
+      } else {
+        toast.warning(`Rejected: ${response.data?.comment}`);
+      }
+    } catch (err) {
+      if (err instanceof InteractionTimeoutError) {
+        toast.error('No response received — interaction timed out.');
+      } else {
+        toast.error('Failed to send approval request.');
+      }
+    }
+  };
+
+  return (
+    &lt;button onClick={handleRequest} disabled={isSending}&gt;
+      {isSending ? 'Sending...' : 'Request Manager Approval'}
+    &lt;/button&gt;
+  );
+}
+</code></pre>
+
+  <h2>Return Values</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>sendInteraction(request)</code></td><td>Function → Promise</td><td>Publishes the interaction. Resolves with <code>InteractionResponse</code> when the user responds. Rejects on timeout, block, or error.</td></tr>
+      <tr><td><code>isSending</code></td><td>boolean</td><td><code>true</code> while an interaction is in-flight (published but no response yet)</td></tr>
+      <tr><td><code>lastError</code></td><td>Error | null</td><td>The last error from <code>sendInteraction</code>. Reset to <code>null</code> on the next call.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Typed Usage with Generics</h2>
+  <pre><code">import { useInteraction } from 'edge-interact-react';
+import type { ApprovalPayload } from 'edge-interact-core';
+
+// TPayload = ApprovalPayload, TData = { comment: string }
+const { sendInteraction } = useInteraction&lt;ApprovalPayload, { comment: string }&gt;();
+
+const response = await sendInteraction({
+  type: 'approval',
+  targetUserId: managerId,
+  title: 'Approve',
+  payload: {
+    context: '...',        // typed as ApprovalPayload
+    fields: [...]
+  },
+  timeoutMs: 86_400_000
+});
+
+// response.data is typed as { comment: string }
+console.log(response.data?.comment);
+</code></pre>
+
+  <h2>Error Types</h2>
+  <table>
+    <thead><tr><th>Error</th><th>When Thrown</th></tr></thead>
+    <tbody>
+      <tr><td><code>InteractionTimeoutError</code></td><td>User did not respond within <code>timeoutMs</code></td></tr>
+      <tr><td><code>InteractionBlockedError</code></td><td>A pre-send hook blocked the interaction</td></tr>
+      <tr><td><code>InteractionRateLimitError</code></td><td>Rate limit exceeded for the target user</td></tr>
+      <tr><td><code>InteractionConnectionError</code></td><td>EdgeStream not connected when <code>sendInteraction</code> was called</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-provider.html">&#8592; InteractionProvider</a>
+    <a href="03-use-receiver.html">Next: useInteractionReceiver &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

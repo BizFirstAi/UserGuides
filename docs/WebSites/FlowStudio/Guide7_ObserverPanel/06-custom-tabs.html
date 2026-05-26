@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adding Custom Tabs — Observer Panel | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Observer Panel</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observer Panel Overview</a>
+  <a href="01-tab-system.html">Tab System</a>
+  <a href="02-engine.html">FlowObserverPanelEngine</a>
+  <a href="03-panel-store.html">Observer Panel Store</a>
+  <a href="04-signalr.html">Observer SignalR Hook</a>
+  <a href="05-built-in-tabs.html">Built-In Tabs Summary</a>
+  <a href="06-custom-tabs.html" class="active">Adding Custom Tabs</a>
+  <a href="07-panel-constraints.html">Panel Sizing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Adding Custom Tabs</h1>
+    <p class="lead">The Observer Panel is extensible. You can register custom tabs that appear alongside the built-in tabs, receive execution events, and display custom monitoring data relevant to your workflow domain.</p>
+  </div>
+
+  <h2>Step 1 — Implement the Tab Component</h2>
+  <p>A custom tab content component is a standard React component. It reads from <code>flowObserverPanelStore</code> and any custom stores you create:</p>
+  <pre><code>// MetricsTabContent.tsx
+import { useFlowObserverPanelStore } from 'flow-observer-core';
+
+export function MetricsTabContent() {
+  // Read from the shared store
+  const completedCount = useFlowObserverPanelStore(s =&gt; s.completedNodeCount);
+  const totalCount = useFlowObserverPanelStore(s =&gt; s.totalNodeCount);
+
+  // Read from a custom store you manage
+  const { apiCallCount, averageApiLatencyMs } = useMetricsStore();
+
+  return (
+    &lt;div className="custom-tab-content"&gt;
+      &lt;div className="metric"&gt;
+        &lt;span className="label"&gt;Progress&lt;/span&gt;
+        &lt;span className="value"&gt;{completedCount} / {totalCount}&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div className="metric"&gt;
+        &lt;span className="label"&gt;HTTP Calls&lt;/span&gt;
+        &lt;span className="value"&gt;{apiCallCount}&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div className="metric"&gt;
+        &lt;span className="label"&gt;Avg API Latency&lt;/span&gt;
+        &lt;span className="value"&gt;{averageApiLatencyMs}ms&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Step 2 — Register with the Engine</h2>
+  <pre><code>// In your app's initialisation (e.g., FlowStudioProvider setup)
+import { useFlowObserverPanelEngine } from 'flow-observer-core';
+
+function AppInitialiser({ children }) {
+  const engine = useFlowObserverPanelEngine();
+
+  useEffect(() =&gt; {
+    engine.registerTab({
+      id: 'metrics',
+      label: 'Metrics',
+      icon: 'fa-solid fa-chart-bar',
+      component: MetricsTabContent,
+      order: 60,          // appears after the built-in tabs (10–50)
+      onEvent: (event) =&gt; {
+        // Filter only HTTP node events and update your custom store
+        if (event.type === 'NodeExecutionCompleted' &amp;&amp;
+            event.nodeType === 'http-request') {
+          metricsStore.getState().recordApiCall(event.durationMs);
+        }
+      }
+    });
+
+    return () =&gt; engine.unregisterTab('metrics');
+  }, [engine]);
+
+  return children;
+}</code></pre>
+
+  <h2>Step 3 — Badge Counts</h2>
+  <p>Badge counts draw attention to the tab when something important happens. Update the badge via the engine:</p>
+  <pre><code>// Set badge to number of failed HTTP calls
+engine.setTabBadge('metrics', failedCallCount);
+
+// Clear the badge
+engine.setTabBadge('metrics', null);</code></pre>
+
+  <h2>Custom Tab Checklist</h2>
+  <table>
+    <thead><tr><th>Item</th><th>Required</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Unique tab ID</td><td>Yes</td><td>Must not conflict with built-in IDs</td></tr>
+      <tr><td>Tab component</td><td>Yes</td><td>Standard React component</td></tr>
+      <tr><td>Register on mount</td><td>Yes</td><td>Call <code>engine.registerTab()</code></td></tr>
+      <tr><td>Unregister on unmount</td><td>Recommended</td><td>Call <code>engine.unregisterTab()</code> in cleanup</td></tr>
+      <tr><td>Handle <code>engine.clear()</code></td><td>Recommended</td><td>Reset custom store state when a new execution starts</td></tr>
+      <tr><td>order value &gt; 50</td><td>Recommended</td><td>Avoid conflicting with built-in tab ordering</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-built-in-tabs.html">&#8592; Built-In Tabs Summary</a>
+    <a href="07-panel-constraints.html">Next: Panel Sizing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

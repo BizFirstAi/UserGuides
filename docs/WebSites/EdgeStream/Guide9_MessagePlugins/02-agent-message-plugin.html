@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Message Plugin — Message Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Plugins</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Message Plugins Overview</a>
+  <a href="01-workflow-event-plugin.html">Workflow Event Plugin</a>
+  <a href="02-agent-message-plugin.html" class="active">Agent Message Plugin</a>
+  <a href="03-ui-action-plugin.html">UI Action Plugin</a>
+  <a href="04-system-event-plugin.html">System Event Plugin</a>
+  <a href="05-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="06-plugin-registry.html">Plugin Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Agent Message Plugin</h1>
+    <p class="lead">The Agent Message Plugin owns the <code>agent.*</code> topic namespace. It carries Octopus agent messages from the LLM backend to the chat UI — including streaming tokens, tool calls, and turn completions.</p>
+  </div>
+
+  <h2>Topic Namespace</h2>
+  <pre><code>agent.chat.turnStarted       // New agent turn begins (user sent message)
+agent.chat.token             // Streaming token — one per LLM output token
+agent.chat.toolCallStarted   // Agent invoked a tool
+agent.chat.toolCallCompleted // Tool call finished, result available
+agent.chat.turnCompleted     // Full agent response assembled
+agent.chat.error             // Agent error (timeout, API failure, etc.)
+agent.status                 // Agent availability/health status</code></pre>
+
+  <h2>Message Formats</h2>
+  <pre><code>// agent.chat.token — high-frequency streaming message
+interface AgentTokenMessage {
+  sessionId: string;
+  turnId: string;
+  agentId: string;
+  token: string;           // single LLM output token (e.g., "Hello", " world")
+  tokenIndex: number;      // position in the stream
+  isLast: boolean;         // true on final token
+}
+
+// agent.chat.turnCompleted
+interface AgentTurnCompletedMessage {
+  sessionId: string;
+  turnId: string;
+  agentId: string;
+  fullText: string;        // complete assembled response
+  toolCallsUsed: string[];
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+}
+
+// agent.chat.toolCallStarted
+interface AgentToolCallMessage {
+  sessionId: string;
+  turnId: string;
+  toolName: string;
+  toolCallId: string;
+  arguments: Record&lt;string, unknown&gt;;
+}</code></pre>
+
+  <h2>Streaming Chat Implementation</h2>
+  <pre><code>import { useCallback, useState } from 'react';
+import { useSubscription } from 'edge-stream-js-react';
+
+function ChatStreamingWindow({ sessionId }: { sessionId: string }) {
+  const [streamingText, setStreamingText] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [toolCalls, setToolCalls] = useState&lt;string[]&gt;([]);
+
+  const tokenHandler = useCallback((envelope) =&gt; {
+    const { token, sessionId: sid, isLast } = envelope.body;
+    if (sid !== sessionId) return;
+
+    setStreamingText(prev =&gt; prev + token);
+    if (isLast) setIsStreaming(false);
+  }, [sessionId]);
+
+  const turnHandler = useCallback((envelope) =&gt; {
+    if (envelope.body.sessionId !== sessionId) return;
+    setIsStreaming(true);
+    setStreamingText('');
+    setToolCalls([]);
+  }, [sessionId]);
+
+  const toolHandler = useCallback((envelope) =&gt; {
+    if (envelope.body.sessionId !== sessionId) return;
+    setToolCalls(prev =&gt; [...prev, envelope.body.toolName]);
+  }, [sessionId]);
+
+  // Use 'chat' server which has WebSocket transport
+  useSubscription('chat', 'agent.chat.token', tokenHandler);
+  useSubscription('chat', 'agent.chat.turnStarted', turnHandler);
+  useSubscription('chat', 'agent.chat.toolCallStarted', toolHandler);
+
+  return (
+    &lt;div&gt;
+      {toolCalls.length &gt; 0 &amp;&amp; (
+        &lt;div className="tool-calls"&gt;
+          Using tools: {toolCalls.join(', ')}
+        &lt;/div&gt;
+      )}
+      &lt;div className="agent-response"&gt;
+        {streamingText}
+        {isStreaming &amp;&amp; &lt;span className="cursor"&gt;|&lt;/span&gt;}
+      &lt;/div&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>High-Frequency Token Handling</h2>
+  <p>Token messages arrive at LLM output speed — potentially 50-100 tokens/second. Apply these patterns to prevent rendering bottlenecks:</p>
+  <pre><code>// Pattern: accumulate tokens in a ref, flush to state on requestAnimationFrame
+function EfficientTokenStream({ sessionId }) {
+  const [text, setText] = useState('');
+  const bufferRef = useRef('');
+  const rafRef = useRef&lt;number&gt;(0);
+
+  const tokenHandler = useCallback((envelope) =&gt; {
+    if (envelope.body.sessionId !== sessionId) return;
+
+    bufferRef.current += envelope.body.token;
+
+    // Only schedule one RAF at a time
+    if (!rafRef.current) {
+      rafRef.current = requestAnimationFrame(() =&gt; {
+        setText(prev =&gt; prev + bufferRef.current);
+        bufferRef.current = '';
+        rafRef.current = 0;
+      });
+    }
+  }, [sessionId]);
+
+  useSubscription('chat', 'agent.chat.token', tokenHandler);
+  return &lt;pre&gt;{text}&lt;/pre&gt;;
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Use the 'chat' Server</strong>
+    Agent messages use the <code>'chat'</code> server (WebSocket transport) — not the <code>'bas'</code> server (SignalR). The WebSocket transport is lower-overhead for high-frequency streaming, and the namespaces are isolated so token floods do not affect workflow event delivery.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-workflow-event-plugin.html">&#8592; Workflow Event Plugin</a>
+    <a href="03-ui-action-plugin.html">Next: UI Action Plugin &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

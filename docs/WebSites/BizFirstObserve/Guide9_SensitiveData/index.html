@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sensitive Data Overview — Sensitive Data Handling | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Sensitive Data Handling</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Sensitive Data Overview</a>
+  <a href="01-log-sanitization.html">Log Sanitization in BizFirstGO</a>
+  <a href="02-otel-redaction.html">OTel Collector Redaction</a>
+  <a href="03-label-hygiene.html">Label Hygiene</a>
+  <a href="04-trace-attributes.html">Trace Attribute Filtering</a>
+  <a href="05-loki-access.html">Loki Access Controls</a>
+  <a href="06-gdpr-deletion.html">GDPR Deletion</a>
+  <a href="07-audit.html">Observability Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Sensitive Data Overview</h1>
+    <p class="lead">Observability systems are a common vector for accidental PII exposure. Log lines can contain form field values, trace spans can capture HTTP headers with authentication tokens, and metrics labels can encode user identifiers. BizFirstGO implements a defense-in-depth approach — sanitization at emission, redaction at the collector, and access control at the storage layer.</p>
+  </div>
+
+  <h2>Sensitive Data Risk Categories</h2>
+  <table>
+    <thead>
+      <tr><th>Risk Category</th><th>Examples</th><th>Where It Appears</th><th>Defense Layer</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Authentication credentials</strong></td><td>Passwords, API keys, OAuth tokens, JWT secrets</td><td>Log messages, span attributes, HTTP headers</td><td>INodeLogger sanitizer + OTel Collector redaction</td></tr>
+      <tr><td><strong>Personal identifiers (PII)</strong></td><td>Email addresses, SSN, phone numbers, national IDs</td><td>Workflow input/output data in logs</td><td>INodeLogger sanitizer + field-level redaction</td></tr>
+      <tr><td><strong>Financial data</strong></td><td>Credit card numbers, bank account numbers</td><td>Payment workflow logs</td><td>INodeLogger sanitizer (regex patterns)</td></tr>
+      <tr><td><strong>Health data (PHI)</strong></td><td>Diagnoses, prescription data, patient IDs</td><td>Healthcare workflow logs</td><td>Allowlist logging (log what is safe, not what exists)</td></tr>
+      <tr><td><strong>Cross-tenant data</strong></td><td>Tenant A seeing Tenant B's metrics or logs</td><td>Grafana dashboards, Loki queries</td><td>Loki multi-tenancy + Grafana access control</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Defense-in-Depth Architecture</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Source: INodeLogger sanitization (BizFirstGO)</h4>
+        <p>Before a log line is emitted, BizFirstGO's <code>INodeLogger</code> passes the message through <code>LogSanitizer.cs</code>, which applies regex patterns to mask known PII patterns. This is the first and most effective defense — data never leaves the service if it matches a mask pattern.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Transport: OTel Collector redaction processor</h4>
+        <p>The OTel Collector's <code>redaction</code> processor applies a second layer of attribute-level scrubbing to spans and logs passing through. Catches anything the service-level sanitizer missed — acts as a safety net.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Storage: Loki multi-tenancy enforcement</h4>
+        <p>Loki with <code>auth_enabled: true</code> enforces tenant isolation at the storage layer. Tenant A's logs are stored in a separate keyspace and cannot be queried by Tenant B — even if a Grafana dashboard is misconfigured.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Access: Grafana role-based access control</h4>
+        <p>Grafana roles (Viewer/Editor/Admin) and team folder permissions control which humans can see which dashboards. Viewers cannot use Explore to make ad-hoc queries. Cross-tenant dashboard access is blocked by folder permissions.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Remediation: GDPR deletion API</h4>
+        <p>If sensitive data is discovered in Loki despite the above layers, Loki's delete API allows targeted deletion of specific log lines matching a pattern — without deleting the entire tenant's logs.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <strong>Sanitization Must Be Enabled Before First Use</strong>
+    <p>The BizFirstGO LogSanitizer and OTel Collector redaction processor must be configured before the first production workflow execution. Sensitive data written to Loki cannot be efficiently "un-written" — it can be deleted, but the deletion process is slow and may leave traces in compacted chunks. Prevention is always better than remediation.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="../Guide8_DataRetentionArchive/07-cost-optimization.html">&#8592; Data Retention Guide</a>
+    <a href="01-log-sanitization.html">Next: Log Sanitization in BizFirstGO &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

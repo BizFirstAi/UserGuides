@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Publishing from a Node — Workflow Event Bus | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Event Bus</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interface.html">IWorkflowEventBus</a>
+  <a href="02-built-in-events.html">Built-In Workflow Events</a>
+  <a href="03-event-schema.html">WorkflowEvent Schema</a>
+  <a href="04-publishing.html" class="active">Publishing from a Node</a>
+  <a href="05-subscribing.html">Subscribing to Events</a>
+  <a href="06-custom-events.html">Defining Custom Events</a>
+  <a href="07-delivery-guarantees.html">Delivery Guarantees</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Publishing from a Node</h1>
+    <p class="lead">Inject IWorkflowEventBus into your executor and call PublishAsync inside ExecuteInternalAsync. This is how domain events flow outward from workflow execution to the rest of your system.</p>
+  </div>
+
+  <h2>Constructor Injection Pattern</h2>
+  <pre><code>public class InvoiceProcessingExecutor
+    : BaseNodeExecutor&lt;InvoiceInput, InvoiceOutput&gt;
+{
+    private readonly IWorkflowEventBus  _eventBus;
+    private readonly IInvoiceService    _invoices;
+
+    public InvoiceProcessingExecutor(
+        IWorkflowEventBus eventBus,
+        IInvoiceService invoices)
+    {
+        _eventBus = eventBus;
+        _invoices = invoices;
+    }
+
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteInternalAsync(
+        NodeExecutionContext ctx, CancellationToken ct)
+    {
+        var result = await _invoices.ProcessAsync(ctx.Input.InvoiceId, ct);
+
+        // Publish domain event — all subscribed handlers will receive this
+        await _eventBus.PublishAsync(new InvoiceProcessedEvent
+        {
+            ExecutionId = ctx.ExecutionId,
+            ProcessId   = ctx.ProcessId,
+            TenantId    = ctx.TenantId,
+            InvoiceId   = ctx.Input.InvoiceId,
+            Amount      = result.TotalAmount,
+            Currency    = result.Currency,
+            ProcessedAt = DateTimeOffset.UtcNow
+        }, ct);
+
+        return NodeExecutionResult.Success(new InvoiceOutput
+        {
+            InvoiceId = ctx.Input.InvoiceId,
+            Status    = result.Status
+        });
+    }
+}</code></pre>
+
+  <h2>Timing: When to Publish</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Recommendation</th></tr></thead>
+    <tbody>
+      <tr><td>Publish before returning Success</td><td>Standard — event reflects the node outcome</td></tr>
+      <tr><td>Publish conditionally based on output</td><td>Fine — check result value before PublishAsync</td></tr>
+      <tr><td>Publish inside error handling</td><td>Consider an INodeEventSubscriber OnError instead — cleaner separation</td></tr>
+      <tr><td>Publish multiple events from one node</td><td>Allowed — call PublishAsync multiple times</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Publishing Multiple Events</h2>
+  <pre><code>// Two domain events from one executor — both fully supported
+await _eventBus.PublishAsync(new CustomerUpdatedEvent { ... }, ct);
+await _eventBus.PublishAsync(new AuditTrailEntryEvent { ... }, ct);</code></pre>
+
+  <h2>Context Fields — Always Populate Them</h2>
+  <p>Always copy <code>ExecutionId</code>, <code>ProcessId</code>, and <code>TenantId</code> from <code>ctx</code> into your event. These are required for correlating events back to executions and for tenant isolation in handlers.</p>
+
+  <div class="callout warning">
+    <strong>Do not hardcode tenant IDs:</strong> Always use <code>ctx.TenantId</code>. If you hardcode or omit TenantId, handlers that write to multi-tenant stores will corrupt or leak data.
+  </div>
+
+  <h2>PublishAsync Is Awaited</h2>
+  <p>Despite the name "fire-and-forget" in common documentation, <code>PublishAsync</code> does <em>await</em> all handlers before returning. The "fire-and-forget" refers to the fact that handler results do not affect node output — but execution is still synchronous. If you want true background delivery, your handler must do the fire-and-forget internally (e.g., enqueue to a background channel).</p>
+
+  <div class="page-nav">
+    <a href="03-event-schema.html">&#8592; WorkflowEvent Schema</a>
+    <a href="05-subscribing.html">Next: Subscribing to Events &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

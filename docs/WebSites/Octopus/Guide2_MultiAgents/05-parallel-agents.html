@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parallel Agent Execution — Multi-Agent System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Multi-Agent System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Multi-Agent Overview</a>
+  <a href="01-orchestrator-pattern.html">Orchestrator Agent Pattern</a>
+  <a href="02-handoff.html">Agent Handoff</a>
+  <a href="03-specialist-agents.html">Specialist Agents</a>
+  <a href="04-shared-conversation.html">Shared Conversation Context</a>
+  <a href="05-parallel-agents.html" class="active">Parallel Agent Execution</a>
+  <a href="06-agent-teams.html">Defining Agent Teams</a>
+  <a href="07-monitoring.html">Monitoring Multi-Agent Flows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Parallel Agent Execution</h1>
+    <p class="lead">When a user request spans multiple domains, the orchestrator can invoke multiple specialist agents simultaneously and merge their results into a single coherent response. This is the fan-out/fan-in pattern for multi-agent systems.</p>
+  </div>
+
+  <h2>When to Use Parallel Execution</h2>
+  <p>Parallel execution is appropriate when:</p>
+  <ul>
+    <li>A single user request genuinely requires two or more independent domains (e.g., "What are my leave balance <em>and</em> my current expense report status?")</li>
+    <li>The sub-questions are independent — one agent's result does not depend on another's</li>
+    <li>Latency matters — sequential calls would be noticeably slower</li>
+  </ul>
+  <p>Parallel execution should <em>not</em> be used when one specialist's output feeds into another's input — use sequential handoff in that case.</p>
+
+  <h2>Parallel Execution API</h2>
+  <pre><code>public class ParallelAgentExecutor
+{
+    public async Task&lt;ParallelAgentResult&gt; ExecuteAsync(
+        IReadOnlyList&lt;ParallelAgentRequest&gt; requests,
+        ConversationComposite conversation,
+        CancellationToken ct = default)
+    {
+        // Fan out: invoke all specialist agents concurrently
+        var tasks = requests.Select(req => _agentExecutor.ExecuteAsync(
+            agent: await _agentRepo.GetCompositeAsync(req.AgentId, conversation.TenantId),
+            conversation: conversation,
+            newMessage: req.FocusedPrompt,
+            ct: ct));
+
+        var results = await Task.WhenAll(tasks);
+
+        // Fan in: merge results
+        return new ParallelAgentResult
+        {
+            AgentResponses = requests.Zip(results).Select((pair, _) => new AgentResponse
+            {
+                AgentId = pair.First.AgentId,
+                Content = pair.Second.Content,
+                ToolCalls = pair.Second.ToolCalls
+            }).ToList()
+        };
+    }
+}</code></pre>
+
+  <h2>Response Merging</h2>
+  <p>After parallel execution, the orchestrator merges results. Three merging strategies are supported:</p>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>How</th><th>When to Use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Concatenation</strong></td><td>Join responses with section headers</td><td>Independent answers that don't need synthesis</td></tr>
+      <tr><td><strong>LLM Synthesis</strong></td><td>Pass all results to orchestrator LLM to write a unified answer</td><td>When responses need to be coherently combined</td></tr>
+      <tr><td><strong>Template Merge</strong></td><td>Fill a response template with values from each agent</td><td>Structured outputs (tables, summaries)</td></tr>
+    </tbody>
+  </table>
+
+  <pre><code>// LLM Synthesis merge
+var synthesisPrompt = $"""
+The user asked: "{userMessage}"
+
+Here are the specialist responses:
+HR Agent: {hrResult.Content}
+Finance Agent: {financeResult.Content}
+
+Write a single, clear response that incorporates both answers.
+""";
+
+var merged = await _orchestratorLLM.CompleteAsync(
+    new[] { new LLMMessage(Role.User, synthesisPrompt) },
+    tools: null, options: orchestratorOptions);</code></pre>
+
+  <div class="callout warning">
+    <strong>Cost Consideration</strong>
+    <p>Parallel execution multiplies your LLM call cost — invoking 3 agents in parallel costs 3x the token cost of a single call. Budget this carefully. Use parallel execution only when the response quality improvement justifies the cost.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-shared-conversation.html">&#8592; Shared Conversation Context</a>
+    <a href="06-agent-teams.html">Next: Defining Agent Teams &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

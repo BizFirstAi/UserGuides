@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stopping the Server — Servers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Servers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Server Overview</a>
+  <a href="01-creating.html">Creating a Server</a>
+  <a href="02-attaching-transport.html">Attaching a Transport</a>
+  <a href="03-registering-hooks.html">Registering Hooks</a>
+  <a href="04-starting.html">Starting the Server</a>
+  <a href="05-stopping.html" class="active">Stopping the Server</a>
+  <a href="06-multi-server.html">Multi-Server Patterns</a>
+  <a href="07-error-handling.html">Server Error Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Stopping the Server</h1>
+    <p class="lead"><code>edgeStream.stop()</code> gracefully shuts down all server transports. In-flight pipeline processing completes before the transport disconnects.</p>
+  </div>
+
+  <h2>Stop Flow</h2>
+  <pre><code>// EdgeStream.stop() — stops all servers concurrently
+async stop(): Promise&lt;void&gt; {
+  if (this.status === 'idle') return;
+  this.status = 'stopping';
+
+  const stopPromises = Array.from(this.servers.values()).map(s =&gt; s.stop());
+  await Promise.all(stopPromises); // all servers stop concurrently
+
+  this.status = 'idle';
+  this.emit('stream:stopped', { timestamp: new Date() });
+}</code></pre>
+
+  <h2>Graceful Application Shutdown</h2>
+  <pre><code>// Cleanup on page unload or component destroy
+async function teardownEdgeStream() {
+  // 1. Unsubscribe all subscriptions first
+  activeSubscriptions.forEach(sub =&gt; sub.unsubscribe());
+
+  // 2. Stop EdgeStream
+  await edgeStream.stop();
+
+  console.log('EdgeStream stopped cleanly');
+  console.log('Status:', edgeStream.status); // 'idle'
+}
+
+// React app teardown
+useEffect(() =&gt; {
+  return () =&gt; {
+    teardownEdgeStream().catch(console.error);
+  };
+}, []);</code></pre>
+
+  <h2>React Provider Teardown</h2>
+  <p>The <code>EdgeStreamProvider</code> automatically handles teardown when the provider unmounts. You do not need to call <code>stop()</code> manually when using the React provider:</p>
+  <pre><code>// EdgeStreamProvider handles this internally
+useEffect(() =&gt; {
+  let isMounted = true;
+  initializeClient().then(() =&gt; {
+    if (!isMounted) return;
+    setIsInitialized(true);
+  });
+
+  return () =&gt; {
+    isMounted = false;
+    // Cleanup subscriptions (not transport — let transport manage itself)
+  };
+}, [edgeStreamClient]);</code></pre>
+
+  <div class="callout info">
+    <strong>stop() Is Idempotent</strong>
+    Calling <code>stop()</code> when already idle returns immediately without doing any work.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-starting.html">&#8592; Starting the Server</a>
+    <a href="06-multi-server.html">Next: Multi-Server Patterns &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

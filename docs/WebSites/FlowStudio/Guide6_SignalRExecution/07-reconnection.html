@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reconnection Handling — Real-Time Execution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.reconnect-state{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:6px;font-size:13px;font-weight:600;margin:4px 0;}
+.state-reconnecting{background:rgba(251,191,36,0.15);color:#fbbf24;border:1px solid rgba(251,191,36,0.3);}
+.state-degraded{background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.3);}
+.state-restored{background:rgba(52,211,153,0.15);color:#34d399;border:1px solid rgba(52,211,153,0.3);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Real-Time Execution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">SignalR Overview</a>
+  <a href="01-connection.html">Establishing Connection</a>
+  <a href="02-event-types.html">Execution Event Types</a>
+  <a href="03-node-stream.html">Per-Node Log Streaming</a>
+  <a href="04-workflow-stream.html">Workflow-Level Events</a>
+  <a href="05-state-sync.html">Syncing to UI State</a>
+  <a href="06-polling-fallback.html">Polling Fallback</a>
+  <a href="07-reconnection.html" class="active">Reconnection Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Reconnection Handling</h1>
+    <p class="lead">SignalR's <code>withAutomaticReconnect()</code> provides built-in retry with configurable delays. Flow Studio layers on top of this with UI state indicators, event replay on reconnect, and graceful degradation to polling when all reconnection attempts fail.</p>
+  </div>
+
+  <h2>Automatic Reconnect Configuration</h2>
+  <p>The retry delay sequence is configured when the HubConnection is built. Flow Studio uses four escalating delays before giving up:</p>
+  <pre><code>// useExecutionSignalR.ts
+const connection = new HubConnectionBuilder()
+  .withUrl('/hubs/execution', {
+    accessTokenFactory: () => getAuthToken()
+  })
+  .withAutomaticReconnect([1000, 2000, 5000, 10000]) // ms delays between attempts
+  .configureLogging(LogLevel.Warning)
+  .build();</code></pre>
+
+  <p>The four configured delays total 18 seconds of retry time. After the fourth attempt fails, SignalR fires the <code>onclose</code> callback and does not retry further. At that point, the polling fallback activates automatically.</p>
+
+  <h2>Reconnection State Machine</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Connection Lost</h4>
+        <p>Network interruption or server restart drops the WebSocket. SignalR fires <code>onreconnecting(error)</code>.</p>
+        <div class="reconnect-state state-reconnecting"><i class="fa-solid fa-rotate"></i> Reconnecting…</div>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Retry Attempts (1s → 2s → 5s → 10s)</h4>
+        <p>SignalR automatically retries. The reconnecting banner in the Observer Panel shows the attempt count. Execution continues on the server during this window — events are queued server-side.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3a</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Reconnect Succeeded</h4>
+        <p>SignalR fires <code>onreconnected(connectionId)</code>. The client re-joins the execution group and performs an event replay catch-up to fill any gaps.</p>
+        <div class="reconnect-state state-restored"><i class="fa-solid fa-circle-check"></i> Connection Restored</div>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot" style="background:#f87171;">3b</div></div>
+      <div class="body">
+        <h4>All Retries Exhausted → Polling Fallback</h4>
+        <p>SignalR fires <code>onclose(error)</code>. The polling fallback activates and the "Live updates unavailable" banner replaces the reconnecting indicator.</p>
+        <div class="reconnect-state state-degraded"><i class="fa-solid fa-triangle-exclamation"></i> Live updates unavailable</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Reconnection Event Handlers</h2>
+  <pre><code>// useExecutionSignalR.ts — lifecycle hooks
+connection.onreconnecting((error) => {
+  setConnectionState('reconnecting');
+  uiStore.showReconnectingBanner(error?.message);
+  // Don't clear existing node states — they remain visible during reconnect
+});
+
+connection.onreconnected(async (connectionId) => {
+  setConnectionState('connected');
+  uiStore.hideReconnectingBanner();
+
+  // Re-join the execution group (server forgets group membership on disconnect)
+  await connection.invoke('JoinExecutionGroup', executionId);
+
+  // Catch up on events missed during the disconnect window
+  await replayMissedEvents(executionId, lastReceivedEventTimestamp);
+});
+
+connection.onclose((error) => {
+  setConnectionState('disconnected');
+  // Activate polling fallback
+  setPollingEnabled(true);
+  uiStore.showPollingFallbackBanner();
+});</code></pre>
+
+  <h2>Event Replay on Reconnect</h2>
+  <p>When the connection is re-established, the client may have missed events that occurred during the disconnection window. The <code>replayMissedEvents</code> function fetches a snapshot from the REST API and reconciles it with current UI state:</p>
+  <pre><code>// executionReplay.ts
+async function replayMissedEvents(
+  executionId: string,
+  since: string           // ISO 8601 timestamp of last received event
+) {
+  const snapshot = await fetch(
+    `/api/v1/process-engine/executions/${executionId}/snapshot?since=${since}`
+  ).then(r => r.json());
+
+  // Apply each node's current status from the snapshot
+  for (const node of snapshot.nodes) {
+    designerModeStore.setNodeStatus(node.nodeId, {
+      status: node.status,
+      durationMs: node.durationMs,
+      output: node.output
+    });
+  }
+
+  // If the execution finished during the disconnect, handle completion
+  if (['completed', 'failed', 'cancelled'].includes(snapshot.executionStatus)) {
+    designerModeStore.setExecutionComplete(snapshot.executionStatus);
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Snapshot Endpoint</strong>
+    The <code>/snapshot?since=</code> endpoint returns the current state of all nodes in the execution, not a list of events. This is intentional — replaying individual events in order would be complex and error-prone. Instead, the snapshot gives a consistent point-in-time view that the client applies as a batch update.
+  </div>
+
+  <h2>UI Indicators During Reconnection</h2>
+  <table>
+    <thead><tr><th>State</th><th>Banner Text</th><th>Color</th><th>Node Canvas</th></tr></thead>
+    <tbody>
+      <tr><td>Reconnecting (attempt 1–4)</td><td>"Reconnecting… (attempt N of 4)"</td><td>Yellow</td><td>Node states frozen; no new updates</td></tr>
+      <tr><td>Reconnected</td><td>"Connection restored" (auto-dismisses after 3s)</td><td>Green</td><td>Snapshot applied; states updated</td></tr>
+      <tr><td>All retries failed</td><td>"Live updates unavailable — polling every 2s"</td><td>Red</td><td>Polling takes over; slower updates</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Server-Side Behaviour During Disconnect</h2>
+  <p>The execution continues running on the server regardless of whether the client is connected. SignalR buffers outgoing messages for a configurable duration (default 30 seconds). If the client reconnects within the buffer window, no events are lost. If the buffer expires, the client uses the snapshot endpoint to catch up.</p>
+
+  <div class="callout warning">
+    <strong>Group Re-Join is Required</strong>
+    SignalR SignalR does not automatically restore Hub group memberships after a reconnect. The client must explicitly call <code>connection.invoke('JoinExecutionGroup', executionId)</code> in the <code>onreconnected</code> handler. Failure to do so means the client reconnects to the hub but receives no execution events.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-polling-fallback.html">&#8592; Polling Fallback</a>
+    <a href="../Guide7_ObserverPanel/index.html">Next: Observer Panel &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

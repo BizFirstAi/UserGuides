@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procedural Memory — Memory Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory System Overview</a>
+  <a href="01-working.html">Working Memory</a>
+  <a href="02-episodic.html">Episodic Memory</a>
+  <a href="03-semantic.html">Semantic Memory</a>
+  <a href="04-procedural.html" class="active">Procedural Memory</a>
+  <a href="05-comparison.html">Comparison Table</a>
+  <a href="06-interaction.html">How Memory Types Interact</a>
+  <a href="07-config.html">Memory Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Procedural Memory</h1>
+    <p class="lead">Procedural memory stores step-by-step sequences for repeatable tasks — the agent's "skill library." When a user requests a task that matches a known procedure, the agent follows the stored steps instead of reasoning from scratch on every request.</p>
+  </div>
+
+  <h2>What Is Procedural Memory?</h2>
+  <p>A <em>procedure</em> is an ordered sequence of steps that define how to accomplish a specific task type. Procedures are stored in SQL Server and matched against user intent before each LLM call. When matched, the procedure's steps are injected into working memory as a structured guide:</p>
+  <pre><code>// Example: "Onboard New Vendor" procedure
+{
+  "procedureId": "proc_vendor_onboard",
+  "name":        "Onboard New Vendor",
+  "triggerPattern": "onboard.*vendor|add.*supplier|new.*vendor",
+  "steps": [
+    { "order": 1, "action": "Ask for vendor company name and contact email" },
+    { "order": 2, "action": "Call vendor_lookup tool to check if vendor exists" },
+    { "order": 3, "action": "If not found, call create_vendor tool with collected details" },
+    { "order": 4, "action": "Send welcome email via email_send tool" },
+    { "order": 5, "action": "Confirm completion to the user with vendor ID" }
+  ]
+}</code></pre>
+
+  <h2>Key Characteristics</h2>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Value</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Storage</td><td>SQL Server (<code>Octopus_Procedures</code> table)</td><td>Managed by SqlServerPlugin</td></tr>
+      <tr><td>Lifetime</td><td>Persistent until deactivated</td><td>Soft-delete via <code>IsActive = false</code></td></tr>
+      <tr><td>Scope</td><td>Agent-level or shared across agents</td><td>TenantId + optional AgentId scope</td></tr>
+      <tr><td>Matching</td><td>Regex pattern first, embedding fallback</td><td>Fast + intelligent matching</td></tr>
+      <tr><td>Approval</td><td>Configurable approval workflow</td><td>Agent-learned procedures require admin approval</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Two Sources of Procedures</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Admin-Defined Procedures</h4>
+      <p>Written by administrators in the Skill Library UI or via API. Always approved and immediately active. Use these for well-known, stable business processes.</p>
+    </div>
+    <div class="card">
+      <h4>Agent-Learned Procedures</h4>
+      <p>Captured automatically when the agent successfully completes a multi-step task. Stored in a pending state — must be reviewed and approved by an admin before becoming active.</p>
+    </div>
+  </div>
+
+  <h2>Matching Pipeline</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Regex Pattern Match</strong>
+        <span>User message tested against all active procedure trigger patterns. Fast — no LLM call needed.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Embedding Fallback</strong>
+        <span>If no regex match, embed the message and compare cosine similarity against procedure embeddings.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Best Match Selected</strong>
+        <span>The highest-confidence procedure is selected. Multiple matches: highest similarity wins.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Injected into Working Memory</strong>
+        <span>Matched procedure steps are formatted and injected between system prompt and retrieved knowledge.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Procedure vs. Tool</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Procedure</th><th>Tool</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>What it is</td><td>Stored step-by-step instructions in SQL</td><td>Registered executable function (MCP)</td></tr>
+      <tr><td>Who defines it</td><td>Admin or agent learning</td><td>Developer (code)</td></tr>
+      <tr><td>LLM sees it as</td><td>Context injection in working memory</td><td>Available function in tool schema</td></tr>
+      <tr><td>Execution</td><td>LLM follows steps using available tools</td><td>LLM calls the function; runtime executes it</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Full Guide</strong>
+    <p>This is a summary page. The <a href="../Guide5_ProceduralMemory/index.html">Procedural Memory full guide</a> covers procedure capture, SQL storage schema, recall and matching algorithms, step execution with parameter substitution, the Skill Library UI, editing and versioning, and procedure scope levels.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-semantic.html">&#8592; Semantic Memory</a>
+    <a href="05-comparison.html">Next: Comparison Table &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

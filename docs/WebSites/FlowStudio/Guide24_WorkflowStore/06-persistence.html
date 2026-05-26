@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Persistence — Workflow Store | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Store</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-state-shape.html">Store State Shape</a>
+  <a href="02-node-actions.html">Node Actions</a>
+  <a href="03-edge-actions.html">Edge Actions</a>
+  <a href="04-viewport-actions.html">Viewport Actions</a>
+  <a href="05-subscribing.html">Subscribing to Slices</a>
+  <a href="06-persistence.html" class="active">Persistence</a>
+  <a href="07-react-flow-sync.html">React Flow Sync</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Persistence — Save and Load</h1>
+    <p class="lead">workflowStore serializes the canvas graph to JSON and saves it to the server via the process definition API. Auto-save fires on every tracked mutation. Load restores nodes, edges, and viewport from the saved payload.</p>
+  </div>
+
+  <h2>serializeWorkflow</h2>
+  <pre><code">serializeWorkflow: () => SerializedWorkflow
+
+// Returns a plain JSON-serializable representation of the current canvas state
+const serialized = useWorkflowStore.getState().serializeWorkflow();
+
+// Output shape:
+interface SerializedWorkflow {
+    processId : string;
+    viewport  : Viewport;
+    nodes     : SerializedNode[];
+    edges     : SerializedEdge[];
+}
+
+// Example output:
+{
+  "processId": "proc-001",
+  "viewport" : { "x": -120, "y": 80, "zoom": 0.85 },
+  "nodes"    : [
+    { "id": "node-abc", "type": "ApprovalNode", "position": { "x": 400, "y": 200 },
+      "data": { "label": "Manager Approval", "config": { "actorId": "{{$context.managerId}}" },
+                "inputPorts": [...], "outputPorts": [...] } }
+  ],
+  "edges"    : [
+    { "id": "edge-001", "source": "node-trigger", "sourceHandle": "out",
+      "target": "node-abc", "targetHandle": "in" }
+  ]
+}</code></pre>
+
+  <h2>deserializeWorkflow</h2>
+  <pre><code">deserializeWorkflow: (payload: SerializedWorkflow) => void
+
+// Replaces the entire store state with the deserialized payload
+// Called when loading an existing workflow from the API
+useWorkflowStore.getState().deserializeWorkflow(apiResponse.definition);
+
+// Internally calls:
+// set({ nodes: payload.nodes, edges: payload.edges, viewport: payload.viewport,
+//        processId: payload.processId, selectedNodes: [], selectedEdges: [] })
+// Then triggers React Flow to update its internal state</code></pre>
+
+  <h2>Auto-Save</h2>
+  <pre><code">// Persistence middleware wraps the store and intercepts tracked mutations
+// Every call to addNode, updateNode, removeNode, moveNode, addEdge, removeEdge
+// triggers a debounced saveWorkflow call
+
+// Debounce window: 1500ms (configurable via AUTOSAVE_DEBOUNCE_MS)
+// If 3 rapid mutations happen, only 1 save is made (1500ms after the last mutation)
+
+// The save indicator in the toolbar shows:
+//  "Saving..."  — save in progress
+//  "Saved"      — last save succeeded
+//  "Unsaved changes" — save pending or failed</code></pre>
+
+  <h2>loadWorkflow</h2>
+  <pre><code">loadWorkflow: (processId: string) => Promise&lt;void&gt;
+
+// Usage — called when the designer opens a specific workflow
+const { loadWorkflow } = useWorkflowStore.getState();
+
+await loadWorkflow('proc-001');
+
+// Internally:
+// 1. GET /api/processes/{processId}/definition
+// 2. Calls deserializeWorkflow(response.definition)
+// 3. Resets the undo/redo history stack (fresh load = no history)</code></pre>
+
+  <h2>Save API Endpoint</h2>
+  <pre><code">// PUT /api/processes/{processId}/definition
+// Body: SerializedWorkflow JSON
+// Response: { savedAt: "2026-05-25T10:00:00Z", version: 42 }</code></pre>
+
+  <div class="callout warning">
+    <strong>Auto-save saves the canvas graph only</strong> — not execution results, pinned data, or run history. Those are managed by the ProcessEngine backend and are never overwritten by the designer save operation.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-subscribing.html">&#8592; Subscribing to Slices</a>
+    <a href="07-react-flow-sync.html">Next: React Flow Sync &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reranking — RAG | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>RAG Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">RAG Pipeline Overview</a>
+  <a href="01-document-ingestion.html">Document Ingestion</a>
+  <a href="02-chunking.html">Chunking Strategies</a>
+  <a href="03-embedding.html">Embedding</a>
+  <a href="04-indexing.html">Indexing</a>
+  <a href="05-retrieval.html">Retrieval</a>
+  <a href="06-hybrid-search.html">Hybrid Search</a>
+  <a href="07-reranking.html" class="active">Reranking</a>
+  <a href="08-context-injection.html">Context Injection</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Reranking</h1>
+    <p class="lead">Reranking is an optional post-retrieval step that uses a cross-encoder model to score each retrieved chunk against the query directly — producing more precise relevance scores than the bi-encoder embedding used at retrieval time. It is the highest-quality but highest-latency retrieval option.</p>
+  </div>
+
+  <h2>Bi-Encoder vs. Cross-Encoder</h2>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Bi-Encoder (retrieval)</th><th>Cross-Encoder (reranking)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>How it works</td><td>Encodes query and document separately; compares vectors</td><td>Encodes query + document together; outputs relevance score</td></tr>
+      <tr><td>Speed</td><td>Fast — O(1) per document (precomputed embeddings)</td><td>Slow — O(n) cross-attention over all candidate pairs</td></tr>
+      <tr><td>Precision</td><td>Good — approximate relevance</td><td>Better — full attention over both texts</td></tr>
+      <tr><td>Use in pipeline</td><td>First stage — narrow millions to top-K candidates</td><td>Second stage — reorder top-K candidates by true relevance</td></tr>
+    </tbody>
+  </table>
+
+  <h2>IReranker Interface</h2>
+  <pre><code>public interface IReranker
+{
+    Task&lt;IReadOnlyList&lt;RankedResult&gt;&gt; RerankAsync(
+        string query,
+        IReadOnlyList&lt;MemoryRecord&gt; candidates,
+        int topN,
+        CancellationToken ct);
+}
+
+public class RankedResult
+{
+    public MemoryRecord Record       { get; init; } = new();
+    public float        RerankerScore{ get; init; }
+    public int          OriginalRank { get; init; }
+    public int          NewRank      { get; init; }
+}</code></pre>
+
+  <h2>Supported Rerankers</h2>
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>Model</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Cohere Rerank</td><td>rerank-english-v3.0</td><td>API call; best quality; per-request cost</td></tr>
+      <tr><td>Cohere Rerank</td><td>rerank-multilingual-v3.0</td><td>Multi-language support</td></tr>
+      <tr><td>ONNX (local)</td><td>cross-encoder/ms-marco-MiniLM-L-6-v2</td><td>On-premise; no API cost; CPU-intensive</td></tr>
+      <tr><td>ONNX (local)</td><td>cross-encoder/ms-marco-MiniLM-L-12-v2</td><td>Higher quality local reranker; more CPU</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Reranking in the Retrieval Pipeline</h2>
+  <pre><code>public class RetrievalPipeline
+{
+    public async Task&lt;IReadOnlyList&lt;MemoryRecord&gt;&gt; RetrieveAndRerankAsync(
+        AgentComposite agent,
+        string query,
+        float[] queryEmbedding,
+        CancellationToken ct)
+    {
+        // Step 1: Retrieve a larger candidate set (TopK * 3 for reranking)
+        int candidateK = agent.MemoryConfig.RerankerEnabled
+            ? agent.MemoryConfig.SemanticTopK * 3
+            : agent.MemoryConfig.SemanticTopK;
+
+        var candidates = await _store.SearchAsync(
+            $"agent_{agent.Id:N}", queryEmbedding, candidateK, 0.6f, ct);
+
+        if (!agent.MemoryConfig.RerankerEnabled || !candidates.Any())
+            return candidates.Take(agent.MemoryConfig.SemanticTopK).ToList();
+
+        // Step 2: Rerank with cross-encoder
+        var ranked = await _reranker.RerankAsync(
+            query:      query,
+            candidates: candidates,
+            topN:       agent.MemoryConfig.SemanticTopK,
+            ct:         ct);
+
+        return ranked.Select(r => r.Record).ToList();
+    }
+}</code></pre>
+
+  <h2>Configuration</h2>
+  <pre><code>// appsettings.json
+{
+  "Octopus": {
+    "Reranker": {
+      "Provider":     "Cohere",       // Cohere | ONNX
+      "Model":        "rerank-english-v3.0",
+      "CredentialId": 44,             // API key via ICredentialResolver
+      "TopN":         5               // Final number of results after reranking
+    }
+  }
+}
+
+// Agent memory config
+{
+  "rerankerEnabled": true
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Reranking Adds Latency</strong>
+    <p>Each reranking call makes N cross-encoder inference passes (where N = candidate count). For 15 candidates with Cohere Rerank, expect +100–200ms per turn. For ONNX local reranking, expect +200–800ms depending on hardware. Only enable reranking if retrieval precision is the bottleneck — for most agents, bi-encoder retrieval alone is sufficient.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-hybrid-search.html">&#8592; Hybrid Search</a>
+    <a href="08-context-injection.html">Next: Context Injection &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

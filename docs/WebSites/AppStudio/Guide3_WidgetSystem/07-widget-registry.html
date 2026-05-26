@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Widget Registry — Widget System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Widget System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Widget System Overview</a>
+  <a href="01-widget-definition.html">Widget Definition</a>
+  <a href="02-widget-placement.html">Widget Placement</a>
+  <a href="03-system-widgets.html">System Widgets</a>
+  <a href="04-form-widget.html">Form Widget</a>
+  <a href="05-custom-widget.html">Custom Widget</a>
+  <a href="06-configuration-cascade.html">Configuration Cascade</a>
+  <a href="07-widget-registry.html" class="active">Widget Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Widget Registry</h1>
+    <p class="lead">The Widget Registry is the global catalog of all Widget Definitions available in App Studio — system widgets and custom widgets. It drives the widget palette and provides config schemas to the Properties Editor.</p>
+  </div>
+
+  <h2>Registry Responsibilities</h2>
+  <ul>
+    <li><strong>Discovery</strong> — maintains the list of all available widget types shown in the palette</li>
+    <li><strong>Schema serving</strong> — provides the <code>configSchema</code> for each widget type so the Properties Editor can auto-generate config forms</li>
+    <li><strong>Federation loading</strong> — loads custom widget React components via Module Federation at runtime</li>
+    <li><strong>Tenant overrides</strong> — stores and applies Level 2 (tenant-level) config overrides per widget type</li>
+    <li><strong>Compatibility checking</strong> — during app import, validates that all widget types referenced in the bundle are available in the target tenant</li>
+  </ul>
+
+  <h2>Registry API</h2>
+  <table>
+    <thead>
+      <tr><th>Endpoint</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>GET /api/widget-registry</code></td><td>List all registered widget definitions (used by the builder palette)</td></tr>
+      <tr><td><code>GET /api/widget-registry/{typeId}</code></td><td>Get a specific widget definition including full config schema</td></tr>
+      <tr><td><code>POST /api/widget-registry/register</code></td><td>Register a new custom widget (requires platform admin role)</td></tr>
+      <tr><td><code>PUT /api/widget-registry/{typeId}/tenant-override</code></td><td>Set tenant-level config override for a widget type</td></tr>
+      <tr><td><code>DELETE /api/widget-registry/{typeId}</code></td><td>Unregister a custom widget (system widgets cannot be deleted)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Registry in the Frontend</h2>
+  <p>The TypeScript <code>WidgetRegistry</code> class manages the client-side catalog:</p>
+  <pre><code>// WidgetRegistry.ts (simplified)
+class WidgetRegistry {
+  private definitions = new Map&lt;string, WidgetDefinition&gt;();
+
+  register(def: WidgetDefinition): void {
+    this.definitions.set(def.widgetTypeId, def);
+  }
+
+  get(typeId: string): WidgetDefinition | undefined {
+    return this.definitions.get(typeId);
+  }
+
+  getAll(): WidgetDefinition[] {
+    return Array.from(this.definitions.values());
+  }
+
+  async loadFederatedWidget(typeId: string): Promise&lt;React.ComponentType&gt; {
+    const def = this.get(typeId);
+    if (!def?.federationUrl) throw new Error(`No federation for ${typeId}`);
+
+    // Dynamically load the remote module via Webpack Module Federation
+    const container = await loadRemote(def.federationUrl);
+    return container.get(def.federationModule);
+  }
+}
+
+export const widgetRegistry = new WidgetRegistry();
+</code></pre>
+
+  <h2>System Widget Registration</h2>
+  <p>System widgets are registered at application startup in the App Studio bootstrap:</p>
+  <pre><code>// App Studio bootstrap
+import { widgetRegistry } from './WidgetRegistry';
+import { DataGridDefinition } from './widgets/DataGrid';
+import { ChartDefinition } from './widgets/Chart';
+import { MetricDefinition } from './widgets/Metric';
+// ... all system widgets
+
+export function bootstrapWidgets(): void {
+  widgetRegistry.register(DataGridDefinition);
+  widgetRegistry.register(ChartDefinition);
+  widgetRegistry.register(MetricDefinition);
+  widgetRegistry.register(FormDefinition);
+  widgetRegistry.register(ButtonDefinition);
+  widgetRegistry.register(TextDefinition);
+  // ...
+}
+</code></pre>
+
+  <div class="callout info">
+    <strong>Registry Caching</strong>
+    <p>Widget definitions are cached in Redis on the backend (<code>WidgetService.cs</code>) with a long TTL (1 hour). The frontend fetches the list on builder startup and caches it in memory for the session. Changes to custom widget registrations take effect after the next builder session or cache invalidation.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-configuration-cascade.html">&#8592; Configuration Cascade</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timeout Output Port — HIL Timeout | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Timeout</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-timeout-config.html">Configuring Timeout</a>
+  <a href="02-timeout-job.html">The Timeout Background Job</a>
+  <a href="03-escalation.html">Escalation</a>
+  <a href="04-auto-decision.html">Auto-Decision</a>
+  <a href="05-timeout-port.html" class="active">Timeout Output Port</a>
+  <a href="06-no-action.html">No Action (Fail)</a>
+  <a href="07-monitoring.html">Monitoring Timeouts</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Timeout Output Port</h1>
+    <p class="lead">HIL nodes have a dedicated timeout output port. When an escalation itself times out (double-timeout), execution routes through this port — allowing the workflow to take a specific action rather than simply failing.</p>
+  </div>
+
+  <h2>Port Definition</h2>
+  <p>The timeout port is declared in the executor's port list with a special flag:</p>
+  <pre><code">// BaseHILExecutor registers the timeout port
+protected override IReadOnlyList&lt;NodePortDefinition&gt; DefineOutputPorts()
+{
+    return new[]
+    {
+        new NodePortDefinition("approved",   label: "Approved"),
+        new NodePortDefinition("rejected",   label: "Rejected"),
+        new NodePortDefinition("timeout",    label: "Timeout", isTimeoutPort: true)
+    };
+}
+
+// The isTimeoutPort flag tells the canvas to render it with the clock icon
+// and tells the engine this is the port to use when double-timeout fires</code></pre>
+
+  <h2>When the Timeout Port Fires</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Timeout Port Fires?</th></tr></thead>
+    <tbody>
+      <tr><td>timeoutBehavior = Escalate, escalation also times out</td><td>Yes</td></tr>
+      <tr><td>timeoutBehavior = AutoApprove (single timeout)</td><td>No — routes via approved port</td></tr>
+      <tr><td>timeoutBehavior = AutoReject (single timeout)</td><td>No — routes via rejected port</td></tr>
+      <tr><td>timeoutBehavior = Fail (single timeout)</td><td>No — workflow fails entirely</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Routing Pattern</h2>
+  <pre><code">[Approval Node] (timeoutBehavior: Escalate, escalationActor: user-manager)
+  ├─ approved → [Continue Process]
+  ├─ rejected → [Send Rejection Email]
+  └─ timeout  → [Send Critical Alert] → [Auto-Reject End Node]
+                    ↑
+              (fires when escalation also times out)</code></pre>
+
+  <h2>Timeout Port Output Data</h2>
+  <p>When the timeout port fires, the node's output in ExecutionMemory is:</p>
+  <pre><code">{
+  "timedOut"     : true,
+  "suspendedAt"  : "2026-05-25T09:00:00Z",
+  "expiredAt"    : "2026-05-26T09:00:00Z",
+  "originalActor": "user-manager",
+  "escalationActor": "user-director"
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Unconnected timeout port:</strong> If you configure a timeout but leave the timeout port unconnected, the engine will log a design warning. If the timeout port fires on an unconnected port, the workflow fails with an UnconnectedPortError. Always connect the timeout port when using Escalate behavior.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-auto-decision.html">&#8592; Auto-Decision</a>
+    <a href="06-no-action.html">Next: No Action (Fail) &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

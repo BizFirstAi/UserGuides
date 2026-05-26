@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Callback Subscription — Interaction Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-receiving-interactions.html">Receiving Interaction Requests</a>
+  <a href="02-callback-subscription.html" class="active">Callback Subscription</a>
+  <a href="03-response-handling.html">Handling Responses</a>
+  <a href="04-timeout-handling.html">Handling Timeout</a>
+  <a href="05-multi-user.html">Multi-User Interactions</a>
+  <a href="06-cleanup.html">Subscription Cleanup</a>
+  <a href="07-react-integration.html">React Integration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Callback Subscription</h1>
+    <p class="lead">The callback subscription is the server-side subscription to <code>interactions.callback.{interactionId}</code>. The <code>InteractionPipeline</code> manages this subscription internally as part of <code>PublishAndWaitAsync()</code>. This page explains what happens under the hood.</p>
+  </div>
+
+  <h2>The Callback Topic</h2>
+  <p>Each interaction gets a unique callback topic: <code>interactions.callback.{interactionId}</code>. This topic:</p>
+  <ul>
+    <li>Is created transiently when the interaction is published</li>
+    <li>Only two parties use it: the client (publishes <code>InteractionResponse</code>) and the server pipeline (subscribes)</li>
+    <li>Is destroyed after the response or timeout is received</li>
+    <li>Cannot be subscribed to by arbitrary clients — topic access control enforces this</li>
+  </ul>
+
+  <h2>How PublishAndWaitAsync Uses the Callback</h2>
+  <pre><code>// Simplified internal implementation of PublishAndWaitAsync
+public async Task&lt;InteractionResponse&gt; PublishAndWaitAsync(
+    InteractionRequest request,
+    CancellationToken ct = default)
+{
+    // 1. Assign interactionId
+    request = request with { InteractionId = Guid.NewGuid().ToString() };
+
+    // 2. Set up callback subscription BEFORE publishing
+    //    (to avoid race conditions where the response arrives before we subscribe)
+    var tcs = new TaskCompletionSource&lt;InteractionResponse&gt;();
+    var callbackTopic = request.CallbackTopic
+        ?? $"interactions.callback.{request.InteractionId}";
+
+    var callbackSub = await _edgeStream.SubscribeAsync(callbackTopic, msg =&gt;
+    {
+        var response = JsonSerializer.Deserialize&lt;InteractionResponse&gt;(msg.Body);
+        if (response?.Outcome == "timeout")
+        {
+            tcs.TrySetException(new InteractionTimeoutException(request.InteractionId));
+        }
+        else
+        {
+            tcs.TrySetResult(response!);
+        }
+    });
+
+    try
+    {
+        // 3. Run pre-send hooks
+        await _hookRunner.RunBeforePublishAsync(request, ct);
+
+        // 4. Publish to EdgeStream
+        await _edgeStream.PublishAsync($"interactions.{request.TargetUserId}",
+            JsonSerializer.Serialize(request));
+
+        // 5. Set up timeout timer
+        var timeoutToken = new CancellationTokenSource(request.TimeoutMs);
+
+        // 6. Await response (or timeout)
+        using var combined = CancellationTokenSource.CreateLinkedTokenSource(
+            ct, timeoutToken.Token);
+
+        return await tcs.Task.WaitAsync(combined.Token);
+    }
+    finally
+    {
+        // 7. Always clean up the callback subscription
+        await callbackSub.UnsubscribeAsync();
+    }
+}
+</code></pre>
+
+  <h2>Race Condition: Subscribe Before Publish</h2>
+  <p>A critical implementation detail: the callback subscription must be set up <strong>before</strong> the request is published to EdgeStream. If the subscription is set up after publishing, there is a window where a fast client could respond before the server is subscribed — causing the response to be lost.</p>
+
+  <div class="callout danger">
+    <strong>Always Subscribe Before Publishing</strong>
+    This is handled automatically by <code>PublishAndWaitAsync()</code>. If you are implementing a custom interaction publisher (not recommended), ensure your callback subscription is established before publishing the request.
+  </div>
+
+  <h2>Custom Callback Topics</h2>
+  <p>Override <code>callbackTopic</code> when you need the response routed to a different service or subscription:</p>
+  <pre><code">// Route response to a shared response aggregator
+var request = new InteractionRequest {
+    type: 'approval',
+    targetUserId: 'usr_abc',
+    payload: { ... },
+    timeoutMs: 86_400_000,
+    callbackTopic: 'approval-service/responses'
+};
+
+// Your aggregator service is subscribed to 'approval-service/responses'
+// and handles all approval responses for that service
+</code></pre>
+
+  <div class="page-nav">
+    <a href="01-receiving-interactions.html">&#8592; Receiving Interaction Requests</a>
+    <a href="03-response-handling.html">Next: Handling Responses &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

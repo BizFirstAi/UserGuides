@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Embedding Knowledge — Semantic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Semantic Memory Overview</a>
+  <a href="01-embedding.html" class="active">Embedding Knowledge</a>
+  <a href="02-vector-stores.html">Vector Store Backends</a>
+  <a href="03-indexing.html">Knowledge Indexing</a>
+  <a href="04-retrieval.html">Retrieval at Query Time</a>
+  <a href="05-hybrid-search.html">Hybrid Search</a>
+  <a href="06-reranking.html">Reranking Results</a>
+  <a href="07-per-agent.html">Per-Agent Knowledge Scoping</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Embedding Knowledge</h1>
+    <p class="lead">An embedding is a dense numerical vector that captures the semantic meaning of text. Octopus uses an <code>IEmbeddingProvider</code> to convert both knowledge documents (at index time) and user queries (at retrieval time) into vectors that can be compared by cosine similarity.</p>
+  </div>
+
+  <h2>IEmbeddingProvider Interface</h2>
+  <pre><code>public interface IEmbeddingProvider
+{
+    string ModelName { get; }
+    int VectorDimensions { get; }   // must match collection dimension
+
+    Task&lt;float[]&gt; EmbedAsync(
+        string text,
+        CancellationToken ct = default);
+
+    Task&lt;IReadOnlyList&lt;float[]&gt;&gt; EmbedBatchAsync(
+        IReadOnlyList&lt;string&gt; texts,
+        int batchSize = 100,
+        CancellationToken ct = default);
+}</code></pre>
+
+  <h2>Supported Embedding Models</h2>
+  <table>
+    <thead>
+      <tr><th>Model</th><th>Provider</th><th>Dimensions</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>text-embedding-3-small</td><td>OpenAI</td><td>1536</td><td>Default — good balance of quality and cost</td></tr>
+      <tr><td>text-embedding-3-large</td><td>OpenAI</td><td>3072</td><td>Higher quality, 2x cost</td></tr>
+      <tr><td>text-embedding-ada-002</td><td>OpenAI</td><td>1536</td><td>Legacy — use 3-small instead</td></tr>
+      <tr><td>all-MiniLM-L6-v2</td><td>sentence-transformers (local)</td><td>384</td><td>Local, fast, lower quality</td></tr>
+      <tr><td>nomic-embed-text</td><td>Nomic / Ollama</td><td>768</td><td>Local, high quality</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Embedding Configuration</h2>
+  <pre><code>// Embedding config on agent's MemoryConfig
+public class EmbeddingConfig
+{
+    public string Provider { get; set; }         // "OpenAI", "Local", "AzureOpenAI"
+    public string Model { get; set; }            // model name
+    public int CredentialId { get; set; }        // API key via ICredentialResolver
+    public int BatchSize { get; set; } = 100;    // texts per API call
+    public string? Endpoint { get; set; }        // for local or Azure endpoint
+}
+
+// Configuration example
+new EmbeddingConfig
+{
+    Provider = "OpenAI",
+    Model = "text-embedding-3-small",
+    CredentialId = 43,    // OpenAI key in credential vault
+    BatchSize = 50
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Model Consistency is Critical</strong>
+    <p>The embedding model used at <strong>indexing time</strong> must be exactly the same model used at <strong>retrieval time</strong>. Different models produce incompatible vector spaces — mixing them gives meaningless similarity scores. If you change the embedding model, you must re-index all documents from scratch.</p>
+  </div>
+
+  <h2>Batch Embedding for Large Documents</h2>
+  <pre><code>// Efficient batch embedding during ingestion
+public async Task EmbedDocumentChunksAsync(
+    IReadOnlyList&lt;string&gt; chunks,
+    IEmbeddingProvider provider)
+{
+    // Process in batches to respect rate limits
+    var embeddings = await provider.EmbedBatchAsync(chunks, batchSize: 50);
+
+    for (int i = 0; i &lt; chunks.Count; i++)
+    {
+        await _store.StoreAsync(new MemoryRecord
+        {
+            Content = chunks[i],
+            Embedding = embeddings[i],
+            Metadata = new MemoryMetadata { ChunkIndex = i, ... }
+        });
+    }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Semantic Memory Overview</a>
+    <a href="02-vector-stores.html">Next: Vector Store Backends &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

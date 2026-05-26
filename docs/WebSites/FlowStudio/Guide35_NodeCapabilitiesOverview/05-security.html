@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Capability-Based Security — Guide35_NodeCapabilitiesOverview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Capabilities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-capability-model.html"><i class="fa-solid fa-cubes"></i> Capability Model</a>
+  <a href="02-declaring.html"><i class="fa-solid fa-code"></i> Declaring Capabilities</a>
+  <a href="03-capability-registry.html"><i class="fa-solid fa-list-check"></i> CapabilityRegistry</a>
+  <a href="04-palette-integration.html"><i class="fa-solid fa-palette"></i> Palette Integration</a>
+  <a href="05-security.html" class="active"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <a href="06-capability-map.html"><i class="fa-solid fa-map"></i> Capability Type Map</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Capability-Based Security</h1>
+    <p class="lead"><code>NodeCapabilityPolicy</code> — controlling which tenants and actors can use which node capability types at both design time and execution time.</p>
+  </div>
+
+  <h2>NodeCapabilityPolicy</h2>
+  <p><code>NodeCapabilityPolicy</code> is a ProcessSecurity entity that maps a tenant (or specific actor role) to a set of allowed capability types. It enforces capability access at two levels:</p>
+  <ol>
+    <li><strong>Design time:</strong> The palette and API filter out capabilities not allowed for the tenant</li>
+    <li><strong>Execution time:</strong> The engine checks policy before running any node with a restricted capability</li>
+  </ol>
+
+  <h2>Policy Schema</h2>
+  <pre><code class="language-csharp">public class NodeCapabilityPolicy
+{
+    public Guid Id { get; set; }
+    public string TenantId { get; set; }
+    public string? RoleId { get; set; }          // null = applies to all roles in tenant
+    public List&lt;CapabilityType&gt; AllowedTypes { get; set; }
+    public List&lt;CapabilityType&gt; DeniedTypes { get; set; }
+    public bool AllowAllByDefault { get; set; }   // if true, DeniedTypes is the blocklist
+}</code></pre>
+
+  <h2>Execution-Time Check</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Security/CapabilityAuthorizationService.cs
+public async Task&lt;bool&gt; IsAllowedAsync(
+    CapabilityType capabilityType,
+    string tenantId,
+    string actorId)
+{
+    var policy = await _policyRepo.GetForTenantAsync(tenantId);
+    if (policy == null) return true; // no policy = allow all
+
+    if (policy.AllowAllByDefault)
+        return !policy.DeniedTypes.Contains(capabilityType);
+    else
+        return policy.AllowedTypes.Contains(capabilityType);
+}</code></pre>
+
+  <h2>Security Layers</h2>
+  <table>
+    <thead><tr><th>Layer</th><th>Enforcement Point</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td>Palette filter</td><td>GET /api/capabilities (designer)</td><td>Capability sections hidden from UI</td></tr>
+      <tr><td>Publish validation</td><td>POST /api/processes/{id}/publish</td><td>Cannot publish workflow using denied capabilities</td></tr>
+      <tr><td>Execution check</td><td>Before each node execution</td><td>Node fails with CapabilityAccessDenied error</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-warning">
+    <strong>Defense in depth:</strong> The execution-time check is the authoritative gate. The palette and publish filters are convenience — they improve UX but must not be relied upon as the sole security control. An attacker with direct API access could publish a workflow with restricted nodes; the execution-time check stops it at runtime.
+  </div>
+
+  <h2>Example Policy Configuration</h2>
+  <pre><code class="language-json">{
+  "tenantId": "tenant-acme",
+  "allowAllByDefault": true,
+  "deniedTypes": ["DIDComm", "MCP"],
+  "comment": "Acme has not licensed the DIDComm or MCP add-ons"
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="04-palette-integration.html">&#8592; Palette Integration</a>
+    <a href="06-capability-map.html">Next: Capability Type Map &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

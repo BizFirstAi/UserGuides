@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Error Analysis Workflow — Using the Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Using the Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Using the Tools Overview</a>
+  <a href="01-find-execution-logs.html">Find Logs for an Execution</a>
+  <a href="02-trace-slow-node.html">Trace a Slow Node</a>
+  <a href="03-error-analysis.html" class="active">Error Analysis Workflow</a>
+  <a href="04-hil-backlog.html">Monitoring HIL Backlog</a>
+  <a href="05-alert-response.html">Responding to Alerts</a>
+  <a href="06-tenant-isolation.html">Querying as a Tenant Admin</a>
+  <a href="07-common-queries.html">Common Query Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Error Analysis Workflow</h1>
+    <p class="lead">Error analysis answers: what failed, how often, which tenants are affected, and what is the root cause? This workflow takes you from the error rate metric to error log patterns to a specific trace showing the exception — the complete chain of signals for a production incident.</p>
+  </div>
+
+  <h2>Phase 1: Quantify the Error Rate</h2>
+  <pre><code># In Grafana Explore — Prometheus — understand the scale of the problem:
+
+# Current error rate across all tenants:
+sum(rate(bizfirst_workflow_executions_total{status="failed"}[5m]))
+  /
+sum(rate(bizfirst_workflow_executions_total[5m]))
+* 100
+
+# Error rate broken down by tenant — find which tenants are affected:
+sum(rate(bizfirst_workflow_executions_total{status="failed"}[5m])) by (tenant_id)
+  /
+sum(rate(bizfirst_workflow_executions_total[5m])) by (tenant_id)
+* 100
+
+# Error rate broken down by node type — find which node is failing:
+sum(rate(bizfirst_node_execution_duration_seconds_count{status="error"}[5m])) by (node_type)</code></pre>
+
+  <h2>Phase 2: Find Error Log Patterns</h2>
+  <pre><code># In Grafana Explore — Loki:
+
+# Find all error logs in the last 15 minutes:
+{job="processengine", environment="production", level="error"}
+  | json
+  | line_format "{{.timestamp}} [{{.nodeType}}] {{.message}}"
+
+# Count error occurrences by message to find the most common error:
+sum by (message) (
+  count_over_time(
+    {job="processengine", level="error"} | json [15m]
+  )
+)
+
+# Find the most common error node type:
+{job="processengine", level="error"} | json
+  | unwrap nodeType
+# Note: use LogQL parsing to group by nodeType field</code></pre>
+
+  <h2>Phase 3: Find the Exception Detail</h2>
+  <pre><code># Drill into a specific error to see the exception:
+{job="processengine", level="error"} | json
+  | message =~ ".*timeout.*"
+  | line_format "executionId={{.executionId}} node={{.nodeType}} error={{.exceptionMessage}}"
+
+# Example output:
+# executionId=exec-abc123 node=HttpRequestNode error=Request timeout after 30000ms
+# executionId=exec-def456 node=HttpRequestNode error=Request timeout after 30000ms
+# executionId=exec-ghi789 node=HttpRequestNode error=Connection refused
+
+# Pattern: HttpRequestNode is failing with timeouts — external dependency issue</code></pre>
+
+  <h2>Phase 4: Correlate Error to Trace</h2>
+  <pre><code># Find a specific error log line and its traceId:
+{job="processengine", level="error"} |= "exec-abc123" | json
+
+# In the log line, find:
+# traceId: "4bf92f3577b34da6a3ce929d0e0e4736"
+
+# Search for this trace in Tempo:
+# Grafana Explore → Tempo → TraceId search
+# Paste: 4bf92f3577b34da6a3ce929d0e0e4736
+
+# In the trace, look for the error span:
+# - Spans with status = "error" are highlighted in red
+# - Click the error span to see: exception.type, exception.message, exception.stacktrace
+# - The stacktrace shows exactly which line of code threw the exception</code></pre>
+
+  <h2>Phase 5: Determine Blast Radius</h2>
+  <pre><code># How many executions are currently failing?
+sum(increase(bizfirst_workflow_executions_total{status="failed"}[1h]))
+
+# Which tenants are affected?
+sum by (tenant_id) (increase(bizfirst_workflow_executions_total{status="failed"}[1h]))
+  > 0
+
+# Is this affecting a specific workflow type?
+sum by (workflow_type) (
+  rate(bizfirst_workflow_executions_total{status="failed"}[5m])
+)
+
+# How long has this been happening? (look at historical error rate)
+# In Grafana: Flow Studio Overview dashboard → Error Rate panel → Zoom out to 6h view
+# Find when the error rate started climbing</code></pre>
+
+  <div class="callout info">
+    <strong>Document Your Findings as You Go</strong>
+    <p>During an active incident, paste your key queries and findings into a shared incident document as you discover them. Other engineers joining the incident can immediately see what you've found without repeating your steps. Include: the PromQL query that showed the error rate, the LogQL query that found the error pattern, the TraceId of the representative trace, and your current hypothesis for root cause.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-trace-slow-node.html">&#8592; Trace a Slow Node</a>
+    <a href="04-hil-backlog.html">Next: Monitoring HIL Backlog &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

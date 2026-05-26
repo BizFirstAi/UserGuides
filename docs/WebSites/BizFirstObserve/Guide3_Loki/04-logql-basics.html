@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LogQL Basics — Loki Log Aggregation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Loki Log Aggregation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Loki Overview</a>
+  <a href="01-deployment.html">Deploying Loki</a>
+  <a href="02-ingestion.html">Log Ingestion from BizFirstGO</a>
+  <a href="03-label-strategy.html">Label Strategy</a>
+  <a href="04-logql-basics.html" class="active">LogQL Basics</a>
+  <a href="05-logql-examples.html">LogQL for BizFirstGO</a>
+  <a href="06-retention.html">Log Retention in Loki</a>
+  <a href="07-alerts.html">Loki Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>LogQL Basics</h1>
+    <p class="lead">LogQL is Loki's query language. It is modeled after PromQL and uses a pipeline syntax — start with a stream selector, then chain filter and parse expressions. LogQL has two query types: log queries (return log lines) and metric queries (return time series computed from logs).</p>
+  </div>
+
+  <h2>Query Types</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>Log Queries</h4>
+      <p>Return matching log lines with timestamp and labels. Used in Grafana Logs panels and Explore. Always start with a stream selector.</p>
+    </div>
+    <div class="card">
+      <h4>Metric Queries</h4>
+      <p>Compute time series from log data — e.g., count log entries per minute, extract numeric values from log lines. Used in Grafana Time Series panels and alert rules.</p>
+    </div>
+  </div>
+
+  <h2>Stream Selectors</h2>
+  <p>A stream selector is mandatory. It matches log streams by their labels. Without a stream selector, Loki would have to scan all logs — which is not allowed.</p>
+  <pre><code># Exact match — most efficient
+{job="processengine"}
+
+# Multiple labels — AND logic
+{job="processengine", environment="production", level="error"}
+
+# Regex match on label value
+{job=~"processengine|edgestream"}
+
+# Negative match
+{job="processengine", level!="debug"}</code></pre>
+
+  <h2>Filter Expressions</h2>
+  <p>After the stream selector, apply filters to narrow down log lines within the matched streams:</p>
+  <pre><code># Contains substring (case-sensitive)
+{job="processengine"} |= "execution failed"
+
+# Does not contain
+{job="processengine"} != "health check"
+
+# Regex match
+{job="processengine"} |~ "error|exception|fail"
+
+# Case-insensitive regex
+{job="processengine"} |~ "(?i)timeout"
+
+# Multiple filters (AND logic — both must match)
+{job="processengine"} |= "error" |= "DataFetchNode"</code></pre>
+
+  <h2>Parsing Expressions</h2>
+  <p>Parse log line content into structured fields for further filtering or metric extraction:</p>
+  <pre><code># JSON parser — extract fields from JSON log lines
+{job="processengine"} | json
+
+# After JSON parsing, filter on extracted fields
+{job="processengine"} | json | level="error" | nodeType="DataFetchNode"
+
+# Pattern parser — extract by positional pattern
+{job="processengine"} | pattern "&lt;timestamp&gt; &lt;level&gt; &lt;message&gt;"
+
+# Logfmt parser — for key=value format logs
+{job="legacy-service"} | logfmt | level="error"
+
+# Line format — reshape the output
+{job="processengine"} | json | line_format "{{.level}}: {{.message}} [{{.executionId}}]"</code></pre>
+
+  <h2>Metric Queries</h2>
+  <pre><code># Count log lines per minute
+count_over_time({job="processengine"}[1m])
+
+# Rate of error logs per second (for alerting)
+rate({job="processengine"} | json | level="error" [5m])
+
+# Sum error rate across all tenants
+sum(rate({job="processengine", level="error"}[5m])) by (tenant_id)
+
+# P50 of a numeric field extracted from logs
+quantile_over_time(0.5, {job="processengine"} | json | unwrap duration_ms [5m])
+
+# Log volume per level over time
+sum(count_over_time({job="processengine"}[5m])) by (level)</code></pre>
+
+  <h2>Time Range Syntax</h2>
+  <table>
+    <thead>
+      <tr><th>Range</th><th>Meaning</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>[1m]</code></td><td>Last 1 minute</td><td>High-frequency alerting</td></tr>
+      <tr><td><code>[5m]</code></td><td>Last 5 minutes</td><td>Standard alert smoothing window</td></tr>
+      <tr><td><code>[15m]</code></td><td>Last 15 minutes</td><td>Trend detection</td></tr>
+      <tr><td><code>[1h]</code></td><td>Last 1 hour</td><td>Hourly dashboard panels</td></tr>
+      <tr><td><code>[24h]</code></td><td>Last 24 hours</td><td>Daily aggregates</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Grafana LogQL Autocomplete</strong>
+    <p>Grafana's Explore view provides LogQL autocomplete — press Ctrl+Space to see available labels and values. The label browser on the left panel lets you click to build a stream selector without typing. For learning LogQL, start in Explore with the autocomplete — it also validates your query syntax in real-time.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-label-strategy.html">&#8592; Label Strategy</a>
+    <a href="05-logql-examples.html">Next: LogQL for BizFirstGO &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

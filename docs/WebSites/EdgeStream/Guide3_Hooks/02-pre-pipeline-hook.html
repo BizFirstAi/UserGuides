@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pre-Pipeline Hook — Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-normalization-hook.html">NormalizationHook</a>
+  <a href="02-pre-pipeline-hook.html" class="active">Pre-Pipeline Hook</a>
+  <a href="03-post-pipeline-hook.html">Post-Pipeline Hook</a>
+  <a href="04-incoming-hook.html">Incoming Hook</a>
+  <a href="05-outgoing-hook.html">Outgoing Hook</a>
+  <a href="06-activity-logger.html">HookActivityLogger</a>
+  <a href="07-custom-hook.html">Implementing a Custom Hook</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Pre-Pipeline Hook</h1>
+    <p class="lead">Pre-pipeline hooks operate on the normalized envelope before core processing. They are the standard location for enrichment, authorization checks, routing decisions, and filtering that applies to all messages on a server.</p>
+  </div>
+
+  <h2>Priority Range: 120–199</h2>
+  <p>Pre-pipeline hooks sit just after normalization (110) and before the core processing stage (200+). They receive a fully parsed <code>NormalizedEnvelopeBody</code> and can read business metadata without parsing raw bytes.</p>
+
+  <h2>Enrichment Hook Pattern</h2>
+  <pre><code>import { BaseHook, IPipelineContext, HookResult } from 'edge-stream-js';
+
+export class UserContextEnrichmentHook extends BaseHook {
+  readonly name = 'UserContextEnrichmentHook';
+  readonly priority = 120;
+
+  constructor(private userService: UserService) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const body = context.body as any;
+    const userId = body?.data?.metadata?.userId;
+
+    if (!userId) return { continue: true }; // not all messages have userId
+
+    const user = await this.userService.findById(userId);
+    if (!user) return { continue: true }; // user lookup failure is non-fatal
+
+    // Attach to metadata — accessible in all downstream hooks
+    context.metadata.user = user;
+    context.metadata.userId = userId;
+    context.metadata.tenantId = user.tenantId;
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Authorization Hook Pattern</h2>
+  <pre><code>export class TenantBoundaryHook extends BaseHook {
+  readonly name = 'TenantBoundaryHook';
+  readonly priority = 135;
+
+  constructor(private currentTenantId: string) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const messageTenantId = context.metadata.tenantId as string;
+
+    // If message has a tenantId and it doesn't match, reject
+    if (messageTenantId &amp;&amp; messageTenantId !== this.currentTenantId) {
+      context.abort(`Tenant boundary violation: ${messageTenantId} !== ${this.currentTenantId}`);
+      return { continue: false };
+    }
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Routing Decision Hook</h2>
+  <pre><code>export class TopicRoutingHook extends BaseHook {
+  readonly name = 'TopicRoutingHook';
+  readonly priority = 160;
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const topic = context.envelope.meta.topic || '';
+
+    // Tag message with routing attributes for subscriber filtering
+    if (topic.startsWith('agent.chat')) {
+      context.envelope.attributes = {
+        ...context.envelope.attributes,
+        routingClass: 'streaming',
+        priority: 'high',
+      };
+    } else if (topic.startsWith('workflow.execution')) {
+      context.envelope.attributes = {
+        ...context.envelope.attributes,
+        routingClass: 'workflow',
+        priority: 'normal',
+      };
+    }
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Pre-Pipeline Hook Registration</h2>
+  <pre><code>const server = edgeStream.server('bas')!;
+
+// Add in any order — pipeline sorts by priority automatically
+server.incomingPipeline.addHook(new UserContextEnrichmentHook(userService));
+server.incomingPipeline.addHook(new TenantBoundaryHook(currentTenantId));
+server.incomingPipeline.addHook(new TopicRoutingHook());</code></pre>
+
+  <div class="page-nav">
+    <a href="01-normalization-hook.html">&#8592; NormalizationHook</a>
+    <a href="03-post-pipeline-hook.html">Next: Post-Pipeline Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

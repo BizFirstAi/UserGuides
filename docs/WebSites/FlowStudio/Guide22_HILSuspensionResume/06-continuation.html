@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resuming the Engine — HIL Suspension & Resume | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Suspension &amp; Resume</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-suspending.html">Triggering Suspension</a>
+  <a href="02-state-persistence.html">Persisting Execution State</a>
+  <a href="03-correlation-token.html">Correlation Tokens</a>
+  <a href="04-resume-api.html">Resume API</a>
+  <a href="05-resume-data.html">Injecting Resume Data</a>
+  <a href="06-continuation.html" class="active">Resuming the Engine</a>
+  <a href="07-failure-modes.html">Failure Modes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Resuming the Engine</h1>
+    <p class="lead">IWorkflowContinuationOrchestrator re-loads the suspended state, merges the actor's response, and restarts execution from the HIL node's downstream. The engine does not re-execute nodes that have already completed.</p>
+  </div>
+
+  <h2>Continuation Steps</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Load suspended execution</h4><p>HILResumeService loads the row from Process_SuspendedExecutions. Deserialises ExecutionMemory from JSON.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Mark token as consumed</h4><p>Sets ResumedAt on the suspended execution row — prevents double-resume before continuation begins.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Merge response data</h4><p>Actor's responseData is written to ExecutionMemory.nodeOutputs[suspendedNodeId].</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body"><h4>Resolve output port</h4><p>Based on response (e.g., Approved → approved port), the engine identifies which downstream edges to follow.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div><div class="line"></div></div>
+      <div class="body"><h4>Continue execution</h4><p>IWorkflowContinuationOrchestrator.ContinueAsync() resumes the engine from the identified downstream nodes. Normal execution proceeds.</p></div>
+    </div>
+  </div>
+
+  <h2>Nodes Not Re-Executed</h2>
+  <p>The engine uses the restored <code>ExecutionMemory.nodeOutputs</code> map to know which nodes have already run. Any node whose output is already in the map is skipped — only nodes downstream of the HIL node (on the selected port) are executed fresh.</p>
+
+  <h2>IWorkflowContinuationOrchestrator</h2>
+  <pre><code">public interface IWorkflowContinuationOrchestrator
+{
+    Task ContinueAsync(
+        ExecutionMemory     restoredMemory,
+        string              processId,
+        string              threadId,
+        string              startFromNodeId,  // the HIL node
+        string              startFromPort,    // the resolved output port
+        CancellationToken   ct);
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="05-resume-data.html">&#8592; Injecting Resume Data</a>
+    <a href="07-failure-modes.html">Next: Failure Modes &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

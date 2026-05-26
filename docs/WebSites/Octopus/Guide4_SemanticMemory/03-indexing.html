@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowledge Indexing — Semantic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Semantic Memory Overview</a>
+  <a href="01-embedding.html">Embedding Knowledge</a>
+  <a href="02-vector-stores.html">Vector Store Backends</a>
+  <a href="03-indexing.html" class="active">Knowledge Indexing</a>
+  <a href="04-retrieval.html">Retrieval at Query Time</a>
+  <a href="05-hybrid-search.html">Hybrid Search</a>
+  <a href="06-reranking.html">Reranking Results</a>
+  <a href="07-per-agent.html">Per-Agent Knowledge Scoping</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Knowledge Indexing</h1>
+    <p class="lead">Knowledge indexing is the ingestion pipeline: document → extract text → chunk → embed → store in vector DB. The knowledge-app provides a UI for this process; the API allows programmatic ingestion.</p>
+  </div>
+
+  <h2>Ingestion Pipeline</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Document Upload</h4><p>User uploads a file (PDF, TXT, MD) or provides a URL. <code>IDocumentIngester.IngestAsync()</code> is called.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Text Extraction</h4><p>Text is extracted from the document format. PDF → PDFium text extraction. HTML URL → Playwright headless browser text. MD → plain text.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Chunking</h4><p>Text is split into overlapping chunks by the configured <code>IChunker</code>. Each chunk is 200–500 tokens with 50-token overlap.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body"><h4>Embedding</h4><p>Each chunk is embedded via <code>IEmbeddingProvider.EmbedBatchAsync()</code>. Processed in batches of 50–100 chunks per API call.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div></div>
+      <div class="body"><h4>Vector Store Write</h4><p>Each (chunk, embedding, metadata) tuple is written to the agent's vector collection via <code>ISemanticMemoryStore.StoreAsync()</code>.</p></div>
+    </div>
+  </div>
+
+  <h2>IDocumentIngester</h2>
+  <pre><code>public interface IDocumentIngester
+{
+    Task&lt;IngestionResult&gt; IngestAsync(
+        IngestionRequest request,
+        CancellationToken ct = default);
+}
+
+public class IngestionRequest
+{
+    public Guid AgentId { get; set; }
+    public string TenantId { get; set; }
+    public IngestionSource Source { get; set; }  // File, Url, Text
+    public string? FileName { get; set; }
+    public Stream? FileContent { get; set; }
+    public string? Url { get; set; }
+    public string? TextContent { get; set; }
+    public string? Category { get; set; }        // for metadata filtering
+    public ChunkingConfig? ChunkingOverride { get; set; }
+}</code></pre>
+
+  <h2>Chunking Configuration</h2>
+  <pre><code>public class ChunkingConfig
+{
+    public ChunkingStrategy Strategy { get; set; } = ChunkingStrategy.FixedSize;
+    public int ChunkSize { get; set; } = 400;      // target tokens per chunk
+    public int ChunkOverlap { get; set; } = 50;    // overlap between consecutive chunks
+    public bool SplitOnParagraphs { get; set; } = true;   // prefer paragraph boundaries
+    public bool SplitOnSentences { get; set; } = true;    // then sentence boundaries
+}
+
+// Available strategies:
+// FixedSize: chunk by token count, split at paragraph/sentence boundaries
+// ParagraphChunker: each paragraph is one chunk (variable size)
+// SentenceChunker: groups of N sentences per chunk
+// SemanticChunker: similarity-based chunking (groups semantically similar sentences)</code></pre>
+
+  <h2>Re-Indexing</h2>
+  <p>If documents change or you switch embedding models, re-indexing is required:</p>
+  <pre><code>// Re-index a specific document
+await _ingester.DeleteDocumentAsync(agentId, tenantId, documentId);
+await _ingester.IngestAsync(new IngestionRequest { AgentId = agentId, ... });
+
+// Full knowledge base re-index (after model change)
+await _semanticStore.DropCollectionAsync($"agent_{agentId}_{tenantId}");
+await _semanticStore.CreateCollectionAsync($"agent_{agentId}_{tenantId}", newVectorSize);
+// Then re-ingest all documents</code></pre>
+
+  <div class="page-nav">
+    <a href="02-vector-stores.html">&#8592; Vector Store Backends</a>
+    <a href="04-retrieval.html">Next: Retrieval at Query Time &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

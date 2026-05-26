@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-User Interactions — Interaction Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-receiving-interactions.html">Receiving Interaction Requests</a>
+  <a href="02-callback-subscription.html">Callback Subscription</a>
+  <a href="03-response-handling.html">Handling Responses</a>
+  <a href="04-timeout-handling.html">Handling Timeout</a>
+  <a href="05-multi-user.html" class="active">Multi-User Interactions</a>
+  <a href="06-cleanup.html">Subscription Cleanup</a>
+  <a href="07-react-integration.html">React Integration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Multi-User Interactions</h1>
+    <p class="lead">Role-targeted interactions go to multiple users simultaneously. The first user to respond closes the interaction for all others — "first-to-respond wins." This page covers how multi-user delivery and dismissal work at the subscriber level.</p>
+  </div>
+
+  <h2>Role-Targeted Delivery Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Role Resolution</h4>
+        <p>Server resolves <code>role:finance-managers</code> to <code>[usr_alice, usr_bob, usr_carol]</code>. Three separate publish calls go to their individual interaction topics.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>All Three Receive the Interaction</h4>
+        <p>Alice, Bob, and Carol all see the interaction in their HIL inboxes. The <code>interactionId</code> is the same for all three.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Bob Responds First</h4>
+        <p>Bob clicks Approve. His <code>InteractionResponse</code> arrives at the server. The pipeline atomically claims the interaction. Bob's response is accepted.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Alice and Carol Receive Dismissal</h4>
+        <p>The pipeline publishes a dismissal signal to <code>interactions.dismiss.{aliceId}</code> and <code>interactions.dismiss.{carolId}</code>. Their clients remove the interaction from the inbox with a "Responded by another team member" message.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">5</div></div>
+      <div class="body">
+        <h4>Concurrent Response Attempt (Rejected)</h4>
+        <p>If Alice tries to respond in the same moment as Bob, her response is rejected with <code>InteractionAlreadyRespondedException</code>. Her client shows an error and dismisses the interaction.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Dismissal Signal Format</h2>
+  <pre><code>// Received on interactions.dismiss.{userId}
+interface InteractionDismissalSignal {
+  interactionId: string;
+  reason: 'responded_by_other' | 'timed_out' | 'cancelled';
+  respondedBy?: string; // present when reason is 'responded_by_other'
+  message?: string;     // human-readable dismissal message
+}
+</code></pre>
+
+  <h2>Client Handling of Dismissal Signals</h2>
+  <pre><code>// InteractionSubscriber also listens to the dismiss topic
+edgeStreamClient.subscribe(`interactions.dismiss.${userId}`, (msg) =&gt; {
+  const dismissal = JSON.parse(msg.body) as InteractionDismissalSignal;
+
+  // Remove from queue
+  queue.dismiss(dismissal.interactionId, dismissal.reason);
+
+  // Notify the UI
+  if (dismissal.reason === 'responded_by_other') {
+    toast.info(`Interaction responded to by ${dismissal.respondedBy}`);
+  } else if (dismissal.reason === 'timed_out') {
+    toast.warning('An interaction expired without a response.');
+  }
+});
+</code></pre>
+
+  <h2>Viewing Who Responded (Audit)</h2>
+  <p>The <code>InteractionResponse.RespondedBy</code> field identifies which role member responded. The audit log records this for every interaction, allowing you to see the full history of who responded to role-targeted interactions:</p>
+  <table>
+    <thead><tr><th>Field</th><th>Value (example)</th></tr></thead>
+    <tbody>
+      <tr><td><code>interactionId</code></td><td>8f4a91bc-...</td></tr>
+      <tr><td><code>targetUserId</code></td><td>role:finance-managers</td></tr>
+      <tr><td><code>respondedBy</code></td><td>usr_bob</td></tr>
+      <tr><td><code>outcome</code></td><td>approved</td></tr>
+      <tr><td>Dismissed users</td><td>usr_alice, usr_carol</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-timeout-handling.html">&#8592; Handling Timeout</a>
+    <a href="06-cleanup.html">Next: Subscription Cleanup &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Octopus Integration — Integration | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.chat-mock{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin:20px 0;max-width:380px;}
+.chat-mock .chat-header{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border);}
+.chat-mock .chat-icon{width:32px;height:32px;background:var(--accent2);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:0.85rem;}
+.chat-mock .chat-name{font-weight:600;font-size:0.88rem;}
+.chat-mock .chat-status{font-size:0.72rem;color:var(--text-muted);}
+.chat-bubble{padding:8px 12px;border-radius:10px;margin-bottom:8px;font-size:0.82rem;line-height:1.4;max-width:85%;}
+.bubble-agent{background:var(--surface2);align-self:flex-start;}
+.bubble-user{background:rgba(108,140,255,0.18);color:#c0ccff;margin-left:auto;text-align:right;}
+.chat-messages{display:flex;flex-direction:column;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Integration</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Integration Overview</a>
+  <a href="01-atlas-forms.html">Atlas Forms</a>
+  <a href="02-flow-studio.html">Flow Studio</a>
+  <a href="03-octopus.html" class="active">Octopus</a>
+  <a href="04-app-studio.html">App Studio</a>
+  <a href="05-edgestream.html">EdgeStream</a>
+  <a href="06-passport.html">Passport</a>
+  <a href="07-extension-points.html">Extension Points</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Octopus Integration</h1>
+    <p class="lead">Octopus is BizFirstGO's AI agent platform. WorkDesk embeds the Octopus <code>ChatWidget</code> in every page, providing employees with a context-aware AI assistant that can answer questions, explain workflow decisions, summarize task requirements, and guide form completion.</p>
+  </div>
+
+  <h2>Integration Direction</h2>
+  <p>WorkDesk embeds Octopus — the integration is one-directional: <strong>WorkDesk embeds the Octopus ChatWidget</strong>. WorkDesk passes page context as seed data to the widget so the agent is immediately aware of what the employee is looking at.</p>
+
+  <h2>ChatWidget in WorkDesk Shell</h2>
+  <p>The <code>ChatWidget</code> is mounted once in <code>WorkDeskShell.tsx</code> and persists across page navigation. As the employee navigates between pages, WorkDesk updates the widget's context seed data to reflect the current view:</p>
+
+  <pre><code>// WorkDeskShell.tsx — Octopus ChatWidget integration
+import { ChatWidget } from '@bizfirstai/octopus-react';
+import { useOctopusContext } from './hooks/useOctopusContext';
+
+export function WorkDeskShell() {
+  const { agentId, seedData } = useOctopusContext(); // context changes per page
+
+  return (
+    &lt;div className="shell"&gt;
+      &lt;WorkDeskNav /&gt;
+      &lt;main&gt;
+        &lt;Outlet /&gt;  {/* React Router page content */}
+      &lt;/main&gt;
+
+      &lt;ChatWidget
+        agentId={agentId}             // configured per WorkDesk deployment
+        seedData={seedData}           // current-page context (task, execution, etc.)
+        theme="dark"
+        position="bottom-right"
+        initiallyOpen={false}
+        locale={userLocale}
+      /&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Context-Aware Seed Data</h2>
+  <p>The <code>useOctopusContext</code> hook builds seed data based on the current route. The agent receives relevant context without the employee needing to explain what they're looking at:</p>
+
+  <pre><code>// useOctopusContext.ts — builds seed data per page
+export function useOctopusContext(): OctopusContextData {
+  const location = useLocation();
+  const { taskId } = useParams();
+  const task = useTaskStore(s => s.activeTask);
+  const execution = useHistoryStore(s => s.activeExecution);
+
+  return useMemo(() => {
+    // Task inbox — active task page
+    if (location.pathname.startsWith('/tasks/') && task) {
+      return {
+        agentId: OCTOPUS_AGENT_ID,
+        seedData: {
+          context: 'hil_task',
+          taskId:       task.id,
+          taskType:     task.type,         // "approval" | "form" | "review"
+          taskTitle:    task.title,
+          workflowName: task.workflowName,
+          dueAt:        task.dueAt,
+          // Note: form field values NOT included — privacy boundary
+        }
+      };
+    }
+
+    // Workflow history — execution detail page
+    if (location.pathname.startsWith('/history/') && execution) {
+      return {
+        agentId: OCTOPUS_AGENT_ID,
+        seedData: {
+          context:      'execution_history',
+          executionId:  execution.id,
+          workflowName: execution.workflowName,
+          status:       execution.status,
+          triggeredAt:  execution.triggeredAt,
+        }
+      };
+    }
+
+    // Dashboard / default
+    return {
+      agentId: OCTOPUS_AGENT_ID,
+      seedData: { context: 'workdesk_home' }
+    };
+  }, [location.pathname, task, execution]);
+}</code></pre>
+
+  <h2>What the Agent Can Help With</h2>
+  <p>The Octopus agent configured for WorkDesk has access to the following capabilities based on the context seed:</p>
+  <table>
+    <thead><tr><th>Context</th><th>Agent Can Help With</th></tr></thead>
+    <tbody>
+      <tr><td>HIL Approval Task</td><td>Explain what the workflow does, what approving vs. rejecting means, relevant policies</td></tr>
+      <tr><td>HIL Form Task</td><td>Explain individual fields, provide examples, clarify validation requirements</td></tr>
+      <tr><td>HIL Review Task</td><td>Summarize long documents, answer questions about the content under review</td></tr>
+      <tr><td>Workflow History</td><td>Explain why an execution failed, what each node does, how to re-trigger</td></tr>
+      <tr><td>Notifications</td><td>Explain what a notification means, link to the relevant task or workflow</td></tr>
+      <tr><td>Dashboard</td><td>General WorkDesk help, navigation assistance, feature questions</td></tr>
+    </tbody>
+  </table>
+
+  <div class="chat-mock">
+    <div class="chat-header">
+      <div class="chat-icon"><i class="fa-solid fa-robot"></i></div>
+      <div>
+        <div class="chat-name">WorkDesk Assistant</div>
+        <div class="chat-status">Online &mdash; Octopus AI</div>
+      </div>
+    </div>
+    <div class="chat-messages">
+      <div class="chat-bubble bubble-agent">I can see you have an <strong>Expense Report Approval</strong> task due tomorrow. Would you like me to explain what happens when you approve vs. reject?</div>
+      <div class="chat-bubble bubble-user">Yes, what happens if I reject?</div>
+      <div class="chat-bubble bubble-agent">If you reject, the workflow sends a notification to the employee who submitted the expense, and routes the execution back to the "Revise and Resubmit" node. The employee gets a chance to correct the report and resubmit for your approval.</div>
+    </div>
+  </div>
+
+  <h2>Privacy Boundaries</h2>
+  <p>WorkDesk enforces strict privacy boundaries on what data is passed to the Octopus agent:</p>
+
+  <div class="callout warning">
+    <strong>What is NOT Sent to Octopus</strong>
+    <ul>
+      <li>Form field values (user-entered data in HIL form tasks)</li>
+      <li>Workflow data context variables (intermediate computation outputs)</li>
+      <li>Other users' task details or notification content</li>
+      <li>Authentication tokens or session data</li>
+    </ul>
+    <p>Only structural metadata (task type, workflow name, due date) is passed as seed data. The agent uses its knowledge base to provide help — it does not have access to actual business data unless explicitly granted by the administrator.</p>
+  </div>
+
+  <h2>Agent Configuration</h2>
+  <p>The Octopus agent used in WorkDesk is configured in the Octopus admin console and identified by <code>agentId</code>. Platform engineers can configure:</p>
+  <ul>
+    <li>Which knowledge bases the agent has access to (e.g., company policy documents, workflow descriptions)</li>
+    <li>What tools/actions the agent can perform (read-only queries, or active assistance like starting a new workflow)</li>
+    <li>The agent's personality and response style (formal vs. conversational)</li>
+    <li>Language and locale support</li>
+  </ul>
+
+  <pre><code>// WorkDesk environment configuration
+NEXT_PUBLIC_OCTOPUS_AGENT_ID=agt-workdesk-assistant-prod
+NEXT_PUBLIC_OCTOPUS_ENDPOINT=https://octopus.bizfirstai.com
+
+// ChatWidget picks up agent config from Octopus via agentId
+// No additional configuration needed in WorkDesk code</code></pre>
+
+  <h2>ChatWidget Lifecycle</h2>
+  <table>
+    <thead><tr><th>Event</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>User opens WorkDesk</td><td>ChatWidget mounts in closed state — no conversation started yet</td></tr>
+      <tr><td>User clicks chat icon</td><td>Widget opens; agent receives seed data and sends an opening message based on current context</td></tr>
+      <tr><td>User navigates to different page</td><td>Seed data updates; if chat is open, agent receives context update event and adjusts its awareness</td></tr>
+      <tr><td>User closes widget</td><td>Conversation state is preserved — reopening resumes the conversation</td></tr>
+      <tr><td>User session ends</td><td>Conversation history is cleared (not persisted between sessions by default)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Octopus Widget is Optional</strong>
+    <p>If the <code>OCTOPUS_AGENT_ID</code> environment variable is not set, <code>WorkDeskShell</code> skips rendering the <code>ChatWidget</code> entirely. Deployments that do not have Octopus available can disable the integration by leaving the variable unset.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-flow-studio.html">&#8592; Flow Studio</a>
+    <a href="04-app-studio.html">Next: App Studio &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

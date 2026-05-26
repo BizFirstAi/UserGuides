@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Creating a Managed Identity — Managed Identities | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Managed Identities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-creating.html" class="active">Creating a Managed Identity</a>
+  <a href="02-credentials.html">Managed Identity Credentials</a>
+  <a href="03-role-assignment.html">Assigning Roles and Permissions</a>
+  <a href="04-workflow-execution.html">Using in Workflow Execution</a>
+  <a href="05-service-calls.html">Using in Service-to-Service Calls</a>
+  <a href="06-credential-rotation.html">Credential Rotation</a>
+  <a href="07-audit.html">Managed Identity Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Creating a Managed Identity</h1>
+    <p class="lead">Create managed identities via the Passport Admin API or the Passport Admin UI — name your identity after its purpose, assign it to the correct tenant, and follow naming conventions that make audit logs readable.</p>
+  </div>
+
+  <h2>CreateManagedIdentityRequest</h2>
+  <pre><code">public class CreateManagedIdentityRequest
+{
+    public required string Name        { get; init; }  // human-readable name (appears in audit logs)
+    public string? Description         { get; init; }  // purpose of this identity
+    public required string TenantId    { get; init; }  // must match a valid tenant
+    public string[]? InitialRoles      { get; init; }  // role names to assign immediately
+    public string[]? Tags              { get; init; }  // for filtering/organization
+}</code></pre>
+
+  <h2>Creating via API</h2>
+  <pre><code">POST /passport/admin/managed-identities
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "name":        "payroll-scheduler",
+  "description": "Runs the monthly payroll workflow on the 25th of each month",
+  "tenantId":    "tenant-abc",
+  "initialRoles":["payroll-executor"],
+  "tags":        ["automation", "payroll", "scheduler"]
+}
+
+// Response — SECRET SHOWN ONLY ONCE
+{
+  "managedIdentityId": "mi-guid-1234",
+  "clientId":          "mi-payroll-scheduler-clientid",
+  "clientSecret":      "mics_sk_xxxxxxxxxxxxxxxxxxxxxxxx",  // STORE SECURELY
+  "name":              "payroll-scheduler",
+  "tenantId":          "tenant-abc",
+  "createdAt":         "2026-05-25T10:00:00Z"
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Store the Client Secret Immediately</strong>
+    <p>The <code>clientSecret</code> is shown only once in the creation response. It is stored as a one-way hash in Passport — it cannot be retrieved again. Store it immediately in a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault). If lost, generate a new secret using the credential rotation process.</p>
+  </div>
+
+  <h2>Naming Conventions</h2>
+  <p>Managed identity names appear directly in audit logs. A well-chosen name makes security investigations straightforward. Follow this convention:</p>
+  <pre><code">// Good naming — describes function, not the team
+"payroll-monthly-scheduler"
+"hr-onboarding-integration"
+"erp-data-sync-agent"
+"slack-notification-sender"
+"backup-export-job"
+
+// Poor naming — vague, no context
+"service1"
+"automation"
+"test-mi"
+"john-smith-service"  // DO NOT use person names</code></pre>
+
+  <h2>Listing Managed Identities</h2>
+  <pre><code">GET /passport/admin/managed-identities?tenantId=tenant-abc
+Authorization: Bearer {admin-token}
+
+// Response
+{
+  "managedIdentities": [
+    {
+      "managedIdentityId": "mi-guid-1234",
+      "clientId":          "mi-payroll-scheduler-clientid",
+      "name":              "payroll-monthly-scheduler",
+      "description":       "Runs the monthly payroll workflow on the 25th",
+      "tenantId":          "tenant-abc",
+      "isEnabled":         true,
+      "createdAt":         "2026-05-25T10:00:00Z",
+      "lastUsedAt":        "2026-05-25T10:05:00Z",
+      "roles":             ["payroll-executor"],
+      "tags":              ["automation", "payroll"]
+    }
+  ],
+  "total": 1
+}</code></pre>
+
+  <h2>Disabling a Managed Identity</h2>
+  <pre><code">// Disable immediately (revokes all active tokens)
+POST /passport/admin/managed-identities/{managedIdentityId}/disable
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "reason": "security-incident",
+  "disabledBy": "admin-user-guid"
+}
+
+// Re-enable
+POST /passport/admin/managed-identities/{managedIdentityId}/enable
+Authorization: Bearer {admin-token}</code></pre>
+
+  <h2>Terraform / Infrastructure-as-Code</h2>
+  <pre><code"># Manage managed identities with Terraform (Passport provider)
+resource "bizfirst_managed_identity" "payroll_scheduler" {
+  name        = "payroll-monthly-scheduler"
+  description = "Runs the monthly payroll workflow"
+  tenant_id   = var.tenant_id
+
+  roles = ["payroll-executor"]
+
+  tags = {
+    team        = "finance"
+    environment = "production"
+  }
+}
+
+# Store the secret in Azure Key Vault
+resource "azurerm_key_vault_secret" "payroll_scheduler_secret" {
+  name         = "payroll-scheduler-client-secret"
+  value        = bizfirst_managed_identity.payroll_scheduler.client_secret
+  key_vault_id = azurerm_key_vault.main.id
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-credentials.html">Next: Managed Identity Credentials &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

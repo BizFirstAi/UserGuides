@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Creating a Subscription — Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-subscribing.html" class="active">Creating a Subscription</a>
+  <a href="02-topic-patterns.html">Topic Patterns</a>
+  <a href="03-topic-matcher.html">TopicMatcher</a>
+  <a href="04-subscription-manager.html">SubscriptionManager</a>
+  <a href="05-subscription-registry.html">SubscriptionRegistry</a>
+  <a href="06-callback-patterns.html">Callback Patterns</a>
+  <a href="07-unsubscribing.html">Unsubscribing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Creating a Subscription</h1>
+    <p class="lead">Subscribe to a topic using <code>edgeStream.subscribe(serverId, topic, callback)</code>. The returned handle lets you unsubscribe when done.</p>
+  </div>
+
+  <h2>The subscribe() API</h2>
+  <pre><code>// Signature
+subscribe&lt;TBody = unknown&gt;(
+  serverId: string,
+  topic: string,
+  callback: SubscriberCallback&lt;TBody&gt;
+): ISubscription
+
+// SubscriberCallback type
+type SubscriberCallback&lt;TBody = unknown&gt; =
+  (envelope: IEnvelope&lt;TBody&gt;) =&gt; void | Promise&lt;void&gt;</code></pre>
+
+  <h2>Basic Subscription</h2>
+  <pre><code>import { createEdgeStream, IEnvelope } from 'edge-stream-js';
+
+const stream = createEdgeStream();
+// ... setup and start ...
+
+interface WorkflowEvent {
+  nodeId: string;
+  status: 'started' | 'completed' | 'failed';
+  output?: unknown;
+}
+
+// Subscribe with typed body
+const sub = stream.subscribe&lt;WorkflowEvent&gt;(
+  'bas',                          // server ID
+  'workflow.execution.*',         // topic pattern
+  (envelope: IEnvelope&lt;WorkflowEvent&gt;) =&gt; {
+    const { nodeId, status } = envelope.body;
+    console.log(`Node ${nodeId}: ${status}`);
+    console.log('Topic:', envelope.meta.topic);
+    console.log('Received at:', envelope.meta.receivedAt);
+    console.log('Correlation:', envelope.meta.correlationId);
+  }
+);
+
+// sub.id       → 'sub-a1b2c3d4'
+// sub.active   → true
+// Later: sub.unsubscribe()</code></pre>
+
+  <h2>Server-Level Subscribe</h2>
+  <p>You can also subscribe directly on a server instance — useful when you already have a reference to the server:</p>
+  <pre><code>const server = stream.server('bas')!;
+
+const sub = server.subscriptionManager.subscribe&lt;ChatMessage&gt;(
+  'agent.chat.*',
+  (envelope) =&gt; {
+    chatStore.appendMessage(envelope.body);
+  }
+);</code></pre>
+
+  <h2>Multiple Subscriptions to One Topic</h2>
+  <p>Multiple subscribers on the same topic all receive the message independently. One subscriber's failure does not affect others:</p>
+  <pre><code>// Three subscribers on the same topic
+const sub1 = stream.subscribe('bas', 'workflow.*', (e) =&gt; logStore.add(e));
+const sub2 = stream.subscribe('bas', 'workflow.*', (e) =&gt; metricsStore.track(e));
+const sub3 = stream.subscribe('bas', 'workflow.*', (e) =&gt; uiStore.update(e));
+
+// All three receive every 'workflow.*' message independently</code></pre>
+
+  <h2>Async Subscriber</h2>
+  <pre><code>// Async callback — EdgeStream awaits all async subscribers concurrently
+const sub = stream.subscribe('bas', 'hil.approval.*', async (envelope) =&gt; {
+  try {
+    await hilInboxStore.processApprovalRequest(envelope.body);
+    await notificationService.notifyUser(envelope.body.userId);
+  } catch (error) {
+    // Catch internally — never let async subscriber errors propagate
+    console.error('[HILSubscriber] Failed:', error);
+  }
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Subscribers Overview</a>
+    <a href="02-topic-patterns.html">Next: Topic Patterns &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

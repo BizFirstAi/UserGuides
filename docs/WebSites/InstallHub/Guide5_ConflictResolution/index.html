@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conflict Resolution Overview — Conflict Resolution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.strategy-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 22px 24px; margin-bottom: 16px; }
+.strategy-card.replace { border-left: 4px solid var(--danger); }
+.strategy-card.merge   { border-left: 4px solid var(--warning); }
+.strategy-card.skip    { border-left: 4px solid var(--success); }
+.strategy-card h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Conflict Resolution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-conflict-detection.html">Conflict Detection</a>
+  <a href="02-replace-strategy.html">Replace Strategy</a>
+  <a href="03-merge-strategy.html">Merge Strategy</a>
+  <a href="04-skip-strategy.html">Skip Strategy</a>
+  <a href="05-manual-resolution.html">Manual Resolution</a>
+  <a href="06-default-strategy.html">Default Strategy</a>
+  <a href="07-audit.html">Conflict Audit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Conflict Resolution Overview</h1>
+    <p class="lead">When importing a package, a conflict occurs when the package contains an artifact with the same name and type as an artifact already in the target tenant. Three strategies — Replace, Merge, and Skip — determine what happens.</p>
+  </div>
+
+  <h2>What is a Conflict?</h2>
+  <p>A conflict arises when:</p>
+  <ul>
+    <li>The package contains an artifact of type <code>AtlasForm</code> named <code>EmployeeForm</code></li>
+    <li>AND the target tenant already has an <code>AtlasForm</code> named <code>EmployeeForm</code></li>
+  </ul>
+  <p>The import engine detects this during the ID remapping phase. The existing artifact in the target tenant has a known ID; the package artifact has been remapped to a new ID. A conflict exists — the engine must decide whether to overwrite, merge, or leave the existing artifact.</p>
+
+  <h2>Three Conflict Strategies</h2>
+
+  <div class="strategy-card replace">
+    <h3>Replace <span class="badge badge-red">Destructive</span></h3>
+    <p>The existing artifact is overwritten by the package version. The existing artifact's data is permanently replaced. Previous versions are not automatically preserved (though they may exist in export history if previously exported).</p>
+    <p><strong>Best for:</strong> Environment promotion (dev → staging → prod) where you always want the latest version from the source.</p>
+  </div>
+
+  <div class="strategy-card merge">
+    <h3>Merge <span class="badge badge-yellow">Selective</span></h3>
+    <p>The engine computes a JSON diff between the existing artifact and the package version, and applies only the changed fields. Fields not present in the package version are left unchanged in the existing artifact.</p>
+    <p><strong>Supported for:</strong> RuleSet, EntitySchema, AppDefinition (pure JSON config). Not supported for ProcessDefinition, ThreadDefinition, or AtlasForm (complex nested structures where automated merge is unreliable).</p>
+    <p><strong>Best for:</strong> Additive updates where local customizations should be preserved.</p>
+  </div>
+
+  <div class="strategy-card skip">
+    <h3>Skip <span class="badge badge-green">Safe</span></h3>
+    <p>The existing artifact is left completely unchanged. The package artifact is not installed for this artifact — the conflict is silently skipped. The import continues with other non-conflicting artifacts.</p>
+    <p><strong>Best for:</strong> Installing a package that may contain artifacts the target tenant has already customized — protect local modifications.</p>
+  </div>
+
+  <h2>Strategy Selection</h2>
+  <p>Strategies can be applied at two levels:</p>
+  <ol>
+    <li><strong>Default strategy:</strong> Set in <code>ImportOptions.defaultConflictStrategy</code> — applied to all conflicts that don't have a per-artifact override.</li>
+    <li><strong>Per-artifact override:</strong> For manual resolution, the administrator can choose a different strategy for each conflicting artifact individually.</li>
+  </ol>
+
+  <h2>ConflictReport</h2>
+  <p>Before the installation stage begins, the engine generates a <code>ConflictReport</code> listing all detected conflicts:</p>
+  <pre><code>{
+  "conflictsFound": 2,
+  "conflicts": [
+    {
+      "artifactType":      "AtlasForm",
+      "artifactName":      "EmployeeForm",
+      "packageVersion":    "1.3.0",
+      "existingVersion":   "1.0.0",
+      "proposedStrategy":  "Replace",
+      "mergeSupported":    false
+    },
+    {
+      "artifactType":      "RuleSet",
+      "artifactName":      "ApprovalRules",
+      "packageVersion":    "1.2.0",
+      "existingVersion":   "1.1.0",
+      "proposedStrategy":  "Merge",
+      "mergeSupported":    true,
+      "mergeDiff": {
+        "added":   ["rules[2]"],
+        "changed": ["rules[0].priority"],
+        "removed": []
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>Conflict Resolution in Unattended Imports</h2>
+  <p>For CI/CD pipeline imports, set <code>defaultConflictStrategy</code> in <code>ImportOptions</code> to run without human interaction. The engine applies the strategy to all conflicts automatically:</p>
+  <pre><code>{
+  "defaultConflictStrategy": "Replace",
+  "dryRun":                  false
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Replace is Irreversible</strong>
+    The Replace strategy overwrites the existing artifact permanently. If you need to preserve the previous version, export it before running the import, or enable the "backup before replace" option in ImportOptions.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-conflict-detection.html">Next: Conflict Detection &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

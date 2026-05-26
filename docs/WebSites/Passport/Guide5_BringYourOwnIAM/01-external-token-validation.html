@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>External Token Validation — Bring Your Own IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Bring Your Own IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-external-token-validation.html" class="active">External Token Validation</a>
+  <a href="02-okta.html">Okta Integration</a>
+  <a href="03-azure-ad.html">Azure AD Integration</a>
+  <a href="04-auth0.html">Auth0 Integration</a>
+  <a href="05-keycloak.html">Keycloak Integration</a>
+  <a href="06-claims-mapping.html">Claims Mapping</a>
+  <a href="07-hybrid-mode.html">Hybrid Mode</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>External Token Validation</h1>
+    <p class="lead">Configure Passport to accept and validate JWT tokens issued by an external identity provider — configure the issuer, JWKS URI, audience, and group claim mapping.</p>
+  </div>
+
+  <h2>Federation Configuration</h2>
+  <p>External IdP federation is configured in the tenant's identity provider settings. Each external IdP is registered with its issuer URL, JWKS URI, and group mapping configuration.</p>
+  <pre><code>// Tenant federation configuration (stored in Passport)
+POST /passport/admin/tenants/{tenantId}/federation
+Authorization: Bearer {admin-token}
+Content-Type: application/json
+
+{
+  "providerId":  "okta-main",
+  "displayName": "Okta (Main Directory)",
+  "issuer":      "https://company.okta.com/oauth2/default",
+  "jwksUri":     "https://company.okta.com/oauth2/default/v1/keys",
+  "audience":    "api://bizfirstgo",
+  "tenantIdClaim": "tenant_id",        // which claim contains the BizFirstGO tenant ID
+  "userIdClaim":   "sub",
+  "emailClaim":    "email",
+  "groupsClaim":   "groups",
+  "groupMapping": {
+    "BizFirst-Admins":   "admin",
+    "BizFirst-Managers": "manager",
+    "BizFirst-Users":    "user",
+    "BizFirst-Viewers":  "viewer"
+  }
+}</code></pre>
+
+  <h2>appsettings.json Configuration</h2>
+  <pre><code>// Multi-issuer configuration in appsettings.json
+{
+  "Passport": {
+    "Authority": "https://passport.bizfirst.ai",  // default Passport issuer
+    "ExternalProviders": [
+      {
+        "ProviderId":    "okta-main",
+        "Issuer":        "https://company.okta.com/oauth2/default",
+        "JwksUri":       "https://company.okta.com/oauth2/default/v1/keys",
+        "Audience":      "api://bizfirstgo",
+        "TenantIdClaim": "tenant_id",
+        "UserIdClaim":   "sub",
+        "EmailClaim":    "email",
+        "GroupsClaim":   "groups",
+        "JwksRefreshIntervalMinutes": 10
+      },
+      {
+        "ProviderId": "azure-ad",
+        "Issuer":     "https://login.microsoftonline.com/{tenantId}/v2.0",
+        "JwksUri":    "https://login.microsoftonline.com/{tenantId}/discovery/v2.0/keys",
+        "Audience":   "api://bizfirstgo",
+        "GroupsClaim":"groups"
+      }
+    ]
+  }
+}</code></pre>
+
+  <h2>Implementing a Custom IExternalTokenProvider</h2>
+  <pre><code">// Custom provider — for IdPs not covered by built-in providers
+public sealed class CustomEnterpriseTokenProvider : IExternalTokenProvider
+{
+    private readonly IConfiguration _config;
+    private readonly IJwksCache _jwksCache;
+
+    public string Issuer =&gt; _config["Federation:CustomProvider:Issuer"]!;
+
+    public async Task&lt;ExternalIdentityClaims?&gt; ValidateTokenAsync(
+        string token,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Fetch JWKS (cached)
+            var jwks = await _jwksCache.GetAsync(
+                _config["Federation:CustomProvider:JwksUri"]!, ct);
+
+            // Validate JWT
+            var handler = new JsonWebTokenHandler();
+            var result  = await handler.ValidateTokenAsync(token, new TokenValidationParameters
+            {
+                ValidIssuer          = Issuer,
+                ValidAudience        = _config["Federation:CustomProvider:Audience"],
+                IssuerSigningKeys    = jwks,
+                ValidateLifetime     = true,
+                ClockSkew            = TimeSpan.FromSeconds(60)
+            });
+
+            if (!result.IsValid) return null;
+
+            var claims = result.ClaimsIdentity.Claims.ToDictionary(c =&gt; c.Type, c =&gt; c.Value);
+
+            return new ExternalIdentityClaims
+            {
+                UserId      = claims.GetValueOrDefault("sub") ?? "",
+                TenantId    = claims.GetValueOrDefault("tenant_id") ?? "",
+                Email       = claims.GetValueOrDefault("email") ?? "",
+                DisplayName = claims.GetValueOrDefault("name"),
+                Groups      = claims
+                    .Where(c =&gt; c.Key == "groups")
+                    .Select(c =&gt; c.Value)
+                    .ToList()
+            };
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+}
+
+// Registration
+builder.Services.AddExternalTokenProvider&lt;CustomEnterpriseTokenProvider&gt;();</code></pre>
+
+  <h2>JWKS Caching</h2>
+  <p>External IdPs' JWKS endpoints are cached to prevent excessive outbound calls. The cache is refreshed when a token references a <code>kid</code> (key ID) not found in the cache — standard JWKS rotation handling.</p>
+  <table>
+    <thead>
+      <tr><th>Cache Behavior</th><th>Value</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Default JWKS cache TTL</td><td>10 minutes</td></tr>
+      <tr><td>Cache key</td><td>JWKS URI</td></tr>
+      <tr><td>Refresh trigger</td><td>Unknown <code>kid</code> in token header</td></tr>
+      <tr><td>Maximum refresh rate</td><td>1 refresh per 30 seconds (prevents thundering herd)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Audience Validation Is Mandatory</strong>
+    <p>Always configure the <code>Audience</code> field for each external provider. Without audience validation, tokens issued by your IdP for other applications (Salesforce, Jira, etc.) would be accepted by BizFirstGO. This is a critical security boundary — never set <code>ValidateAudience = false</code>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-okta.html">Next: Okta Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

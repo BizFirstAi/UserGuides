@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log Sanitization — Sensitive Data Handling | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Sensitive Data Handling</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Sensitive Data Overview</a>
+  <a href="01-log-sanitization.html" class="active">Log Sanitization in BizFirstGO</a>
+  <a href="02-otel-redaction.html">OTel Collector Redaction</a>
+  <a href="03-label-hygiene.html">Label Hygiene</a>
+  <a href="04-trace-attributes.html">Trace Attribute Filtering</a>
+  <a href="05-loki-access.html">Loki Access Controls</a>
+  <a href="06-gdpr-deletion.html">GDPR Deletion</a>
+  <a href="07-audit.html">Observability Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Log Sanitization in BizFirstGO</h1>
+    <p class="lead">BizFirstGO's <code>INodeLogger</code> interface wraps all structured logging with a built-in sanitization pass. Before any log message is forwarded to the OTel SDK, it passes through <code>LogSanitizer.cs</code> which applies regex patterns to mask recognized sensitive field patterns.</p>
+  </div>
+
+  <h2>Built-In Sanitization Patterns</h2>
+  <table>
+    <thead>
+      <tr><th>Pattern Name</th><th>Matches</th><th>Replacement</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>password</code></td><td>Any key named "password", "passwd", "pwd" (case-insensitive)</td><td><code>[REDACTED]</code></td></tr>
+      <tr><td><code>api_key</code></td><td>Keys named "apiKey", "api_key", "x-api-key", "Authorization"</td><td><code>[REDACTED]</code></td></tr>
+      <tr><td><code>token</code></td><td>Keys named "token", "accessToken", "refreshToken", "bearerToken"</td><td><code>[REDACTED]</code></td></tr>
+      <tr><td><code>credit_card</code></td><td>16-digit sequences matching Luhn algorithm (Visa, MC, Amex patterns)</td><td><code>[CC-REDACTED]</code></td></tr>
+      <tr><td><code>ssn</code></td><td>US SSN format: ddd-dd-dddd</td><td><code>[SSN-REDACTED]</code></td></tr>
+      <tr><td><code>email</code></td><td>Standard email format (configurable — disabled by default)</td><td><code>[EMAIL-REDACTED]</code></td></tr>
+      <tr><td><code>connection_string</code></td><td>Strings containing "Server=", "Password=", "mongodb://", etc.</td><td><code>[CONNSTR-REDACTED]</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>How INodeLogger Uses LogSanitizer</h2>
+  <pre><code>// ProcessEngine/Observability/LogSanitizer.cs (simplified)
+public static class LogSanitizer
+{
+    private static readonly List&lt;SanitizationRule&gt; Rules = new()
+    {
+        new SanitizationRule(
+            name: "password",
+            pattern: @"(?i)(""?password""?\s*[:=]\s*""?)([^""&amp;\s,}]+)",
+            replacement: "$1[REDACTED]"
+        ),
+        new SanitizationRule(
+            name: "credit_card",
+            pattern: @"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b",
+            replacement: "[CC-REDACTED]"
+        ),
+        // ... more rules
+    };
+
+    public static string Sanitize(string message)
+    {
+        foreach (var rule in Rules)
+            message = Regex.Replace(message, rule.Pattern, rule.Replacement);
+        return message;
+    }
+}
+
+// ProcessEngine/Observability/NodeLogger.cs
+public class NodeLogger : INodeLogger
+{
+    public void LogInformation(string message, object? data = null)
+    {
+        var sanitizedMessage = LogSanitizer.Sanitize(message);
+        var sanitizedData = data != null ? SanitizeObject(data) : null;
+        _logger.LogInformation(sanitizedMessage, sanitizedData);
+    }
+}</code></pre>
+
+  <h2>Adding Custom Sanitization Rules</h2>
+  <pre><code>// appsettings.json — extend built-in patterns with custom rules
+{
+  "Observability": {
+    "LogSanitization": {
+      "CustomRules": [
+        {
+          "Name": "employee_id",
+          "Pattern": "EMP-[0-9]{6}",
+          "Replacement": "[EMP-ID-REDACTED]"
+        },
+        {
+          "Name": "iban",
+          "Pattern": "[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}",
+          "Replacement": "[IBAN-REDACTED]"
+        }
+      ]
+    }
+  }
+}</code></pre>
+
+  <h2>Verifying Sanitization Is Working</h2>
+  <pre><code># After enabling sanitization, run a test workflow with known-sensitive input:
+# Test input: { "password": "secret123", "cardNumber": "4111111111111111" }
+
+# Query Loki for the execution log:
+{job="processengine"} |= "test-sanitization-execution"
+
+# Expected log output (sensitive values should be masked):
+# {"executionId":"exec-test-123","level":"info","message":"Processing form input",
+#  "formData":{"password":"[REDACTED]","cardNumber":"[CC-REDACTED]"}}
+
+# If you see raw values instead of [REDACTED]:
+# 1. Verify LogSanitizer is registered in DI: services.AddLogSanitizer()
+# 2. Verify the field name matches a sanitization rule
+# 3. Check for regex pattern escaping issues</code></pre>
+
+  <div class="callout info">
+    <strong>Sanitization Applies to Message Content, Not Labels</strong>
+    <p>LogSanitizer processes log message content and structured property values. Loki labels (job, tenant_id, environment) are set at the OTel Collector level and do not pass through the sanitizer. For label hygiene (ensuring labels never contain PII), see the Label Hygiene page.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Sensitive Data Overview</a>
+    <a href="02-otel-redaction.html">Next: OTel Collector Redaction &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Passport IAM Integration — Permissions | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Permissions</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Permissions Overview</a>
+  <a href="01-app-access.html">App-Level Access</a>
+  <a href="02-page-visibility.html">Page Visibility</a>
+  <a href="03-widget-visibility.html">Widget Visibility</a>
+  <a href="04-role-expression.html">Role-Based Expression</a>
+  <a href="05-data-scoping.html">Data Scoping</a>
+  <a href="06-passport-integration.html" class="active">Passport IAM Integration</a>
+  <a href="07-audit.html">Permissions Audit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Passport IAM Integration</h1>
+    <p class="lead">App Studio does not manage users or roles — it reads them from the Passport JWT issued at login. The <code>context</code> object in every App Studio session is populated directly from the Passport token claims, making role changes in Passport immediately effective on the next session start.</p>
+  </div>
+
+  <h2>How context.roles Is Populated</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>User logs in via Passport</strong>
+        <p>Passport authenticates the user and issues a signed JWT. The JWT payload includes standard claims plus BizFirstGO-specific claims: <code>tenantId</code>, <code>roles</code>, <code>userId</code>, custom claims.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>App Studio reads the JWT at session start</strong>
+        <p>When App Studio loads for a tenant+app, it reads the current Passport JWT from the session. It extracts the claims and builds the <code>context</code> object.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>context is injected into the token evaluator</strong>
+        <p>All token expressions throughout the app (visibility rules, data source params, widget config) can read from <code>context.*</code>. This includes <code>context.roles</code>, <code>context.userId</code>, <code>context.tenantId</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>context is refreshed on token renewal</strong>
+        <p>When the Passport JWT is renewed (typically every 15-60 minutes), App Studio updates the context object. Role changes take effect at the next token renewal — not immediately.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Passport JWT Claims Used by App Studio</h2>
+  <pre><code>// Typical Passport JWT payload for App Studio use
+{
+  "sub": "user-abc-123",           // → context.userId
+  "tid": "tenant-acme",            // → context.tenantId
+  "roles": ["admin", "sales"],     // → context.roles
+  "name": "Jane Smith",            // → context.displayName
+  "email": "jane@acme.com",        // → context.email
+  "iat": 1716640000,
+  "exp": 1716643600,
+  "custom_claim_1": "value"        // → context.claims.custom_claim_1
+}
+</code></pre>
+
+  <h2>Custom Claims in context.claims</h2>
+  <p>Passport can issue custom claims beyond the standard set. These are available under <code>context.claims</code>:</p>
+  <pre><code>// Passport custom claim: region
+// JWT: { "region": "APAC" }
+// Available in App Studio as:
+{{ context.claims.region }}   →   "APAC"
+
+// Use in visibility expression
+"visibilityExpression": "{{ context.claims.region === 'APAC' || context.roles.includes('admin') }}"
+</code></pre>
+
+  <h2>When Role Changes Take Effect</h2>
+  <table>
+    <thead>
+      <tr><th>Change</th><th>When effective in App Studio</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Role added to user in Passport</td><td>Next JWT renewal (session refresh, typically within the token TTL)</td></tr>
+      <tr><td>Role removed from user in Passport</td><td>Next JWT renewal — old JWT still valid until expiry</td></tr>
+      <tr><td>User deactivated in Passport</td><td>Immediately on next API call (Passport rejects the JWT)</td></tr>
+      <tr><td>App Studio allowedRoles changed</td><td>Immediately on next app load</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-info">
+    <strong>No user management in App Studio</strong>
+    App Studio has no user management UI. To add users, assign roles, or revoke access: use Passport. App Studio reads roles; it does not write them.
+  </div>
+
+  <h2>Testing Permissions as a Different Role</h2>
+  <p>In the App Studio Designer, the State Inspector allows you to simulate a different <code>context</code> to preview how the app looks for different roles without logging out:</p>
+  <pre><code>// State Inspector — simulate context for preview
+{
+  "context": {
+    "userId": "test-user",
+    "tenantId": "acme",
+    "roles": ["viewer"],           // Preview as a viewer role
+    "displayName": "Test Viewer"
+  }
+}
+// All visibility rules re-evaluate with this simulated context
+// The canvas updates live to show the viewer's perspective
+</code></pre>
+
+  <div class="page-nav">
+    <a href="05-data-scoping.html">&#8592; Data Scoping</a>
+    <a href="07-audit.html">Next: Permissions Audit &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

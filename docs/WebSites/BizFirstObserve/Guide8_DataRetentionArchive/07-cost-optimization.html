@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cost Optimization — Data Retention & Archive | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Data Retention &amp; Archive</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Data Retention Overview</a>
+  <a href="01-loki-retention.html">Loki Log Retention</a>
+  <a href="02-prometheus-retention.html">Prometheus Metric Retention</a>
+  <a href="03-tempo-retention.html">Tempo Trace Retention</a>
+  <a href="04-archiving.html">Archiving to Cold Storage</a>
+  <a href="05-backup.html">Backup Strategies</a>
+  <a href="06-compliance.html">Compliance Retention</a>
+  <a href="07-cost-optimization.html" class="active">Cost Optimization</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Cost Optimization</h1>
+    <p class="lead">The three most impactful cost levers for BizFirst Observe are: log volume reduction (fewer log lines per execution), metric cardinality control (fewer unique label combinations), and trace sampling rate (fewer spans stored). Applying all three can reduce observability storage costs by 60-80% without sacrificing meaningful coverage.</p>
+  </div>
+
+  <h2>Log Volume Reduction</h2>
+  <pre><code># 1. Set minimum log level to Information (not Debug) in production:
+# appsettings.Production.json
+{
+  "OpenTelemetry": {
+    "Logging": {
+      "MinimumLevel": "Information"   // Never emit Debug logs to OTel in production
+    }
+  }
+}
+
+# 2. Sample high-volume, low-value log lines in the OTel Collector:
+# otel-collector-config.yaml
+processors:
+  filter/drop-healthchecks:
+    logs:
+      exclude:
+        match_type: regexp
+        body: ".*health.*check.*"    # Drop health check log lines
+
+  # Sample DEBUG-equivalent logs at 1%:
+  probabilistic_sampler:
+    sampling_percentage: 1
+
+# 3. Use Loki's structured metadata to reduce per-line content:
+# Instead of: "Processing execution exec-abc123 for tenant tenant-xyz in environment production"
+# Use structured fields: executionId, tenant_id, environment as LABELS + short message</code></pre>
+
+  <h2>Metric Cardinality Control</h2>
+  <pre><code># High cardinality is the primary cost driver for Prometheus storage.
+# Rule: Never add a label with unbounded values (user ID, URL, email).
+
+# BAD — executionId has millions of unique values:
+bizfirst_workflow_executions_total{executionId="exec-abc123", status="success"}
+
+# GOOD — use bounded labels only:
+bizfirst_workflow_executions_total{workflow_type="approval", status="success", tenant_id="t123"}
+
+# Audit your metric cardinality regularly:
+# In Prometheus: http://localhost:9090/tsdb-status
+# Shows top series by label set count
+
+# Drop high-cardinality metrics at the OTel Collector before they reach Prometheus:
+processors:
+  filter/drop-high-cardinality:
+    metrics:
+      exclude:
+        match_type: strict
+        metric_names:
+          - "http_server_requests_seconds"  # Drop if URL is a label</code></pre>
+
+  <h2>Trace Sampling Optimization</h2>
+  <pre><code># Optimal tail sampling configuration for production:
+processors:
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000    # In-memory buffer size
+    policies:
+      # Keep 100% of error traces (most valuable)
+      - name: errors
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      # Keep 100% of slow traces (> 10s)
+      - name: slow
+        type: latency
+        latency: {threshold_ms: 10000}
+      # Keep 5% of everything else (random sample)
+      - name: baseline
+        type: probabilistic
+        probabilistic: {sampling_percentage: 5}
+
+# At 5% sampling with 1000 executions/hour:
+# Without sampling: 1000 × 20 spans = 20,000 spans/hour = 480,000 spans/day
+# With 5% sampling: 1000 spans/hour = 24,000 spans/day
+# Storage reduction: 20x
+# (Error and slow traces are always kept — 100% capture of important events)</code></pre>
+
+  <h2>Cost Summary — Before vs. After Optimization</h2>
+  <table>
+    <thead>
+      <tr><th>Signal</th><th>Before Optimization</th><th>After Optimization</th><th>Savings</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Logs (30 days)</td><td>500 GB/month</td><td>100 GB/month (Info-only + drop health checks)</td><td>80%</td></tr>
+      <tr><td>Metrics (90 days)</td><td>50 GB (high cardinality)</td><td>10 GB (bounded labels)</td><td>80%</td></tr>
+      <tr><td>Traces (7 days)</td><td>150 GB (100% sampling)</td><td>7.5 GB (5% sampling)</td><td>95%</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Measure Before Optimizing</strong>
+    <p>Before applying cost optimizations, measure your actual current volumes. Use <code>sum(rate(loki_distributor_bytes_received_total[1h])) by (tenant)</code> in Prometheus to see log byte rate per tenant. Use <code>prometheus_tsdb_head_series</code> to see current metric cardinality. Optimization decisions should be data-driven — not based on assumptions.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-compliance.html">&#8592; Compliance Retention</a>
+    <a href="../Guide9_SensitiveData/index.html">Next Guide: Sensitive Data Handling &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

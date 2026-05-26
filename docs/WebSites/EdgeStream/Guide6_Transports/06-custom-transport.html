@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Transport — Transports | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Transports</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Transport Overview</a>
+  <a href="01-signalr.html">SignalR Transport</a>
+  <a href="02-websocket.html">WebSocket Transport</a>
+  <a href="03-sse.html">SSE Transport</a>
+  <a href="04-choosing.html">Choosing a Transport</a>
+  <a href="05-connection-lifecycle.html">Connection Lifecycle</a>
+  <a href="06-custom-transport.html" class="active">Custom Transport</a>
+  <a href="07-multiple-transports.html">Multiple Transports</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Custom Transport</h1>
+    <p class="lead">Implement <code>ITransport</code> to integrate EdgeStream with any messaging protocol — MQTT, AMQP, gRPC streaming, WebRTC data channels, or proprietary protocols. The <code>BaseTransport</code> abstract class provides status management, error tracking, and handler registration so you can focus on the protocol layer.</p>
+  </div>
+
+  <h2>ITransport Interface</h2>
+  <pre><code>interface ITransport {
+  readonly id: string;
+  readonly type: 'signalr' | 'websocket' | 'sse' | 'http-polling';
+  readonly status: TransportStatus;
+  readonly lastError?: Error;
+
+  // Lifecycle
+  connect(): Promise&lt;void&gt;;
+  disconnect(): Promise&lt;void&gt;;
+
+  // Messaging
+  send(data: string | ArrayBuffer): Promise&lt;void&gt;;
+
+  // Event registration (returns unsubscribe function)
+  onMessage(handler: (raw: string | ArrayBuffer) =&gt; void): () =&gt; void;
+  onStatusChange(handler: (status: TransportStatus) =&gt; void): () =&gt; void;
+  onError(handler: (error: Error) =&gt; void): () =&gt; void;
+}</code></pre>
+
+  <h2>Extending BaseTransport (Recommended)</h2>
+  <p>Extend <code>BaseTransport</code> to get status management, error tracking, and handler plumbing for free. You only need to implement <code>connect()</code>, <code>disconnect()</code>, and <code>send()</code>:</p>
+  <pre><code>import { BaseTransport } from 'edge-stream-js';
+import type { TransportConfig } from 'edge-stream-js';
+import mqtt from 'mqtt';
+
+export class MqttTransport extends BaseTransport {
+  private client: mqtt.MqttClient | null = null;
+
+  constructor(id: string, config: TransportConfig) {
+    super(id, 'websocket', config); // use 'websocket' as closest type
+  }
+
+  async connect(): Promise&lt;void&gt; {
+    if (this.status === 'connected') return;
+
+    this.setStatus('connecting'); // inherited from BaseTransport
+
+    return new Promise((resolve, reject) =&gt; {
+      this.client = mqtt.connect(this.config.url, {
+        clientId: `edge-stream-${this.id}`,
+        username: this.config.accessToken,
+        reconnectPeriod: 1000,
+      });
+
+      this.client.on('connect', () =&gt; {
+        this.setStatus('connected'); // notifies all onStatusChange handlers
+        resolve();
+      });
+
+      this.client.on('message', (_topic, payload) =&gt; {
+        this.emitMessage(payload.toString()); // feeds EdgeStream pipeline
+      });
+
+      this.client.on('error', (error) =&gt; {
+        this.setStatus('error');
+        this.emitError(error); // records lastError, notifies onError handlers
+        reject(error);
+      });
+
+      this.client.on('offline', () =&gt; {
+        this.setStatus('reconnecting');
+      });
+    });
+  }
+
+  async disconnect(): Promise&lt;void&gt; {
+    if (this.client) {
+      await new Promise&lt;void&gt;((resolve) =&gt; {
+        this.client!.end(false, {}, () =&gt; resolve());
+      });
+      this.client = null;
+    }
+    this.setStatus('disconnected');
+    this.cleanup(); // clears all handler sets
+  }
+
+  async send(data: string | ArrayBuffer): Promise&lt;void&gt; {
+    if (!this.client || this.status !== 'connected') {
+      throw new Error('MQTT transport not connected');
+    }
+
+    const payload = typeof data === 'string' ? data : Buffer.from(data);
+    await new Promise&lt;void&gt;((resolve, reject) =&gt; {
+      this.client!.publish('edge-stream/outbound', payload, (err) =&gt; {
+        if (err) {
+          this.emitError(err);
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+}</code></pre>
+
+  <h2>Registering a Custom Transport</h2>
+  <p>To use a custom transport, create it manually and attach it to the server via <code>server.setTransport()</code> after registration:</p>
+  <pre><code>const stream = createEdgeStream({ logLevel: 'debug' });
+
+stream.registerServer({
+  id: 'mqtt',
+  type: 'bas',
+  url: 'wss://mqtt.bizfirst.com:8883',
+  // transportConfig not needed — we attach the transport manually below
+  transportConfig: { type: 'websocket', url: 'wss://mqtt.bizfirst.com:8883' }, // placeholder
+});
+
+// Replace the auto-created transport with our custom one
+const server = stream.server('mqtt')!;
+const mqttTransport = new MqttTransport('mqtt-transport', {
+  type: 'websocket',
+  url: 'wss://mqtt.bizfirst.com:8883',
+  accessToken: authStore.getToken(),
+});
+
+server.setTransport(mqttTransport);
+
+// Pipeline and subscriptions work as normal
+server.incomingPipeline.addHook(new NormalizationHook());
+stream.subscribe('mqtt', 'sensor.*', sensorHandler);
+await stream.start();</code></pre>
+
+  <h2>BaseTransport Protected API</h2>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>Use In</th><th>Effect</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>setStatus(status)</code></td><td>connect, disconnect, reconnect</td><td>Updates status, fires onStatusChange handlers (deduplicated)</td></tr>
+      <tr><td><code>emitMessage(raw)</code></td><td>Message received handler</td><td>Routes raw bytes into the EdgeStream pipeline</td></tr>
+      <tr><td><code>emitError(error)</code></td><td>Error handlers</td><td>Records lastError, fires onError handlers</td></tr>
+      <tr><td><code>cleanup()</code></td><td>disconnect</td><td>Clears all handler Sets — call at end of disconnect()</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Call cleanup() on Disconnect</strong>
+    Always call <code>this.cleanup()</code> at the end of your <code>disconnect()</code> implementation. This prevents memory leaks by clearing the internal Sets of message, status, and error handlers.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-connection-lifecycle.html">&#8592; Connection Lifecycle</a>
+    <a href="07-multiple-transports.html">Next: Multiple Transports &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

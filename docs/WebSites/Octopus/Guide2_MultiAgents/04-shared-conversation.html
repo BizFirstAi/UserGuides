@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shared Conversation Context — Multi-Agent System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Multi-Agent System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Multi-Agent Overview</a>
+  <a href="01-orchestrator-pattern.html">Orchestrator Agent Pattern</a>
+  <a href="02-handoff.html">Agent Handoff</a>
+  <a href="03-specialist-agents.html">Specialist Agents</a>
+  <a href="04-shared-conversation.html" class="active">Shared Conversation Context</a>
+  <a href="05-parallel-agents.html">Parallel Agent Execution</a>
+  <a href="06-agent-teams.html">Defining Agent Teams</a>
+  <a href="07-monitoring.html">Monitoring Multi-Agent Flows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Shared Conversation Context</h1>
+    <p class="lead">In a multi-agent flow, one ConversationComposite is shared across all agents that participate in a single user session. How much of that shared context each agent sees is controlled by the handoff configuration.</p>
+  </div>
+
+  <h2>The Single Conversation Principle</h2>
+  <p>Regardless of how many agents participate, the user experiences one conversation. The <code>ConversationComposite</code> belongs to the session — not to a specific agent. When the orchestrator hands off to a specialist, the specialist operates on the same <code>conversationId</code>.</p>
+  <p>This has important implications:</p>
+  <ul>
+    <li>The full conversation (all turns, all agents) is saved as a single episode in episodic memory</li>
+    <li>The user sees a continuous message thread, not multiple separate chats</li>
+    <li>Tool call history from the orchestrator's turn is accessible in the specialist's context (if configured)</li>
+  </ul>
+
+  <h2>Context Sharing Modes</h2>
+  <table>
+    <thead>
+      <tr><th>Mode</th><th>What Specialist Sees</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Handoff Summary Only</strong></td><td>Orchestrator-generated summary + user message</td><td>Default — minimal context, fastest</td></tr>
+      <tr><td><strong>Recent History</strong></td><td>Last N messages (configurable) + user message</td><td>Context-sensitive specialists needing conversation thread</td></tr>
+      <tr><td><strong>Full History</strong></td><td>All messages in the conversation</td><td>Rarely used — high token cost, reserved for complex tasks</td></tr>
+      <tr><td><strong>Forked Context</strong></td><td>New ConversationComposite branched from parent</td><td>When specialist needs an isolated context that must not pollute main session</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Context Forking</h2>
+  <p>For cases where a specialist needs to run extended reasoning without polluting the main conversation thread, Octopus supports context forking:</p>
+  <pre><code>// Forked context: specialist gets a copy of the conversation
+var fork = await _conversationRepo.ForkAsync(
+    parentConversationId: conversation.Id,
+    targetAgentId: specialistAgentId,
+    includeHistoryMessages: 5);  // include last 5 messages as starting context
+
+// The fork runs independently
+var specialistResponse = await _agentExecutor.ExecuteAsync(specialistAgent, fork, userMessage);
+
+// Merge the specialist's output back as a single "result" message in the main conversation
+await _conversationRepo.AppendAsync(
+    conversation.Id,
+    new LLMMessage(Role.Assistant, specialistResponse.Content,
+        metadata: new { source = "specialist", agentId = specialistAgentId }));</code></pre>
+
+  <h2>Conversation Metadata</h2>
+  <p>Each message in the ConversationComposite carries metadata that identifies which agent produced it — useful for the AgentMonitor micro-frontend:</p>
+  <pre><code>public class LLMMessage
+{
+    public string Role { get; set; }
+    public string Content { get; set; }
+    public MessageMetadata? Metadata { get; set; }
+}
+
+public class MessageMetadata
+{
+    public Guid? AgentId { get; set; }        // which agent produced this message
+    public string? AgentDisplayName { get; set; }
+    public bool IsHandoffSummary { get; set; }
+    public bool IsToolResult { get; set; }
+    public string? ToolName { get; set; }
+    public DateTimeOffset Timestamp { get; set; }
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="03-specialist-agents.html">&#8592; Specialist Agents</a>
+    <a href="05-parallel-agents.html">Next: Parallel Agent Execution &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chunking Strategies — RAG | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>RAG Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">RAG Pipeline Overview</a>
+  <a href="01-document-ingestion.html">Document Ingestion</a>
+  <a href="02-chunking.html" class="active">Chunking Strategies</a>
+  <a href="03-embedding.html">Embedding</a>
+  <a href="04-indexing.html">Indexing</a>
+  <a href="05-retrieval.html">Retrieval</a>
+  <a href="06-hybrid-search.html">Hybrid Search</a>
+  <a href="07-reranking.html">Reranking</a>
+  <a href="08-context-injection.html">Context Injection</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Chunking Strategies</h1>
+    <p class="lead">Chunking splits an ingested document's raw text into segments that are small enough to embed meaningfully and large enough to carry complete ideas. The chunking strategy has a major impact on retrieval quality. Three strategies are available: FixedSize, Sentence, and Semantic.</p>
+  </div>
+
+  <h2>Why Chunking Matters</h2>
+  <p>A document cannot be embedded as a whole — embedding models have input limits, and a 100-page policy document would produce a single vector that averages all its topics into noise. Chunking creates granular, topic-focused segments that embed well and retrieve with precision.</p>
+  <ul>
+    <li><strong>Too small</strong> (e.g. 50 tokens): Chunks lose context; answers require too many retrievals to assemble</li>
+    <li><strong>Too large</strong> (e.g. 2000 tokens): Chunks cover too many topics; low precision; token cost per retrieval is high</li>
+    <li><strong>Optimal</strong> (256–512 tokens): Single coherent idea per chunk; precise retrieval with manageable token cost</li>
+  </ul>
+
+  <h2>IChunker Interface</h2>
+  <pre><code>public interface IChunker
+{
+    IReadOnlyList&lt;TextChunk&gt; Chunk(string text, ChunkingConfig config);
+}
+
+public class TextChunk
+{
+    public int    Index     { get; init; }   // Position in original document
+    public string Content   { get; init; } = string.Empty;
+    public int    StartChar { get; init; }
+    public int    EndChar   { get; init; }
+    public int    TokenCount{ get; init; }
+}
+
+public class ChunkingConfig
+{
+    public string Strategy  { get; set; } = "FixedSize";  // FixedSize | Sentence | Semantic
+    public int    ChunkSize { get; set; } = 512;           // Max tokens per chunk
+    public int    Overlap   { get; set; } = 64;            // Overlap tokens between chunks
+}</code></pre>
+
+  <h2>Strategy 1: FixedSize</h2>
+  <p>Splits text into fixed-size token windows with overlap. Fast and predictable. The overlap ensures context is not lost at chunk boundaries:</p>
+  <pre><code>public class FixedSizeChunker : IChunker
+{
+    public IReadOnlyList&lt;TextChunk&gt; Chunk(string text, ChunkingConfig config)
+    {
+        var tokens = _tokenizer.Tokenize(text);
+        var chunks = new List&lt;TextChunk&gt;();
+        int step  = config.ChunkSize - config.Overlap;
+
+        for (int i = 0; i &lt; tokens.Count; i += step)
+        {
+            var slice = tokens.Skip(i).Take(config.ChunkSize).ToList();
+            chunks.Add(new TextChunk
+            {
+                Index      = chunks.Count,
+                Content    = _tokenizer.Decode(slice),
+                TokenCount = slice.Count
+            });
+            if (i + config.ChunkSize >= tokens.Count) break;
+        }
+        return chunks;
+    }
+}
+
+// Best for: dense reference docs (policy PDFs, technical manuals)
+// Drawback: may split mid-sentence</code></pre>
+
+  <h2>Strategy 2: Sentence</h2>
+  <p>Respects sentence boundaries — never splits mid-sentence. Groups sentences into chunks until the token limit is reached, with sentence-level overlap:</p>
+  <pre><code>public class SentenceChunker : IChunker
+{
+    public IReadOnlyList&lt;TextChunk&gt; Chunk(string text, ChunkingConfig config)
+    {
+        // Split into sentences using NLP sentence detector
+        var sentences = _sentenceDetector.Split(text);
+        var chunks    = new List&lt;TextChunk&gt;();
+        var current   = new List&lt;string&gt;();
+        int currentTokens = 0;
+
+        foreach (var sentence in sentences)
+        {
+            int sentTokens = _counter.Count(sentence);
+            if (currentTokens + sentTokens > config.ChunkSize && current.Any())
+            {
+                chunks.Add(BuildChunk(current, chunks.Count));
+                // Overlap: keep last N sentences
+                var overlapSentences = current.TakeLast(2).ToList();
+                current = overlapSentences;
+                currentTokens = overlapSentences.Sum(s => _counter.Count(s));
+            }
+            current.Add(sentence);
+            currentTokens += sentTokens;
+        }
+
+        if (current.Any()) chunks.Add(BuildChunk(current, chunks.Count));
+        return chunks;
+    }
+}
+
+// Best for: narrative documents, articles, FAQs
+// Drawback: chunks may vary significantly in size</code></pre>
+
+  <h2>Strategy 3: Semantic</h2>
+  <p>Groups sentences that are semantically similar using embedding similarity. Sentences with a large semantic shift trigger a new chunk boundary:</p>
+  <pre><code>public class SemanticChunker : IChunker
+{
+    public IReadOnlyList&lt;TextChunk&gt; Chunk(string text, ChunkingConfig config)
+    {
+        var sentences = _detector.Split(text);
+        var embeddings = _embedder.EmbedBatch(sentences);  // Synchronous batch
+
+        var chunks   = new List&lt;TextChunk&gt;();
+        var current  = new List&lt;string&gt; { sentences[0] };
+
+        for (int i = 1; i &lt; sentences.Count; i++)
+        {
+            float similarity = CosineSimilarity(embeddings[i - 1], embeddings[i]);
+            bool semanticBreak = similarity &lt; 0.75f;  // Configurable threshold
+
+            if (semanticBreak || _counter.Count(string.Concat(current)) > config.ChunkSize)
+            {
+                chunks.Add(BuildChunk(current, chunks.Count));
+                current = new List&lt;string&gt; { sentences[i] };
+            }
+            else
+            {
+                current.Add(sentences[i]);
+            }
+        }
+
+        if (current.Any()) chunks.Add(BuildChunk(current, chunks.Count));
+        return chunks;
+    }
+}
+
+// Best for: diverse topic documents (annual reports, multi-section guides)
+// Drawback: requires embedding at chunk time (slower ingestion)</code></pre>
+
+  <h2>Strategy Comparison</h2>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>Boundary Awareness</th><th>Ingestion Speed</th><th>Retrieval Precision</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>FixedSize</td><td>None (token boundary)</td><td>Fast</td><td>Good for dense text</td><td>Reference manuals, policy documents</td></tr>
+      <tr><td>Sentence</td><td>Sentence boundary</td><td>Fast</td><td>Better for natural language</td><td>FAQs, articles, conversational content</td></tr>
+      <tr><td>Semantic</td><td>Semantic topic boundary</td><td>Slow (needs embedding at index time)</td><td>Best — topic-aligned chunks</td><td>Mixed-topic documents, annual reports</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="01-document-ingestion.html">&#8592; Document Ingestion</a>
+    <a href="03-embedding.html">Next: Embedding &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

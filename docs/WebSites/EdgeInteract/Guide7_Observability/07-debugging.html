@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Debugging Stuck Interactions — Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.debug-step{display:flex;gap:14px;margin:14px 0;align-items:flex-start;}
+.debug-num{min-width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-size:0.8rem;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px;}
+.debug-body h4{margin:0 0 6px;font-size:0.9rem;}
+.debug-body p{margin:0;font-size:0.83rem;color:var(--text-muted);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observability Overview</a>
+  <a href="01-interaction-monitor.html">InteractionMonitor Component</a>
+  <a href="02-response-time.html">Response Time Tracking</a>
+  <a href="03-completion-rate.html">Completion Rate</a>
+  <a href="04-audit-log.html">Interaction Audit Log</a>
+  <a href="05-metrics-emission.html">Metrics to BizFirst Observe</a>
+  <a href="06-alerting.html">Alerting</a>
+  <a href="07-debugging.html" class="active">Debugging Stuck Interactions</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Debugging Stuck Interactions</h1>
+    <p class="lead">A "stuck" interaction is one that has been published and is pending, but the user has not responded and the timeout has not yet expired — often because delivery failed or the interaction is not rendering. This page explains how to find stuck interactions and resolve them.</p>
+  </div>
+
+  <h2>Diagnosing: Is an Interaction Stuck?</h2>
+  <p>An interaction is stuck (rather than merely slow) if all of these are true:</p>
+  <ul>
+    <li>It has been in-flight significantly longer than the P95 response time for its type</li>
+    <li>The <code>displayedAt</code> field in the audit log is null (the UI never confirmed rendering)</li>
+    <li>The target user is actively online (EdgeStream shows their session as connected)</li>
+  </ul>
+
+  <h2>Step-by-Step Debugging Process</h2>
+
+  <div class="debug-step">
+    <div class="debug-num">1</div>
+    <div class="debug-body">
+      <h4>Check InteractionMonitor for in-flight interactions</h4>
+      <p>Open the admin dashboard and review <code>InteractionMonitor</code>. Look for interactions with age significantly greater than expected. Note the <code>interactionId</code> and <code>targetUserId</code>.</p>
+    </div>
+  </div>
+
+  <div class="debug-step">
+    <div class="debug-num">2</div>
+    <div class="debug-body">
+      <h4>Query the audit log for the interaction</h4>
+      <p>Use the audit store to fetch the full entry. Check whether <code>deliveredAt</code> and <code>displayedAt</code> are populated. If <code>deliveredAt</code> is null, delivery failed.</p>
+    </div>
+  </div>
+
+  <div class="debug-step">
+    <div class="debug-num">3</div>
+    <div class="debug-body">
+      <h4>Check EdgeStream session state for the target user</h4>
+      <p>Query the EdgeStream session store for the target user. If they are offline, the interaction will be delivered when they reconnect (unless the timeout expires first).</p>
+    </div>
+  </div>
+
+  <div class="debug-step">
+    <div class="debug-num">4</div>
+    <div class="debug-body">
+      <h4>Check the client-side queue</h4>
+      <p>If the user is connected, the interaction should appear in their <code>useInteractionReceiver()</code> queue. Ask the user to open the WorkDesk inbox or check for rendering errors in browser console.</p>
+    </div>
+  </div>
+
+  <div class="debug-step">
+    <div class="debug-num">5</div>
+    <div class="debug-body">
+      <h4>Manually resolve if needed</h4>
+      <p>If the workflow is blocked and the interaction cannot be delivered, use the admin resolution API to manually respond to or cancel the interaction.</p>
+    </div>
+  </div>
+
+  <h2>Audit Log Query for Stuck Interactions</h2>
+  <pre><code">// Find interactions that have been in-flight for more than 2x their type's expected P95
+public async Task&lt;List&lt;InteractionAuditEntry&gt;&gt; FindStuckInteractionsAsync(
+    TimeSpan stuckThreshold,
+    CancellationToken ct = default)
+{
+    return await _auditStore.QueryAsync(new AuditQuery
+    {
+        Statuses       = [InteractionStatus.Pending],
+        CreatedBefore  = DateTime.UtcNow - stuckThreshold,
+        // No displayedAt — never rendered by client
+        DisplayedAt    = null
+    }, ct);
+}
+
+// Example: find approvals stuck for more than 8 hours with no display
+var stuck = await FindStuckInteractionsAsync(TimeSpan.FromHours(8), ct);
+foreach (var entry in stuck)
+{
+    _logger.LogWarning(
+        "Stuck interaction {Id} for user {User} — published {Age} ago, never displayed",
+        entry.InteractionId,
+        entry.TargetUserId,
+        DateTime.UtcNow - entry.PublishedAt);
+}
+</code></pre>
+
+  <h2>Manual Resolution API</h2>
+  <p>Administrators can manually resolve a stuck interaction via the admin endpoint. This triggers the response pipeline as if the user had responded:</p>
+  <pre><code">// POST /edge-interact/admin/resolve
+[HttpPost("admin/resolve")]
+[Authorize(Roles = "admin")]
+public async Task&lt;IActionResult&gt; ResolveAsync(
+    [FromBody] AdminResolveRequest req,
+    CancellationToken ct)
+{
+    // Validate the interaction is still in pending state
+    var entry = await _auditStore.GetByIdAsync(req.InteractionId, ct);
+    if (entry is null)
+        return NotFound();
+    if (entry.Status != InteractionStatus.Pending)
+        return Conflict($"Interaction is already in state: {entry.Status}");
+
+    var response = new InteractionResponse
+    {
+        InteractionId = req.InteractionId,
+        RespondedBy   = $"admin:{User.Identity!.Name}",
+        Outcome       = req.Outcome,
+        Data          = req.Data,
+        Timestamp     = DateTime.UtcNow,
+        AdminOverride = true
+    };
+
+    await _pipeline.SubmitResponseAsync(response, ct);
+    return Ok(new { resolved = true, outcome = req.Outcome });
+}
+</code></pre>
+
+  <h2>Manual Cancellation (Force Timeout)</h2>
+  <p>To cancel an interaction without submitting a response (equivalent to forcing a timeout):</p>
+  <pre><code">// POST /edge-interact/admin/cancel
+[HttpPost("admin/cancel")]
+[Authorize(Roles = "admin")]
+public async Task&lt;IActionResult&gt; CancelAsync(
+    [FromBody] AdminCancelRequest req,
+    CancellationToken ct)
+{
+    await _pipeline.CancelAsync(req.InteractionId, reason: req.Reason, ct);
+    return Ok();
+}
+</code></pre>
+
+  <h2>Common Root Causes and Fixes</h2>
+  <table>
+    <thead><tr><th>Symptom</th><th>Root Cause</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><code>deliveredAt</code> is null, user offline</td><td>User is not connected to EdgeStream</td><td>Wait for reconnect, or escalate via email/notification out-of-band</td></tr>
+      <tr><td><code>deliveredAt</code> set, <code>displayedAt</code> null</td><td>Client received the interaction but did not render it (renderer missing or error)</td><td>Check <code>InteractionContainer</code> renderer map for the interaction type; check browser errors</td></tr>
+      <tr><td>Interaction delivered and displayed, no response</td><td>User is ignoring or cannot find the interaction</td><td>Send a reminder notification; check inbox UI priority ordering</td></tr>
+      <tr><td>All interactions for one type stuck</td><td>Renderer component for that type is crashing (React error boundary)</td><td>Check browser console; fix the component; redeploy</td></tr>
+      <tr><td>Callback topic not receiving response</td><td>Topic routing misconfigured in EdgeStream</td><td>Verify <code>interactions.callback.{id}</code> topic subscription is active on the server</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Timeout Is the Automatic Resolution</strong>
+    For most stuck interactions, simply waiting for the timeout to expire is the correct course of action. Manual resolution should only be used when the workflow is blocked and waiting is not acceptable (e.g., a time-critical approval).
+  </div>
+
+  <h2>Grafana Query: Interactions Pending Over Threshold</h2>
+  <pre><code">// Count interactions in-flight for more than 1 hour
+# Note: This requires the pipeline to tag in-flight metrics with publish timestamp
+# Use the audit log query endpoint for fine-grained stuck detection instead.
+
+# Coarse signal — growing in-flight gauge suggests accumulating stuck interactions:
+interaction_in_flight > 50
+</code></pre>
+
+  <div class="page-nav">
+    <a href="06-alerting.html">&#8592; Alerting</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

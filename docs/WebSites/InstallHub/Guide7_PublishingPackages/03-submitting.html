@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Submitting — Publishing Packages | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Publishing</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-publisher-profile.html">Publisher Profile</a>
+  <a href="02-preparing.html">Preparing the Package</a>
+  <a href="03-submitting.html" class="active">Submitting</a>
+  <a href="04-review.html">Review Process</a>
+  <a href="05-security-scan.html">Security Scan</a>
+  <a href="06-certification.html">Certification</a>
+  <a href="07-managing.html">Managing Published Packages</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Submitting a Package</h1>
+    <p class="lead">Package submission is a single multipart POST request. The API accepts the package ZIP and submission metadata, queues it for the review pipeline, and returns a submission ID for polling.</p>
+  </div>
+
+  <div class="callout warning"><strong>Phase 3 — PENDING</strong> This feature is planned but not yet implemented.</div>
+
+  <h2>Submit API</h2>
+  <pre><code>POST /api/marketplace/submit
+Authorization: Bearer {publisherToken}
+Content-Type: multipart/form-data
+
+// Form fields:
+package              — (file) The .installhub.zip package
+description          — Short description shown in marketplace search results (max 500 chars)
+category             — Package category (see Category Values below)
+tags                 — Comma-separated list of tags, max 10, max 30 chars each
+changelog            — Release notes for this version (max 5000 chars)
+requestCertification — "true" to enter the Certified review queue (optional, default false)
+
+// Response — HTTP 202 Accepted:
+{
+  "submissionId":      "sub-a1b2c3d4",
+  "packageId":         "mkt-pkg-a1b2c3",   // Assigned on first submission; reused for new versions
+  "version":           "3.0.0",
+  "status":            "Queued",
+  "trustLevelTarget":  "Community",         // Or "Certified" if requestCertification=true
+  "statusUrl":         "/api/marketplace/submissions/sub-a1b2c3d4/status",
+  "estimatedMinutes":  10
+}</code></pre>
+
+  <h2>Category Values</h2>
+  <table>
+    <thead>
+      <tr><th>Category</th><th>Use For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Workflows</code></td><td>Process definitions, approval flows, automation chains</td></tr>
+      <tr><td><code>Forms</code></td><td>AtlasForm packages — data capture and structured input</td></tr>
+      <tr><td><code>Agents</code></td><td>AI agent packages — Claude-powered decision and orchestration nodes</td></tr>
+      <tr><td><code>Templates</code></td><td>Starter templates combining workflows + forms for a vertical (HR, Finance, etc.)</td></tr>
+      <tr><td><code>Utilities</code></td><td>Shared rule sets, entity schemas, configuration helpers</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Submission Status Lifecycle</h2>
+  <pre><code>GET /api/marketplace/submissions/{submissionId}/status
+
+// Status values and transitions:
+// Queued → SecurityScanning → ManifestValidation → [HumanReview] → Listed / Rejected
+
+// During scan:
+{
+  "status":   "SecurityScanning",
+  "stage":    "ExpressionInjectionCheck",
+  "progress": "2 of 5 checks complete"
+}
+
+// During manifest validation:
+{
+  "status":   "ManifestValidation",
+  "stage":    "ReadmeCompletenessCheck"
+}
+
+// Awaiting human review (Certified path only):
+{
+  "status":          "AwaitingHumanReview",
+  "estimatedDays":   3,
+  "reviewQueuePosition": 7
+}
+
+// Successfully listed:
+{
+  "status":         "Listed",
+  "packageId":      "mkt-pkg-a1b2c3",
+  "trustLevel":     "Community",
+  "listedAt":       "2026-05-25T14:22:00Z",
+  "marketplaceUrl": "https://marketplace.bizfirstai.com/packages/mkt-pkg-a1b2c3"
+}
+
+// Rejected:
+{
+  "status":  "Rejected",
+  "reason":  "SecurityScanFailed",
+  "details": "Expression injection detected in ProcessDefinition 'EmployeeOnboarding': expression contains environment variable access",
+  "scanReport": "/api/marketplace/submissions/sub-a1b2c3d4/scan-report",
+  "resubmitAfterFix": true
+}</code></pre>
+
+  <h2>Submission Constraints</h2>
+  <table>
+    <thead>
+      <tr><th>Constraint</th><th>Limit</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Maximum package size</td><td>50 MB</td></tr>
+      <tr><td>Maximum artifacts per package</td><td>100</td></tr>
+      <tr><td>Maximum submissions per day (per publisher)</td><td>20</td></tr>
+      <tr><td>Maximum versions per packageId</td><td>No limit</td></tr>
+      <tr><td>Version resubmission</td><td>Not allowed — each SemVer version is immutable once listed</td></tr>
+      <tr><td>Same version resubmission after rejection</td><td>Allowed after fixing the reported issue</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Listing Your Submissions</h2>
+  <pre><code>GET /api/marketplace/publishers/{publisherId}/submissions?status=Rejected
+
+{
+  "items": [
+    {
+      "submissionId": "sub-a1b2c3d4",
+      "packageId":    "mkt-pkg-a1b2c3",
+      "version":      "3.0.0",
+      "status":       "Rejected",
+      "reason":       "SecurityScanFailed",
+      "submittedAt":  "2026-05-25T14:00:00Z"
+    }
+  ]
+}</code></pre>
+
+  <h2>Error Responses</h2>
+  <table>
+    <thead>
+      <tr><th>HTTP Status</th><th>Error Code</th><th>Cause</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>400</td><td><code>InvalidPackageFormat</code></td><td>ZIP is malformed or not an InstallHub package</td></tr>
+      <tr><td>400</td><td><code>VersionAlreadyPublished</code></td><td>This version of this packageId is already listed</td></tr>
+      <tr><td>400</td><td><code>MissingRequiredField</code></td><td>A required manifest field or form field is absent</td></tr>
+      <tr><td>403</td><td><code>PublisherNotVerified</code></td><td>Publisher profile domain not yet verified</td></tr>
+      <tr><td>403</td><td><code>PackageBelongsToOtherPublisher</code></td><td>The packageId was first submitted by a different publisher</td></tr>
+      <tr><td>429</td><td><code>RateLimitExceeded</code></td><td>Exceeded 20 submissions/day limit</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-preparing.html">&#8592; Preparing the Package</a>
+    <a href="04-review.html">Next: Review Process &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

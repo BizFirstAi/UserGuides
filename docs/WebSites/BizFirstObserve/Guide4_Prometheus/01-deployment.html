@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploying Prometheus — Prometheus Metrics | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Prometheus Metrics</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Prometheus Overview</a>
+  <a href="01-deployment.html" class="active">Deploying Prometheus</a>
+  <a href="02-scrape-config.html">Scrape Configuration</a>
+  <a href="03-bizfirst-metrics.html">BizFirst Metrics Reference</a>
+  <a href="04-promql-basics.html">PromQL Basics</a>
+  <a href="05-promql-examples.html">PromQL for BizFirstGO</a>
+  <a href="06-recording-rules.html">Recording Rules</a>
+  <a href="07-alerting.html">Prometheus Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Deploying Prometheus</h1>
+    <p class="lead">Prometheus is a single stateful binary that manages its own embedded TSDB. Deploying it correctly — with appropriate retention settings, disk provisioning, and remote write configuration — is critical for reliable metrics collection.</p>
+  </div>
+
+  <h2>Prometheus Command-Line Configuration</h2>
+  <pre><code># Docker Compose — Prometheus service definition
+prometheus:
+  image: prom/prometheus:v2.51.0
+  command:
+    - "--config.file=/etc/prometheus/prometheus.yml"
+    - "--storage.tsdb.path=/prometheus"
+    - "--storage.tsdb.retention.time=90d"         # Keep 90 days of metrics
+    - "--storage.tsdb.retention.size=100GB"        # Cap storage at 100GB
+    - "--web.enable-remote-write-receiver"          # Accept remote write (for OTel Collector)
+    - "--web.enable-lifecycle"                      # Enable /-/reload endpoint
+    - "--web.enable-admin-api"                      # Enable snapshot API
+    - "--rules.alert.resend-delay=1m"
+  volumes:
+    - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    - ./alert-rules.yml:/etc/prometheus/alert-rules.yml
+    - prometheus-data:/prometheus
+  ports:
+    - "9090:9090"</code></pre>
+
+  <h2>prometheus.yml — Main Configuration</h2>
+  <pre><code># prometheus.yml
+global:
+  scrape_interval: 15s        # Default scrape frequency
+  evaluation_interval: 15s    # Alert rule evaluation frequency
+  scrape_timeout: 10s
+
+  # Labels added to all metrics scraped by this Prometheus instance
+  external_labels:
+    cluster: 'bizfirst-prod-us-east-1'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+# Alert and recording rules files
+rule_files:
+  - "/etc/prometheus/alert-rules.yml"
+  - "/etc/prometheus/recording-rules.yml"
+
+# Scrape configurations — see 02-scrape-config.html for full details
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8888']
+
+  - job_name: 'bizfirst-processengine'
+    static_configs:
+      - targets: ['processengine:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 15s</code></pre>
+
+  <h2>Storage Sizing</h2>
+  <p>Prometheus TSDB requires SSD storage — it performs many small random reads and writes. Rotational disk (HDD) will cause severe performance degradation.</p>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th>Active Series</th><th>Retention</th><th>Disk Required</th><th>RAM Required</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Development</td><td>~5,000</td><td>15 days</td><td>10 GB SSD</td><td>512 MB</td></tr>
+      <tr><td>Small production</td><td>~50,000</td><td>90 days</td><td>50 GB SSD</td><td>4 GB</td></tr>
+      <tr><td>Medium production</td><td>~500,000</td><td>90 days</td><td>500 GB SSD</td><td>16 GB</td></tr>
+      <tr><td>Large production</td><td>5M+</td><td>90 days</td><td>Use Thanos + object storage</td><td>64 GB+</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Remote Write — Sending Metrics to Prometheus</h2>
+  <p>In addition to scraping, Prometheus can receive metrics via remote write — which is how the OTel Collector pushes metrics it receives via OTLP:</p>
+  <pre><code># otel-collector-config.yaml — remote write to Prometheus
+exporters:
+  prometheusremotewrite:
+    endpoint: "http://prometheus:9090/api/v1/write"
+    tls:
+      insecure: true
+    headers:
+      X-Prometheus-Remote-Write-Version: "0.1.0"
+    resource_to_telemetry_conversion:
+      enabled: true  # Convert OTel resource attributes to Prometheus labels</code></pre>
+
+  <div class="callout warning">
+    <strong>Prometheus is Single-Node by Default</strong>
+    <p>The default Prometheus deployment is a single instance with no built-in replication. If Prometheus goes down, metric collection stops (though services continue serving traffic). For HA deployments, run two Prometheus instances scraping the same targets, and use Thanos Querier to deduplicate the results. See <a href="../Guide11_EnterpriseOptions/index.html">Guide11: Enterprise Options</a>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Prometheus Overview</a>
+    <a href="02-scrape-config.html">Next: Scrape Configuration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

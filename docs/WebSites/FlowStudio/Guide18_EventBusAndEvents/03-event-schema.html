@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WorkflowEvent Schema — Workflow Event Bus | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Event Bus</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interface.html">IWorkflowEventBus</a>
+  <a href="02-built-in-events.html">Built-In Workflow Events</a>
+  <a href="03-event-schema.html" class="active">WorkflowEvent Schema</a>
+  <a href="04-publishing.html">Publishing from a Node</a>
+  <a href="05-subscribing.html">Subscribing to Events</a>
+  <a href="06-custom-events.html">Defining Custom Events</a>
+  <a href="07-delivery-guarantees.html">Delivery Guarantees</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>WorkflowEvent Schema</h1>
+    <p class="lead">The abstract base class all workflow events inherit from. Every event carries a common set of fields for correlation, tenant isolation, and event type identification.</p>
+  </div>
+
+  <h2>Base Class</h2>
+  <pre><code>namespace BizFirst.Ai.ProcessEngine.EventBus;
+
+/// &lt;summary&gt;
+/// Base class for all workflow events — both built-in and custom.
+/// Provides correlation, tenant, and event metadata.
+/// &lt;/summary&gt;
+public abstract class WorkflowEvent
+{
+    // Set by the engine at publish time
+    public string          EventId     { get; init; } = Guid.NewGuid().ToString();
+    public string          EventType   { get; init; } = string.Empty; // auto-set by dispatcher
+    public DateTimeOffset  OccurredAt  { get; init; } = DateTimeOffset.UtcNow;
+
+    // Correlation context — always required
+    public string ExecutionId { get; init; }
+    public string ProcessId   { get; init; }
+    public string TenantId    { get; init; }
+}</code></pre>
+
+  <h2>Base Fields Reference</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>EventId</code></td><td>string (GUID)</td><td>Unique identifier for this event instance — use for deduplication in idempotent handlers</td></tr>
+      <tr><td><code>EventType</code></td><td>string</td><td>Auto-set by dispatcher to the class name — e.g., "WorkflowCompleted"</td></tr>
+      <tr><td><code>OccurredAt</code></td><td>DateTimeOffset</td><td>UTC timestamp when PublishAsync was called</td></tr>
+      <tr><td><code>ExecutionId</code></td><td>string</td><td>The execution instance this event relates to</td></tr>
+      <tr><td><code>ProcessId</code></td><td>string</td><td>The workflow definition (process) this execution is running</td></tr>
+      <tr><td><code>TenantId</code></td><td>string</td><td>Tenant that owns the workflow — always include in handler DB writes for isolation</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Idempotent Handler Pattern</h2>
+  <p>Use <code>EventId</code> to prevent double-processing in handlers that write to external systems:</p>
+  <pre><code>public async Task HandleAsync(WorkflowCompleted @event, CancellationToken ct)
+{
+    // Skip if already processed (e.g., after a retry)
+    if (await _processedEvents.ExistsAsync(@event.EventId, ct))
+        return;
+
+    await _billingService.ChargeExecutionAsync(@event.TenantId, @event.ExecutionId, ct);
+    await _processedEvents.MarkAsync(@event.EventId, ct);
+}</code></pre>
+
+  <h2>Serialisation for External Delivery</h2>
+  <p>When pushing events to an external message broker from a handler, serialise the full event object to preserve all base fields:</p>
+  <pre><code>public async Task HandleAsync(WorkflowCompleted @event, CancellationToken ct)
+{
+    var message = new ServiceBusMessage(JsonSerializer.Serialize(@event))
+    {
+        MessageId      = @event.EventId,       // dedup key
+        CorrelationId  = @event.ExecutionId,
+        Subject        = @event.EventType
+    };
+
+    await _sender.SendMessageAsync(message, ct);
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="02-built-in-events.html">&#8592; Built-In Events</a>
+    <a href="04-publishing.html">Next: Publishing from a Node &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

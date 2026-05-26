@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procedural Memory Overview — Procedural Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Procedural Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Procedural Memory Overview</a>
+  <a href="01-procedure-capture.html">Capturing Procedures</a>
+  <a href="02-procedure-storage.html">Procedure Storage</a>
+  <a href="03-procedure-recall.html">Recalling Procedures</a>
+  <a href="04-procedure-execution.html">Executing a Recalled Procedure</a>
+  <a href="05-skill-library.html">Skill Library</a>
+  <a href="06-editing-procedures.html">Editing and Approving Procedures</a>
+  <a href="07-procedure-scope.html">Procedure Scope</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Procedural Memory</h1>
+    <p class="lead">Procedural memory stores <em>how to do things</em> — ordered sequences of steps and tool calls that agents can recall and replay when given a matching task. It enables consistent, repeatable task execution without re-deriving the approach each time.</p>
+  </div>
+
+  <h2>What is a Procedure?</h2>
+  <p>A procedure is a named, stored sequence of steps that an agent has learned (or been taught) for accomplishing a specific type of task. Unlike semantic memory (facts) or episodic memory (conversations), procedural memory captures the <em>how-to</em> — the exact sequence of actions including tool calls, conditional checks, and parameter patterns.</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>Admin-Defined Procedures</h4>
+      <p>Platform administrators write procedures explicitly in the agents-app Skill Library. These are immediately available to the agent after saving, without any approval step.</p>
+    </div>
+    <div class="card">
+      <h4>Agent-Learned Procedures</h4>
+      <p>When an agent successfully completes a multi-step task, Octopus can auto-capture the tool call sequence as a candidate procedure. These require human review and approval before activation.</p>
+    </div>
+  </div>
+
+  <h2>Procedure Entity</h2>
+  <pre><code>public class Procedure
+{
+    public Guid Id { get; init; }
+    public string Name { get; set; }              // "vendor_onboarding"
+    public string Description { get; set; }       // human-readable purpose
+    public string TriggerPattern { get; set; }    // pattern for matching: "onboard * vendor"
+    public List&lt;ProcedureStep&gt; Steps { get; set; }
+    public Guid AgentId { get; set; }             // owner agent (or null for shared)
+    public string TenantId { get; init; }
+    public bool IsApproved { get; set; }           // must be true to be active
+    public bool IsShared { get; set; }             // available to all agents in tenant
+    public DateTimeOffset CreatedAt { get; init; }
+    public string CreatedBy { get; set; }          // "admin" or "agent" (auto-captured)
+}
+
+public class ProcedureStep
+{
+    public int Order { get; set; }
+    public string Instruction { get; set; }        // what to do in this step
+    public string? ToolName { get; set; }          // MCP tool to call (optional)
+    public string? ToolArgumentTemplate { get; set; } // JSON with {{parameter}} placeholders
+    public string? Condition { get; set; }          // only execute if condition is true
+    public bool IsOptional { get; set; }
+}</code></pre>
+
+  <h2>IProceduralMemoryStore Interface</h2>
+  <pre><code>public interface IProceduralMemoryStore
+{
+    Task StoreAsync(Procedure procedure, CancellationToken ct = default);
+
+    Task&lt;Procedure?&gt; RecallByNameAsync(
+        string name, Guid agentId, string tenantId, CancellationToken ct = default);
+
+    Task&lt;Procedure?&gt; FindMatchAsync(
+        string taskDescription, Guid agentId, string tenantId,
+        CancellationToken ct = default);
+
+    Task&lt;IReadOnlyList&lt;Procedure&gt;&gt; ListAsync(
+        Guid agentId, string tenantId, CancellationToken ct = default);
+
+    Task ApproveAsync(Guid procedureId, string tenantId, CancellationToken ct = default);
+    Task DeleteAsync(Guid procedureId, string tenantId, CancellationToken ct = default);
+}</code></pre>
+
+  <h2>Procedure Matching at Runtime</h2>
+  <p>Before each LLM call, the MemoryOrchestrator checks if the user's task matches a known procedure:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Task Description Extracted</h4><p>The user's message is analyzed for a task pattern. e.g., "Onboard the new vendor TechCorp" → task: "onboard vendor"</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Procedure Match Search</h4><p><code>IProceduralMemoryStore.FindMatchAsync(task)</code> — pattern matching against all approved procedures for this agent.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Procedure Injected into Context</h4><p>Matched procedure steps are injected into the system prompt as: "To accomplish this task, follow these steps: [1] ... [2] ..."</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body"><h4>Agent Follows Procedure</h4><p>The LLM executes the procedure steps in order, calling the specified tools and substituting parameters from the user's request.</p></div>
+    </div>
+  </div>
+
+  <h2>Example Procedure — Vendor Onboarding</h2>
+  <pre><code>// Admin-defined vendor onboarding procedure
+new Procedure
+{
+    Name = "vendor_onboarding",
+    Description = "Onboard a new vendor into the procurement system",
+    TriggerPattern = "onboard * vendor|add new vendor|register vendor",
+    Steps = new()
+    {
+        new ProcedureStep { Order=1, Instruction="Collect vendor name, contact, and contract reference from the user." },
+        new ProcedureStep { Order=2, Instruction="Look up the vendor in the existing system.",
+            ToolName = "vendor_lookup",
+            ToolArgumentTemplate = "{\"name\": \"{{vendor_name}}\"}" },
+        new ProcedureStep { Order=3, Instruction="If vendor exists, report to user and stop.",
+            Condition = "vendor_lookup.result != null", IsOptional = true },
+        new ProcedureStep { Order=4, Instruction="Create the new vendor record.",
+            ToolName = "vendor_create",
+            ToolArgumentTemplate = "{\"name\":\"{{vendor_name}}\",\"contact\":\"{{contact}}\",\"contract\":\"{{contract_ref}}\"}" },
+        new ProcedureStep { Order=5, Instruction="Confirm creation to the user with the new vendor ID." }
+    }
+}</code></pre>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-procedure-capture.html">Next: Capturing Procedures &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

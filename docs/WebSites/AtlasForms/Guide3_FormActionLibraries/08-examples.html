@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Complete Library Examples — Form Action Libraries | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Action Libraries</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-action-context.html">FormActionContext Deep Dive</a>
+  <a href="02-custom-handler.html">Writing a Custom Handler</a>
+  <a href="03-registering-actions.html">Registering Actions</a>
+  <a href="04-action-repositories.html">Action Repositories</a>
+  <a href="05-action-scope.html">Action Scope</a>
+  <a href="06-distributing.html">Distributing Your Library</a>
+  <a href="07-testing.html">Testing Custom Actions</a>
+  <a href="08-examples.html" class="active">Complete Library Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Complete Library Examples</h1>
+    <p class="lead">Three complete action library implementations showing real patterns: a CRM account linker, a workflow approval handler, and a bulk-export handler. Each example demonstrates the full lifecycle from handler to registration to schema usage.</p>
+  </div>
+
+  <h2>Example 1: CRM Account Linker</h2>
+  <p>Links a form record to a CRM account record by creating a cross-system relationship.</p>
+  <pre><code>// handlers/linkCrmAccount.ts
+import type { FormActionContext } from '@atlas-forms/types-js';
+import { crmApi } from '../api/crmApi';
+
+export const linkCrmAccountHandler = async (ctx: FormActionContext): Promise&lt;void&gt; =&gt; {
+  const { formValues, tenantId, config } = ctx;
+  const formRecordId = formValues['record-id'];
+  const crmAccountId = formValues['crm-account-id'];
+
+  if (!crmAccountId) {
+    ctx.fail('Please select a CRM account first.');
+    return;
+  }
+
+  try {
+    await crmApi.linkRecord({
+      tenantId,
+      formId: ctx.formId,
+      formRecordId,
+      crmAccountId,
+      linkType: config?.linkType ?? 'associated'
+    });
+
+    ctx.formEngine.setFieldValue('crm-link-status', 'linked');
+    ctx.complete('CRM account linked successfully.');
+  } catch (err) {
+    ctx.fail(`CRM link failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+};
+
+// index.ts
+export function registerCrmActions(): void {
+  registerFormAction('crm:link-account', linkCrmAccountHandler);
+}</code></pre>
+
+  <h2>Example 2: Workflow Approval Handler</h2>
+  <p>Approve or reject a workflow instance from a HIL form. Configurable outcome via <code>handlerConfig</code>.</p>
+  <pre><code>// handlers/workflowApproval.ts
+import type { FormActionContext } from '@atlas-forms/types-js';
+import { workflowApi } from '../api/workflowApi';
+
+export const workflowApprovalHandler = async (ctx: FormActionContext): Promise&lt;void&gt; =&gt; {
+  const { formValues, tenantId, config } = ctx;
+  const outcome = config?.outcome ?? 'approved';
+  const requireComment = config?.requireComment ?? false;
+
+  const instanceId = formValues['workflow-instance-id'];
+  const comment = formValues['approver-comment'];
+
+  if (!instanceId) { ctx.fail('Workflow instance not found.'); return; }
+  if (requireComment &amp;&amp; !comment) { ctx.fail('A comment is required.'); return; }
+
+  try {
+    await workflowApi.transition({ instanceId, tenantId, outcome, comment });
+    ctx.complete(outcome === 'approved' ? 'Approved successfully.' : 'Rejected.');
+    ctx.navigate('/workdesk/inbox');
+  } catch (err) {
+    ctx.fail('Could not complete approval. Please try again.');
+  }
+};
+
+// Used in schema as:
+// { "type": "custom", "label": "Approve", "config": { "handlerType": "hil:approve", "handlerConfig": { "outcome": "approved" } } }
+// { "type": "custom", "label": "Reject", "config": { "handlerType": "hil:approve", "handlerConfig": { "outcome": "rejected", "requireComment": true } } }</code></pre>
+
+  <h2>Example 3: Bulk PDF Export</h2>
+  <p>Generates a PDF from the form's current values and triggers a browser download.</p>
+  <pre><code>// handlers/exportPdf.ts
+import type { FormActionContext } from '@atlas-forms/types-js';
+
+export const exportPdfHandler = async (ctx: FormActionContext): Promise&lt;void&gt; =&gt; {
+  const { formValues, formId, tenantId, config } = ctx;
+  const template = config?.template ?? 'default';
+  const filename = config?.filename ?? `form-${formId}.pdf`;
+
+  try {
+    const response = await fetch('/api/pdf/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ formId, tenantId, template, values: formValues })
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    ctx.complete('PDF downloaded.');
+  } catch (err) {
+    ctx.fail('PDF export failed. Please try again.');
+  }
+};</code></pre>
+
+  <div class="page-nav">
+    <a href="07-testing.html">&#8592; Testing Custom Actions</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

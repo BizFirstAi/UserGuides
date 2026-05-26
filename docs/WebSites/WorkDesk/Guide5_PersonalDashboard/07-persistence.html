@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Persistence — Personal Dashboard | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Personal Dashboard</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Dashboard Overview</a>
+  <a href="01-widget-types.html">Widget Types</a>
+  <a href="02-adding-widgets.html">Adding Widgets</a>
+  <a href="03-arranging.html">Arranging Widgets</a>
+  <a href="04-metrics-widget.html">Metrics Widget</a>
+  <a href="05-shortcuts-widget.html">Shortcuts Widget</a>
+  <a href="06-default-templates.html">Default Templates</a>
+  <a href="07-persistence.html" class="active">Persistence</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Persistence</h1>
+    <p class="lead">Dashboard layout is stored per-user in the WorkDesk backend database as a JSON document. It survives logout, browser close, device changes, and WorkDesk version updates. Your layout is exactly as you left it every time you return.</p>
+  </div>
+
+  <h2>Storage Architecture</h2>
+  <p>The dashboard layout is stored in the <code>WorkDesk_UserDashboardConfig</code> table:</p>
+
+  <pre><code>CREATE TABLE WorkDesk_UserDashboardConfig (
+  UserId       UNIQUEIDENTIFIER  PRIMARY KEY,
+  TenantId     UNIQUEIDENTIFIER  NOT NULL,
+  TemplateId   UNIQUEIDENTIFIER  NULL,        -- null = user has customized
+  LayoutJson   NVARCHAR(MAX)     NOT NULL,    -- JSON array of DashboardWidget
+  LastModified DATETIME2         NOT NULL     DEFAULT GETUTCDATE(),
+  Version      INT               NOT NULL     DEFAULT 1,
+  INDEX IX_Dashboard_Tenant (TenantId, UserId)
+);</code></pre>
+
+  <h2>Save vs. Auto-Save</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>When Layout Saves</th></tr></thead>
+    <tbody>
+      <tr><td>Adding a widget</td><td>Immediately after widget is added (auto-save)</td></tr>
+      <tr><td>Dragging/resizing in Edit Mode</td><td>When "Save Layout" button is clicked (manual save)</td></tr>
+      <tr><td>Removing a widget</td><td>Immediately when widget is removed (auto-save)</td></tr>
+      <tr><td>Widget config changes</td><td>When widget settings form is saved (auto-save)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Cross-Device Behavior</h2>
+  <p>Since layout is stored server-side, the same layout appears on all devices. However, the grid renders differently depending on screen width:</p>
+  <ul>
+    <li><strong>Desktop (1024px+)</strong> — full 3-column grid as configured</li>
+    <li><strong>Tablet (768–1023px)</strong> — collapses to 2-column grid; 3-column-wide widgets become 2-column-wide</li>
+    <li><strong>Mobile (&lt;768px)</strong> — single column; all widgets stack vertically in the order they were configured</li>
+  </ul>
+  <p>The configured layout (col, row, w, h values) always represents the desktop 3-column layout. Responsive rendering is handled by the CSS grid system automatically.</p>
+
+  <h2>Layout Versioning</h2>
+  <p>The <code>Version</code> column in the table increments with each save. This enables future migration support — if a new WorkDesk version adds or removes widget types, the migration service can safely transform stored layout JSON from old versions to the new schema.</p>
+
+  <h2>Optimistic Save Strategy</h2>
+  <pre><code>// Dashboard layout save — optimistic
+async function saveDashboardLayout(widgets: DashboardWidget[]) {
+  // 1. Immediately update local state (no spinner)
+  setWidgets(widgets);
+
+  // 2. Save to backend in background
+  try {
+    await api.put('/workdesk/dashboard', { widgets });
+    // Success — layout persisted, no UI change needed
+  } catch (error) {
+    // Failure — show error + rollback option
+    showErrorToast(
+      'Dashboard save failed. Changes may be lost on refresh.',
+      { action: 'Retry', onClick: () => saveDashboardLayout(widgets) }
+    );
+  }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Never Lose Your Layout</strong>
+    <p>WorkDesk also stores the layout in <code>localStorage</code> as a fallback cache. If the server save fails, the local cache ensures your layout persists within the same browser session. On next session, the server version is authoritative — the local cache is discarded.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-default-templates.html">&#8592; Default Templates</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

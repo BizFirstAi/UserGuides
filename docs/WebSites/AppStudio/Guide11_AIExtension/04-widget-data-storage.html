@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Widget Data Storage — AI Extension Data Layer | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>AI Extension Data Layer</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-why-no-db.html">Why No Direct Database Access</a>
+  <a href="02-service-api.html">AIExtension.Service API</a>
+  <a href="03-app-config-storage.html">App Config Storage</a>
+  <a href="04-widget-data-storage.html" class="active">Widget Data Storage</a>
+  <a href="05-extending.html">Extending the Service Layer</a>
+  <a href="06-caching.html">Service Layer Caching</a>
+  <a href="07-audit.html">Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Widget Data Storage</h1>
+    <p class="lead">Widget placements — the per-page positioning and configuration of widget instances — are persisted separately from the full app definition, enabling efficient layout updates without rewriting the entire app JSON. Widget placements live in <code>AIExt_WidgetPlacements</code>.</p>
+  </div>
+
+  <h2>Widget Definition vs. Widget Placement</h2>
+  <p>Recall the two-layer widget model from Guide3:</p>
+  <ul>
+    <li><strong>Widget Definition</strong> — the registered widget type (DataGrid, Button, Chart). Defined by the platform, not stored per-app.</li>
+    <li><strong>Widget Placement</strong> — a specific instance of a widget on a page, with its position, configuration, and overrides. Stored per-app per-page in the database.</li>
+  </ul>
+  <p>Only Widget Placements are stored in the database. Widget Definitions are registered in the widget registry at startup.</p>
+
+  <h2>Widget Placement Storage</h2>
+  <pre><code>-- AIExt_WidgetPlacements
+CREATE TABLE AIExt_WidgetPlacements (
+    Id            BIGINT          PRIMARY KEY,
+    TenantId      NVARCHAR(100)   NOT NULL,
+    AppId         NVARCHAR(100)   NOT NULL,
+    PageId        NVARCHAR(100)   NOT NULL,
+    PaneId        NVARCHAR(100)   NOT NULL,
+    WidgetId      NVARCHAR(100)   NOT NULL,       -- Unique within the page
+    WidgetType    NVARCHAR(100)   NOT NULL,       -- e.g., "DataGrid", "Button"
+    SortOrder     INT             NOT NULL,
+    GridCol       INT             NOT NULL,       -- Layout position
+    GridRow       INT             NOT NULL,
+    ColSpan       INT             NOT NULL,
+    RowSpan       INT             NOT NULL,
+    ConfigJson    NVARCHAR(MAX)   NOT NULL,       -- Widget config + overrides
+    CreatedAt     DATETIME2       NOT NULL,
+    UpdatedAt     DATETIME2       NOT NULL,
+    UNIQUE (TenantId, AppId, PageId, WidgetId)
+);
+</code></pre>
+
+  <h2>SaveLayoutAsync — Granular Page Layout Persistence</h2>
+  <p>The designer's drag-and-drop operations use <code>SaveLayoutAsync</code> to persist layout changes for a single page without rewriting the full app definition. This is far more efficient for frequent designer interactions:</p>
+  <pre><code>// Service method — replaces widget placements for a single page
+Task SaveLayoutAsync(string tenantId, string appId, string pageId,
+                     IList<WidgetPlacement> placements, string changedByUserId);
+
+// Implementation strategy:
+// 1. Delete all existing placements for (tenantId, appId, pageId)
+// 2. Insert the new placements from the list
+// 3. Invalidate the Redis cache for this app
+// 4. Write audit log entry
+// Done in a single transaction — atomic
+</code></pre>
+
+  <h2>Widget Config JSON Structure</h2>
+  <p>Each widget placement's <code>ConfigJson</code> stores the complete widget configuration including app-level overrides and placement-level overrides:</p>
+  <pre><code>// ConfigJson for a DataGrid widget placement
+{
+  "dataSource": "GetLeads",
+  "params": { "tenantId": "{{ context.tenantId }}" },
+  "columns": [
+    { "field": "name", "header": "Name", "sortable": true },
+    { "field": "status", "header": "Status" },
+    { "field": "dealValue", "header": "Deal Value", "visibleTo": ["manager"] }
+  ],
+  "rowAction": { "type": "navigate", "target": "/leads/{{ row.id }}" },
+  "visibilityExpression": null,
+  "visibleTo": [],
+  "breakpoints": {
+    "mobile": { "colSpan": 12, "visible": false },
+    "tablet": { "colSpan": 12 },
+    "desktop": { "colSpan": 8 }
+  }
+}
+</code></pre>
+
+  <h2>Relationship Between WidgetPlacements and AppDefinitions</h2>
+  <p>The <code>AIExt_AppDefinitions</code> table stores a complete snapshot of the app including embedded widget placements. The <code>AIExt_WidgetPlacements</code> table is the normalized, live version used for incremental designer updates. On export, the service reads from <code>AIExt_WidgetPlacements</code> (current state) and serializes to the bundle. On full app save, both tables are updated in sync.</p>
+
+  <div class="page-nav">
+    <a href="03-app-config-storage.html">&#8592; App Config Storage</a>
+    <a href="05-extending.html">Next: Extending the Service Layer &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

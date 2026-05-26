@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Declaring Capabilities — Guide35_NodeCapabilitiesOverview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Capabilities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-capability-model.html"><i class="fa-solid fa-cubes"></i> Capability Model</a>
+  <a href="02-declaring.html" class="active"><i class="fa-solid fa-code"></i> Declaring Capabilities</a>
+  <a href="03-capability-registry.html"><i class="fa-solid fa-list-check"></i> CapabilityRegistry</a>
+  <a href="04-palette-integration.html"><i class="fa-solid fa-palette"></i> Palette Integration</a>
+  <a href="05-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <a href="06-capability-map.html"><i class="fa-solid fa-map"></i> Capability Type Map</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Declaring Capabilities on Executors</h1>
+    <p class="lead">Applying <code>[NodeCapability(CapabilityType.X)]</code> to executor classes — convention, auto-discovery, and multiple capabilities per executor.</p>
+  </div>
+
+  <h2>One Attribute, Zero Registration</h2>
+  <p>The <code>[NodeCapability]</code> attribute on an executor class is all that is needed. The engine scans all registered executor types at startup and reads the attribute to populate the <code>CapabilityRegistry</code>. No manual registry call is required.</p>
+
+  <h2>Example Declarations</h2>
+  <pre><code class="language-csharp">// Webhook capability
+[NodeCapability(CapabilityType.Webhook)]
+public class WebhookCallExecutor : BaseNodeExecutor { /* ... */ }
+
+// Messaging capability — Slack
+[NodeCapability(CapabilityType.Messaging)]
+public class SlackMessageExecutor : BaseNodeExecutor { /* ... */ }
+
+// Entity capability
+[NodeCapability(CapabilityType.Entity)]
+public class EntityReadExecutor : BaseNodeExecutor { /* ... */ }
+
+// MCP capability
+[NodeCapability(CapabilityType.MCP)]
+public class MCPToolCallExecutor : BaseNodeExecutor { /* ... */ }</code></pre>
+
+  <h2>Multiple Capabilities (Rare)</h2>
+  <p>In unusual cases, a node may bridge two capability domains. While the attribute is not marked <code>AllowMultiple</code> in the base design, the registry supports multiple capability associations per executor type via convention: add the node type to both capabilities' lookup lists manually if needed.</p>
+  <pre><code class="language-csharp">// A node that both calls a business service AND sends a message
+// Primary capability declared via attribute:
+[NodeCapability(CapabilityType.BusinessService)]
+public class OrderConfirmationExecutor : BaseNodeExecutor
+{
+    // This executor calls the order service (BusinessService)
+    // AND sends a confirmation email (Messaging)
+    // but is categorized under BusinessService for palette grouping
+}</code></pre>
+
+  <h2>Node Type Registration</h2>
+  <p>Executor classes are registered with DI using a keyed registration pattern — the key is the node type string (matching the canvas node's <code>type</code> property):</p>
+  <pre><code class="language-csharp">// Registration in DI
+services.AddKeyedScoped&lt;INodeExecutor, SlackMessageExecutor&gt;("SlackMessage");
+services.AddKeyedScoped&lt;INodeExecutor, EntityReadExecutor&gt;("EntityRead");
+services.AddKeyedScoped&lt;INodeExecutor, MCPToolCallExecutor&gt;("MCPToolCall");</code></pre>
+
+  <h2>Auto-Discovery at Startup</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Capabilities/CapabilityRegistry.cs (startup scan)
+public void Discover(IEnumerable&lt;Type&gt; executorTypes)
+{
+    foreach (var type in executorTypes)
+    {
+        var attr = type.GetCustomAttribute&lt;NodeCapabilityAttribute&gt;();
+        if (attr != null)
+        {
+            _byType[attr.Type].Add(type);
+            _byExecutorType[type] = attr.Type;
+        }
+    }
+}</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Convention:</strong> Place all executor classes for a given capability in a dedicated subfolder — e.g., <code>ExecutionNodes/Messaging/</code>, <code>ExecutionNodes/Entities/</code>. This makes capability discovery predictable and keeps the codebase organized.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-capability-model.html">&#8592; Capability Model</a>
+    <a href="03-capability-registry.html">Next: CapabilityRegistry &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

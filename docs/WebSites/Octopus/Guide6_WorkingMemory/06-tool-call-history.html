@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Call History in Context — Working Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Working Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Working Memory Overview</a>
+  <a href="01-context-window.html">Context Window</a>
+  <a href="02-token-budget.html">Token Budget</a>
+  <a href="03-history-management.html">History Management</a>
+  <a href="04-pruning-strategies.html">Pruning Strategies</a>
+  <a href="05-knowledge-injection.html">Knowledge Injection</a>
+  <a href="06-tool-call-history.html" class="active">Tool Call History in Context</a>
+  <a href="07-context-inspector.html">Context Inspector</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Tool Call History in Context</h1>
+    <p class="lead">When an agent calls a tool, the tool call request and its result must appear in the message history — LLM APIs require that tool call messages appear in the correct sequence. This page explains how Octopus manages tool call messages in working memory.</p>
+  </div>
+
+  <h2>Tool Call Message Sequence</h2>
+  <p>When the LLM produces a tool call, the message history must contain the tool call + result as a consecutive pair before the LLM can continue:</p>
+  <pre><code>// Required message sequence for tool calls (Anthropic format):
+[
+  { "role": "user", "content": "Onboard TechCorp as a vendor" },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "tc_01",
+        "name": "vendor_lookup",
+        "input": { "name": "TechCorp" }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "tc_01",
+    "content": "{\"result\": null, \"message\": \"Vendor not found\"}"
+  },
+  {
+    // LLM continues here with the tool result in context:
+    "role": "assistant",
+    "content": "TechCorp is not yet in the system. I'll create it now..."
+  }
+]</code></pre>
+
+  <h2>Pruning Tool Call Pairs</h2>
+  <p>Tool call + result messages are always pruned as a pair — never individually. Removing only one half would break the message sequence and cause LLM API errors:</p>
+  <pre><code>// FIFOPruner handles tool call pairs
+private IEnumerable&lt;MessageGroup&gt; GroupIntoRemovableUnits(IReadOnlyList&lt;LLMMessage&gt; messages)
+{
+    // Each group is a removable unit:
+    // - Single user message (no tool calls)
+    // - Assistant message with tool calls + all their tool result messages
+    // - Single assistant message (no tool calls)
+    var groups = new List&lt;MessageGroup&gt;();
+    // ... grouping logic ...
+    return groups;
+    // Pruner removes entire groups — never individual messages within a group
+}</code></pre>
+
+  <h2>Tool Call Results Token Impact</h2>
+  <p>Tool results can be very large — a database query might return thousands of tokens of JSON. The <code>ToolResultTruncator</code> limits tool result sizes before they enter the context:</p>
+  <pre><code>// Truncate tool results to fit budget
+public class ToolResultTruncator
+{
+    public string Truncate(string toolResult, int maxTokens = 2000)
+    {
+        int tokens = _counter.Count(toolResult);
+        if (tokens &lt;= maxTokens) return toolResult;
+
+        // Truncate and add notice
+        int keepChars = maxTokens * 4;  // approximate char count
+        return toolResult[..keepChars] +
+            $"\n[... truncated {tokens - maxTokens} tokens ...]";
+    }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Tool Results and Token Cost</strong>
+    <p>Large tool results are a common source of unexpected token cost inflation. Always set appropriate size limits on MCP tool outputs. A tool that returns a 10,000-token JSON blob on every call will rapidly exhaust the context budget. Design tools to return only the data the LLM needs — not full database records.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-knowledge-injection.html">&#8592; Knowledge Injection</a>
+    <a href="07-context-inspector.html">Next: Context Inspector &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

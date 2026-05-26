@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auth0 Integration — Bring Your Own IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Bring Your Own IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-external-token-validation.html">External Token Validation</a>
+  <a href="02-okta.html">Okta Integration</a>
+  <a href="03-azure-ad.html">Azure AD Integration</a>
+  <a href="04-auth0.html" class="active">Auth0 Integration</a>
+  <a href="05-keycloak.html">Keycloak Integration</a>
+  <a href="06-claims-mapping.html">Claims Mapping</a>
+  <a href="07-hybrid-mode.html">Hybrid Mode</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Auth0 Integration</h1>
+    <p class="lead">Configure Auth0 as the identity provider — create an API resource, set the audience, use Auth0 Actions to inject custom claims and tenant ID, and map roles to BizFirstGO.</p>
+  </div>
+
+  <h2>Auth0 Configuration Steps</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Create Auth0 API</h4>
+        <p>In Auth0 Dashboard → <strong>APIs → Create API</strong>.<br>
+        Name: <code>BizFirstGO API</code>, Identifier (Audience): <code>https://api.bizfirstgo.com</code><br>
+        Signing Algorithm: RS256.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Create Auth0 Action (Add Custom Claims)</h4>
+        <p>In Auth0 → <strong>Actions → Flows → Login → Add Custom Claims</strong>:</p>
+        <pre><code">exports.onExecutePostLogin = async (event, api) =&gt; {
+  const namespace = 'https://bizfirstgo.com/';
+
+  // Add BizFirstGO tenant ID
+  api.accessToken.setCustomClaim(
+    namespace + 'tenant_id',
+    event.user.app_metadata?.bizfirst_tenant_id ?? 'tenant-default'
+  );
+
+  // Add roles from app_metadata
+  const roles = event.user.app_metadata?.bizfirst_roles ?? [];
+  api.accessToken.setCustomClaim(namespace + 'roles', roles);
+};</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Assign Roles in User Profiles</h4>
+        <p>Set <code>bizfirst_roles</code> and <code>bizfirst_tenant_id</code> in each user's <code>app_metadata</code> via Auth0 Management API or the Auth0 Dashboard user editor.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Auth0 Token Structure</h2>
+  <pre><code>// Decoded Auth0 access token
+{
+  "iss":   "https://your-tenant.auth0.com/",
+  "sub":   "auth0|5f7c8796f0bb1a0d5e5bcdfe",
+  "aud":   ["https://api.bizfirstgo.com", "https://your-tenant.auth0.com/userinfo"],
+  "exp":   1748120400,
+  "iat":   1748119500,
+  "email": "jane.smith@company.com",
+  "name":  "Jane Smith",
+
+  // Custom namespace claims (added by Auth0 Action)
+  "https://bizfirstgo.com/tenant_id": "tenant-abc",
+  "https://bizfirstgo.com/roles":     ["admin", "manager"]
+}</code></pre>
+
+  <h2>BizFirstGO Federation Configuration</h2>
+  <pre><code>POST /passport/admin/tenants/{tenantId}/federation
+{
+  "providerId":    "auth0-main",
+  "displayName":   "Auth0",
+  "issuer":        "https://your-tenant.auth0.com/",
+  "jwksUri":       "https://your-tenant.auth0.com/.well-known/jwks.json",
+  "audience":      "https://api.bizfirstgo.com",
+  "tenantIdClaim": "https://bizfirstgo.com/tenant_id",
+  "userIdClaim":   "sub",
+  "emailClaim":    "email",
+  "rolesClaim":    "https://bizfirstgo.com/roles",
+  "roleMapping": {
+    "admin":   "admin",
+    "manager": "manager",
+    "user":    "user",
+    "viewer":  "viewer"
+  }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Auth0 Custom Claims Must Use a Namespace URL</strong>
+    <p>Auth0 requires all custom claims in access tokens to use a namespace URI prefix (e.g., <code>https://bizfirstgo.com/tenant_id</code>). Claims without a namespace are stripped from the token. Configure <code>tenantIdClaim</code> and <code>rolesClaim</code> in BizFirstGO with the full namespaced claim name.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-azure-ad.html">&#8592; Azure AD Integration</a>
+    <a href="05-keycloak.html">Next: Keycloak Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

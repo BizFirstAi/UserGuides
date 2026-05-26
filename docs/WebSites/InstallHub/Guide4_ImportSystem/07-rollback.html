@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rollback on Failure — Import System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Import System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-upload.html">Uploading a Package</a>
+  <a href="02-validation.html">Package Validation</a>
+  <a href="03-security-scan.html">Security Scanning</a>
+  <a href="04-id-remapping.html">ID Remapping</a>
+  <a href="05-install.html">Installation</a>
+  <a href="06-verification.html">Post-Install Verification</a>
+  <a href="07-rollback.html" class="active">Rollback on Failure</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Rollback on Failure</h1>
+    <p class="lead">The import engine uses database transactions to guarantee atomicity. Any failure after installation begins automatically triggers a full rollback — the target tenant is returned to its pre-import state.</p>
+  </div>
+
+  <h2>When Rollback Occurs</h2>
+  <table>
+    <thead>
+      <tr><th>Failure Stage</th><th>Rollback Triggered?</th><th>Note</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Upload / Validation / Security Scan</td><td>No</td><td>No data was written — no rollback needed</td></tr>
+      <tr><td>Package Dependency Check</td><td>No</td><td>No data was written</td></tr>
+      <tr><td>ID Remapping</td><td>No</td><td>No data was written (in-memory only)</td></tr>
+      <tr><td>Conflict Detection</td><td>No</td><td>No data was written</td></tr>
+      <tr><td>Installation (any artifact fails)</td><td><strong>Yes</strong></td><td>Full transaction rollback</td></tr>
+      <tr><td>Post-Install Verification (any check fails)</td><td><strong>Yes</strong></td><td>Full transaction rollback</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What is Rolled Back</h2>
+  <p>All database writes performed during the installation stage are within a single transaction. A rollback undoes:</p>
+  <ul>
+    <li>All <code>INSERT</code> statements for newly created artifacts</li>
+    <li>All <code>UPDATE</code> statements for artifacts that were replaced or merged</li>
+    <li>The import history record (the record is only committed on success)</li>
+  </ul>
+  <p>The target tenant's artifact database is left exactly as it was before the import began.</p>
+
+  <h2>What is NOT Rolled Back</h2>
+  <p>The following are not part of the transaction and are not rolled back:</p>
+  <ul>
+    <li>The import attempt log entry (failure is recorded for audit)</li>
+    <li>The security scan result</li>
+    <li>The blob storage read of the ZIP file</li>
+    <li>Any notifications sent during the import</li>
+  </ul>
+
+  <h2>Failure Response</h2>
+  <pre><code>HTTP 422 Unprocessable Entity
+{
+  "importId":   "imp-f9a2c1e8-...",
+  "status":     "Failed",
+  "stage":      "Installation",
+  "error":      "ArtifactInstallFailed",
+  "message":    "Failed to install AtlasForm 'EmployeeForm' (form-9104): field 'f3' has an invalid datasource configuration.",
+  "rolledBack": true,
+  "partialInstall": {
+    "installedBeforeFailure": ["ent-2291", "rule-6612"],
+    "failedAt": "form-9104"
+  }
+}</code></pre>
+
+  <h2>Diagnosing Failures</h2>
+  <p>The failure response includes the stage and error code to help diagnose the problem. Common failure causes:</p>
+  <table>
+    <thead>
+      <tr><th>Error Code</th><th>Cause</th><th>Resolution</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ArtifactInstallFailed</code></td><td>The artifact service rejected the artifact definition</td><td>Inspect the artifact JSON for invalid configuration</td></tr>
+      <tr><td><code>BrokenReference</code></td><td>A cross-reference could not be resolved after installation</td><td>Verify all referenced artifacts are in the package</td></tr>
+      <tr><td><code>VerificationFailed</code></td><td>Post-install check failed</td><td>Inspect the verification details in the response</td></tr>
+      <tr><td><code>TransactionTimeout</code></td><td>Installation took longer than the transaction timeout (120s)</td><td>Split large packages into smaller ones</td></tr>
+      <tr><td><code>DatabaseError</code></td><td>Unexpected database error during install</td><td>Check database connectivity and retry</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Retrying After Failure</h2>
+  <p>After a rollback, the target tenant is clean — you can safely retry the import after fixing the issue. Common retry scenarios:</p>
+  <ul>
+    <li><strong>Artifact configuration issue:</strong> Fix the artifact in the source tenant, re-export, and retry the import.</li>
+    <li><strong>Missing dependency:</strong> Install the missing package dependency first, then retry the import.</li>
+    <li><strong>Database error:</strong> Wait for the database to recover, then retry. The import engine is idempotent — a retry produces the same result.</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Idempotency</strong>
+    Import is idempotent: importing the same package twice with the same conflict strategy produces the same result. A retry after rollback is safe.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-verification.html">&#8592; Post-Install Verification</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

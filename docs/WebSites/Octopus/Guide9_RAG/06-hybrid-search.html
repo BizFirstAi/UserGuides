@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hybrid Search — RAG | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>RAG Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">RAG Pipeline Overview</a>
+  <a href="01-document-ingestion.html">Document Ingestion</a>
+  <a href="02-chunking.html">Chunking Strategies</a>
+  <a href="03-embedding.html">Embedding</a>
+  <a href="04-indexing.html">Indexing</a>
+  <a href="05-retrieval.html">Retrieval</a>
+  <a href="06-hybrid-search.html" class="active">Hybrid Search</a>
+  <a href="07-reranking.html">Reranking</a>
+  <a href="08-context-injection.html">Context Injection</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Hybrid Search</h1>
+    <p class="lead">Hybrid search combines vector similarity search (semantic) with BM25 keyword search (lexical) using Reciprocal Rank Fusion (RRF). The combined approach outperforms either method alone, especially for queries containing precise terms like product codes, names, or technical identifiers.</p>
+  </div>
+
+  <h2>Why Hybrid Search?</h2>
+  <p>Pure vector search excels at semantic understanding but can miss exact term matches. Pure keyword search (BM25) excels at exact matches but misses synonyms and semantic intent. Hybrid search covers both failure modes:</p>
+  <table>
+    <thead>
+      <tr><th>Query Type</th><th>Vector Alone</th><th>BM25 Alone</th><th>Hybrid</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>"What is the parental leave policy?"</td><td>Excellent</td><td>Good</td><td>Excellent</td></tr>
+      <tr><td>"SKU AX-2240 specifications"</td><td>Poor (exact code)</td><td>Excellent</td><td>Excellent</td></tr>
+      <tr><td>"John Smith expense report March"</td><td>Poor (name + date)</td><td>Excellent</td><td>Excellent</td></tr>
+      <tr><td>"How do I request time off?"</td><td>Excellent (semantic)</td><td>Mediocre (phrasing variance)</td><td>Excellent</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Reciprocal Rank Fusion (RRF)</h2>
+  <p>RRF merges two ranked lists by assigning each document a score based on its rank position in each list. Documents ranked highly in both lists receive the highest combined score:</p>
+  <pre><code>public class HybridSearchService
+{
+    private const int RRF_K = 60;  // Standard RRF constant
+
+    public async Task&lt;IReadOnlyList&lt;MemoryRecord&gt;&gt; SearchAsync(
+        string collection,
+        string queryText,
+        float[] queryEmbedding,
+        int topK,
+        float minScore,
+        CancellationToken ct)
+    {
+        // Run both searches in parallel
+        var vectorTask  = _vectorStore.SearchAsync(collection, queryEmbedding, topK * 2, 0f, ct);
+        var keywordTask = _keywordStore.SearchAsync(collection, queryText, topK * 2, ct);
+
+        await Task.WhenAll(vectorTask, keywordTask);
+
+        var vectorResults  = vectorTask.Result;
+        var keywordResults = keywordTask.Result;
+
+        // Build RRF score maps
+        var scores = new Dictionary&lt;string, double&gt;();
+
+        for (int rank = 0; rank &lt; vectorResults.Count; rank++)
+        {
+            string id = vectorResults[rank].Id;
+            scores[id] = scores.GetValueOrDefault(id) + 1.0 / (RRF_K + rank + 1);
+        }
+
+        for (int rank = 0; rank &lt; keywordResults.Count; rank++)
+        {
+            string id = keywordResults[rank].Id;
+            scores[id] = scores.GetValueOrDefault(id) + 1.0 / (RRF_K + rank + 1);
+        }
+
+        // Merge all records and sort by RRF score
+        var allRecords = vectorResults.Concat(keywordResults)
+            .GroupBy(r => r.Id)
+            .Select(g => g.First())  // Deduplicate
+            .ToList();
+
+        return allRecords
+            .OrderByDescending(r => scores[r.Id])
+            .Take(topK)
+            .ToList();
+    }
+}</code></pre>
+
+  <h2>Keyword Search Backend Options</h2>
+  <table>
+    <thead>
+      <tr><th>Backend</th><th>Notes</th><th>When to Use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SQL Server Full-Text Search</td><td>Uses existing SQL Server; FTS index on chunk content</td><td>SQL Server already in use; small-medium collections</td></tr>
+      <tr><td>Qdrant Sparse Vectors (SPLADE)</td><td>Sparse vectors stored alongside dense; native Qdrant hybrid</td><td>Qdrant is the vector backend; larger collections</td></tr>
+      <tr><td>Elasticsearch / OpenSearch</td><td>Dedicated BM25 index; best precision</td><td>Teams already running Elasticsearch</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Enabling Hybrid Search</h2>
+  <pre><code>// appsettings.json
+{
+  "Octopus": {
+    "HybridSearch": {
+      "Enabled":         true,
+      "KeywordBackend":  "SqlServerFTS",  // SqlServerFTS | QdrantSparse | Elasticsearch
+      "RrfK":            60
+    }
+  }
+}
+
+// Agent memory config
+{
+  "hybridSearchEnabled": true
+}
+// When enabled, SemanticMemoryService automatically routes
+// through HybridSearchService instead of direct vector search.</code></pre>
+
+  <div class="callout info">
+    <strong>Start with Vector-Only</strong>
+    <p>Hybrid search adds infrastructure complexity (keyword index to maintain) and additional latency (two parallel searches). Enable it only when you observe that pure vector search misses exact-match queries important to your use case. Many knowledge base agents perform well with vector-only retrieval.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-retrieval.html">&#8592; Retrieval</a>
+    <a href="07-reranking.html">Next: Reranking &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

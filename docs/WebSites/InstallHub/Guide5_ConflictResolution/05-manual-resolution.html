@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manual Resolution — Conflict Resolution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Conflict Resolution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-conflict-detection.html">Conflict Detection</a>
+  <a href="02-replace-strategy.html">Replace Strategy</a>
+  <a href="03-merge-strategy.html">Merge Strategy</a>
+  <a href="04-skip-strategy.html">Skip Strategy</a>
+  <a href="05-manual-resolution.html" class="active">Manual Resolution</a>
+  <a href="06-default-strategy.html">Default Strategy</a>
+  <a href="07-audit.html">Conflict Audit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Manual Resolution</h1>
+    <p class="lead">When automated merge fails or the administrator wants to inspect and choose resolution field-by-field, manual resolution provides a side-by-side diff view and field-level decision making.</p>
+  </div>
+
+  <h2>When Manual Resolution is Triggered</h2>
+  <ul>
+    <li>No <code>defaultConflictStrategy</code> is set and the import pauses for review</li>
+    <li>Automated merge fails due to a three-way conflict (both existing and package changed the same field)</li>
+    <li>The administrator explicitly requests manual resolution via the API</li>
+  </ul>
+
+  <h2>Manual Resolution API Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Import Pauses</h4>
+        <p>When conflicts are found and no default strategy is configured, the import returns <code>202 Accepted</code> with the <code>ConflictReport</code> and a <code>resumeUrl</code>.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Get Conflict Diff</h4>
+        <p>For each conflict, retrieve the full side-by-side diff to understand what would change.</p>
+        <pre><code>GET /api/installhub/packages/{importId}/conflicts/{conflictId}/diff</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Choose Resolution</h4>
+        <p>For each conflict, choose Replace, Merge, or Skip.</p>
+        <pre><code>POST /api/installhub/packages/{importId}/resume
+{
+  "resolutions": [
+    { "conflictId": "conf-001", "strategy": "Replace" },
+    { "conflictId": "conf-002", "strategy": "Skip"    }
+  ]
+}</code></pre>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Import Resumes</h4>
+        <p>The import continues with the chosen strategies applied and completes normally.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Conflict Diff Response</h2>
+  <pre><code>GET /api/installhub/packages/{importId}/conflicts/conf-001/diff
+
+{
+  "conflictId":    "conf-001",
+  "artifactType":  "RuleSet",
+  "artifactName":  "ApprovalRules",
+  "existing": {
+    "version": "1.1.0",
+    "content": { "rules": [{ "ruleId": "r1", "condition": "amount &lt; 750" }] }
+  },
+  "package": {
+    "version": "1.2.0",
+    "content": { "rules": [{ "ruleId": "r1", "condition": "amount &lt; 1000" }, { "ruleId": "r3", "name": "HighValueAlert" }] }
+  },
+  "diff": {
+    "changed": [{ "path": "rules[0].condition", "existing": "amount &lt; 750", "package": "amount &lt; 1000" }],
+    "added":   [{ "path": "rules[1]", "package": { "ruleId": "r3", "name": "HighValueAlert" } }],
+    "removed": []
+  },
+  "suggestedStrategies": ["Replace", "Merge", "Skip"]
+}</code></pre>
+
+  <h2>Import Expiry</h2>
+  <p>A paused import (waiting for conflict resolution) is held in memory for 24 hours. If the <code>resumeUrl</code> is not called within that time, the import is automatically cancelled and must be re-initiated.</p>
+
+  <div class="callout info">
+    <strong>CI/CD Pipelines Should Not Use Manual Resolution</strong>
+    Manual resolution requires a human in the loop. For automated pipelines, always set a <code>defaultConflictStrategy</code> to prevent the import from pausing. Use dry-run mode first to preview conflicts before the real import.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-skip-strategy.html">&#8592; Skip Strategy</a>
+    <a href="06-default-strategy.html">Next: Default Strategy &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

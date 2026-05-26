@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Service Layer Caching — AI Extension Data Layer | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>AI Extension Data Layer</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-why-no-db.html">Why No Direct Database Access</a>
+  <a href="02-service-api.html">AIExtension.Service API</a>
+  <a href="03-app-config-storage.html">App Config Storage</a>
+  <a href="04-widget-data-storage.html">Widget Data Storage</a>
+  <a href="05-extending.html">Extending the Service Layer</a>
+  <a href="06-caching.html" class="active">Service Layer Caching</a>
+  <a href="07-audit.html">Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Service Layer Caching</h1>
+    <p class="lead">App definitions are read-heavy — every page load in every user session triggers a read of the app definition. The AIExtension.Service layer caches app definitions in Redis, making reads near-instant. Cache invalidation is automatic on every write operation.</p>
+  </div>
+
+  <h2>What Is Cached</h2>
+  <table>
+    <thead>
+      <tr><th>Data</th><th>Cache key pattern</th><th>TTL</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Full app definition</td><td><code>appdef:{tenantId}:{appId}</code></td><td>15 minutes</td></tr>
+      <tr><td>App page list</td><td><code>apppages:{tenantId}:{appId}</code></td><td>15 minutes</td></tr>
+      <tr><td>Individual page</td><td><code>apppage:{tenantId}:{appId}:{pageId}</code></td><td>15 minutes</td></tr>
+      <tr><td>Widget placements (by page)</td><td><code>widgets:{tenantId}:{appId}:{pageId}</code></td><td>15 minutes</td></tr>
+      <tr><td>App list (tenant)</td><td><code>applist:{tenantId}</code></td><td>5 minutes</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Cache Read Pattern</h2>
+  <pre><code>// Read-through cache pattern in AppStudioDataService:
+public async Task<AppDefinition?> GetAppAsync(string tenantId, string appId)
+{
+    var cacheKey = $"appdef:{tenantId}:{appId}";
+
+    // 1. Try Redis — O(1), sub-millisecond
+    var cached = await _redis.GetStringAsync(cacheKey);
+    if (cached != null)
+        return JsonSerializer.Deserialize<AppDefinition>(cached);
+
+    // 2. Miss — load from database
+    var entity = await _db.AppDefinitions
+        .Where(a => a.TenantId == tenantId && a.AppId == appId)
+        .FirstOrDefaultAsync();
+
+    if (entity == null) return null;
+
+    var definition = JsonSerializer.Deserialize<AppDefinition>(entity.DefinitionJson);
+
+    // 3. Populate cache for next read
+    await _redis.SetStringAsync(
+        cacheKey,
+        entity.DefinitionJson,
+        new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15)
+        });
+
+    return definition;
+}
+</code></pre>
+
+  <h2>Cache Invalidation on Write</h2>
+  <p>Every write operation invalidates the affected cache keys. Invalidation uses delete (not expire) — subsequent reads immediately go to the database and repopulate the cache:</p>
+  <pre><code>public async Task<AppDefinition> SaveAppAsync(string tenantId, AppDefinition app, string userId)
+{
+    // 1. Persist to database
+    await UpsertAppDefinitionAsync(tenantId, app);
+
+    // 2. Invalidate all related cache keys
+    await Task.WhenAll(
+        _redis.RemoveAsync($"appdef:{tenantId}:{app.AppId}"),
+        _redis.RemoveAsync($"apppages:{tenantId}:{app.AppId}"),
+        _redis.RemoveAsync($"applist:{tenantId}")
+    );
+
+    // 3. Write audit log
+    await WriteAuditLogAsync(tenantId, app.AppId, "SaveApp", userId);
+
+    return app;
+}
+
+// SaveLayoutAsync also invalidates widget cache:
+public async Task SaveLayoutAsync(string tenantId, string appId, string pageId,
+                                  IList<WidgetPlacement> placements, string userId)
+{
+    await ReplacePageWidgetsAsync(tenantId, appId, pageId, placements);
+
+    await Task.WhenAll(
+        _redis.RemoveAsync($"widgets:{tenantId}:{appId}:{pageId}"),
+        _redis.RemoveAsync($"appdef:{tenantId}:{appId}")   // Full def cache also cleared
+    );
+
+    await WriteAuditLogAsync(tenantId, appId, $"SaveLayout:{pageId}", userId);
+}
+</code></pre>
+
+  <h2>Cache Stampede Prevention</h2>
+  <p>On cache miss, multiple concurrent requests could all hit the database simultaneously (stampede). The service uses a Redis lock pattern to prevent this:</p>
+  <pre><code>// Simplified — actual implementation uses a distributed lock library
+var lockKey = $"lock:{cacheKey}";
+using var @lock = await _redisLock.AcquireAsync(lockKey, TimeSpan.FromSeconds(5));
+
+if (@lock.IsAcquired)
+{
+    // Double-check after acquiring lock
+    var cached = await _redis.GetStringAsync(cacheKey);
+    if (cached != null) return Deserialize(cached);
+
+    // Load from DB — only one caller wins the lock
+    var data = await LoadFromDbAsync(tenantId, appId);
+    await _redis.SetStringAsync(cacheKey, Serialize(data), options);
+    return data;
+}
+else
+{
+    // Lock contention — fall back to DB read directly
+    return await LoadFromDbAsync(tenantId, appId);
+}
+</code></pre>
+
+  <div class="callout callout-info">
+    <strong>Cache is transparent to callers</strong>
+    App Studio controllers call <code>GetAppAsync</code> and receive the definition — they have no knowledge of whether the result came from Redis or the database. This is intentional: caching is an implementation detail of the service layer, not a concern for the API layer.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-extending.html">&#8592; Extending the Service Layer</a>
+    <a href="07-audit.html">Next: Audit Trail &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

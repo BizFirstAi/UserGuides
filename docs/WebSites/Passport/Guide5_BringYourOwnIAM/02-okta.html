@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Okta Integration — Bring Your Own IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Bring Your Own IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-external-token-validation.html">External Token Validation</a>
+  <a href="02-okta.html" class="active">Okta Integration</a>
+  <a href="03-azure-ad.html">Azure AD Integration</a>
+  <a href="04-auth0.html">Auth0 Integration</a>
+  <a href="05-keycloak.html">Keycloak Integration</a>
+  <a href="06-claims-mapping.html">Claims Mapping</a>
+  <a href="07-hybrid-mode.html">Hybrid Mode</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Okta Integration</h1>
+    <p class="lead">Configure Okta as the identity provider for BizFirstGO — create the Okta API Services app, configure the authorization server, add group claims, and map Okta groups to BizFirstGO roles.</p>
+  </div>
+
+  <h2>Step 1 — Create Okta API Application</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Create Application in Okta Admin</h4>
+        <p>In your Okta org, go to <strong>Applications → Create App Integration</strong>. Select <strong>API Services</strong> (for service-to-service) or <strong>OIDC - Web Application</strong> (for user-facing flows).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Configure Application Settings</h4>
+        <pre><code>App name:      BizFirstGO Integration
+Sign-in method: OIDC
+Application type: Web Application
+Grant types: Authorization Code, Refresh Token
+Redirect URIs: https://passport.bizfirst.ai/federation/okta/callback</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Create Custom Authorization Server</h4>
+        <p>Go to <strong>Security → API → Authorization Servers → Add Authorization Server</strong>. Set the audience to <code>api://bizfirstgo</code>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Add Groups Claim</h4>
+        <p>In the Authorization Server, go to <strong>Claims → Add Claim</strong>:</p>
+        <pre><code>Name:          groups
+Include in:    Access Token
+Value type:    Groups
+Filter:        Starts with: BizFirst-
+Always include in token: Yes</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Add BizFirstGO Tenant Claim</h4>
+        <p>Add another claim for the BizFirstGO tenant ID:</p>
+        <pre><code>Name:          tenant_id
+Include in:    Access Token
+Value type:    Expression
+Value:         user.bizfirstTenantId  (custom Okta user attribute)</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <h2>Okta Token Example</h2>
+  <pre><code>// Decoded Okta access token (after configuration above)
+{
+  "iss": "https://company.okta.com/oauth2/default",
+  "sub": "00u1ab2cd3ef456GH78",
+  "aud": "api://bizfirstgo",
+  "exp": 1748120400,
+  "iat": 1748119500,
+  "email": "jane.smith@company.com",
+  "name": "Jane Smith",
+  "groups": ["BizFirst-Admins", "Finance-Users"],
+  "tenant_id": "tenant-abc"
+}</code></pre>
+
+  <h2>BizFirstGO Federation Configuration</h2>
+  <pre><code>POST /passport/admin/tenants/{tenantId}/federation
+{
+  "providerId":    "okta-main",
+  "displayName":   "Okta (Company Directory)",
+  "issuer":        "https://company.okta.com/oauth2/default",
+  "jwksUri":       "https://company.okta.com/oauth2/default/v1/keys",
+  "audience":      "api://bizfirstgo",
+  "tenantIdClaim": "tenant_id",
+  "userIdClaim":   "sub",
+  "emailClaim":    "email",
+  "groupsClaim":   "groups",
+  "groupMapping": {
+    "BizFirst-Admins":    "admin",
+    "BizFirst-Managers":  "manager",
+    "Finance-Users":      "finance-user",
+    "BizFirst-Viewers":   "viewer"
+  }
+}</code></pre>
+
+  <h2>Claims After Mapping</h2>
+  <table>
+    <thead>
+      <tr><th>Okta Claim</th><th>Value</th><th>BizFirstGO IDInfo</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>sub</code></td><td><code>00u1ab2cd3ef456GH78</code></td><td><code>UserId</code></td></tr>
+      <tr><td><code>email</code></td><td><code>jane.smith@company.com</code></td><td><code>Email</code></td></tr>
+      <tr><td><code>name</code></td><td><code>Jane Smith</code></td><td><code>DisplayName</code></td></tr>
+      <tr><td><code>groups[0]</code></td><td><code>BizFirst-Admins</code></td><td><code>Roles → admin</code></td></tr>
+      <tr><td><code>groups[1]</code></td><td><code>Finance-Users</code></td><td><code>Roles → finance-user</code></td></tr>
+      <tr><td><code>tenant_id</code></td><td><code>tenant-abc</code></td><td><code>TenantId</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Okta Groups Filter</strong>
+    <p>Use the Okta groups claim filter (<code>Starts with: BizFirst-</code>) to only include BizFirstGO-relevant groups in the token. Including all Okta groups would bloat the JWT and expose group memberships not relevant to BizFirstGO. Only mapped groups translate to BizFirstGO roles — unmapped groups are silently ignored.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-external-token-validation.html">&#8592; External Token Validation</a>
+    <a href="03-azure-ad.html">Next: Azure AD Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Completion Rate — Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.rate-donut-row{display:flex;gap:24px;margin:20px 0;flex-wrap:wrap;}
+.rate-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;flex:1;min-width:160px;}
+.rate-pct{font-size:2rem;font-weight:700;margin-bottom:4px;}
+.rate-label{font-size:0.8rem;color:var(--text-muted);}
+.rate-bar{height:8px;border-radius:4px;margin-top:10px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observability Overview</a>
+  <a href="01-interaction-monitor.html">InteractionMonitor Component</a>
+  <a href="02-response-time.html">Response Time Tracking</a>
+  <a href="03-completion-rate.html" class="active">Completion Rate</a>
+  <a href="04-audit-log.html">Interaction Audit Log</a>
+  <a href="05-metrics-emission.html">Metrics to BizFirst Observe</a>
+  <a href="06-alerting.html">Alerting</a>
+  <a href="07-debugging.html">Debugging Stuck Interactions</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Completion Rate</h1>
+    <p class="lead">Completion rate is the percentage of published interactions that receive a user response before expiry. It is the primary health indicator for EdgeInteract deployments — a falling completion rate signals delivery failures, user disengagement, or misconfigured timeout windows.</p>
+  </div>
+
+  <h2>Completion Rate Definition</h2>
+  <p>For a given time window, completion rate is calculated as:</p>
+  <pre><code">completion_rate = interaction_responses_total / interaction_published_total * 100
+</code></pre>
+  <p>The complementary rate — <strong>timeout rate</strong> — is:</p>
+  <pre><code">timeout_rate = interaction_timeout_total / interaction_published_total * 100
+</code></pre>
+  <p>Blocked interactions (rejected by pre-send hooks) are counted separately in <code>interaction_blocked_total</code> and are <em>excluded</em> from the completion rate denominator, since they were never delivered.</p>
+
+  <h2>Example Breakdown</h2>
+  <div class="rate-donut-row">
+    <div class="rate-card">
+      <div class="rate-pct" style="color:var(--success);">87%</div>
+      <div class="rate-label">Completed (responded)</div>
+      <div class="rate-bar" style="background:var(--success);width:87%;"></div>
+    </div>
+    <div class="rate-card">
+      <div class="rate-pct" style="color:var(--danger);">9%</div>
+      <div class="rate-label">Timed Out</div>
+      <div class="rate-bar" style="background:var(--danger);width:9%;"></div>
+    </div>
+    <div class="rate-card">
+      <div class="rate-pct" style="color:var(--warning);">4%</div>
+      <div class="rate-label">Blocked (pre-send hooks)</div>
+      <div class="rate-bar" style="background:var(--warning);width:4%;"></div>
+    </div>
+  </div>
+
+  <h2>Metrics Involved</h2>
+  <table>
+    <thead><tr><th>Metric</th><th>Type</th><th>Counts</th></tr></thead>
+    <tbody>
+      <tr><td><code>interaction_published_total</code></td><td>Counter</td><td>Every interaction that passed pre-send hooks and was delivered to the pipeline</td></tr>
+      <tr><td><code>interaction_responses_total</code></td><td>Counter</td><td>Every interaction that received a user response (any outcome)</td></tr>
+      <tr><td><code>interaction_timeout_total</code></td><td>Counter</td><td>Every interaction that expired without a response</td></tr>
+      <tr><td><code>interaction_blocked_total</code></td><td>Counter</td><td>Interactions rejected before delivery by pre-send hooks</td></tr>
+    </tbody>
+  </table>
+
+  <h2>PromQL Queries for BizFirst Observe</h2>
+  <pre><code">// Completion rate (%) over 1h sliding window — all types
+100 * (
+  sum(increase(interaction_responses_total[1h]))
+  /
+  sum(increase(interaction_published_total[1h]))
+)
+
+// Timeout rate (%) — approval interactions only
+100 * (
+  sum(increase(interaction_timeout_total{type="approval"}[1h]))
+  /
+  sum(increase(interaction_published_total{type="approval"}[1h]))
+)
+
+// Blocked rate (%) — segmented by hook name
+100 * (
+  sum by (blocked_by) (increase(interaction_blocked_total[1h]))
+  /
+  sum(increase(interaction_published_total[1h]) + increase(interaction_blocked_total[1h]))
+)
+</code></pre>
+
+  <h2>Alert Thresholds</h2>
+  <table>
+    <thead><tr><th>Condition</th><th>Severity</th><th>Default Threshold</th></tr></thead>
+    <tbody>
+      <tr><td>Timeout rate &gt; 5% over 5 minutes</td><td>Warning</td><td>5%</td></tr>
+      <tr><td>Timeout rate &gt; 15% over 5 minutes</td><td>Critical</td><td>15%</td></tr>
+      <tr><td>Completion rate &lt; 80% over 1 hour</td><td>Warning</td><td>80%</td></tr>
+      <tr><td>Blocked rate &gt; 10% over 5 minutes</td><td>Warning</td><td>10%</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Querying Completion Rate in Code</h2>
+  <pre><code">// Admin API endpoint — completion rate by type for last 24h
+[HttpGet("stats/completion-rate")]
+[Authorize(Roles = "admin")]
+public async Task&lt;CompletionRateReport&gt; GetCompletionRateAsync(
+    [FromQuery] string? type,
+    [FromQuery] int windowHours = 24,
+    CancellationToken ct = default)
+{
+    var since = DateTime.UtcNow.AddHours(-windowHours);
+    var query = new AuditQuery { Type = type, CreatedAfter = since };
+
+    var all    = await _auditStore.CountAsync(query, ct);
+    var responded = await _auditStore.CountAsync(
+        query with { Statuses = [InteractionStatus.Responded] }, ct);
+    var timedOut  = await _auditStore.CountAsync(
+        query with { Statuses = [InteractionStatus.TimedOut] }, ct);
+    var blocked   = await _auditStore.CountAsync(
+        query with { Statuses = [InteractionStatus.Blocked] }, ct);
+
+    return new CompletionRateReport
+    {
+        TotalPublished    = all,
+        Responded         = responded,
+        TimedOut          = timedOut,
+        Blocked           = blocked,
+        CompletionRatePct = all > 0 ? (double)responded / all * 100 : 0,
+        TimeoutRatePct    = all > 0 ? (double)timedOut  / all * 100 : 0
+    };
+}
+</code></pre>
+
+  <h2>Interpreting Low Completion Rates</h2>
+  <table>
+    <thead><tr><th>Pattern</th><th>Likely Cause</th><th>Investigation</th></tr></thead>
+    <tbody>
+      <tr><td>Sudden drop in completion rate for all types</td><td>Delivery failure (SignalR disconnects, EdgeStream outage)</td><td>Check <code>interaction_in_flight</code> — is it growing without responses?</td></tr>
+      <tr><td>Low completion for one specific type</td><td>UI rendering issue for that interaction type</td><td>Check browser console for render errors; review <code>InteractionContainer</code> renderer map</td></tr>
+      <tr><td>Gradually declining completion rate</td><td>User disengagement or notification fatigue</td><td>Review volume per user; consider reducing frequency or increasing priority of critical interactions</td></tr>
+      <tr><td>High blocked rate</td><td>Rate limit hook is too aggressive</td><td>Review <code>RateLimitInteractionHook</code> configuration; check <code>interaction_blocked_total</code> by <code>blocked_by</code> label</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>First-to-Respond Interactions</strong>
+    For role-targeted interactions (first-to-respond wins), the interaction is counted as one response in <code>interaction_responses_total</code> regardless of how many users received it. The <code>interaction_published_total</code> is also counted once per interaction, not once per recipient.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-response-time.html">&#8592; Response Time Tracking</a>
+    <a href="04-audit-log.html">Next: Interaction Audit Log &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

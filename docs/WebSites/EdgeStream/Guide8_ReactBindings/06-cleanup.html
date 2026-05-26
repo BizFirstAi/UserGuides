@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cleanup and Lifecycle — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html">EdgeStreamProvider</a>
+  <a href="02-use-server.html">useEdgeStream</a>
+  <a href="03-use-subscription.html">useSubscription</a>
+  <a href="04-use-message.html">useMessage</a>
+  <a href="05-use-message-history.html">useConnectionStatus</a>
+  <a href="06-cleanup.html" class="active">Cleanup and Lifecycle</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Cleanup and Lifecycle</h1>
+    <p class="lead">EdgeStream React hooks are designed around React's mount/unmount lifecycle. <code>useSubscription</code> creates a subscription on mount and unsubscribes on unmount — automatically. No manual cleanup is needed when using the provided hooks.</p>
+  </div>
+
+  <h2>What Happens on Mount</h2>
+  <pre><code>// When a component using useSubscription('bas', 'workflow.*', handler) mounts:
+//
+// 1. useEffect runs
+// 2. client.server('bas') is retrieved
+// 3. client.subscribe('bas', 'workflow.*', handler) is called
+//    → SubscriptionManager registers handler with ID 'sub-xxxx'
+// 4. setIsSubscribed(true)
+// 5. The subscription ID is stored in unsubscribeRef</code></pre>
+
+  <h2>What Happens on Unmount</h2>
+  <pre><code>// When the component unmounts:
+//
+// 1. useEffect cleanup function runs
+// 2. unsubscribeRef.current() is called
+//    → subscription.unsubscribe()
+//    → SubscriptionManager removes the handler from its Map
+// 3. setIsSubscribed(false)
+//
+// The handler is GONE — no more messages will reach this component
+// even if the transport continues receiving them</code></pre>
+
+  <h2>Cleanup on Topic or ServerId Change</h2>
+  <pre><code>// If serverId or topic changes (e.g., navigating to a different workflow):
+//
+// React calls the cleanup function for the OLD effect first:
+//   → old subscription.unsubscribe()
+// Then runs the new effect:
+//   → new subscription for the new serverId/topic is created
+//
+// There is never a gap where both subscriptions are active simultaneously
+
+function WorkflowDetail({ workflowId }: { workflowId: string }) {
+  const handler = useCallback((envelope) =&gt; {
+    // only called for messages matching the CURRENT workflowId
+    handleEvent(envelope);
+  }, [workflowId]);
+
+  useSubscription('bas', `workflow.${workflowId}.*`, handler);
+  // Old subscription cleaned up automatically when workflowId changes
+}</code></pre>
+
+  <h2>Preventing State Updates After Unmount</h2>
+  <pre><code>// If the handler uses setState and the component unmounts while
+// an async operation is in flight, React will warn about state updates
+// after unmount. Guard with a ref:
+
+function AsyncSubscriber() {
+  const isMountedRef = useRef(true);
+  const [data, setData] = useState(null);
+
+  useEffect(() =&gt; {
+    return () =&gt; { isMountedRef.current = false; };
+  }, []);
+
+  const handler = useCallback(async (envelope) =&gt; {
+    const result = await fetchDetails(envelope.body.id);
+    if (isMountedRef.current) { // guard before setState
+      setData(result);
+    }
+  }, []);
+
+  useSubscription('bas', 'workflow.*', handler);
+  return &lt;div&gt;{JSON.stringify(data)}&lt;/div&gt;;
+}</code></pre>
+
+  <h2>React StrictMode Double-Mount</h2>
+  <pre><code>// In React 18 StrictMode (development), effects run twice:
+// mount → unmount → mount
+//
+// useSubscription handles this correctly because unsubscribeRef
+// is always cleared in the cleanup function before re-subscribing.
+// You will see two subscribe() + unsubscribe() cycles in dev,
+// but only one active subscription at runtime.</code></pre>
+
+  <h2>Provider Lifecycle</h2>
+  <table>
+    <thead>
+      <tr><th>Event</th><th>Provider Action</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Provider mounts</td><td>Calls <code>edgeStreamClient.start()</code>, subscribes to stream:started/stopped/error</td></tr>
+      <tr><td>Provider unmounts</td><td>Sets isMounted=false, unsubscribes from stream events. Does NOT call stop()</td></tr>
+      <tr><td>Child unmounts</td><td>useSubscription cleanup removes subscription from SubscriptionManager</td></tr>
+      <tr><td>stream:stopped fires</td><td>Provider sets connectionStatus = 'disconnected'</td></tr>
+      <tr><td>stream:error fires</td><td>Provider sets connectionStatus = 'error', calls onError prop</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Transport Is Not Stopped on Provider Unmount</strong>
+    <code>EdgeStreamProvider</code> deliberately does not call <code>edgeStreamClient.stop()</code> on unmount. The transport manages its own lifecycle. Call <code>stream.stop()</code> explicitly in your application teardown logic (e.g., <code>window.addEventListener('beforeunload', ...)</code>).
+  </div>
+
+  <div class="page-nav">
+    <a href="05-use-message-history.html">&#8592; useConnectionStatus</a>
+    <a href="07-examples.html">Next: Examples &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

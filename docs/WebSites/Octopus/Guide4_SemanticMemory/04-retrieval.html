@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retrieval at Query Time — Semantic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Semantic Memory Overview</a>
+  <a href="01-embedding.html">Embedding Knowledge</a>
+  <a href="02-vector-stores.html">Vector Store Backends</a>
+  <a href="03-indexing.html">Knowledge Indexing</a>
+  <a href="04-retrieval.html" class="active">Retrieval at Query Time</a>
+  <a href="05-hybrid-search.html">Hybrid Search</a>
+  <a href="06-reranking.html">Reranking Results</a>
+  <a href="07-per-agent.html">Per-Agent Knowledge Scoping</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Retrieval at Query Time</h1>
+    <p class="lead">At query time, the user's message is embedded and matched against the agent's knowledge collection. The top-K most similar chunks are returned, filtered, and injected into the LLM context window before generation.</p>
+  </div>
+
+  <h2>The Retrieval Pipeline</h2>
+  <pre><code>public class SemanticMemoryService : ISemanticMemoryService
+{
+    public async Task&lt;SemanticRetrievalResult&gt; RetrieveAsync(
+        AgentComposite agent,
+        string query,
+        CancellationToken ct = default)
+    {
+        if (!agent.MemoryConfig.SemanticEnabled)
+            return SemanticRetrievalResult.Empty;
+
+        // 1. Embed the query
+        var queryEmbedding = await _embeddingProvider.EmbedAsync(query, ct);
+
+        // 2. Search the agent's vector collection
+        var collection = GetCollectionName(agent);
+        var results = await _store.SearchAsync(
+            collection,
+            queryEmbedding,
+            topK: agent.MemoryConfig.SemanticTopK,
+            minScore: agent.MemoryConfig.SemanticMinScore,
+            filter: new MemoryFilter { TenantId = agent.TenantId },
+            ct: ct);
+
+        // 3. Format for context injection
+        return new SemanticRetrievalResult
+        {
+            Chunks = results,
+            FormattedContext = FormatForContext(results)
+        };
+    }
+
+    private string FormatForContext(IReadOnlyList&lt;MemoryRecord&gt; records)
+    {
+        var sb = new StringBuilder("[Retrieved Knowledge]\n");
+        foreach (var r in records)
+        {
+            sb.AppendLine($"Source: {r.Metadata.Source}");
+            sb.AppendLine(r.Content);
+            sb.AppendLine("---");
+        }
+        return sb.ToString();
+    }
+}</code></pre>
+
+  <h2>Retrieval Configuration</h2>
+  <table>
+    <thead>
+      <tr><th>Config Property</th><th>Default</th><th>Effect</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SemanticTopK</code></td><td>5</td><td>Number of chunks to retrieve per query</td></tr>
+      <tr><td><code>SemanticMinScore</code></td><td>0.7</td><td>Minimum cosine similarity threshold (0–1)</td></tr>
+      <tr><td><code>SemanticContextMaxTokens</code></td><td>2000</td><td>Max tokens allocated to retrieved knowledge in context</td></tr>
+      <tr><td><code>SemanticEnabled</code></td><td>true</td><td>Disable to skip retrieval entirely for this agent</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Context Injection Position</h2>
+  <p>Retrieved knowledge is injected between the system prompt and the conversation history in the LLM context:</p>
+  <pre><code>// LLM context assembly order:
+[1] System Prompt        ← agent.SystemPrompt
+[2] Retrieved Knowledge  ← semantic retrieval results (this page)
+[3] Episode Snippets     ← episodic memory recall
+[4] Message History      ← current session messages (pruned to budget)
+[5] Current User Message ← the user's latest input
+
+// The LLM reads [2] Retrieved Knowledge as authoritative information
+// to ground its response — reducing hallucination</code></pre>
+
+  <div class="callout info">
+    <strong>Tuning MinScore</strong>
+    <p>A MinScore of 0.7 is conservative — you may get fewer but more relevant chunks. If your agent frequently responds "I don't have information about that" for queries that <em>should</em> match, lower MinScore to 0.6. If it returns irrelevant information, raise to 0.75 or above.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-indexing.html">&#8592; Knowledge Indexing</a>
+    <a href="05-hybrid-search.html">Next: Hybrid Search &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

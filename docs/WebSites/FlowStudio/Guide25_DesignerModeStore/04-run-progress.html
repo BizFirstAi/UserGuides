@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Run Progress — Designer Mode Store | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Designer Mode Store</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-state-shape.html">Store State Shape</a>
+  <a href="02-modes.html">Canvas Modes</a>
+  <a href="03-node-statuses.html">Node Statuses</a>
+  <a href="04-run-progress.html" class="active">Run Progress</a>
+  <a href="05-transitions.html">Mode Transitions</a>
+  <a href="06-consuming.html">Consuming in Components</a>
+  <a href="07-status-visualization.html">Status Visualization</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Run Progress</h1>
+    <p class="lead">runProgress aggregates per-node statuses into a summary: totalNodes, completedNodes, failedNodes, and progressPct. The progress bar in the canvas toolbar reads this field during execution mode.</p>
+  </div>
+
+  <h2>RunProgress Shape</h2>
+  <pre><code">export interface RunProgress {
+    totalNodes     : number;  // Count of nodes in the workflow graph
+    completedNodes : number;  // Nodes with status: success | failed | skipped
+    failedNodes    : number;  // Nodes with status: failed
+    progressPct    : number;  // completedNodes / totalNodes * 100 (0–100)
+}
+
+// Initial value (before run starts):
+{ totalNodes: 0, completedNodes: 0, failedNodes: 0, progressPct: 0 }</code></pre>
+
+  <h2>updateRunProgress Action</h2>
+  <pre><code">updateRunProgress: (progress: RunProgress) => void
+
+// Called on each NodeStatusChanged event when status is terminal
+function recalculateProgress() {
+    const { nodeStatuses } = useDesignerModeStore.getState();
+    const { nodes } = useWorkflowStore.getState();
+
+    const completed = Object.values(nodeStatuses).filter(
+        s => ['success', 'failed', 'skipped'].includes(s.status)
+    ).length;
+
+    const failed = Object.values(nodeStatuses).filter(
+        s => s.status === 'failed'
+    ).length;
+
+    useDesignerModeStore.getState().updateRunProgress({
+        totalNodes    : nodes.length,
+        completedNodes: completed,
+        failedNodes   : failed,
+        progressPct   : nodes.length > 0 ? (completed / nodes.length) * 100 : 0
+    });
+}</code></pre>
+
+  <h2>Progress Bar Component</h2>
+  <pre><code">// CanvasToolbar.tsx — progress bar in execution mode
+function ExecutionProgressBar() {
+    const { runProgress, currentMode } = useDesignerModeStore(
+        state => ({ runProgress: state.runProgress, currentMode: state.currentMode }),
+        shallow
+    );
+
+    if (currentMode !== 'execution') return null;
+
+    return (
+        &lt;div className="progress-bar"&gt;
+            &lt;div
+                className="progress-fill"
+                style={{ width: `${runProgress.progressPct}%` }}
+            /&gt;
+            &lt;span&gt;{runProgress.completedNodes} / {runProgress.totalNodes} nodes&lt;/span&gt;
+            {runProgress.failedNodes &gt; 0 &amp;&amp;
+                &lt;span className="failed-badge"&gt;{runProgress.failedNodes} failed&lt;/span&gt;}
+        &lt;/div&gt;
+    );
+}</code></pre>
+
+  <h2>Suspended Nodes and Progress</h2>
+  <p>Nodes in <code>suspended</code> status (HIL waiting) are NOT counted as completed. The progress bar shows partial completion while a HIL node waits for human input. When the actor responds and the node completes, the count updates.</p>
+
+  <div class="page-nav">
+    <a href="03-node-statuses.html">&#8592; Node Statuses</a>
+    <a href="05-transitions.html">Next: Mode Transitions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

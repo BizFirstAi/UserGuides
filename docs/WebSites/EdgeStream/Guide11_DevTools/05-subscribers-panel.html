@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscribers Panel — DevTools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>DevTools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Dev Tools Overview</a>
+  <a href="01-node-explorer.html">Node Explorer</a>
+  <a href="02-action-invoker.html">Action Invoker</a>
+  <a href="03-ancp-view.html">ANCP Protocol View</a>
+  <a href="04-hooks-panel.html">Hooks Panel</a>
+  <a href="05-subscribers-panel.html" class="active">Subscribers Panel</a>
+  <a href="06-mobile-dashboard.html">Mobile Dashboard</a>
+  <a href="07-running.html">Running Dev Tools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Subscribers Panel</h1>
+    <p class="lead">The Subscriber Delivery panel at <code>/subscribers</code> shows a real-time log of every message delivered to registered subscribers, including delivery status, topic breakdown, and timing. It uses <code>SubscribersMonitor</code> from <code>@edge-stream/observability-react</code>.</p>
+  </div>
+
+  <h2>Route and Component</h2>
+  <pre><code>// Route in App.tsx
+&lt;Route path="/subscribers" element={&lt;SubscribersPage /&gt;} /&gt;
+
+// SubscribersPage source: packages/app-pages-react/src/SubscribersPage.tsx
+export function SubscribersPage(): React.ReactElement {
+  return &lt;SubscribersMonitor
+    className="page-container"
+    showSettings={true}
+    pollInterval={500}
+    maxLogs={100}
+  /&gt;
+}
+
+// SubscribersMonitor from: @edge-stream/observability-react</code></pre>
+
+  <h2>SubscribersMonitor — How It Works</h2>
+  <pre><code>// Polls LoggingService every 500ms (same ring buffer as HooksMonitor):
+useEffect(() =&gt; {
+  const interval = setInterval(() =&gt; {
+    const logs = loggingService.getRecentLogs(maxLogs);
+    setLogs(logs);
+  }, pollInterval);
+
+  return () =&gt; clearInterval(interval);
+}, [maxLogs, pollInterval]);
+
+// Flattens subscriber logs from all message activity logs:
+const allSubscriberLogs = logs.flatMap((msg) =&gt; msg.subscriberLogs || []);
+
+// Topic breakdown — a Map from topic string to array of subscriber logs:
+const topicStats = new Map&lt;string, SubscriberLog[]&gt;();
+for (const log of allSubscriberLogs) {
+  const existing = topicStats.get(log.topic) ?? [];
+  topicStats.set(log.topic, [...existing, log]);
+}
+
+// Global stats:
+const stats = {
+  total:     allSubscriberLogs.length,
+  delivered: allSubscriberLogs.filter((s) =&gt; s.status === 'delivered').length,
+  failed:    allSubscriberLogs.filter((s) =&gt; s.status === 'failed').length,
+  pending:   allSubscriberLogs.filter((s) =&gt; s.status === 'pending').length,
+};</code></pre>
+
+  <h2>SubscriberLog Entry Fields</h2>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>subscriberName</td><td>string</td><td>Identifier for the subscriber (typically the topic pattern registered)</td></tr>
+      <tr><td>topic</td><td>string</td><td>The exact topic string of the message delivered (e.g. <code>workflow.step.completed</code>)</td></tr>
+      <tr><td>status</td><td>string</td><td><code>delivered</code>, <code>failed</code>, or <code>pending</code></td></tr>
+      <tr><td>durationMs</td><td>number</td><td>Time from delivery attempt to completion in milliseconds</td></tr>
+      <tr><td>error</td><td>string?</td><td>Error message if the subscriber threw during delivery</td></tr>
+      <tr><td>messageId</td><td>string</td><td>Links to IEnvelope.meta.id — correlates with the Hooks Panel</td></tr>
+      <tr><td>serverId</td><td>string</td><td>Which registered server this message came from</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Topic Breakdown</h2>
+  <p>The Subscribers Panel groups delivery logs by topic, showing how many messages each topic has delivered, failed, and the topics that are most active. This helps identify over-subscribed topics or topics with high failure rates.</p>
+  <pre><code>// Per-topic stats displayed as a breakdown table:
+// Topic                         | Delivered | Failed | Total
+// workflow.step.completed       |    42     |   0    |  42
+// agent.message.received        |    18     |   2    |  20
+// system.health                 |    10     |   0    |  10
+// ancp.heartbeat                |   152     |   0    | 152
+
+// Filter by topic (text match on topic string):
+const filtered = allSubscriberLogs.filter((log) =&gt;
+  log.topic.toLowerCase().includes(topicFilter.toLowerCase())
+);</code></pre>
+
+  <h2>Delivery Status Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Color</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>delivered</td><td>Green</td><td>Subscriber callback completed without throwing</td></tr>
+      <tr><td>failed</td><td>Red</td><td>Subscriber callback threw an error during execution</td></tr>
+      <tr><td>pending</td><td>Yellow</td><td>Delivery in progress (async subscriber not yet resolved)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Difference Between Hooks Panel and Subscribers Panel</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Hooks Panel</th><th>Subscribers Panel</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>What it monitors</td><td>Pipeline hook execution (transforms, validation, security)</td><td>Subscriber callback delivery (your application code)</td></tr>
+      <tr><td>Data source</td><td><code>MessageActivityLog.hookLogs[]</code></td><td><code>MessageActivityLog.subscriberLogs[]</code></td></tr>
+      <tr><td>Primary field</td><td>hookName + priority + result</td><td>topic + status + durationMs</td></tr>
+      <tr><td>Failure impact</td><td>Hook failure can stop/reroute the pipeline</td><td>Subscriber failure is logged but does not affect other subscribers</td></tr>
+      <tr><td>Filter by</td><td>Hook name (substring)</td><td>Topic (substring)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Subscribers Reference Panel</h2>
+  <p>The Subscribers Reference at <code>/subscribers-reference</code> shows all available subscriber types with their topic patterns and configuration. Use it to discover which topics are available for subscription in the current pipeline configuration:</p>
+  <pre><code>// Route in App.tsx
+&lt;Route path="/subscribers-reference" element={&lt;SubscribersReferencePage /&gt;} /&gt;
+
+// SubscribersReferencePage: packages/app-pages-react/src/SubscribersReferencePage.tsx
+// Sidebar label: "Available Subscribers"
+
+// Also available via help:
+&lt;Route path="/help/subscribers" element={&lt;SubscribersHelpPage /&gt;} /&gt;</code></pre>
+
+  <h2>Registering Subscribers to Log</h2>
+  <p>Subscriber delivery is only logged when <code>HookActivityLogger</code> is present in the pipeline AND <code>stream.subscribe()</code> is called. Wildcard topic subscriptions generate one log entry per matching message:</p>
+  <pre><code>import { HookActivityLogger } from 'edge-stream-js';
+
+// Required: enables logging for both hooks and subscribers
+server.incomingPipeline.addHook(new HookActivityLogger());
+
+// Subscribe — each delivery is logged with status + duration:
+stream.subscribe('bas', 'workflow.*', async (envelope) =&gt; {
+  // If this throws, status = 'failed' and error is captured
+  await processWorkflowEvent(envelope.body);
+});
+
+// Wildcard subscriptions show individual topic matches in the panel:
+// workflow.step.started     → delivered in 12ms
+// workflow.step.completed   → delivered in 8ms
+// workflow.flow.stopped     → delivered in 5ms</code></pre>
+
+  <div class="callout info">
+    <strong>Tip: Cross-Reference with Hooks Panel</strong>
+    Use the <code>messageId</code> field that appears in both Hooks Panel entries and Subscriber Panel entries to trace a specific message through the entire pipeline — from hook execution to subscriber delivery.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-hooks-panel.html">&#8592; Hooks Panel</a>
+    <a href="06-mobile-dashboard.html">Next: Mobile Dashboard &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

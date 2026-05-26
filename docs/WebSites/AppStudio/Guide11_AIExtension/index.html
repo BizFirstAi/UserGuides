@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIExtension Data Layer Overview — AI Extension Data Layer | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>AI Extension Data Layer</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-why-no-db.html">Why No Direct Database Access</a>
+  <a href="02-service-api.html">AIExtension.Service API</a>
+  <a href="03-app-config-storage.html">App Config Storage</a>
+  <a href="04-widget-data-storage.html">Widget Data Storage</a>
+  <a href="05-extending.html">Extending the Service Layer</a>
+  <a href="06-caching.html">Service Layer Caching</a>
+  <a href="07-audit.html">Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>AIExtension Data Layer Overview</h1>
+    <p class="lead">App Studio has zero direct database access — no <code>DbContext</code>, no repositories, no SQL. Every read and write goes through <code>IAppStudioService</code>, implemented in <code>AIExtension.Service</code>. This service layer is the authoritative contract for all App Studio data operations and enforces multi-tenancy, caching, and audit logging automatically.</p>
+  </div>
+
+  <h2>The Architecture Principle</h2>
+  <pre><code>// What App Studio controllers do NOT have:
+// ❌ AppDbContext
+// ❌ IRepository<AppPage>
+// ❌ Raw SQL queries
+// ❌ Direct table access
+
+// What App Studio controllers DO have:
+// ✅ IAppStudioService (injected via DI)
+
+// Every data operation:
+public class AppController : ControllerBase
+{
+    private readonly IAppStudioService _appService;
+
+    public AppController(IAppStudioService appService)
+    {
+        _appService = appService;
+    }
+
+    [HttpGet("{appId}")]
+    public async Task<IActionResult> GetApp(string appId)
+    {
+        var app = await _appService.GetAppAsync(TenantId, appId);
+        return Ok(app);
+    }
+}
+</code></pre>
+
+  <h2>Why This Design</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Multi-Tenancy Enforcement</strong>
+        <p>The service layer always scopes queries to the requesting tenant. It is impossible for an App Studio controller to accidentally read another tenant's data because the service enforces tenantId on every operation.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Transparent Caching</strong>
+        <p>App definitions are cached in Redis by the service layer. Controllers receive cached data without knowing or caring about cache state. Cache invalidation happens automatically on write operations.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Automatic Audit Logging</strong>
+        <p>Every write operation through the service layer creates an audit log entry — who changed what, when, from which IP. Controllers do not need to implement audit logic themselves.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Extensibility Without Breaking Changes</strong>
+        <p>Adding new data operations means adding a method to <code>IAppStudioService</code> and implementing it in AIExtension.Service — the controller is the only consumer and sees the interface, not the implementation.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Service Layer Stack</h2>
+  <pre><code>// Request flow for a read operation:
+App Studio Controller
+  → IAppStudioService.GetAppAsync(tenantId, appId)
+    → [Cache check] Redis cache hit? return cached result
+    → [Cache miss] AIExtension.Service queries AIExtension DB tables
+    → Multi-tenancy filter applied (tenantId scoped)
+    → Result cached in Redis with TTL
+    → AppDefinition returned to controller
+    → Controller returns to client
+</code></pre>
+
+  <h2>In This Guide</h2>
+  <div class="card-grid">
+    <a href="01-why-no-db.html" class="card"><h3>Why No Direct Database Access</h3><p>The design rationale and what the service layer enforces.</p></a>
+    <a href="02-service-api.html" class="card"><h3>AIExtension.Service API</h3><p>Key methods: GetApp, SaveApp, GetWidgets, SaveLayout.</p></a>
+    <a href="03-app-config-storage.html" class="card"><h3>App Config Storage</h3><p>AIExtension tables that store app definitions.</p></a>
+    <a href="04-widget-data-storage.html" class="card"><h3>Widget Data Storage</h3><p>How widget placements and overrides are persisted.</p></a>
+    <a href="05-extending.html" class="card"><h3>Extending the Service Layer</h3><p>Adding a new data operation end-to-end.</p></a>
+    <a href="06-caching.html" class="card"><h3>Service Layer Caching</h3><p>Redis caching strategy and cache invalidation.</p></a>
+    <a href="07-audit.html" class="card"><h3>Audit Trail</h3><p>How every change is automatically audit-logged.</p></a>
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-why-no-db.html">Next: Why No Direct Database Access &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

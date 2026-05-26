@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Permission Resolver — Custom IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Custom IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom IAM Overview</a>
+  <a href="01-custom-resolver.html" class="active">Custom Permission Resolver</a>
+  <a href="02-custom-role-provider.html">Custom Role Provider</a>
+  <a href="03-attribute-conditions.html">Attribute-Based Conditions</a>
+  <a href="04-combining.html">Combining with Built-In IAM</a>
+  <a href="05-registration.html">Registering Custom Extensions</a>
+  <a href="06-testing.html">Testing Custom IAM</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Custom Permission Resolver</h1>
+    <p class="lead">Implement <code>ICustomPermissionResolver</code> to add ABAC (Attribute-Based Access Control) rules — return Allow, Deny, or Defer based on user attributes, resource context, and environment conditions.</p>
+  </div>
+
+  <h2>ICustomPermissionResolver</h2>
+  <pre><code>namespace BizFirst.Essentials.Passport.IAM;
+
+public interface ICustomPermissionResolver
+{
+    /// &lt;summary&gt;
+    /// Evaluate a permission check with ABAC logic.
+    /// Called after built-in role/permission evaluation.
+    /// Return:
+    ///   Allow  — explicitly grant (short-circuits pipeline, stops further resolvers)
+    ///   Deny   — explicitly deny (short-circuits pipeline, stops further resolvers)
+    ///   Defer  — no opinion, continue to next resolver
+    /// &lt;/summary&gt;
+    Task&lt;PermissionResolution&gt; ResolveAsync(
+        PermissionContext context,
+        CancellationToken ct = default);
+}
+
+public class PermissionContext
+{
+    public required IDInfo             User        { get; init; }
+    public required string             Permission  { get; init; }  // e.g., "form.submit"
+    public string?                     ResourceId  { get; init; }
+    public string?                     ResourceType{ get; init; }  // e.g., "form"
+    public ResourceAttributes?         Resource    { get; init; }  // resource metadata (if available)
+    public EnvironmentContext          Environment { get; init; } = new();
+    public bool                        BaseAllowed { get; init; }  // result of role-based check
+}
+
+public class ResourceAttributes
+{
+    public string?                     OwnerId     { get; init; }
+    public string?                     Department  { get; init; }
+    public string?                     Classification { get; init; }
+    public IReadOnlyDictionary&lt;string, object&gt; Custom { get; init; } = new Dictionary&lt;string, object&gt;();
+}
+
+public class EnvironmentContext
+{
+    public DateTimeOffset              Now         { get; init; } = DateTimeOffset.UtcNow;
+    public string?                     RequestIp   { get; init; }
+    public string?                     Country     { get; init; }
+    public bool                        IsMfaVerified { get; init; }
+}</code></pre>
+
+  <h2>Simple ABAC Resolver — Department Check</h2>
+  <pre><code>/// &lt;summary&gt;
+/// Restricts payroll-related permissions to Finance department employees only.
+/// Contractors (EmployeeType == "contractor") are always denied payroll access.
+/// &lt;/summary&gt;
+public sealed class DepartmentBasedPayrollResolver : ICustomPermissionResolver
+{
+    private static readonly string[] PayrollPermissions =
+        ["workflow.initiate", "form.submit", "report.payroll.read"];
+
+    private readonly IUserProfileService _profiles;
+
+    public DepartmentBasedPayrollResolver(IUserProfileService profiles)
+        =&gt; _profiles = profiles;
+
+    public async Task&lt;PermissionResolution&gt; ResolveAsync(
+        PermissionContext context,
+        CancellationToken ct)
+    {
+        // Only apply to payroll resources
+        if (context.ResourceType != "payroll" &&
+            context.ResourceId?.StartsWith("payroll-") != true)
+            return PermissionResolution.Defer;
+
+        // Only apply to relevant permissions
+        if (!PayrollPermissions.Contains(context.Permission))
+            return PermissionResolution.Defer;
+
+        // Load user profile attributes
+        var profile = await _profiles.GetAsync(context.User.UserId, ct);
+        if (profile is null) return PermissionResolution.Deny;
+
+        // Contractors always denied payroll access
+        if (profile.EmployeeType == "contractor")
+            return PermissionResolution.Deny;
+
+        // Finance department members allowed
+        if (profile.Department == "Finance")
+            return PermissionResolution.Allow;
+
+        // No opinion for other departments — let role check stand
+        return PermissionResolution.Defer;
+    }
+}</code></pre>
+
+  <h2>Business Hours Resolver</h2>
+  <pre><code">public sealed class BusinessHoursPaymentResolver : ICustomPermissionResolver
+{
+    public Task&lt;PermissionResolution&gt; ResolveAsync(
+        PermissionContext context,
+        CancellationToken ct)
+    {
+        // Only apply to live payment workflows
+        if (context.ResourceType != "payment-workflow")
+            return Task.FromResult(PermissionResolution.Defer);
+
+        var now = context.Environment.Now;
+        var dayOfWeek = now.DayOfWeek;
+        var hour = now.Hour;
+
+        // Allow Monday-Friday 9:00-17:00 UTC
+        bool isBusinessHours =
+            dayOfWeek is not DayOfWeek.Saturday and not DayOfWeek.Sunday &&
+            hour is >= 9 and < 17;
+
+        return Task.FromResult(
+            isBusinessHours
+                ? PermissionResolution.Defer   // let normal role check stand
+                : PermissionResolution.Deny);  // outside hours → deny always
+    }
+}</code></pre>
+
+  <h2>Resource Ownership Resolver</h2>
+  <pre><code">/// &lt;summary&gt;
+/// Allows users to edit their own resources even if their base role only grants "view".
+/// Example: a user with "viewer" role can still edit forms they created.
+/// &lt;/summary&gt;
+public sealed class ResourceOwnershipResolver : ICustomPermissionResolver
+{
+    public Task&lt;PermissionResolution&gt; ResolveAsync(
+        PermissionContext context,
+        CancellationToken ct)
+    {
+        // Only apply to edit permissions
+        if (!context.Permission.EndsWith(".edit") && !context.Permission.EndsWith(".delete"))
+            return Task.FromResult(PermissionResolution.Defer);
+
+        // Check if user owns the resource
+        if (context.Resource?.OwnerId == context.User.UserId)
+            return Task.FromResult(PermissionResolution.Allow);
+
+        return Task.FromResult(PermissionResolution.Defer);
+    }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Resolver Performance</strong>
+    <p>Custom resolvers are called on every permission check in the hot path. Avoid blocking I/O without caching. If your resolver calls an external service, implement an in-memory cache with a short TTL (30 seconds to 2 minutes) to prevent latency spikes. A resolver that takes &gt;50ms will noticeably degrade API response times.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Custom IAM Overview</a>
+    <a href="02-custom-role-provider.html">Next: Custom Role Provider &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

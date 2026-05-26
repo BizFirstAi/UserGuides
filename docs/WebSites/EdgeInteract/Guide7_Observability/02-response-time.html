@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Response Time Tracking — Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.timeline-bar{display:flex;align-items:stretch;border-radius:8px;overflow:hidden;margin:20px 0;height:44px;}
+.timeline-seg{display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:600;color:#fff;padding:0 10px;white-space:nowrap;}
+.tl-published{background:#4a6fa5;flex:1;}
+.tl-delivered{background:#5a8a6a;flex:0.6;}
+.tl-displayed{background:#7a6a9a;flex:0.4;}
+.tl-responded{background:#2e7d52;flex:2;}
+.tl-acked{background:#3a7a7a;flex:0.3;}
+.tl-label{font-size:0.72rem;color:var(--text-muted);text-align:center;margin-top:4px;}
+.tl-arrow{display:flex;align-items:center;justify-content:center;font-size:1rem;color:var(--text-muted);padding:0 4px;}
+.pct-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:20px 0;}
+.pct-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center;}
+.pct-label{font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;}
+.pct-value{font-size:1.6rem;font-weight:700;color:var(--accent);}
+.pct-sub{font-size:0.75rem;color:var(--text-muted);margin-top:4px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observability Overview</a>
+  <a href="01-interaction-monitor.html">InteractionMonitor Component</a>
+  <a href="02-response-time.html" class="active">Response Time Tracking</a>
+  <a href="03-completion-rate.html">Completion Rate</a>
+  <a href="04-audit-log.html">Interaction Audit Log</a>
+  <a href="05-metrics-emission.html">Metrics to BizFirst Observe</a>
+  <a href="06-alerting.html">Alerting</a>
+  <a href="07-debugging.html">Debugging Stuck Interactions</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Response Time Tracking</h1>
+    <p class="lead">EdgeInteract measures the elapsed time from when an interaction is first displayed to the user to when a response is received. These measurements are recorded as the <code>interaction_response_time_ms</code> histogram and surfaced via BizFirst Observe dashboards.</p>
+  </div>
+
+  <h2>What Is Measured</h2>
+  <p>Response time in EdgeInteract is defined as the duration from the <strong>displayed</strong> pipeline state to the <strong>responded</strong> pipeline state — i.e., the time from the moment the UI rendered the interaction to the moment the user submitted their response.</p>
+
+  <div class="timeline-bar">
+    <div class="timeline-seg tl-published">published</div>
+    <div class="timeline-seg tl-delivered" style="background:#6a7a9a;">delivered</div>
+    <div class="timeline-seg tl-displayed" style="background:#9a8a5a;">displayed</div>
+    <div class="timeline-seg tl-responded" style="background:#2e7d52;flex:3;">⟵ response_time_ms measured here ⟶</div>
+    <div class="timeline-seg tl-acked" style="background:#4a6a7a;">acked</div>
+  </div>
+  <p style="font-size:0.82rem;color:var(--text-muted);">The clock starts when the client emits the <code>displayed</code> acknowledgement, and stops when the response is received server-side.</p>
+
+  <h2>The Metric: <code>interaction_response_time_ms</code></h2>
+  <table>
+    <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Metric name</td><td><code>interaction_response_time_ms</code></td></tr>
+      <tr><td>Type</td><td>Histogram</td></tr>
+      <tr><td>Unit</td><td>milliseconds</td></tr>
+      <tr><td>Labels</td><td><code>type</code> (approval, confirmation, form, picker, notification), <code>outcome</code> (approved, rejected, confirmed, cancelled, submitted, selected, acknowledged)</td></tr>
+      <tr><td>Buckets</td><td>500ms, 1s, 2s, 5s, 10s, 30s, 60s, 120s, 300s, 600s, 1800s, 3600s</td></tr>
+      <tr><td>Emitted by</td><td><code>MetricsInteractionHook</code> (must be registered)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Histogram Buckets</strong>
+    The buckets span from 500ms to 1 hour, reflecting the wide range of expected response times — notifications may be acknowledged in under a second, while multi-day approvals may be pending for hours.
+  </div>
+
+  <h2>Accessing Response Time in Code</h2>
+  <p>Use the <code>useInteractionMetrics()</code> hook from <code>edge-interact-observability</code> to access response time data in React admin views:</p>
+  <pre><code>import { useInteractionMetrics } from 'edge-interact-observability';
+
+function ResponseTimePanel() {
+  const { responseTime } = useInteractionMetrics({
+    type: 'approval',    // optional filter
+    window: '24h'        // time window
+  });
+
+  // responseTime contains P50, P95, P99, mean, count
+  return (
+    &lt;div&gt;
+      &lt;h3&gt;Approval Response Times (last 24h)&lt;/h3&gt;
+      &lt;p&gt;P50: {responseTime.p50}ms&lt;/p&gt;
+      &lt;p&gt;P95: {responseTime.p95}ms&lt;/p&gt;
+      &lt;p&gt;P99: {responseTime.p99}ms&lt;/p&gt;
+      &lt;p&gt;Sample count: {responseTime.count}&lt;/p&gt;
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+
+  <h2>Server-Side: Accessing Response Time</h2>
+  <p>On the server, you can query response time statistics from the audit store:</p>
+  <pre><code">// In a diagnostics service or admin controller
+public class ResponseTimeService(IInteractionAuditStore auditStore)
+{
+    public async Task&lt;ResponseTimeStats&gt; GetResponseTimeStatsAsync(
+        string? type = null,
+        TimeSpan? window = null,
+        CancellationToken ct = default)
+    {
+        var since = window.HasValue
+            ? DateTime.UtcNow - window.Value
+            : DateTime.UtcNow.AddDays(-1);
+
+        var entries = await auditStore.QueryAsync(new AuditQuery
+        {
+            Type          = type,
+            RespondedAfter = since,
+            Statuses       = [InteractionStatus.Responded]
+        }, ct);
+
+        var times = entries
+            .Where(e => e.DisplayedAt.HasValue && e.RespondedAt.HasValue)
+            .Select(e => (e.RespondedAt!.Value - e.DisplayedAt!.Value).TotalMilliseconds)
+            .OrderBy(ms => ms)
+            .ToList();
+
+        if (times.Count == 0)
+            return ResponseTimeStats.Empty;
+
+        return new ResponseTimeStats
+        {
+            Count = times.Count,
+            P50   = times[(int)(times.Count * 0.50)],
+            P95   = times[(int)(times.Count * 0.95)],
+            P99   = times[(int)(times.Count * 0.99)],
+            Mean  = times.Average(),
+            Min   = times.First(),
+            Max   = times.Last()
+        };
+    }
+}
+</code></pre>
+
+  <h2>Typical Percentile Targets</h2>
+  <div class="pct-grid">
+    <div class="pct-card">
+      <div class="pct-label">Notification P95</div>
+      <div class="pct-value">&lt; 30s</div>
+      <div class="pct-sub">Users typically acknowledge notifications quickly</div>
+    </div>
+    <div class="pct-card">
+      <div class="pct-label">Confirmation P95</div>
+      <div class="pct-value">&lt; 2m</div>
+      <div class="pct-sub">Blocking confirmations should resolve fast</div>
+    </div>
+    <div class="pct-card">
+      <div class="pct-label">Approval P95</div>
+      <div class="pct-value">&lt; 4h</div>
+      <div class="pct-sub">Approvals may involve review; daily alerting is typical</div>
+    </div>
+  </div>
+
+  <h2>Grafana Query</h2>
+  <p>To visualize response time percentiles in a BizFirst Observe dashboard panel:</p>
+  <pre><code">// PromQL — P95 response time for approval interactions (5-minute rate)
+histogram_quantile(0.95,
+  sum(rate(interaction_response_time_ms_bucket{type="approval"}[5m]))
+  by (le)
+)
+
+// PromQL — P50 response time across all types
+histogram_quantile(0.50,
+  sum(rate(interaction_response_time_ms_bucket[5m]))
+  by (le, type)
+)
+</code></pre>
+
+  <div class="callout warning">
+    <strong>Timed-Out Interactions Are Excluded</strong>
+    <code>interaction_response_time_ms</code> only records entries for interactions that received a response. Timed-out interactions are counted separately in <code>interaction_timeout_total</code>. This means response time P95 reflects users who did respond — not the full population.
+  </div>
+
+  <h2>Factors That Skew Response Times</h2>
+  <ul>
+    <li><strong>Interaction type</strong> — notification &lt; confirmation &lt; form &lt; approval in typical order</li>
+    <li><strong>Priority</strong> — high-priority interactions rendered at the top of the queue are responded to faster</li>
+    <li><strong>Business hours</strong> — approval interactions created at end of day or on weekends show higher P95</li>
+    <li><strong>Delegation</strong> — role-targeted interactions where the first-to-respond wins can produce faster P95 than single-user targeting</li>
+  </ul>
+
+  <div class="page-nav">
+    <a href="01-interaction-monitor.html">&#8592; InteractionMonitor Component</a>
+    <a href="03-completion-rate.html">Next: Completion Rate &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

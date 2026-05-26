@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redo (Ctrl+Y) — Undo/Redo History | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Undo/Redo History</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-history-middleware.html">History Middleware</a>
+  <a href="02-tracked-actions.html">Tracked Actions</a>
+  <a href="03-untracked-actions.html">Untracked Actions</a>
+  <a href="04-undo.html">Undo (Ctrl+Z)</a>
+  <a href="05-redo.html" class="active">Redo (Ctrl+Y)</a>
+  <a href="06-stack-limits.html">Stack Depth Limits</a>
+  <a href="07-custom-actions.html">Making Custom Actions Undoable</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Redo (Ctrl+Y)</h1>
+    <p class="lead">Pressing Ctrl+Y pops the top entry from the redo stack, saves the current graph state to the undo stack, and restores the nodes and edges from the popped snapshot. Performing any new tracked action clears the redo stack entirely.</p>
+  </div>
+
+  <h2>Redo Implementation</h2>
+  <pre><code">redo: () => {
+    const { undoStack, redoStack, nodes, edges } = get();
+
+    if (redoStack.length === 0) return;  // Nothing to redo
+
+    // Pop the top snapshot from redo stack
+    const [next, ...remainingRedo] = redoStack;
+
+    // Push current state to undo stack
+    const currentSnapshot: HistorySnapshot = {
+        nodes: JSON.parse(JSON.stringify(nodes)),
+        edges: JSON.parse(JSON.stringify(edges))
+    };
+
+    // Restore the graph to the redo snapshot
+    set({
+        nodes    : next.nodes,
+        edges    : next.edges,
+        undoStack: [currentSnapshot, ...undoStack],
+        redoStack: remainingRedo
+    });
+}</code></pre>
+
+  <h2>Keyboard Binding</h2>
+  <pre><code">// useKeyboardShortcuts.ts
+if (isMod &amp;&amp; (e.key === 'y' || (e.key === 'z' &amp;&amp; e.shiftKey))) {
+    e.preventDefault();
+    useWorkflowStore.getState().redo();
+}</code></pre>
+
+  <h2>Redo Stack Clearing</h2>
+  <pre><code">// In historyAction — any new action clears the redo stack:
+historyAction: (fn) => {
+    // ...
+    set({ undoStack: newUndoStack, redoStack: [] });  // ← redo stack cleared
+    fn();
+}
+
+// This is the standard behavior:
+// Undo twice → can redo twice
+// Undo twice → make a new edit → redo stack is gone — cannot redo</code></pre>
+
+  <h2>Stack State Transitions</h2>
+  <table>
+    <thead><tr><th>User Action</th><th>Undo Stack</th><th>Redo Stack</th></tr></thead>
+    <tbody>
+      <tr><td>Add node A</td><td>[∅]</td><td>[]</td></tr>
+      <tr><td>Add node B</td><td>[∅, A]</td><td>[]</td></tr>
+      <tr><td>Ctrl+Z (undo)</td><td>[∅]</td><td>[A+B]</td></tr>
+      <tr><td>Ctrl+Y (redo)</td><td>[∅, A]</td><td>[]</td></tr>
+      <tr><td>Ctrl+Z (undo)</td><td>[∅]</td><td>[A+B]</td></tr>
+      <tr><td>Add node C (new action)</td><td>[∅, A]</td><td>[] ← cleared</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-undo.html">&#8592; Undo (Ctrl+Z)</a>
+    <a href="06-stack-limits.html">Next: Stack Depth Limits &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

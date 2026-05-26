@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prometheus Overview — Prometheus Metrics | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Prometheus Metrics</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Prometheus Overview</a>
+  <a href="01-deployment.html">Deploying Prometheus</a>
+  <a href="02-scrape-config.html">Scrape Configuration</a>
+  <a href="03-bizfirst-metrics.html">BizFirst Metrics Reference</a>
+  <a href="04-promql-basics.html">PromQL Basics</a>
+  <a href="05-promql-examples.html">PromQL for BizFirstGO</a>
+  <a href="06-recording-rules.html">Recording Rules</a>
+  <a href="07-alerting.html">Prometheus Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Prometheus Overview</h1>
+    <p class="lead">Prometheus is the metrics collection and time-series storage engine for BizFirst Observe. It uses a pull model — scraping exposed <code>/metrics</code> endpoints at regular intervals — and stores the data in its embedded TSDB. PromQL enables powerful aggregations, rate calculations, and latency percentile queries.</p>
+  </div>
+
+  <h2>The Pull Model</h2>
+  <p>Prometheus is fundamentally different from push-based metrics systems (like StatsD or InfluxDB with line protocol). Instead of services sending metrics to Prometheus, Prometheus reaches out to each service's <code>/metrics</code> HTTP endpoint and scrapes the current values.</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <h4>Pull Model Benefits</h4>
+      <ul>
+        <li>Prometheus controls scrape rate — no overload from misbehaving services</li>
+        <li>Immediate detection of down services (scrape fails → <code>up{job="..."} = 0</code>)</li>
+        <li>Simple for services — just expose /metrics, no connection to maintain</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Pull Model Trade-offs</h4>
+      <ul>
+        <li>Services behind firewall need push gateway or reverse proxy for scraping</li>
+        <li>Short-lived jobs (batch workers) need Pushgateway to expose metrics</li>
+        <li>Network must allow Prometheus to reach all target services</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Metric Types</h2>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Always Increases?</th><th>BizFirstGO Example</th><th>Primary Operation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Counter</strong></td><td>Yes (resets on restart)</td><td><code>bizfirst_workflow_executions_total</code></td><td><code>rate()[5m]</code> — compute per-second rate</td></tr>
+      <tr><td><strong>Gauge</strong></td><td>No (can go up or down)</td><td><code>bizfirst_hil_pending_count</code></td><td>Direct value — current backlog</td></tr>
+      <tr><td><strong>Histogram</strong></td><td>Yes (bucket counts)</td><td><code>bizfirst_node_execution_duration_seconds</code></td><td><code>histogram_quantile(0.99, ...)</code> — P99 latency</td></tr>
+      <tr><td><strong>Summary</strong></td><td>Yes</td><td>Rarely used</td><td>Pre-computed quantiles (less flexible)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Prometheus /metrics Format</h2>
+  <p>BizFirstGO services expose metrics in Prometheus text format at <code>GET /metrics</code>:</p>
+  <pre><code># HELP bizfirst_workflow_executions_total Total workflow executions
+# TYPE bizfirst_workflow_executions_total counter
+bizfirst_workflow_executions_total{tenant_id="t123",status="success"} 4821
+bizfirst_workflow_executions_total{tenant_id="t123",status="failed"} 47
+bizfirst_workflow_executions_total{tenant_id="t456",status="success"} 1205
+
+# HELP bizfirst_node_execution_duration_seconds Node execution duration
+# TYPE bizfirst_node_execution_duration_seconds histogram
+bizfirst_node_execution_duration_seconds_bucket{node_type="DataFetchNode",le="0.1"} 812
+bizfirst_node_execution_duration_seconds_bucket{node_type="DataFetchNode",le="0.5"} 1843
+bizfirst_node_execution_duration_seconds_bucket{node_type="DataFetchNode",le="1.0"} 2104
+bizfirst_node_execution_duration_seconds_bucket{node_type="DataFetchNode",le="+Inf"} 2211
+bizfirst_node_execution_duration_seconds_sum{node_type="DataFetchNode"} 847.23
+bizfirst_node_execution_duration_seconds_count{node_type="DataFetchNode"} 2211
+
+# HELP bizfirst_hil_pending_count Current HIL tasks awaiting action
+# TYPE bizfirst_hil_pending_count gauge
+bizfirst_hil_pending_count{tenant_id="t123"} 12</code></pre>
+
+  <h2>How BizFirstGO Services Register Metrics</h2>
+  <p>All BizFirstGO metrics are registered via the OTel Metrics API in <code>MetricsRegistry.cs</code>. The OTel SDK translates these to Prometheus format and exposes them via the <code>/metrics</code> endpoint:</p>
+  <pre><code">// MetricsRegistry.cs — BizFirstGO metric definitions
+public static class MetricsRegistry
+{
+    private static readonly Meter Meter = new Meter("BizFirst.ProcessEngine", "1.0");
+
+    public static readonly Counter&lt;long&gt; WorkflowExecutions =
+        Meter.CreateCounter&lt;long&gt;(
+            "bizfirst.workflow.executions",
+            unit: "{execution}",
+            description: "Total workflow executions");
+
+    public static readonly Histogram&lt;double&gt; NodeExecutionDuration =
+        Meter.CreateHistogram&lt;double&gt;(
+            "bizfirst.node.execution.duration",
+            unit: "s",
+            description: "Node execution duration in seconds");
+
+    public static readonly ObservableGauge&lt;int&gt; HilPendingCount =
+        Meter.CreateObservableGauge&lt;int&gt;(
+            "bizfirst.hil.pending.count",
+            () => HilService.GetPendingCount(),
+            unit: "{task}",
+            description: "HIL tasks awaiting action");
+}</code></pre>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-deployment.html">Next: Deploying Prometheus &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

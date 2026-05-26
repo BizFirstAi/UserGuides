@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Server Patterns — Servers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Servers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Server Overview</a>
+  <a href="01-creating.html">Creating a Server</a>
+  <a href="02-attaching-transport.html">Attaching a Transport</a>
+  <a href="03-registering-hooks.html">Registering Hooks</a>
+  <a href="04-starting.html">Starting the Server</a>
+  <a href="05-stopping.html">Stopping the Server</a>
+  <a href="06-multi-server.html" class="active">Multi-Server Patterns</a>
+  <a href="07-error-handling.html">Server Error Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Multi-Server Patterns</h1>
+    <p class="lead">Register multiple servers in one EdgeStream instance when different message domains need separate transports, distinct pipelines, or isolated subscription namespaces.</p>
+  </div>
+
+  <h2>When to Use Multiple Servers</h2>
+  <ul>
+    <li><strong>Different backends</strong> — BizFirstGO main server + a dedicated Octopus chat server</li>
+    <li><strong>Different transports</strong> — SignalR for workflow events, raw WebSocket for agent streaming</li>
+    <li><strong>Different security policies</strong> — different auth tokens or signing keys per server</li>
+    <li><strong>Performance isolation</strong> — high-volume agent streaming should not block workflow events</li>
+  </ul>
+
+  <h2>Registering Multiple Servers</h2>
+  <pre><code>const stream = createEdgeStream({ logLevel: 'info' });
+
+// Server 1: BAS — workflow events, notifications, forms
+stream.registerServer({
+  id: 'bas',
+  type: 'bas',
+  url: '/hubs/edge-stream',
+  transportConfig: { type: 'signalr', url: '/hubs/edge-stream', accessToken: basToken }
+});
+
+// Server 2: Chat — Octopus agent streaming
+stream.registerServer({
+  id: 'chat',
+  type: 'chat',
+  url: 'wss://chat.bizfirst.com/ws',
+  transportConfig: { type: 'websocket', url: 'wss://chat.bizfirst.com/ws', headers: { 'Authorization': chatToken } }
+});
+
+// Configure each server independently
+const basServer = stream.server('bas')!;
+basServer.incomingPipeline.addHook(new NormalizationHook());
+
+const chatServer = stream.server('chat')!;
+chatServer.incomingPipeline.addHook(new TokenStreamDecoderHook());
+
+// Subscribe to specific servers
+stream.subscribe('bas', 'workflow.*', workflowHandler);
+stream.subscribe('chat', 'agent.chat.*', chatHandler);
+
+// Start all at once
+await stream.start();
+// Both servers connect concurrently (Promise.all)</code></pre>
+
+  <h2>Cross-Server Message Bridging</h2>
+  <p>Bridge messages from one server to another by subscribing on the source and sending on the target:</p>
+  <pre><code>// Bridge: forward agent events from 'chat' to 'bas' for logging
+stream.subscribe('chat', 'agent.*', async (envelope) =&gt; {
+  // Forward relevant agent events to BAS for audit
+  if (envelope.body.eventType !== 'token') { // skip high-volume token events
+    await stream.send('bas', 'agent.audit.event', {
+      originalTopic: envelope.meta.topic,
+      agentId: envelope.body.agentId,
+      timestamp: envelope.meta.receivedAt,
+    });
+  }
+});</code></pre>
+
+  <h2>Independent Pipeline Configuration</h2>
+  <table>
+    <thead>
+      <tr><th>Server</th><th>Transport</th><th>Key Hooks</th><th>Topics</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>'bas'</code></td><td>SignalR</td><td>Normalize, Tenant filter, Audit</td><td>workflow.*, hil.*, notifications.*</td></tr>
+      <tr><td><code>'chat'</code></td><td>WebSocket</td><td>Token decoder, Rate limit</td><td>agent.chat.*</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-stopping.html">&#8592; Stopping the Server</a>
+    <a href="07-error-handling.html">Next: Server Error Handling &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

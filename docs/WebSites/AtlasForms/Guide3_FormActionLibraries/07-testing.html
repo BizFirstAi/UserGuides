@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Testing Custom Actions — Form Action Libraries | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Atlas Forms</h2>
+    <h1>Form Action Libraries</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-action-context.html">FormActionContext Deep Dive</a>
+  <a href="02-custom-handler.html">Writing a Custom Handler</a>
+  <a href="03-registering-actions.html">Registering Actions</a>
+  <a href="04-action-repositories.html">Action Repositories</a>
+  <a href="05-action-scope.html">Action Scope</a>
+  <a href="06-distributing.html">Distributing Your Library</a>
+  <a href="07-testing.html" class="active">Testing Custom Actions</a>
+  <a href="08-examples.html">Complete Library Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Atlas Forms</div>
+    <h1>Testing Custom Actions</h1>
+    <p class="lead">Testing action handlers is straightforward because they are plain async functions. Mock <code>FormActionContext</code> to control the inputs, then assert on the mock's calls. No special test setup or DOM environment required for pure handlers.</p>
+  </div>
+
+  <h2>Creating a Mock Context</h2>
+  <pre><code>// test/helpers/mockContext.ts
+import type { FormActionContext } from '@atlas-forms/types-js';
+import { vi } from 'vitest';
+
+export function createMockContext(
+  overrides?: Partial&lt;FormActionContext&gt;
+): FormActionContext {
+  return {
+    formId: 'test-form-123',
+    tenantId: 'tenant-42',
+    userId: 'user-99',
+    formValues: {},
+    formEngine: {
+      setFieldValue: vi.fn(),
+      getValues: vi.fn().mockReturnValue({}),
+      getFieldError: vi.fn().mockReturnValue(null),
+    } as any,
+    apiClient: {
+      getFormById: vi.fn(),
+      listForms: vi.fn(),
+    } as any,
+    navigate: vi.fn(),
+    complete: vi.fn(),
+    fail: vi.fn(),
+    validate: vi.fn().mockResolvedValue(true),
+    config: {},
+    ...overrides,
+  };
+}</code></pre>
+
+  <h2>Unit Test Examples</h2>
+  <pre><code>// src/handlers/approveWorkflow.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { approveWorkflowHandler } from './approveWorkflow';
+import { createMockContext } from '../../test/helpers/mockContext';
+import { approvalService } from '../services/approvalService';
+
+vi.mock('../services/approvalService');
+
+describe('approveWorkflowHandler', () =&gt; {
+  let ctx: ReturnType&lt;typeof createMockContext&gt;;
+
+  beforeEach(() =&gt; {
+    ctx = createMockContext({
+      formValues: {
+        'workflow-instance-id': 'wf-001',
+        'approver-notes': 'Looks good'
+      },
+      config: { transitionTo: 'approved' }
+    });
+  });
+
+  it('calls approvalService.approve with correct args', async () =&gt; {
+    vi.mocked(approvalService.approve).mockResolvedValue(undefined);
+    await approveWorkflowHandler(ctx);
+
+    expect(approvalService.approve).toHaveBeenCalledWith({
+      workflowInstanceId: 'wf-001',
+      tenantId: 'tenant-42',
+      notes: 'Looks good',
+      status: 'approved'
+    });
+  });
+
+  it('calls ctx.complete() on success', async () =&gt; {
+    vi.mocked(approvalService.approve).mockResolvedValue(undefined);
+    await approveWorkflowHandler(ctx);
+    expect(ctx.complete).toHaveBeenCalled();
+  });
+
+  it('calls ctx.fail() when service throws', async () =&gt; {
+    vi.mocked(approvalService.approve).mockRejectedValue(new Error('Network error'));
+    await approveWorkflowHandler(ctx);
+    expect(ctx.fail).toHaveBeenCalledWith(expect.stringContaining('Network error'));
+  });
+
+  it('calls ctx.fail() when workflow-instance-id is missing', async () =&gt; {
+    ctx.formValues = {};
+    await approveWorkflowHandler(ctx);
+    expect(ctx.fail).toHaveBeenCalled();
+    expect(approvalService.approve).not.toHaveBeenCalled();
+  });
+});</code></pre>
+
+  <h2>Test Coverage Requirements</h2>
+  <p>Aim for these coverage targets before publishing:</p>
+  <table>
+    <thead><tr><th>Test Type</th><th>Required</th><th>Covers</th></tr></thead>
+    <tbody>
+      <tr><td>Happy path</td><td>Yes</td><td>Successful execution, complete() called</td></tr>
+      <tr><td>Missing required values</td><td>Yes</td><td>Guards that call fail() early</td></tr>
+      <tr><td>Service error</td><td>Yes</td><td>catch block calls fail(reason)</td></tr>
+      <tr><td>Validation failure</td><td>If used</td><td>validate() returns false path</td></tr>
+      <tr><td>Config variation</td><td>If configurable</td><td>Different handlerConfig branches</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="06-distributing.html">&#8592; Distributing Your Library</a>
+    <a href="08-examples.html">Next: Complete Library Examples &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

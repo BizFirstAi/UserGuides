@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Lineage — Data Enrichment &amp; Enhancement | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Data Enrichment &amp; Enhancement</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enrichment-pipeline.html">Enrichment Pipeline Pattern</a>
+  <a href="02-ai-enhancement.html">AI-Driven Enhancement</a>
+  <a href="03-embedding-generation.html">Embedding Generation</a>
+  <a href="04-ai-ready-database.html">Building an AI-Ready Database</a>
+  <a href="05-data-lineage.html" class="active">Data Lineage</a>
+  <a href="06-compliance.html">Compliance and PII</a>
+  <a href="07-speed-benefits.html">AI Speed Benefits</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Data Lineage</h1>
+    <p class="lead">Tracking the provenance of AI-enriched data — the DataLineage table, what enrichment events are recorded, how to query the lineage for a specific record, and why lineage is required for GDPR accountability.</p>
+  </div>
+
+  <h2>What Is Data Lineage?</h2>
+  <p><strong>Data lineage</strong> is the documented trail of where data came from and what transformations it has undergone. In the context of AI enrichment, lineage answers the question: <em>How did this classification label get here?</em> — capturing the source record, the AI model that produced the enrichment, the inputs used, and the timestamp.</p>
+  <p>Lineage is required for GDPR accountability (Article 5 principle of accuracy and accountability), enterprise audit standards, and model governance — so you can identify all records enriched by a specific model version and re-enrich them if that model is updated or found to be biased.</p>
+
+  <h2>DataLineage Table Schema</h2>
+  <pre><code>CREATE TABLE DataLineage (
+    -- Primary key
+    LineageId           uniqueidentifier NOT NULL DEFAULT NEWSEQUENTIALID(),
+
+    -- Record reference
+    TenantId            int              NOT NULL,
+    SourceTable         nvarchar(200)    NOT NULL,   -- e.g., 'Lead', 'Customer'
+    SourceRecordId      nvarchar(500)    NOT NULL,   -- GUID or int of the enriched record
+    DatasourceId        nvarchar(200)    NOT NULL,   -- e.g., 'sales-data-db'
+
+    -- Enrichment event details
+    EnrichmentType      nvarchar(100)    NOT NULL,   -- 'Classification', 'Summarization', 'Embedding', 'Sentiment'
+    WorkflowId          nvarchar(200)    NOT NULL,   -- Flow Studio workflow that performed enrichment
+    WorkflowExecutionId nvarchar(500)    NOT NULL,   -- Specific execution ID for traceability
+
+    -- AI model details
+    ModelId             nvarchar(200)    NOT NULL,   -- e.g., 'gpt-4o-2024-08-06'
+    ModelProvider       nvarchar(100)    NOT NULL,   -- e.g., 'Azure OpenAI', 'OpenAI'
+
+    -- Content fingerprinting
+    InputHash           nvarchar(64)     NULL,       -- SHA-256 of the text that was processed
+    OutputHash          nvarchar(64)     NULL,       -- SHA-256 of the AI output
+
+    -- Result summary (no PII — just metadata)
+    ResultSummary       nvarchar(max)    NULL,       -- JSON: { "label": "...", "confidence": 0.9 }
+    TokensUsed          int              NULL,
+
+    -- Timestamps
+    ProcessedAt         datetime2        NOT NULL DEFAULT GETUTCDATE(),
+    IsSuccess           bit              NOT NULL DEFAULT 1,
+    ErrorMessage        nvarchar(max)    NULL,
+
+    CONSTRAINT PK_DataLineage PRIMARY KEY CLUSTERED (LineageId)
+);
+
+CREATE INDEX IX_DataLineage_TenantId_SourceRecord
+    ON DataLineage (TenantId, SourceTable, SourceRecordId, ProcessedAt DESC);
+
+CREATE INDEX IX_DataLineage_TenantId_ModelId
+    ON DataLineage (TenantId, ModelId, ProcessedAt DESC);</code></pre>
+
+  <h2>Recording a Lineage Event in Workflow</h2>
+  <pre><code>// SqlUpdateNode — insert lineage record at end of every enrichment workflow
+{
+  "nodeType": "SqlUpdateNode",
+  "nodeId": "record-lineage",
+  "datasourceId": "sales-data-db",
+  "command": "INSERT INTO DataLineage (LineageId, TenantId, SourceTable, SourceRecordId, DatasourceId, EnrichmentType, WorkflowId, WorkflowExecutionId, ModelId, ModelProvider, InputHash, ResultSummary, TokensUsed, ProcessedAt, IsSuccess) VALUES (NEWID(), @tenantId, @sourceTable, @sourceRecordId, @datasourceId, @enrichmentType, @workflowId, @executionId, @modelId, @modelProvider, @inputHash, @resultSummary, @tokensUsed, GETUTCDATE(), @isSuccess)",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "sourceTable": "Lead",
+    "sourceRecordId": "{{input.leadId}}",
+    "datasourceId": "sales-data-db",
+    "enrichmentType": "Classification",
+    "workflowId": "lead-enrich",
+    "executionId": "{{workflow.executionId}}",
+    "modelId": "{{variables.modelVersion}}",
+    "modelProvider": "Azure OpenAI",
+    "inputHash": "{{variables.inputHash}}",
+    "resultSummary": "{{variables.lineageSummaryJson}}",
+    "tokensUsed": "{{variables.tokensUsed}}",
+    "isSuccess": 1
+  }
+}</code></pre>
+
+  <h2>Querying Data Lineage</h2>
+
+  <h3>Full Lineage History for a Record</h3>
+  <pre><code>SELECT
+    EnrichmentType,
+    ModelId,
+    ModelProvider,
+    ResultSummary,
+    TokensUsed,
+    ProcessedAt,
+    IsSuccess
+FROM DataLineage
+WHERE TenantId = @tenantId
+  AND SourceTable = 'Lead'
+  AND SourceRecordId = @leadId
+ORDER BY ProcessedAt DESC;</code></pre>
+
+  <h3>All Records Enriched by a Specific Model Version</h3>
+  <pre><code>-- Use case: a model version is deprecated or found inaccurate
+-- Find all records enriched by it for re-processing
+SELECT DISTINCT SourceTable, SourceRecordId
+FROM DataLineage
+WHERE TenantId = @tenantId
+  AND ModelId = 'gpt-4o-2024-05-13'  -- Deprecated model
+  AND EnrichmentType = 'Classification'
+  AND IsSuccess = 1;</code></pre>
+
+  <h3>Enrichment Volume and Cost Tracking</h3>
+  <pre><code>SELECT
+    ModelId,
+    EnrichmentType,
+    COUNT(*) AS EnrichmentCount,
+    SUM(TokensUsed) AS TotalTokens,
+    AVG(TokensUsed) AS AvgTokens,
+    MIN(ProcessedAt) AS FirstRun,
+    MAX(ProcessedAt) AS LastRun
+FROM DataLineage
+WHERE TenantId = @tenantId
+  AND ProcessedAt >= DATEADD(DAY, -30, GETUTCDATE())
+  AND IsSuccess = 1
+GROUP BY ModelId, EnrichmentType
+ORDER BY TotalTokens DESC;</code></pre>
+
+  <div class="callout info">
+    <strong>Lineage Table Grows Fast</strong>
+    <p>With multiple enrichment types per record across large datasets, the DataLineage table can grow quickly. Implement an archival strategy: move lineage rows older than 1 year to <code>DataLineage_Archive</code>. Recent lineage (last 12 months) stays in the active table. Historical lineage remains queryable in the archive table.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-ai-ready-database.html">&#8592; Building an AI-Ready Database</a>
+    <a href="06-compliance.html">Next: Compliance and PII &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

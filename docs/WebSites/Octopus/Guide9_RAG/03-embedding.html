@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Embedding — RAG | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>RAG Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">RAG Pipeline Overview</a>
+  <a href="01-document-ingestion.html">Document Ingestion</a>
+  <a href="02-chunking.html">Chunking Strategies</a>
+  <a href="03-embedding.html" class="active">Embedding</a>
+  <a href="04-indexing.html">Indexing</a>
+  <a href="05-retrieval.html">Retrieval</a>
+  <a href="06-hybrid-search.html">Hybrid Search</a>
+  <a href="07-reranking.html">Reranking</a>
+  <a href="08-context-injection.html">Context Injection</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Embedding</h1>
+    <p class="lead">Embedding converts text into a dense vector of floating-point numbers that encodes its semantic meaning. The embedding model used at indexing time must be the same model used at query time — any mismatch produces incompatible vectors and incorrect similarity scores.</p>
+  </div>
+
+  <h2>IEmbeddingProvider Interface</h2>
+  <pre><code>public interface IEmbeddingProvider
+{
+    // Embed a single text string
+    Task&lt;float[]&gt; EmbedAsync(string text, CancellationToken ct = default);
+
+    // Embed a batch of strings (more efficient — fewer API calls)
+    Task&lt;IReadOnlyList&lt;float[]&gt;&gt; EmbedBatchAsync(
+        IReadOnlyList&lt;string&gt; texts,
+        CancellationToken ct = default);
+
+    // Dimensions of the output vector (e.g. 1536, 3072, 768)
+    int Dimensions { get; }
+}
+
+// Usage in the indexing pipeline:
+float[] chunkEmbedding = await _embedder.EmbedAsync(chunk.Content, ct);
+
+// Usage in the retrieval pipeline:
+float[] queryEmbedding = await _embedder.EmbedAsync(userMessage, ct);</code></pre>
+
+  <h2>Supported Embedding Models</h2>
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>Model</th><th>Dimensions</th><th>Max Input Tokens</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>OpenAI</td><td>text-embedding-3-small</td><td>1536</td><td>8191</td><td>Recommended default — fast, cost-effective</td></tr>
+      <tr><td>OpenAI</td><td>text-embedding-3-large</td><td>3072</td><td>8191</td><td>Higher quality; 2x cost</td></tr>
+      <tr><td>Azure OpenAI</td><td>text-embedding-ada-002</td><td>1536</td><td>8191</td><td>Azure-hosted; same quality as OpenAI ada</td></tr>
+      <tr><td>Local ONNX</td><td>all-MiniLM-L6-v2</td><td>384</td><td>512</td><td>On-premise; no API cost; lower quality</td></tr>
+      <tr><td>Local ONNX</td><td>bge-large-en-v1.5</td><td>1024</td><td>512</td><td>High quality local model; CPU-intensive</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Configuration</h2>
+  <pre><code>// appsettings.json — Embedding configuration
+{
+  "Octopus": {
+    "Embedding": {
+      "Provider":     "OpenAI",              // OpenAI | AzureOpenAI | ONNX
+      "Model":        "text-embedding-3-small",
+      "Dimensions":   1536,
+      "CredentialId": 42,                    // ICredentialResolver lookup for API key
+      "BatchSize":    100                    // Max chunks per batch API call
+    }
+  }
+}
+
+// Azure OpenAI variant
+{
+  "Octopus": {
+    "Embedding": {
+      "Provider":     "AzureOpenAI",
+      "Endpoint":     "https://my-instance.openai.azure.com",
+      "Deployment":   "text-embedding-ada-002",
+      "Dimensions":   1536,
+      "CredentialId": 43
+    }
+  }
+}
+
+// Local ONNX variant (no API key required)
+{
+  "Octopus": {
+    "Embedding": {
+      "Provider":   "ONNX",
+      "ModelPath":  "/models/all-MiniLM-L6-v2.onnx",
+      "Dimensions": 384
+    }
+  }
+}</code></pre>
+
+  <h2>Batch Embedding for Efficiency</h2>
+  <pre><code>// Batch embed all chunks in a document before writing to vector store
+public async Task IndexDocumentAsync(DocumentContent doc, Guid agentId, CancellationToken ct)
+{
+    var chunks = _chunker.Chunk(doc.RawText, _chunkingConfig);
+
+    // Embed all chunks in batches of 100
+    var allEmbeddings = await _embedder.EmbedBatchAsync(
+        chunks.Select(c => c.Content).ToList(), ct);
+
+    // Write chunks + embeddings to vector store
+    var records = chunks.Select((chunk, i) => new MemoryRecord
+    {
+        Id        = Guid.NewGuid().ToString(),
+        Content   = chunk.Content,
+        Embedding = allEmbeddings[i],
+        Metadata  = new MemoryMetadata
+        {
+            Source   = doc.Metadata.Source,
+            AgentId  = agentId.ToString(),
+            TenantId = doc.Metadata.TenantId.ToString()
+        }
+    }).ToList();
+
+    await _vectorStore.UpsertBatchAsync($"agent_{agentId:N}", records, ct);
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Model Lock-In Warning</strong>
+    <p>Once documents are indexed with a specific embedding model, you cannot switch models without re-indexing all documents. The stored vectors are incompatible with a different model's query vectors. Establish and document your embedding model choice before indexing any production data.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-chunking.html">&#8592; Chunking Strategies</a>
+    <a href="04-indexing.html">Next: Indexing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

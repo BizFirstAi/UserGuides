@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Keycloak Integration — Bring Your Own IAM | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Bring Your Own IAM</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-external-token-validation.html">External Token Validation</a>
+  <a href="02-okta.html">Okta Integration</a>
+  <a href="03-azure-ad.html">Azure AD Integration</a>
+  <a href="04-auth0.html">Auth0 Integration</a>
+  <a href="05-keycloak.html" class="active">Keycloak Integration</a>
+  <a href="06-claims-mapping.html">Claims Mapping</a>
+  <a href="07-hybrid-mode.html">Hybrid Mode</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Keycloak Integration</h1>
+    <p class="lead">Configure a Keycloak realm as the identity source for BizFirstGO — create an OIDC client, expose realm roles in tokens, and map Keycloak roles to BizFirstGO roles.</p>
+  </div>
+
+  <h2>Keycloak Configuration Steps</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Create OIDC Client</h4>
+        <p>In Keycloak Admin → <strong>Your Realm → Clients → Create Client</strong>.<br>
+        Client type: OpenID Connect, Client ID: <code>bizfirstgo-api</code>, Client authentication: On.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Configure Client Settings</h4>
+        <pre><code>Valid Redirect URIs:  https://passport.bizfirst.ai/federation/keycloak/callback
+Web Origins:          https://passport.bizfirst.ai
+Access Type:          confidential</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Create Realm Roles</h4>
+        <p>In <strong>Realm Roles</strong>, create: <code>bizfirst-admin</code>, <code>bizfirst-manager</code>, <code>bizfirst-user</code>, <code>bizfirst-viewer</code>. Assign users to roles as appropriate.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Add Realm Roles to Token</h4>
+        <p>In <strong>Clients → bizfirstgo-api → Client Scopes → Add Mapper → User Realm Role</strong>.<br>
+        Token claim name: <code>realm_roles</code>, Add to access token: On.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Add Tenant ID Claim</h4>
+        <p>In <strong>Client Scopes → Add Mapper → User Attribute</strong>.<br>
+        User attribute: <code>bizfirst_tenant_id</code>, Token claim name: <code>tenant_id</code>.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Keycloak Token Structure</h2>
+  <pre><code">// Decoded Keycloak access token
+{
+  "iss":        "https://keycloak.company.com/realms/company",
+  "sub":        "3b5f8797-...-kc-user-guid",
+  "aud":        "bizfirstgo-api",
+  "exp":        1748120400,
+  "iat":        1748119500,
+  "email":      "jane.smith@company.com",
+  "name":       "Jane Smith",
+  "realm_roles": ["bizfirst-admin", "bizfirst-manager", "offline_access"],
+  "tenant_id":  "tenant-abc"
+}</code></pre>
+
+  <h2>BizFirstGO Federation Configuration</h2>
+  <pre><code>POST /passport/admin/tenants/{tenantId}/federation
+{
+  "providerId":    "keycloak-main",
+  "displayName":   "Keycloak (Company Realm)",
+  "issuer":        "https://keycloak.company.com/realms/company",
+  "jwksUri":       "https://keycloak.company.com/realms/company/protocol/openid-connect/certs",
+  "audience":      "bizfirstgo-api",
+  "tenantIdClaim": "tenant_id",
+  "userIdClaim":   "sub",
+  "emailClaim":    "email",
+  "rolesClaim":    "realm_roles",
+  "roleMapping": {
+    "bizfirst-admin":   "admin",
+    "bizfirst-manager": "manager",
+    "bizfirst-user":    "user",
+    "bizfirst-viewer":  "viewer"
+  }
+}</code></pre>
+
+  <h2>Keycloak Realm Discovery</h2>
+  <pre><code">// Keycloak OIDC discovery endpoint (auto-configure)
+GET https://keycloak.company.com/realms/company/.well-known/openid-configuration
+
+// Returns the standard discovery document with:
+// - issuer: "https://keycloak.company.com/realms/company"
+// - jwks_uri: "https://keycloak.company.com/realms/company/protocol/openid-connect/certs"
+// - token_endpoint, authorization_endpoint, etc.</code></pre>
+
+  <div class="page-nav">
+    <a href="04-auth0.html">&#8592; Auth0 Integration</a>
+    <a href="06-claims-mapping.html">Next: Claims Mapping &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conflict Detection — Conflict Resolution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Conflict Resolution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-conflict-detection.html" class="active">Conflict Detection</a>
+  <a href="02-replace-strategy.html">Replace Strategy</a>
+  <a href="03-merge-strategy.html">Merge Strategy</a>
+  <a href="04-skip-strategy.html">Skip Strategy</a>
+  <a href="05-manual-resolution.html">Manual Resolution</a>
+  <a href="06-default-strategy.html">Default Strategy</a>
+  <a href="07-audit.html">Conflict Audit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Conflict Detection</h1>
+    <p class="lead">The conflict detection engine identifies every artifact in the package that would conflict with an existing artifact in the target tenant, before any installation begins.</p>
+  </div>
+
+  <h2>Conflict Detection Rule</h2>
+  <p>An artifact conflict is defined as:</p>
+  <blockquote style="border-left:4px solid var(--accent);padding:10px 20px;background:var(--surface);margin:16px 0;border-radius:0 6px 6px 0;">
+    <p>An artifact A in the package conflicts with an artifact B in the target tenant if and only if <code>A.type == B.type</code> AND <code>A.name == B.name</code> (case-insensitive).</p>
+  </blockquote>
+  <p>Note: The comparison is on <em>name</em>, not ID. IDs have already been remapped to avoid ID collisions. The name comparison is what catches genuine "same artifact, different version" scenarios.</p>
+
+  <h2>Detection Algorithm</h2>
+  <pre><code>public async Task&lt;ConflictReport&gt; DetectConflictsAsync(
+    IReadOnlyList&lt;RemappedArtifact&gt; packageArtifacts,
+    string                          targetTenantId,
+    CancellationToken               ct)
+{
+    var report = new ConflictReport();
+
+    foreach (var artifact in packageArtifacts)
+    {
+        // Query target tenant for artifact with same type and name
+        var existing = await _repository.FindByNameAsync(
+            artifact.Type,
+            artifact.Name,
+            targetTenantId,
+            ct);
+
+        if (existing is not null)
+        {
+            report.AddConflict(new ConflictEntry
+            {
+                ArtifactType     = artifact.Type,
+                ArtifactName     = artifact.Name,
+                PackageArtifactId  = artifact.RemappedId,
+                ExistingArtifactId = existing.Id,
+                PackageVersion   = artifact.Version,
+                ExistingVersion  = existing.Version,
+                MergeSupported   = IsMergeSupported(artifact.Type)
+            });
+        }
+    }
+
+    return report;
+}</code></pre>
+
+  <h2>When Detection Runs</h2>
+  <p>Conflict detection runs after ID remapping and before the installation stage. If a <code>defaultConflictStrategy</code> is set, detection results are used to automatically assign strategies. If no default strategy is set and conflicts exist, the import pauses and returns the <code>ConflictReport</code> for administrator review.</p>
+
+  <h2>Conflict Detection API Response (Paused for Review)</h2>
+  <pre><code>HTTP 202 Accepted
+{
+  "importId":        "imp-f9a2c1e8-...",
+  "status":          "PendingConflictResolution",
+  "message":         "2 conflicts found. Resolve them and resume the import.",
+  "resumeUrl":       "/api/installhub/packages/import/imp-f9a2c1e8-/resume",
+  "conflictReport": {
+    "conflictsFound": 2,
+    "conflicts": [
+      {
+        "conflictId":       "conf-001",
+        "artifactType":     "AtlasForm",
+        "artifactName":     "EmployeeForm",
+        "packageVersion":   "1.3.0",
+        "existingVersion":  "1.0.0",
+        "mergeSupported":   false,
+        "proposedStrategy": null
+      },
+      {
+        "conflictId":       "conf-002",
+        "artifactType":     "RuleSet",
+        "artifactName":     "ApprovalRules",
+        "packageVersion":   "1.2.0",
+        "existingVersion":  "1.1.0",
+        "mergeSupported":   true,
+        "proposedStrategy": null
+      }
+    ]
+  }
+}</code></pre>
+
+  <h2>Resume with Conflict Resolutions</h2>
+  <pre><code>POST /api/installhub/packages/import/{importId}/resume
+{
+  "resolutions": [
+    { "conflictId": "conf-001", "strategy": "Replace" },
+    { "conflictId": "conf-002", "strategy": "Merge"   }
+  ]
+}</code></pre>
+
+  <h2>Merge Eligibility</h2>
+  <p>Not all artifact types support automated merge. The <code>mergeSupported</code> flag in each conflict entry indicates whether Merge is a valid strategy for that conflict:</p>
+  <table>
+    <thead>
+      <tr><th>Artifact Type</th><th>Merge Supported</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ProcessDefinition</td><td>No</td><td>Complex nested graph — automated merge unreliable</td></tr>
+      <tr><td>ThreadDefinition</td><td>No</td><td>Same as ProcessDefinition</td></tr>
+      <tr><td>AtlasForm</td><td>No</td><td>Field ordering and action dependencies make merge ambiguous</td></tr>
+      <tr><td>RuleSet</td><td>Yes</td><td>Simple array of rules — append/update is well-defined</td></tr>
+      <tr><td>EntitySchema</td><td>Yes</td><td>Additive field changes merge cleanly</td></tr>
+      <tr><td>AppDefinition</td><td>Yes</td><td>Configuration values can be merged safely</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-replace-strategy.html">Next: Replace Strategy &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

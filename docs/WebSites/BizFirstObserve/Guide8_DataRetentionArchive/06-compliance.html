@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compliance Retention — Data Retention & Archive | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Data Retention &amp; Archive</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Data Retention Overview</a>
+  <a href="01-loki-retention.html">Loki Log Retention</a>
+  <a href="02-prometheus-retention.html">Prometheus Metric Retention</a>
+  <a href="03-tempo-retention.html">Tempo Trace Retention</a>
+  <a href="04-archiving.html">Archiving to Cold Storage</a>
+  <a href="05-backup.html">Backup Strategies</a>
+  <a href="06-compliance.html" class="active">Compliance Retention</a>
+  <a href="07-cost-optimization.html">Cost Optimization</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Compliance Retention</h1>
+    <p class="lead">Regulatory requirements impose minimum log retention periods and specific data handling rules. BizFirstGO deployments in financial, healthcare, and enterprise contexts must align observability retention with applicable regulations — primarily GDPR, SOX, HIPAA, and PCI-DSS.</p>
+  </div>
+
+  <h2>Regulatory Retention Requirements</h2>
+  <table>
+    <thead>
+      <tr><th>Regulation</th><th>Minimum Retention</th><th>Scope</th><th>BizFirstGO Impact</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>SOX (Sarbanes-Oxley)</strong></td><td>7 years</td><td>Financial records, audit trails</td><td>Workflow execution logs for financial processes must be retained 7 years</td></tr>
+      <tr><td><strong>GDPR</strong></td><td>Not specified (data minimization applies)</td><td>EU personal data</td><td>Logs containing EU user data must be deletable on request; don't keep longer than necessary</td></tr>
+      <tr><td><strong>HIPAA</strong></td><td>6 years</td><td>Protected health information (PHI)</td><td>Any workflow touching PHI — audit logs retained 6 years minimum</td></tr>
+      <tr><td><strong>PCI-DSS</strong></td><td>1 year (3 months hot)</td><td>Payment card data environments</td><td>Cardholder data environment logs retained 1 year; 3 months immediately accessible</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recommended Retention Configuration by Tenant Type</h2>
+  <pre><code># loki-runtime-config.yaml — per-tenant compliance retention
+overrides:
+  # SOX-regulated financial workflow tenant
+  "tenant-financial":
+    retention_period: 61320h       # 7 years = 61,320 hours
+    # Use S3 lifecycle: hot (Standard) 30 days, then Glacier for remainder
+
+  # HIPAA healthcare workflow tenant
+  "tenant-healthcare":
+    retention_period: 52560h       # 6 years = 52,560 hours
+
+  # PCI-DSS payment processing tenant
+  "tenant-payments":
+    retention_period: 8760h        # 1 year = 8,760 hours
+    # 3 months in Standard, rest in Standard-IA per PCI-DSS requirement
+
+  # Standard SaaS tenant (no specific regulation)
+  "tenant-standard":
+    retention_period: 2160h        # 90 days</code></pre>
+
+  <h2>GDPR: Deleting Specific User Data</h2>
+  <p>When a user submits a GDPR "right to erasure" (right to be forgotten) request, any logs containing their personal data must be deleted. Loki provides a delete API for this purpose:</p>
+  <pre><code># Loki Delete API — remove log lines containing PII for a specific user
+# Must have retention_enabled: true and the Loki delete API enabled
+
+# Step 1: Identify the log streams and time range containing the user's data
+# Example: find all logs referencing user ID "user-abc123"
+{job="processengine"} |= "userId=user-abc123"
+
+# Step 2: Create a delete request
+curl -g -X POST \
+  "http://localhost:3100/loki/api/v1/delete" \
+  --data-urlencode 'query={job="processengine"} |= "userId=user-abc123"' \
+  --data-urlencode 'start=2024-01-01T00:00:00Z' \
+  --data-urlencode 'end=2025-01-01T00:00:00Z' \
+  -H "X-Scope-OrgID: tenant-id"
+
+# Step 3: Check deletion status
+curl -g "http://localhost:3100/loki/api/v1/delete" \
+  -H "X-Scope-OrgID: tenant-id"
+
+# Step 4: Document the deletion request and completion for GDPR audit trail</code></pre>
+
+  <div class="callout warning">
+    <strong>Loki Delete API Requires Configuration</strong>
+    <p>The Loki delete API is not enabled by default. Add <code>allow_deletes: true</code> under <code>compactor</code> in <code>loki-config.yaml</code>. Also, the delete request is processed asynchronously — it may take hours to complete, depending on how many log chunks need to be rewritten. Do not assume immediate deletion.</p>
+  </div>
+
+  <h2>Compliance Audit Trail for Observability Changes</h2>
+  <pre><code># Document all retention policy changes for compliance auditors:
+# Maintain a retention-policy-log.md in your infrastructure repository
+
+# Example audit entry:
+## 2025-01-15 — SOX Retention Update
+# Changed: tenant-financial retention_period from 30d to 7y
+# Reason: New SOX audit requirement confirmed by legal
+# Approved by: [Name], Platform Engineering Lead
+# Reviewed by: [Name], Compliance Officer
+# Effective: Immediately (new policy applies to all new log chunks)</code></pre>
+
+  <div class="page-nav">
+    <a href="05-backup.html">&#8592; Backup Strategies</a>
+    <a href="07-cost-optimization.html">Next: Cost Optimization &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retrieval — RAG | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>RAG Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">RAG Pipeline Overview</a>
+  <a href="01-document-ingestion.html">Document Ingestion</a>
+  <a href="02-chunking.html">Chunking Strategies</a>
+  <a href="03-embedding.html">Embedding</a>
+  <a href="04-indexing.html">Indexing</a>
+  <a href="05-retrieval.html" class="active">Retrieval</a>
+  <a href="06-hybrid-search.html">Hybrid Search</a>
+  <a href="07-reranking.html">Reranking</a>
+  <a href="08-context-injection.html">Context Injection</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Retrieval</h1>
+    <p class="lead">Retrieval is the per-turn phase that finds the most semantically relevant document chunks for the user's current message. It embeds the query, searches the vector store, applies a minimum score filter, and returns the top-K results for context injection.</p>
+  </div>
+
+  <h2>Retrieval Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>Embed Query</strong>
+        <span>User message embedded via <code>IEmbeddingProvider.EmbedAsync</code>. Must use same model as indexing.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Vector Search</strong>
+        <span><code>ISemanticMemoryStore.SearchAsync</code> queries the agent's collection for the top-K nearest neighbours by cosine similarity.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Score Filter</strong>
+        <span>Results below <code>MinScore</code> (default 0.75) are discarded. Prevents low-relevance chunks from polluting context.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Return Top-K</strong>
+        <span>Up to <code>SemanticTopK</code> chunks (default 5) returned as <code>SemanticRetrievalResult</code>.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>SemanticMemoryService.RetrieveAsync</h2>
+  <pre><code>public class SemanticMemoryService
+{
+    public async Task&lt;SemanticRetrievalResult&gt; RetrieveAsync(
+        AgentComposite agent,
+        string query,
+        CancellationToken ct)
+    {
+        if (!agent.MemoryConfig.SemanticEnabled)
+            return SemanticRetrievalResult.Empty;
+
+        // 1. Embed the query
+        float[] queryEmbedding = await _embedder.EmbedAsync(query, ct);
+
+        // 2. Search the vector store
+        string collection = $"agent_{agent.Id:N}";
+        var results = await _store.SearchAsync(
+            collection:  collection,
+            embedding:   queryEmbedding,
+            topK:        agent.MemoryConfig.SemanticTopK,
+            minScore:    agent.MemoryConfig.SemanticMinScore,
+            ct:          ct);
+
+        return new SemanticRetrievalResult
+        {
+            Records      = results,
+            QueryTokens  = _counter.Count(query),
+            TotalTokens  = results.Sum(r => _counter.Count(r.Content))
+        };
+    }
+}
+
+public class SemanticRetrievalResult
+{
+    public static readonly SemanticRetrievalResult Empty = new();
+
+    public IReadOnlyList&lt;MemoryRecord&gt; Records     { get; init; } = Array.Empty&lt;MemoryRecord&gt;();
+    public int                         QueryTokens  { get; init; }
+    public int                         TotalTokens  { get; init; }
+}</code></pre>
+
+  <h2>Tuning Retrieval Parameters</h2>
+  <table>
+    <thead>
+      <tr><th>Parameter</th><th>Default</th><th>Effect of Increasing</th><th>Effect of Decreasing</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SemanticTopK</code></td><td>5</td><td>More context, more tokens, possible noise</td><td>Less context, fewer tokens, may miss relevant chunks</td></tr>
+      <tr><td><code>SemanticMinScore</code></td><td>0.75</td><td>Stricter filter — only high-confidence matches</td><td>More results — includes lower-relevance chunks</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Category Filtering</h2>
+  <p>Retrieval can be scoped to a specific document category when the query context is known:</p>
+  <pre><code>// Filter to only retrieve from the "Leave" category
+var results = await _store.SearchAsync(
+    collection: collection,
+    embedding:  queryEmbedding,
+    topK:       5,
+    minScore:   0.75f,
+    filter:     new MemoryFilter { Category = "Leave" },
+    ct:         ct);
+
+// Qdrant payload filter equivalent:
+// { "must": [{ "key": "category", "match": { "value": "Leave" } }] }</code></pre>
+
+  <h2>Debugging Retrieval Quality</h2>
+  <table>
+    <thead>
+      <tr><th>Symptom</th><th>Likely Cause</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Agent can't answer a known question</td><td>Chunk not retrieved — score below MinScore</td><td>Lower MinScore; check chunk quality; re-index with better chunking</td></tr>
+      <tr><td>Agent gives irrelevant answers</td><td>Wrong chunks retrieved — MinScore too low</td><td>Raise MinScore to 0.80–0.85</td></tr>
+      <tr><td>Agent only uses part of a long document</td><td>TopK too low — relevant chunk not in top-5</td><td>Increase SemanticTopK to 8–10</td></tr>
+      <tr><td>High token cost per turn</td><td>TopK too high or chunks too large</td><td>Reduce TopK; use smaller chunk size (256 tokens)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-indexing.html">&#8592; Indexing</a>
+    <a href="06-hybrid-search.html">Next: Hybrid Search &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

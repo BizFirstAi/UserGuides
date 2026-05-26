@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenant Isolation — Workflow Access Control | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Access Control</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-roles.html">Workflow Roles</a>
+  <a href="02-policy-model.html">Access Policy Model</a>
+  <a href="03-tenant-isolation.html" class="active">Tenant Isolation</a>
+  <a href="04-granting-access.html">Granting Access</a>
+  <a href="05-revoking-access.html">Revoking Access</a>
+  <a href="06-execution-access.html">Execution-Time Access</a>
+  <a href="07-api-enforcement.html">API-Level Enforcement</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Tenant Isolation</h1>
+    <p class="lead">Every workflow is owned by exactly one tenant. Cross-tenant access is architecturally impossible — TenantId is included in every database query and API check.</p>
+  </div>
+
+  <h2>Isolation Rules</h2>
+  <table>
+    <thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>Workflow ownership</td><td>Every Process has a TenantId set at creation — never null</td></tr>
+      <tr><td>Access queries</td><td>All Process_ProcessAccess lookups include WHERE TenantId = @tenantId</td></tr>
+      <tr><td>Cross-tenant sharing</td><td>Not supported — ActorId must belong to the same tenant</td></tr>
+      <tr><td>Tenant Admin</td><td>Has implicit Owner-level access to all workflows in their tenant (for audit)</td></tr>
+      <tr><td>Platform Admin</td><td>Read-only access to all tenants for support; audited separately</td></tr>
+    </tbody>
+  </table>
+
+  <h2>TenantId Propagation</h2>
+  <p>TenantId flows from the JWT claim through the entire stack:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>JWT Authentication</h4><p>JWT contains tenant_id claim. ASP.NET authentication middleware extracts it and stores in ClaimsPrincipal.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>ITenantContext</h4><p>Scoped service ITenantContext.TenantId is populated from the claim. All services inject ITenantContext — never accept TenantId from the request body.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div><div class="line"></div></div>
+      <div class="body"><h4>Repository Queries</h4><p>All ProcessRepository methods include .Where(p => p.TenantId == _tenantContext.TenantId) — data from other tenants is never returned.</p></div>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <strong>Never trust client-supplied TenantId:</strong> API clients cannot override TenantId. It is always derived from the authenticated JWT. Any attempt to access another tenant's workflow with a manipulated processId returns 404 (not 403 — revealing that the resource exists in another tenant is itself a security risk).
+  </div>
+
+  <h2>Tenant Admin Access</h2>
+  <pre><code>// Tenant admin check in IProcessAccessChecker
+private bool IsTenantAdmin(string userId)
+{
+    return _iamService.HasRoleAsync(userId, WellKnownRoles.TenantAdmin);
+}
+
+// In CanViewAsync:
+if (await IsTenantAdmin(userId)) return true;  // admin bypasses per-workflow policy</code></pre>
+
+  <div class="page-nav">
+    <a href="02-policy-model.html">&#8592; Access Policy Model</a>
+    <a href="04-granting-access.html">Next: Granting Access &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dependency Declarations — Package Format | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Package Format</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-zip-structure.html">ZIP Structure</a>
+  <a href="02-manifest-schema.html">Manifest Schema</a>
+  <a href="03-artifact-serialization.html">Artifact Serialization</a>
+  <a href="04-versioning.html">Versioning</a>
+  <a href="05-dependencies.html" class="active">Dependency Declarations</a>
+  <a href="06-checksum.html">Checksum</a>
+  <a href="07-readme.html">README.md in Package</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Dependency Declarations</h1>
+    <p class="lead">An InstallHub package can declare that it requires another package to be installed first. This enables composable, layered distribution — install a base package, then install extensions that depend on it.</p>
+  </div>
+
+  <h2>Two Types of Dependencies</h2>
+  <p>The manifest contains two distinct dependency concepts:</p>
+  <ol>
+    <li><strong>Artifact dependencies</strong> (<code>dependencies[]</code>) — the artifacts included within this bundle, their versions and hashes. These are auto-populated by the exporter from the dependency graph.</li>
+    <li><strong>Package dependencies</strong> (<code>packageDependencies[]</code>) — other InstallHub packages that must already be installed in the target tenant before this package can be installed. These are declared by the package author.</li>
+  </ol>
+
+  <h2>Package Dependencies — When to Use Them</h2>
+  <p>Use <code>packageDependencies</code> when your package builds on top of another package:</p>
+  <ul>
+    <li>A workflow extension that adds steps to a base HR workflow defined in another package</li>
+    <li>A custom form set that depends on entity schemas from a platform base package</li>
+    <li>An industry vertical package that requires the BizFirstGO standard rules package</li>
+  </ul>
+
+  <h2>Package Dependency Schema</h2>
+  <pre><code>{
+  "packageDependencies": [
+    {
+      "packageName": "BizFirstGO.HRBase",
+      "minVersion":  "1.0.0",
+      "maxVersion":  "2.0.0"
+    },
+    {
+      "packageName": "BizFirstGO.NotificationTemplates",
+      "minVersion":  "3.0.0"
+      // maxVersion omitted = no upper bound
+    }
+  ]
+}</code></pre>
+
+  <h2>Version Range Rules</h2>
+  <table>
+    <thead>
+      <tr><th>Declaration</th><th>Satisfied By</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>minVersion: "1.0.0"</code> only</td><td><code>1.0.0</code> or higher</td><td>HRBase ≥ 1.0.0</td></tr>
+      <tr><td><code>minVersion: "1.0.0", maxVersion: "2.0.0"</code></td><td><code>1.0.0</code> up to but not including <code>2.0.0</code></td><td>HRBase ≥ 1.0.0 &lt; 2.0.0</td></tr>
+      <tr><td><code>minVersion: "2.1.0", maxVersion: "2.2.0"</code></td><td>Exactly <code>2.1.x</code></td><td>HRBase ≥ 2.1.0 &lt; 2.2.0</td></tr>
+      <tr><td><code>minVersion: "3.0.0", maxVersion: "3.0.1"</code></td><td>Exactly <code>3.0.0</code></td><td>Pinned to a specific patch version</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>maxVersion is Exclusive</strong>
+    <code>maxVersion: "2.0.0"</code> means "less than 2.0.0" — it does not include 2.0.0 itself. This follows npm/NuGet convention where major bumps break compatibility.
+  </div>
+
+  <h2>Dependency Validation on Import</h2>
+  <p>When the import engine processes a package, it checks all <code>packageDependencies</code> against the packages currently installed in the target tenant:</p>
+  <pre><code>// Import blocked — missing dependency:
+{
+  "error": "MissingPackageDependency",
+  "message": "Package 'EmployeeOnboarding-Extension' requires 'BizFirstGO.HRBase' >= 1.0.0, but it is not installed in this tenant.",
+  "missingDependencies": [
+    {
+      "packageName": "BizFirstGO.HRBase",
+      "requiredMinVersion": "1.0.0",
+      "installedVersion":   null
+    }
+  ]
+}
+
+// Import blocked — version mismatch:
+{
+  "error": "IncompatiblePackageDependency",
+  "message": "Package 'EmployeeOnboarding-Extension' requires 'BizFirstGO.HRBase' >= 1.0.0 &lt; 2.0.0, but the installed version is 2.1.0.",
+  "incompatibleDependencies": [
+    {
+      "packageName":        "BizFirstGO.HRBase",
+      "requiredRange":      ">= 1.0.0 &lt; 2.0.0",
+      "installedVersion":   "2.1.0"
+    }
+  ]
+}</code></pre>
+
+  <h2>Artifact Dependencies vs. Package Dependencies</h2>
+  <p>Understanding the difference is important:</p>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Purpose</th><th>Auto or Manual</th><th>Must Be Pre-installed?</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Artifact dependencies (<code>dependencies[]</code>)</td>
+        <td>Lists what is inside this bundle</td>
+        <td>Auto-generated by exporter</td>
+        <td>No — they are installed by this package</td>
+      </tr>
+      <tr>
+        <td>Package dependencies (<code>packageDependencies[]</code>)</td>
+        <td>External packages required</td>
+        <td>Manually declared by author</td>
+        <td>Yes — must be installed before this package</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Transitive Package Dependencies</h2>
+  <p>Package dependencies are not automatically transitive. If Package A depends on Package B, and Package B depends on Package C, the import engine requires both B and C to be installed before A — but it is the author's responsibility to declare B in Package A's <code>packageDependencies</code>. The engine does not automatically follow the dependency chain.</p>
+
+  <h2>Platform Version Dependency</h2>
+  <p>In addition to package dependencies, the manifest's <code>platformVersion</code> field acts as an implicit dependency on the BizFirstGO platform version. The import engine warns if the target platform is older than the source platform version.</p>
+
+  <div class="page-nav">
+    <a href="04-versioning.html">&#8592; Versioning</a>
+    <a href="06-checksum.html">Next: Checksum &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Observability Overview — Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Observability Overview</a>
+  <a href="01-hooks-monitor.html">HooksMonitor</a>
+  <a href="02-subscribers-monitor.html">SubscribersMonitor</a>
+  <a href="03-observability-hooks.html">observability-hooks-js</a>
+  <a href="04-observability-react.html">observability-react Package</a>
+  <a href="05-mobile-dashboard.html">Mobile Dashboard</a>
+  <a href="06-integrating.html">Integrating into Your App</a>
+  <a href="07-devtools.html">EdgeStream Dev Tools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Observability Overview</h1>
+    <p class="lead">EdgeStream has a built-in observability layer: three React monitor components, a hook-based data feed, a mobile dashboard, and a full DevTools app — all driven by the same <code>LoggingService</code> that sits inside the pipeline.</p>
+  </div>
+
+  <h2>What Is Visible</h2>
+  <table>
+    <thead>
+      <tr><th>What</th><th>Component / Tool</th><th>Package</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Hook execution log — name, status, timing, errors</td><td><code>HooksMonitor</code></td><td><code>@edge-stream/observability-react</code></td></tr>
+      <tr><td>Subscriber delivery log — topic, status, duration, errors</td><td><code>SubscribersMonitor</code></td><td><code>@edge-stream/observability-react</code></td></tr>
+      <tr><td>Full activity stream — message overview, timeline</td><td><code>ActivityStreamMonitor</code></td><td><code>@edge-stream/observability-react</code></td></tr>
+      <tr><td>External log forwarding (Splunk, Datadog, etc.)</td><td>Observability hooks</td><td><code>@edge-stream/observability-hooks-js</code></td></tr>
+      <tr><td>Pipeline + subscriber state inspection</td><td>DevTools app</td><td><code>edge-stream-dev-tools</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Observability Architecture</h2>
+  <pre><code>Message arrives
+      │
+      ▼
+  Pipeline
+  ├── HookActivityLogger (priority 5) ──→ LoggingService (in-memory ring buffer)
+  │                                              │
+  ├── ... other hooks ...                        │  polls every 500ms
+  │                                              ▼
+  └── Publish to subscribers                HooksMonitor
+                │                           SubscribersMonitor
+                ▼                           ActivityStreamMonitor
+       SubscriptionManager ─────────────→ LoggingService (subscriber logs)
+</code></pre>
+
+  <h2>HooksMonitor vs SubscribersMonitor</h2>
+  <table>
+    <thead>
+      <tr><th></th><th>HooksMonitor</th><th>SubscribersMonitor</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Shows</td><td>Each hook's invocation: name, status (success/error), timing</td><td>Each subscriber delivery: topic, status (delivered/error/queued), timing</td></tr>
+      <tr><td>Stats</td><td>Total hooks, success count, failure count</td><td>Total deliveries, delivered, failed, pending</td></tr>
+      <tr><td>Filter</td><td>By hook name</td><td>By topic</td></tr>
+      <tr><td>Detail click</td><td>Full hook log for that message (all hooks in order)</td><td>All subscriber deliveries for that message</td></tr>
+      <tr><td>Settings tab</td><td>Enable/disable hook logging</td><td>Enable/disable subscriber logging</td></tr>
+      <tr><td>Poll interval</td><td>500ms default</td><td>500ms default</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Data Source: LoggingService</h2>
+  <p>Both monitors poll the singleton <code>LoggingService</code> which maintains an in-memory ring buffer of <code>MessageActivityLog</code> records. Each record captures:</p>
+  <pre><code>interface MessageActivityLog {
+  messageId: string;
+  messageType: string;
+  topic: string;
+  serverId: string;
+  status: 'processing' | 'completed' | 'failed';
+  startTime: Date;
+  endTime?: Date;
+  hookLogs?: HookLog[];        // one entry per hook executed
+  subscriberLogs?: SubscriberLog[]; // one entry per subscriber matched
+}</code></pre>
+
+  <h2>Enabling Observability</h2>
+  <p>Observability is enabled by adding <code>HookActivityLogger</code> to the pipeline. It runs at priority 5 — the first hook to execute — and captures timing for every subsequent hook:</p>
+  <pre><code>import { createEdgeStream, HookActivityLogger } from 'edge-stream-js';
+
+const stream = createEdgeStream({ logLevel: 'debug' });
+stream.registerServer({ id: 'bas', ... });
+
+const server = stream.server('bas')!;
+server.incomingPipeline.addHook(new HookActivityLogger()); // enables observability
+
+await stream.start();</code></pre>
+
+  <div class="page-nav">
+    <a href="../Guide6_Transports/07-multiple-transports.html">&#8592; Previous Guide: Transports</a>
+    <a href="01-hooks-monitor.html">Next: HooksMonitor &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

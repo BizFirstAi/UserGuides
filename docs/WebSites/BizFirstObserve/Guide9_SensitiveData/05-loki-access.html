@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loki Access Controls — Sensitive Data Handling | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Sensitive Data Handling</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Sensitive Data Overview</a>
+  <a href="01-log-sanitization.html">Log Sanitization in BizFirstGO</a>
+  <a href="02-otel-redaction.html">OTel Collector Redaction</a>
+  <a href="03-label-hygiene.html">Label Hygiene</a>
+  <a href="04-trace-attributes.html">Trace Attribute Filtering</a>
+  <a href="05-loki-access.html" class="active">Loki Access Controls</a>
+  <a href="06-gdpr-deletion.html">GDPR Deletion</a>
+  <a href="07-audit.html">Observability Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Loki Access Controls</h1>
+    <p class="lead">Loki's multi-tenancy feature isolates each tenant's logs at the storage level. When <code>auth_enabled: true</code> is set, Loki requires an <code>X-Scope-OrgID</code> header on every request — ensuring that each tenant can only query their own log streams, regardless of how Grafana dashboards are configured.</p>
+  </div>
+
+  <h2>Enabling Loki Multi-Tenancy</h2>
+  <pre><code># loki-config.yaml — enable multi-tenancy
+auth_enabled: true       # REQUIRED for tenant isolation in production
+
+# With auth_enabled: true:
+# - Every ingest request MUST include X-Scope-OrgID: &lt;tenant-id&gt;
+# - Every query request MUST include X-Scope-OrgID: &lt;tenant-id&gt;
+# - Loki stores each tenant's chunks in a separate keyspace
+# - Tenant A cannot query Tenant B's logs — enforced at the Loki storage layer</code></pre>
+
+  <h2>OTel Collector — Sending Tenant ID to Loki</h2>
+  <pre><code># otel-collector-config.yaml — pass tenant ID as Loki header
+exporters:
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    headers:
+      # Forward the tenant ID from the OTel resource attribute:
+      X-Scope-OrgID: "${TENANT_ID}"
+
+# For multi-tenant deployments where one collector handles multiple tenants:
+# Use the routing connector to route each tenant's logs to a separate Loki pipeline
+# with the correct X-Scope-OrgID header.
+
+# Alternative: Use the tenant processor:
+processors:
+  tenant:
+    from_attribute: tenant.id    # Read from OTel resource attribute
+    # Loki exporter automatically uses this as X-Scope-OrgID</code></pre>
+
+  <h2>Grafana — Tenant-Scoped Loki Data Source</h2>
+  <pre><code># grafana-provisioning/datasources/loki.yaml — per-tenant data source
+datasources:
+  # Platform-wide Loki data source (no tenant scope — admin use only)
+  - name: Loki-All
+    type: loki
+    url: http://loki:3100
+    # No X-Scope-OrgID — used by platform admins only (Admin role required)
+
+  # Tenant-specific data source (restricted to one tenant's data)
+  - name: Loki-TenantABC
+    type: loki
+    url: http://loki:3100
+    jsonData:
+      httpHeaderName1: "X-Scope-OrgID"
+    secureJsonData:
+      httpHeaderValue1: "tenant-abc"
+    # Assign to the tenant-abc team in Grafana access control
+    # This data source only returns logs for tenant-abc</code></pre>
+
+  <h2>Label-Based Stream Isolation</h2>
+  <pre><code># Even with auth_enabled: true, validate that your label strategy enforces isolation.
+# All BizFirstGO log streams must include tenant_id as a label:
+
+# Correct (tenant_id label present):
+{job="processengine", tenant_id="tenant-abc", environment="production"}
+
+# Incorrect (no tenant_id label — all tenants' logs visible to anyone querying this stream):
+{job="processengine", environment="production"}
+
+# Verify tenant_id is always present by checking Loki label values:
+curl -G "http://localhost:3100/loki/api/v1/label/tenant_id/values" \
+  -H "X-Scope-OrgID: tenant-abc"
+# Should only return "tenant-abc" — never other tenant IDs</code></pre>
+
+  <div class="callout warning">
+    <strong>auth_enabled: false Is Only For Development</strong>
+    <p>With <code>auth_enabled: false</code> (the default), Loki uses a fixed "fake" tenant — all logs are stored together and any query returns data from all tenants. This is fine for single-tenant development but is a critical security misconfiguration in production multi-tenant deployments. Always set <code>auth_enabled: true</code> in production.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-trace-attributes.html">&#8592; Trace Attribute Filtering</a>
+    <a href="06-gdpr-deletion.html">Next: GDPR Deletion &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

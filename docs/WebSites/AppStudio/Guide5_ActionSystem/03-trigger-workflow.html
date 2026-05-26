@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trigger Workflow Action — Action System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Action System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Action System Overview</a>
+  <a href="01-navigate.html">Navigate Action</a>
+  <a href="02-submit-form.html">Submit Form Action</a>
+  <a href="03-trigger-workflow.html" class="active">Trigger Workflow Action</a>
+  <a href="04-open-modal.html">Open Modal Action</a>
+  <a href="05-set-variable.html">Set Variable Action</a>
+  <a href="06-chain-actions.html">Chaining Actions</a>
+  <a href="07-conditional-actions.html">Conditional Actions</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Trigger Workflow Action</h1>
+    <p class="lead">The Trigger Workflow action starts a Flow Studio process. It is the primary integration point between App Studio's UI and the BizFirstGO workflow engine.</p>
+  </div>
+
+  <h2>How It Works</h2>
+  <p>When the Trigger Workflow action executes, App Studio calls:</p>
+  <pre><code>POST /api/workflows/{processId}/execute
+Content-Type: application/json
+Authorization: Bearer {userToken}
+
+{
+  "input": {
+    "leadId": "lead-123",
+    "approvedBy": "user-jane",
+    "tenantId": "tenant-001"
+  }
+}
+</code></pre>
+  <p>This is handled by <code>WorkflowTriggerActionHandler.cs</code> on the backend, which calls the Flow Studio execution API. The action resolves all token expressions in the <code>input</code> before making the call.</p>
+
+  <h2>Trigger Workflow Action Config</h2>
+  <pre><code>// TriggerWorkflowActionConfig
+{
+  "type": "trigger-workflow",
+  "processId": "lead-approval-process",   // Flow Studio process definition ID
+  "input": {
+    "leadId": "{{ route.id }}",
+    "requestedBy": "{{ context.userId }}",
+    "priority": "{{ variables.selectedPriority }}"
+  },
+  "waitForCompletion": false,             // default: fire-and-forget
+  "onSuccess": {
+    "type": "navigate",
+    "target": "/leads",
+    "params": { "msg": "Workflow started" }
+  },
+  "onError": {
+    "type": "set-variable",
+    "variable": "errorMessage",
+    "value": "Failed to start workflow. Please retry."
+  }
+}
+</code></pre>
+
+  <h2>Fire-and-Forget vs. Wait for Completion</h2>
+  <table>
+    <thead>
+      <tr><th>Mode</th><th><code>waitForCompletion</code></th><th>Behavior</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Fire-and-forget</strong></td><td>false (default)</td><td>Action starts the workflow and immediately runs <code>onSuccess</code>. Does not wait for the workflow to finish.</td><td>Long-running processes (approval chains, batch jobs)</td></tr>
+      <tr><td><strong>Wait</strong></td><td>true</td><td>Action starts the workflow and waits for it to complete. <code>onSuccess</code> receives the workflow output.</td><td>Short synchronous processes (data validation, quick lookups)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Accessing Workflow Output (When Waiting)</h2>
+  <pre><code>// Wait mode — workflow output available in onSuccess
+{
+  "type": "trigger-workflow",
+  "processId": "validate-lead-data",
+  "waitForCompletion": true,
+  "input": { "leadId": "{{ route.id }}" },
+  "onSuccess": {
+    "type": "chain",
+    "actions": [
+      {
+        "type": "set-variable",
+        "variable": "validationResult",
+        "value": "{{ workflowOutput.isValid }}"
+      },
+      {
+        "type": "navigate",
+        "target": "/leads/{{ route.id }}/confirm"
+      }
+    ]
+  }
+}
+// workflowOutput.* contains the fields returned by the workflow's terminal node
+</code></pre>
+
+  <div class="callout warning">
+    <strong>Authentication Context</strong>
+    <p>The workflow trigger call includes the current user's Passport JWT token. The Flow Studio process engine validates this token and uses it for IAM checks within the workflow. This means the workflow runs in the context of the triggering user — not a service account.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-submit-form.html">&#8592; Submit Form</a>
+    <a href="04-open-modal.html">Next: Open Modal &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

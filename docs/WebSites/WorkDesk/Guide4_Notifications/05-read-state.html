@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Read/Unread State — Notifications | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Notifications</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Notifications Overview</a>
+  <a href="01-types.html">Notification Types</a>
+  <a href="02-delivery.html">Real-Time Delivery</a>
+  <a href="03-notification-bell.html">Notification Bell</a>
+  <a href="04-notification-panel.html">Notification Panel</a>
+  <a href="05-read-state.html" class="active">Read/Unread State</a>
+  <a href="06-preferences.html">Notification Preferences</a>
+  <a href="07-history.html">Notification History</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Read/Unread State</h1>
+    <p class="lead">Each notification has a read/unread state stored per-user in the WorkDesk database. Unread notifications increment the bell badge count. Read state is updated via explicit user actions — clicking a notification, opening the panel, or marking all read.</p>
+  </div>
+
+  <h2>What Triggers a Read State Change</h2>
+  <table>
+    <thead><tr><th>Action</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td>Click a notification in the dropdown panel</td><td>That notification marked read; badge count decrements by 1</td></tr>
+      <tr><td>Open the full Notification Panel page</td><td>All visible notifications marked read automatically</td></tr>
+      <tr><td>Click "Mark all read" in the dropdown</td><td>All notifications (including unloaded ones) marked read; badge clears</td></tr>
+      <tr><td>Click "Mark all read" in the history page</td><td>All notifications in selected filter marked read</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Read State APIs</h2>
+  <pre><code>// Mark a single notification read
+POST /api/workdesk/notifications/{notificationId}/read
+Authorization: Bearer {token}
+
+// Response: 200 OK
+{ "notificationId": "...", "isRead": true, "readAt": "2026-05-25T14:00:00Z" }
+
+// Mark all notifications read
+POST /api/workdesk/notifications/read-all
+Authorization: Bearer {token}
+
+// Response: 200 OK
+{ "markedReadCount": 7, "unreadCount": 0 }
+
+// Fetch notifications filtered by read state
+GET /api/workdesk/notifications?isRead=false     // unread only
+GET /api/workdesk/notifications?isRead=true      // read only
+GET /api/workdesk/notifications                  // all</code></pre>
+
+  <h2>Database Schema</h2>
+  <pre><code>// WorkDesk_Notifications table
+CREATE TABLE WorkDesk_Notifications (
+  NotificationId  UNIQUEIDENTIFIER PRIMARY KEY,
+  UserId          UNIQUEIDENTIFIER NOT NULL,
+  TenantId        UNIQUEIDENTIFIER NOT NULL,
+  Type            VARCHAR(50)      NOT NULL,   -- hil_task_assigned | ...
+  Title           NVARCHAR(200)    NOT NULL,
+  Body            NVARCHAR(1000)   NOT NULL,
+  LinkedUrl       NVARCHAR(500),
+  Priority        VARCHAR(20)      NOT NULL DEFAULT 'normal',
+  IsRead          BIT              NOT NULL DEFAULT 0,
+  ReadAt          DATETIME2,
+  CreatedAt       DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+  ExpiresAt       DATETIME2,              -- null = never expires
+  Metadata        NVARCHAR(MAX),          -- JSON blob for type-specific data
+  INDEX IX_Notifications_User (UserId, TenantId, IsRead, CreatedAt DESC)
+);</code></pre>
+
+  <h2>Optimistic UI Updates</h2>
+  <p>When an employee clicks a notification, WorkDesk immediately updates the Zustand store (optimistic update) — the bell badge decrements and the notification appears read — before waiting for the API response. If the API call fails, the store is rolled back and an error toast is shown.</p>
+
+  <pre><code>async function markNotificationRead(notificationId: string) {
+  // Optimistic update
+  store.markRead(notificationId);
+
+  try {
+    await api.post(`/notifications/${notificationId}/read`);
+  } catch (error) {
+    // Rollback on failure
+    store.markUnread(notificationId);
+    showErrorToast('Failed to mark notification as read. Please try again.');
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Unread Count on New Session</strong>
+    <p>When the user opens a new browser session, WorkDesk loads the current unread count from <code>GET /api/workdesk/notifications/count?isRead=false</code> and initializes the bell badge. This ensures accurate counts after periods of inactivity.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-notification-panel.html">&#8592; Notification Panel</a>
+    <a href="06-preferences.html">Next: Notification Preferences &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

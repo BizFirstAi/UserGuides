@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Export/Import API — Export and Import | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Export and Import</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Export/Import Overview</a>
+  <a href="01-exporting.html">Exporting an App</a>
+  <a href="02-bundle-structure.html">Export Bundle Structure</a>
+  <a href="03-importing.html">Importing an App</a>
+  <a href="04-conflict-resolution.html">Conflict Resolution</a>
+  <a href="05-environment-promotion.html">Environment Promotion</a>
+  <a href="06-versioning.html">App Versioning</a>
+  <a href="07-api.html" class="active">Export/Import API</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Export/Import API</h1>
+    <p class="lead">The App Studio REST API provides programmatic export and import — enabling CI/CD pipeline integration, automated environment promotion, and scripted tenant provisioning. All API calls require a valid Passport JWT with admin-level scope for the target tenant.</p>
+  </div>
+
+  <h2>Export API</h2>
+  <pre><code>GET /api/tenants/{tenantId}/apps/{appId}/export
+
+// Response: 200 OK
+// Content-Type: application/json
+// Body: the full export bundle JSON
+
+// Example:
+curl -X GET \
+  -H "Authorization: Bearer {jwt_token}" \
+  https://api.bizfirstai.com/api/tenants/acme/apps/crm/export \
+  -o crm-app-export.json
+
+// With version label and changelog (query params):
+GET /api/tenants/{tenantId}/apps/{appId}/export?version=1.4.2&changelog=Release+notes+here
+</code></pre>
+
+  <h2>Import API</h2>
+  <pre><code>POST /api/tenants/{tenantId}/apps/import
+Content-Type: application/json
+Authorization: Bearer {jwt_token}
+
+Request body:
+{
+  "bundle": { ...full bundle JSON... },
+  "conflictStrategy": "replace",   // "replace" | "merge"
+  "dryRun": false                   // true = validate only, do not apply
+}
+
+// Response: 200 OK
+{
+  "success": true,
+  "appId": "crm",
+  "version": "1.4.2",
+  "created": 3,       // Elements created
+  "updated": 12,      // Elements updated
+  "deleted": 0,       // Elements deleted (replace only)
+  "skipped": 0        // Validation skipped
+}
+
+// Response: 400 Bad Request (validation failure)
+{
+  "success": false,
+  "errors": [
+    "Page 'lead-detail': breadcrumbParent 'missing-page' not found in bundle",
+    "Widget 'leads-grid': duplicate widgetId in pane 'main-pane'"
+  ]
+}
+</code></pre>
+
+  <h2>Dry Run — Validate Without Applying</h2>
+  <pre><code>// Use dryRun: true to validate the bundle and preview changes
+// without writing anything to the database
+POST /api/tenants/{tenantId}/apps/import
+
+{
+  "bundle": { ... },
+  "conflictStrategy": "replace",
+  "dryRun": true
+}
+
+// Response shows what would happen:
+{
+  "success": true,
+  "dryRun": true,
+  "appId": "crm",
+  "preview": {
+    "pagesCreated": 0,
+    "pagesUpdated": 8,
+    "widgetsCreated": 2,
+    "widgetsUpdated": 43,
+    "widgetsDeleted": 1
+  }
+}
+</code></pre>
+
+  <h2>Required Permissions</h2>
+  <table>
+    <thead>
+      <tr><th>API</th><th>Required role</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>GET export</td><td><code>app-studio-admin</code> or <code>platform-admin</code> on the tenant</td></tr>
+      <tr><td>POST import</td><td><code>app-studio-admin</code> or <code>platform-admin</code> on the tenant</td></tr>
+    </tbody>
+  </table>
+
+  <h2>CI/CD Pipeline Integration</h2>
+  <pre><code># GitHub Actions — promote app to staging on tag push
+name: Promote CRM App to Staging
+
+on:
+  push:
+    tags:
+      - 'app-crm-v*'
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export from Dev
+        run: |
+          curl -s -X GET \
+            -H "Authorization: Bearer $DEV_TOKEN" \
+            $DEV_API/api/tenants/acme-dev/apps/crm/export \
+            -o crm-bundle.json
+        env:
+          DEV_TOKEN: ${{ secrets.DEV_API_TOKEN }}
+          DEV_API: ${{ vars.DEV_API_URL }}
+
+      - name: Import to Staging
+        run: |
+          BUNDLE=$(cat crm-bundle.json)
+          curl -s -X POST \
+            -H "Authorization: Bearer $STAGING_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"bundle\": $BUNDLE, \"conflictStrategy\": \"replace\"}" \
+            $STAGING_API/api/tenants/acme-staging/apps/import
+        env:
+          STAGING_TOKEN: ${{ secrets.STAGING_API_TOKEN }}
+          STAGING_API: ${{ vars.STAGING_API_URL }}
+</code></pre>
+
+  <div class="page-nav">
+    <a href="06-versioning.html">&#8592; App Versioning</a>
+    <a href="index.html">Back to Overview &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

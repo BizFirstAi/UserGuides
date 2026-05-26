@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tempo Trace Retention — Data Retention & Archive | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Data Retention &amp; Archive</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Data Retention Overview</a>
+  <a href="01-loki-retention.html">Loki Log Retention</a>
+  <a href="02-prometheus-retention.html">Prometheus Metric Retention</a>
+  <a href="03-tempo-retention.html" class="active">Tempo Trace Retention</a>
+  <a href="04-archiving.html">Archiving to Cold Storage</a>
+  <a href="05-backup.html">Backup Strategies</a>
+  <a href="06-compliance.html">Compliance Retention</a>
+  <a href="07-cost-optimization.html">Cost Optimization</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Tempo Trace Retention</h1>
+    <p class="lead">Tempo manages trace retention through its Compactor component and the TTL (time-to-live) settings on the object storage backend. Unlike Loki, Tempo does not support per-tenant retention in the open-source version — retention applies globally.</p>
+  </div>
+
+  <h2>Tempo Retention Configuration</h2>
+  <pre><code># tempo-config.yaml — retention settings
+compactor:
+  compaction:
+    block_retention: 168h          # Delete blocks older than 7 days (168 hours)
+    compacted_block_retention: 1h  # How long to keep compacted blocks before deletion
+    compaction_window: 1h          # Blocks within this window are compacted together
+    max_block_bytes: 107374182400  # Max block size: 100GB
+    max_compaction_objects: 6000000
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: bizfirst-tempo-traces
+      endpoint: s3.amazonaws.com
+      region: us-east-1
+    wal:
+      path: /tmp/tempo/wal         # WAL is on local disk
+      encoding: snappy
+    local:
+      path: /tmp/tempo/blocks</code></pre>
+
+  <h2>Tempo Block Lifecycle</h2>
+  <table>
+    <thead>
+      <tr><th>Phase</th><th>Location</th><th>Duration</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>WAL (Write-Ahead Log)</td><td>Local disk</td><td>Seconds to minutes</td><td>Incoming spans buffered before flushing to S3</td></tr>
+      <tr><td>Active block</td><td>S3</td><td>~1 hour</td><td>Recent spans, actively written</td></tr>
+      <tr><td>Compacted block</td><td>S3</td><td>Up to block_retention (7 days)</td><td>Merged blocks for efficient query</td></tr>
+      <tr><td>Deleted</td><td>-</td><td>After block_retention expires</td><td>Permanently removed from S3</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Storage Volume Calculation</h2>
+  <pre><code># Tempo storage calculation for BizFirstGO:
+# Assumptions: 100 executions/hour, 20 spans/execution, 10% sampling
+
+executions_per_hour = 100
+spans_per_execution = 20
+sampling_rate = 0.10
+bytes_per_span = 500        # Average span size (compressed)
+
+spans_per_hour = executions_per_hour * spans_per_execution * sampling_rate
+             # = 100 * 20 * 0.10 = 200 spans/hour
+bytes_per_hour = spans_per_hour * bytes_per_span
+             # = 200 * 500 = 100 KB/hour
+bytes_per_day = bytes_per_hour * 24
+             # = 2.4 MB/day
+bytes_for_7_days = bytes_per_day * 7
+             # = 16.8 MB for 7-day retention
+
+# At 10x load (1000 executions/hour): ~168 MB for 7 days
+# At 100x load (10,000 executions/hour): ~1.68 GB for 7 days
+
+# Conclusion: Tempo storage is typically the smallest of the three signals
+# Sampling is the primary cost control lever for Tempo</code></pre>
+
+  <h2>Adjusting Trace Sampling to Control Volume</h2>
+  <pre><code># In otel-collector-config.yaml — tail_sampling processor:
+processors:
+  tail_sampling:
+    decision_wait: 10s
+    policies:
+      # Always keep error traces
+      - name: errors
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      # Keep 5% of success traces (adjust this number)
+      - name: probabilistic-success
+        type: probabilistic
+        probabilistic: {sampling_percentage: 5}
+      # Always keep slow traces (> 5 seconds)
+      - name: slow-traces
+        type: latency
+        latency: {threshold_ms: 5000}
+
+# Lower sampling_percentage to reduce Tempo storage cost.
+# 5% is a good production default — catches outliers while reducing volume 20x.</code></pre>
+
+  <div class="callout info">
+    <strong>7 Days Is Usually Sufficient</strong>
+    <p>The vast majority of trace-based debugging happens within minutes to hours of an incident. It is rare to need traces older than 7 days. If you need to demonstrate a performance pattern over weeks, use metrics (Prometheus) — they are far more storage-efficient for trend analysis than raw traces.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-prometheus-retention.html">&#8592; Prometheus Metric Retention</a>
+    <a href="04-archiving.html">Next: Archiving to Cold Storage &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

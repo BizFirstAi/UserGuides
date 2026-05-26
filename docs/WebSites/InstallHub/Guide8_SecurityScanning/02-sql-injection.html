@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Injection Detection — Security Scanning | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Security Scanning</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-expression-injection.html">Expression Injection Detection</a>
+  <a href="02-sql-injection.html" class="active">SQL Injection Detection</a>
+  <a href="03-dependency-vulnerability.html">Dependency Vulnerability Scan</a>
+  <a href="04-content-policy.html">Content Policy Check</a>
+  <a href="05-scan-results.html">Scan Results</a>
+  <a href="06-false-positives.html">Handling False Positives</a>
+  <a href="07-manual-review.html">Manual Security Review</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>SQL Injection Detection</h1>
+    <p class="lead">Certain workflow node types accept SQL-like query strings to interact with data sources. The SQL injection detector scans these fields for patterns that could manipulate the underlying database when the workflow executes.</p>
+  </div>
+
+  <h2>Fields Scanned</h2>
+  <p>SQL injection scanning targets configuration fields that are executed against data sources at runtime:</p>
+  <table>
+    <thead>
+      <tr><th>Artifact Type</th><th>Field</th><th>Usage</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ProcessDefinition (DataFetch node)</td><td><code>nodes[*].config.query</code></td><td>Parameterized query sent to tenant data source</td></tr>
+      <tr><td>ProcessDefinition (DataWrite node)</td><td><code>nodes[*].config.writeQuery</code></td><td>INSERT/UPDATE statement for tenant records</td></tr>
+      <tr><td>EntitySchema</td><td><code>indexes[*].filterExpression</code></td><td>Index filter applied at query time</td></tr>
+      <tr><td>RuleSet</td><td><code>rules[*].datasourceQuery</code></td><td>Query used to fetch data for rule evaluation</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Detection Rules</h2>
+  <table>
+    <thead>
+      <tr><th>Rule</th><th>Pattern</th><th>Severity</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>UnionAttack</code></td><td><code>UNION\s+SELECT</code> (case-insensitive)</td><td>Critical</td></tr>
+      <tr><td><code>DropStatement</code></td><td><code>DROP\s+(TABLE|DATABASE|SCHEMA|INDEX)</code></td><td>Critical</td></tr>
+      <tr><td><code>TruncateStatement</code></td><td><code>TRUNCATE\s+TABLE</code></td><td>Critical</td></tr>
+      <tr><td><code>RawStringConcatenation</code></td><td>String concatenation with user variable in query: <code>query + variable</code></td><td>High</td></tr>
+      <tr><td><code>AlterStatement</code></td><td><code>ALTER\s+(TABLE|COLUMN|DATABASE)</code></td><td>High</td></tr>
+      <tr><td><code>CommentTermination</code></td><td><code>--\s*$</code> or <code>/\*.*\*/</code> inline in query value</td><td>High</td></tr>
+      <tr><td><code>StoredsProc</code></td><td><code>EXEC\s+\w+</code>, <code>EXECUTE\s+\w+</code></td><td>Medium</td></tr>
+      <tr><td><code>WildcardSelect</code></td><td><code>SELECT\s+\*\s+FROM</code> without parameterized WHERE</td><td>Low</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What Is Allowed</h2>
+  <p>Safe SQL patterns that will not trigger findings:</p>
+  <pre><code>// ALLOWED — Parameterized query with named parameters:
+SELECT id, name, department FROM employees WHERE tenantId = @tenantId AND status = @status
+
+// ALLOWED — Parameterized INSERT:
+INSERT INTO audit_log (tenantId, action, actorId, timestamp)
+VALUES (@tenantId, @action, @actorId, GETUTCDATE())
+
+// ALLOWED — Filtered SELECT with explicit columns:
+SELECT e.id, e.name, d.name AS department
+FROM employees e
+INNER JOIN departments d ON e.departmentId = d.id
+WHERE e.tenantId = @tenantId AND e.isActive = 1</code></pre>
+
+  <h2>What Triggers Failure</h2>
+  <pre><code>// FAIL — UNION attack:
+SELECT id FROM employees WHERE name = 'x' UNION SELECT password FROM admin_users--
+
+// FAIL — DROP TABLE:
+SELECT 1; DROP TABLE employees;--
+
+// FAIL — Dynamic string concatenation (not parameterized):
+"SELECT * FROM " + userInput + " WHERE id = " + userId
+
+// FAIL — TRUNCATE:
+TRUNCATE TABLE process_executions; SELECT 1</code></pre>
+
+  <h2>Scan Finding Example</h2>
+  <pre><code>{
+  "check":        "SqlInjection",
+  "result":       "FAIL",
+  "severity":     "Critical",
+  "findings": [
+    {
+      "artifactType": "ProcessDefinition",
+      "artifactName": "DataExtractionFlow",
+      "field":        "nodes[4].config.query",
+      "value":        "SELECT * FROM employees WHERE name = '' UNION SELECT password, salt, '' FROM admin_credentials--",
+      "rule":         "UnionAttack",
+      "message":      "SQL query contains a UNION SELECT pattern. This is a critical SQL injection indicator — the query has been flagged for review."
+    }
+  ]
+}</code></pre>
+
+  <h2>Legitimate Use of SQL Nodes</h2>
+  <p>SQL-capable workflow nodes are designed for parameterized queries only. The workflow runtime enforces parameterization — direct string interpolation in queries is not supported by the execution engine. If a package contains raw string concatenation in a query field, it indicates either a poorly designed package or a deliberate injection attempt. Both are blocked.</p>
+
+  <div class="callout info">
+    <strong>Reporting a False Positive</strong>
+    If the scanner flags a legitimate query (e.g., a UNION-style view name or a comment in a multi-line query for documentation purposes), request a false positive review. See the <a href="06-false-positives.html">Handling False Positives</a> page for the process.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-expression-injection.html">&#8592; Expression Injection Detection</a>
+    <a href="03-dependency-vulnerability.html">Next: Dependency Vulnerability Scan &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

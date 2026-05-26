@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow Event Plugin — Message Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Plugins</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Message Plugins Overview</a>
+  <a href="01-workflow-event-plugin.html" class="active">Workflow Event Plugin</a>
+  <a href="02-agent-message-plugin.html">Agent Message Plugin</a>
+  <a href="03-ui-action-plugin.html">UI Action Plugin</a>
+  <a href="04-system-event-plugin.html">System Event Plugin</a>
+  <a href="05-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="06-plugin-registry.html">Plugin Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Workflow Event Plugin</h1>
+    <p class="lead">The Workflow Event Plugin owns the <code>workflow.*</code> topic namespace. It carries execution events from BizFirstGO's ProcessEngine to the frontend — powering the Flow Studio Observer Panel in real-time.</p>
+  </div>
+
+  <h2>Topic Namespace</h2>
+  <pre><code>workflow.started                // ProcessExecution started
+workflow.nodeExecutionStarted   // A node began executing
+workflow.nodeExecutionCompleted // A node finished (success)
+workflow.nodeExecutionFailed    // A node threw an error
+workflow.suspended              // Execution paused for HIL
+workflow.resumed                // Execution continued after HIL
+workflow.completed              // ProcessExecution finished successfully
+workflow.failed                 // ProcessExecution terminated with error
+workflow.cancelled              // Execution was cancelled</code></pre>
+
+  <h2>Message Formats</h2>
+  <pre><code>// workflow.started
+interface WorkflowStartedEvent {
+  processId: string;
+  executionId: string;
+  workflowName: string;
+  startedBy: string;
+  startedAt: string;       // ISO timestamp
+  inputData?: unknown;
+}
+
+// workflow.nodeExecutionCompleted
+interface NodeExecutionCompletedEvent {
+  processId: string;
+  executionId: string;
+  nodeId: string;
+  nodeName: string;
+  nodeType: string;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  outputData?: unknown;
+}
+
+// workflow.suspended (HIL — Human in the Loop)
+interface WorkflowSuspendedEvent {
+  processId: string;
+  executionId: string;
+  suspendedAt: string;
+  reason: string;          // e.g., 'approval-required'
+  hilTaskId: string;       // ID of the HIL task awaiting response
+  assignedTo?: string[];   // actor IDs who can resume
+}</code></pre>
+
+  <h2>Subscribing to Workflow Events</h2>
+  <pre><code>// Subscribe to all workflow events for a specific process execution
+stream.subscribe('bas', 'workflow.*', (envelope) =&gt; {
+  const event = envelope.body;
+  const topic = envelope.meta.topic;
+
+  switch (topic) {
+    case 'workflow.started':
+      observerPanel.initExecution(event.executionId, event.workflowName);
+      break;
+    case 'workflow.nodeExecutionStarted':
+      observerPanel.highlightNode(event.nodeId, 'executing');
+      break;
+    case 'workflow.nodeExecutionCompleted':
+      observerPanel.updateNode(event.nodeId, 'completed', event.durationMs);
+      break;
+    case 'workflow.nodeExecutionFailed':
+      observerPanel.updateNode(event.nodeId, 'failed', { error: event.error });
+      break;
+    case 'workflow.suspended':
+      observerPanel.showHilPrompt(event.hilTaskId, event.reason);
+      break;
+    case 'workflow.completed':
+      observerPanel.markComplete(event.executionId);
+      break;
+  }
+});</code></pre>
+
+  <h2>Flow Studio Observer Panel</h2>
+  <p>The Observer Panel in Flow Studio subscribes to <code>workflow.*</code> and overlays live execution state onto the workflow diagram:</p>
+  <ul>
+    <li>Each node shows a color indicator: blue (executing), green (completed), red (failed), yellow (suspended)</li>
+    <li>Duration is displayed for completed nodes</li>
+    <li>Error details overlay on failed nodes (click to expand)</li>
+    <li>HIL suspension triggers the approval sidebar</li>
+  </ul>
+
+  <h2>Filtering by Execution ID</h2>
+  <pre><code>// Only handle events for the currently viewed execution
+const currentExecutionId = 'exec-abc123';
+
+stream.subscribe('bas', 'workflow.*', (envelope) =&gt; {
+  if (envelope.body.executionId !== currentExecutionId) return;
+  // handle event...
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Message Plugins Overview</a>
+    <a href="02-agent-message-plugin.html">Next: Agent Message Plugin &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Document Ingestion — RAG | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>RAG Pipeline</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">RAG Pipeline Overview</a>
+  <a href="01-document-ingestion.html" class="active">Document Ingestion</a>
+  <a href="02-chunking.html">Chunking Strategies</a>
+  <a href="03-embedding.html">Embedding</a>
+  <a href="04-indexing.html">Indexing</a>
+  <a href="05-retrieval.html">Retrieval</a>
+  <a href="06-hybrid-search.html">Hybrid Search</a>
+  <a href="07-reranking.html">Reranking</a>
+  <a href="08-context-injection.html">Context Injection</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Document Ingestion</h1>
+    <p class="lead">Document ingestion is the first stage of the RAG pipeline. It accepts a file upload and extracts clean, structured text for downstream chunking and embedding. The <code>IDocumentIngester</code> abstraction supports PDF, DOCX, TXT, Markdown, and HTML.</p>
+  </div>
+
+  <h2>IDocumentIngester Interface</h2>
+  <pre><code>public interface IDocumentIngester
+{
+    // Returns true if this ingester handles the given MIME type / extension
+    bool CanHandle(string fileExtension, string mimeType);
+
+    // Extract text content from the uploaded file stream
+    Task&lt;DocumentContent&gt; IngestAsync(
+        Stream fileStream,
+        DocumentMetadata metadata,
+        CancellationToken ct);
+}
+
+public class DocumentContent
+{
+    public string            RawText   { get; init; } = string.Empty;
+    public List&lt;TextSection&gt; Sections  { get; init; } = new();  // Optional: heading-aware sections
+    public DocumentMetadata  Metadata  { get; init; } = new();
+}
+
+public class DocumentMetadata
+{
+    public string Source     { get; set; } = string.Empty;  // Filename
+    public string Category   { get; set; } = string.Empty;  // User-assigned tag
+    public Guid   AgentId    { get; set; }
+    public Guid   TenantId   { get; set; }
+    public int    PageCount  { get; set; }
+}</code></pre>
+
+  <h2>Upload API</h2>
+  <pre><code>// POST /api/octopus/knowledge/{agentId}/documents
+// Content-Type: multipart/form-data
+curl -X POST https://api.bizfirstai.com/api/octopus/knowledge/{agentId}/documents \
+  -H "Authorization: Bearer {token}" \
+  -F "file=@HR_Policy_2025.pdf" \
+  -F "category=Leave" \
+  -F "waitForIndexing=true"
+
+// Response (synchronous if waitForIndexing=true)
+{
+  "documentId": "doc_7f3a8b2c...",
+  "fileName":   "HR_Policy_2025.pdf",
+  "chunkCount": 42,
+  "tokenCount": 18320,
+  "status":     "Indexed",
+  "indexedAt":  "2025-03-01T08:03:22Z"
+}</code></pre>
+
+  <h2>Built-In Ingesters</h2>
+  <table>
+    <thead>
+      <tr><th>Format</th><th>Class</th><th>Library</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>PDF</td><td><code>PdfDocumentIngester</code></td><td>PdfPig (NuGet)</td><td>Text-layer extraction; scanned PDFs require OCR pre-processing</td></tr>
+      <tr><td>DOCX</td><td><code>DocxDocumentIngester</code></td><td>DocumentFormat.OpenXml</td><td>Paragraphs, tables, and headers extracted; images skipped</td></tr>
+      <tr><td>TXT</td><td><code>PlainTextIngester</code></td><td>BCL</td><td>UTF-8 text; no transformation</td></tr>
+      <tr><td>Markdown</td><td><code>MarkdownIngester</code></td><td>Markdig</td><td>Stripped to plain text; headings converted to section boundaries</td></tr>
+      <tr><td>HTML</td><td><code>HtmlIngester</code></td><td>HtmlAgilityPack</td><td>Body text extracted; script, style, nav elements removed</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Custom Ingesters</h2>
+  <p>Register a custom ingester for proprietary formats:</p>
+  <pre><code>// 1. Implement IDocumentIngester
+public class ExcelIngester : IDocumentIngester
+{
+    public bool CanHandle(string ext, string mime)
+        => ext == ".xlsx" || mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    public Task&lt;DocumentContent&gt; IngestAsync(Stream stream, DocumentMetadata meta, CancellationToken ct)
+    {
+        using var wb = new XLWorkbook(stream);
+        var sb = new StringBuilder();
+        foreach (var ws in wb.Worksheets)
+            foreach (var row in ws.RowsUsed())
+                sb.AppendLine(string.Join("\t", row.CellsUsed().Select(c => c.Value.ToString())));
+
+        return Task.FromResult(new DocumentContent { RawText = sb.ToString(), Metadata = meta });
+    }
+}
+
+// 2. Register with DI
+services.AddSingleton&lt;IDocumentIngester, ExcelIngester&gt;();</code></pre>
+
+  <h2>Ingestion Error Handling</h2>
+  <table>
+    <thead>
+      <tr><th>Error</th><th>HTTP Status</th><th>Resolution</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Unsupported file format</td><td>415 Unsupported Media Type</td><td>Register a custom ingester or convert to a supported format</td></tr>
+      <tr><td>Empty document (no text extracted)</td><td>422 Unprocessable Entity</td><td>Check if PDF is scanned image; pre-process with OCR</td></tr>
+      <tr><td>File too large (&gt;50 MB default)</td><td>413 Request Entity Too Large</td><td>Increase <code>MaxUploadSizeMb</code> in config or split the document</td></tr>
+      <tr><td>Embedding API error during indexing</td><td>500 (async failure)</td><td>Document saved in pending state; retry via PATCH endpoint</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Asynchronous Indexing</strong>
+    <p>For large documents, set <code>waitForIndexing=false</code> in the upload request. The document is accepted immediately and indexed in the background. Poll <code>GET /api/octopus/knowledge/{agentId}/documents/{documentId}</code> to check status. The document becomes searchable when status reaches <code>Indexed</code>.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; RAG Pipeline Overview</a>
+    <a href="02-chunking.html">Next: Chunking Strategies &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

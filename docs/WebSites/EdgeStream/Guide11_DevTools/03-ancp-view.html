@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ANCP Protocol View — DevTools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>DevTools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Dev Tools Overview</a>
+  <a href="01-node-explorer.html">Node Explorer</a>
+  <a href="02-action-invoker.html">Action Invoker</a>
+  <a href="03-ancp-view.html" class="active">ANCP Protocol View</a>
+  <a href="04-hooks-panel.html">Hooks Panel</a>
+  <a href="05-subscribers-panel.html">Subscribers Panel</a>
+  <a href="06-mobile-dashboard.html">Mobile Dashboard</a>
+  <a href="07-running.html">Running Dev Tools</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>ANCP Protocol View</h1>
+    <p class="lead">The Event Stream at <code>/events</code> is the raw envelope viewer — every message that arrives on the EdgeStream SignalR connection is logged here with full envelope detail. It is the lowest-level diagnostic tool in DevTools.</p>
+  </div>
+
+  <h2>Event Viewer vs Node Explorer</h2>
+  <p>DevTools has two views related to ANCP:</p>
+  <table>
+    <thead>
+      <tr><th>View</th><th>Route</th><th>What It Shows</th><th>Protocol</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Event Stream</td><td><code>/events</code></td><td>All raw IEnvelope messages arriving on SignalR, including ANCP topic envelopes</td><td>EdgeStream SignalR</td></tr>
+      <tr><td>Node Explorer</td><td><code>/ancp</code></td><td>Interactive ANCP node connection — ping, capabilities, action invoke</td><td>ANCP HTTP direct</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Event Stream — Raw Envelope Viewer</h2>
+  <pre><code>// Route in App.tsx
+&lt;Route path="/events" element={&lt;EventViewerPage /&gt;} /&gt;
+
+// EventViewerPage source: packages/app-pages-react/src/EventViewerPage.tsx
+
+// Every message flowing through the EdgeStream pipeline is displayed:
+// - workflow.* events
+// - agent.* messages
+// - ui.* actions
+// - system.* broadcasts
+// - ancp.* protocol frames (heartbeat, capability, flow-control, ack)
+
+// Each entry shows the full IEnvelope:
+{
+  meta: {
+    id:            string,    // unique message ID
+    serverId:      string,    // which server it came from
+    transport:     string,    // 'signalr'
+    protocol:      string,    // message protocol version
+    receivedAt:    string,    // ISO timestamp
+    topic:         string,    // e.g. 'ancp.heartbeat'
+    correlationId: string,    // links request-reply pairs
+  },
+  direction: 'inbound' | 'outbound',
+  body:       object,         // the parsed message payload
+  headers:    Record&lt;string, string&gt;,
+  attributes: Record&lt;string, unknown&gt;,
+}</code></pre>
+
+  <h2>Viewing ANCP Messages via Event Stream</h2>
+  <p>ANCP protocol frames appear in the Event Stream alongside all other EdgeStream messages. To isolate ANCP traffic from the raw event viewer, you can subscribe to the <code>ancp.*</code> topic namespace:</p>
+  <pre><code>// Monitor ANCP protocol activity from your own code:
+const stream = useEdgeStream();
+
+stream.subscribe('bas', 'ancp.*', (envelope) =&gt; {
+  const { topic } = envelope.meta;
+
+  switch (topic) {
+    case 'ancp.heartbeat':
+      // { nodeId, timestamp, sequenceNumber }
+      console.log('Heartbeat from node', envelope.body.nodeId);
+      break;
+
+    case 'ancp.capability.advertise':
+      // { nodeId, actions: AncpActionDescriptor[] }
+      console.log('Capability update', envelope.body.actions.length, 'actions');
+      break;
+
+    case 'ancp.flow.control':
+      // { nodeId, backpressure: 'apply' | 'release', queueDepth }
+      console.log('Flow control signal', envelope.body.backpressure);
+      break;
+
+    case 'ancp.ack':
+      // { correlationId, nodeId, success }
+      console.log('Ack for', envelope.body.correlationId);
+      break;
+
+    case 'ancp.error':
+      // { code, message, nodeId }
+      console.error('ANCP error', envelope.body.message);
+      break;
+  }
+});</code></pre>
+
+  <h2>ANCP Topic Reference</h2>
+  <table>
+    <thead>
+      <tr><th>Topic</th><th>Direction</th><th>Payload Key Fields</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ancp.heartbeat</code></td><td>Node → Server</td><td>nodeId, timestamp, sequenceNumber</td></tr>
+      <tr><td><code>ancp.capability.advertise</code></td><td>Node → Server</td><td>nodeId, actions[]</td></tr>
+      <tr><td><code>ancp.capability.query</code></td><td>Server → Node</td><td>requestingAgent</td></tr>
+      <tr><td><code>ancp.flow.control</code></td><td>Bidirectional</td><td>nodeId, backpressure, queueDepth</td></tr>
+      <tr><td><code>ancp.route.update</code></td><td>Server → Node</td><td>routes[], ttl</td></tr>
+      <tr><td><code>ancp.ack</code></td><td>Node → Server</td><td>correlationId, nodeId, success</td></tr>
+      <tr><td><code>ancp.error</code></td><td>Bidirectional</td><td>code, message, nodeId</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Activity Stream — Processed View</h2>
+  <p>The Activity Stream at <code>/activity-stream</code> provides a higher-level view than the raw Event Stream. It shows message processing outcomes — not raw envelopes:</p>
+  <pre><code>// Route in App.tsx
+&lt;Route path="/activity-stream" element={&lt;ActivityStreamPage /&gt;} /&gt;
+
+// ActivityStreamPage wraps ActivityStreamMonitor from @edge-stream/observability-react
+
+// Filter by:
+// - Status:   all | completed | failed | processing
+// - Server ID: text match
+// - Search:    text search across message content
+
+// Two view modes (persisted in localStorage 'activity-stream-view-mode'):
+// - Overview:  summary table of all processed messages
+// - Timeline:  chronological log with hook/subscriber breakdown
+
+// Controls:
+// - Export: downloads JSON of current filtered log set
+// - Clear:  calls loggingService.clearAllLogs()
+// - Refresh: re-queries loggingService.queryLogs(filter)</code></pre>
+
+  <div class="callout info">
+    <strong>ANCP and EdgeStream Together</strong>
+    ANCP frames that flow through the EdgeStream pipeline appear in both the Event Stream (raw) and the Activity Stream (processed). Use Event Stream to see the raw envelope fields; use Activity Stream to see which hooks and subscribers processed each message and whether they succeeded.
+  </div>
+
+  <h2>EnvelopeViewer Component</h2>
+  <p>The Event Stream uses the <code>EnvelopeViewer</code> component from <code>app-pages-react</code> to render each envelope with expandable JSON trees:</p>
+  <pre><code>// packages/app-pages-react/src/components/EnvelopeViewer.tsx
+// Renders:
+// - Topic badge (colored by namespace)
+// - Direction indicator (inbound / outbound)
+// - Timestamp
+// - Collapsible sections for: meta | body | headers | attributes
+// - JsonViewer for body content
+
+// Color coding by topic namespace:
+// workflow.*  → blue
+// agent.*     → purple
+// ui.*        → orange
+// system.*    → yellow
+// ancp.*      → teal</code></pre>
+
+  <div class="page-nav">
+    <a href="02-action-invoker.html">&#8592; Action Invoker</a>
+    <a href="04-hooks-panel.html">Next: Hooks Panel &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

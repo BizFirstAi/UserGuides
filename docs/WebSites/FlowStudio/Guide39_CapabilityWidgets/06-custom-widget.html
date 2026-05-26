@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registering a Custom Widget — Guide39 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Widgets</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-widget-node.html"><i class="fa-solid fa-window-restore"></i> Widget Node</a>
+  <a href="02-widget-registry.html"><i class="fa-solid fa-list"></i> Widget Registry</a>
+  <a href="03-rendering.html"><i class="fa-solid fa-display"></i> Widget Rendering</a>
+  <a href="04-interaction-capture.html"><i class="fa-solid fa-hand-pointer"></i> Interaction Capture</a>
+  <a href="05-data-binding.html"><i class="fa-solid fa-plug"></i> Data Binding</a>
+  <a href="06-custom-widget.html" class="active"><i class="fa-solid fa-plus-circle"></i> Custom Widget</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Registering a Custom Widget</h1>
+    <p class="lead">End-to-end guide to building, bundling, and registering a custom widget — the <code>IWidgetDefinition</code> contract and DI registration.</p>
+  </div>
+
+  <h2>Step 1: Build the Frontend Bundle</h2>
+  <pre><code class="language-typescript">// my-risk-scorer-widget/src/index.ts
+// Must expose via window.BizFirstWidgets[widgetId]
+(window as any).BizFirstWidgets = (window as any).BizFirstWidgets || {};
+(window as any).BizFirstWidgets['my-risk-scorer'] = {
+  mount(container: HTMLElement, props: RiskScorerProps, callbacks: WidgetCallbacks) {
+    const root = document.createElement('div');
+    container.appendChild(root);
+
+    // Render your widget
+    renderRiskScorer(root, props, {
+      onScore: (score: number, factors: string[]) => {
+        callbacks.onInteraction('scored', { score, factors, timestamp: new Date().toISOString() });
+      }
+    });
+  },
+  unmount(container: HTMLElement) {
+    container.innerHTML = '';
+  }
+};</code></pre>
+
+  <h2>Step 2: Implement IWidgetDefinition</h2>
+  <pre><code class="language-csharp">public class RiskScorerWidgetDefinition : IWidgetDefinition
+{
+    public string WidgetId => "my-risk-scorer";
+    public string DisplayName => "Risk Scorer";
+    public string Description => "Interactive risk assessment widget with factor analysis";
+    public string BundleUrl => "https://cdn.acme.com/widgets/risk-scorer/v1/bundle.js";
+
+    public string PropsSchema => @"{
+        type: 'object',
+        required: ['applicantId', 'riskFactors'],
+        properties: {
+            applicantId: { type: 'string' },
+            riskFactors: { type: 'array', items: { type: 'object' } },
+            threshold: { type: 'number', default: 70 }
+        }
+    }";
+
+    public string InteractionSchema => @"{
+        type: 'object',
+        required: ['score'],
+        properties: {
+            score: { type: 'number', minimum: 0, maximum: 100 },
+            factors: { type: 'array', items: { type: 'string' } }
+        }
+    }";
+
+    public IReadOnlyList&lt;string&gt; InteractionEvents => ["scored", "cancelled"];
+    public WidgetSandboxPolicy SandboxPolicy => WidgetSandboxPolicy.Standard;
+}
+
+// DI registration
+services.AddSingleton&lt;IWidgetDefinition, RiskScorerWidgetDefinition&gt;();</code></pre>
+
+  <h2>Step 3: Host the Bundle</h2>
+  <p>The bundle URL must be publicly accessible (or accessible from the WorkDesk's browser context). Host on CDN, Azure Blob Storage, or an internal static asset server. Ensure proper CORS headers and CSP allow-listing.</p>
+
+  <div class="callout callout-tip">
+    <strong>Versioning:</strong> Include the version in the bundle URL path (<code>/v1/bundle.js</code>). This enables cache-busting when you release a new version — old tasks already in-flight continue to use the version they were created with until they expire or are completed.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-data-binding.html">&#8592; Data Binding</a>
+    <a href="07-security.html">Next: Widget Security &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

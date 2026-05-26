@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Service Authentication — Guide37 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Business Services</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-service-registry.html"><i class="fa-solid fa-list"></i> Service Registry</a>
+  <a href="02-calling-a-service.html"><i class="fa-solid fa-phone"></i> Calling a Service</a>
+  <a href="03-authentication.html" class="active"><i class="fa-solid fa-lock"></i> Authentication</a>
+  <a href="04-response-mapping.html"><i class="fa-solid fa-arrows-left-right"></i> Response Mapping</a>
+  <a href="05-error-handling.html"><i class="fa-solid fa-triangle-exclamation"></i> Error Handling</a>
+  <a href="06-custom-service.html"><i class="fa-solid fa-plus-circle"></i> Custom Service</a>
+  <a href="07-testing.html"><i class="fa-solid fa-flask"></i> Testing</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Service Authentication</h1>
+    <p class="lead"><code>IBusinessServiceAuthProvider</code> — how mTLS, API key, and token pass-through authentication are handled transparently for service calls.</p>
+  </div>
+
+  <h2>IBusinessServiceAuthProvider</h2>
+  <pre><code class="language-csharp">public interface IBusinessServiceAuthProvider
+{
+    Task&lt;Dictionary&lt;string, string&gt;&gt; GetAuthHeadersAsync(
+        string serviceId,
+        CancellationToken cancellationToken = default);
+}
+
+public enum AuthType
+{
+    None,
+    ApiKey,
+    BearerToken,
+    MutualTLS,
+    TokenPassThrough   // passes the calling actor's token
+}</code></pre>
+
+  <h2>Auth Type Behaviors</h2>
+  <table>
+    <thead><tr><th>AuthType</th><th>Header Added</th><th>Credential Source</th></tr></thead>
+    <tbody>
+      <tr><td><code>ApiKey</code></td><td><code>X-Api-Key: {key}</code></td><td><code>ICredentialResolver</code> by service credentialId</td></tr>
+      <tr><td><code>BearerToken</code></td><td><code>Authorization: Bearer {token}</code></td><td>Service account token from <code>ICredentialResolver</code></td></tr>
+      <tr><td><code>MutualTLS</code></td><td>TLS client certificate on the <code>HttpClient</code></td><td>Certificate from certificate store</td></tr>
+      <tr><td><code>TokenPassThrough</code></td><td><code>Authorization: Bearer {actor-token}</code></td><td>Current execution actor's access token</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Token Pass-Through Pattern</h2>
+  <p>When <code>AuthType = TokenPassThrough</code>, the service receives the same bearer token that the workflow execution actor used to authenticate. This means the service enforces its own RBAC against the actor's permissions — not the workflow's service account. Use this pattern when the service should apply user-specific access control:</p>
+  <pre><code class="language-csharp">public class TokenPassThroughAuthProvider : IBusinessServiceAuthProvider
+{
+    private readonly IHttpContextAccessor _httpContextAccessor;
+
+    public Task&lt;Dictionary&lt;string, string&gt;&gt; GetAuthHeadersAsync(string serviceId, ...)
+    {
+        var token = _httpContextAccessor.HttpContext?.Request.Headers["Authorization"].ToString()
+            ?? throw new InvalidOperationException("No actor token in context");
+
+        return Task.FromResult(new Dictionary&lt;string, string&gt;
+        {
+            ["Authorization"] = token
+        });
+    }
+}</code></pre>
+
+  <div class="callout callout-warning">
+    <strong>Never store tokens in node config.</strong> Auth is always injected by <code>IBusinessServiceAuthProvider</code> from secure credential storage. Workflow designers cannot see or modify auth credentials — they only specify which service and operation to call.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-calling-a-service.html">&#8592; Calling a Service</a>
+    <a href="04-response-mapping.html">Next: Response Mapping &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

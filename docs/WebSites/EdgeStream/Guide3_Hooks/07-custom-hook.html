@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Implementing a Custom Hook — Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-normalization-hook.html">NormalizationHook</a>
+  <a href="02-pre-pipeline-hook.html">Pre-Pipeline Hook</a>
+  <a href="03-post-pipeline-hook.html">Post-Pipeline Hook</a>
+  <a href="04-incoming-hook.html">Incoming Hook</a>
+  <a href="05-outgoing-hook.html">Outgoing Hook</a>
+  <a href="06-activity-logger.html">HookActivityLogger</a>
+  <a href="07-custom-hook.html" class="active">Implementing a Custom Hook</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Implementing a Custom Hook</h1>
+    <p class="lead">Create a hook by extending <code>BaseHook</code>, implementing <code>execute()</code>, and registering it with the server pipeline. Hooks are stateful objects — constructor injection is the pattern for configuration and dependencies.</p>
+  </div>
+
+  <h2>The BaseHook Class</h2>
+  <p><code>BaseHook</code> is the recommended base class. It provides default implementations for the logging helpers defined in <code>IHookActivityLogger</code> and ensures your hook satisfies the full <code>IHook</code> contract:</p>
+
+  <pre><code>import { BaseHook, IPipelineContext, HookResult } from 'edge-stream-js';
+
+export class MyCustomHook extends BaseHook {
+  readonly name = 'MyCustomHook';
+  readonly priority = 150;  // choose based on when it should run
+
+  // Dependencies injected via constructor
+  constructor(private config: { allowedTopics: string[] }) {
+    super();
+  }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const topic = context.envelope.meta.topic || '';
+
+    // Example: filter by allowed topics
+    if (!this.config.allowedTopics.some(t =&gt; topic.startsWith(t))) {
+      return { continue: false }; // drop silently
+    }
+
+    // Enrich context metadata for downstream hooks
+    context.metadata.processedByMyHook = true;
+    context.addActivity(`MyCustomHook processed topic: ${topic}`);
+
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Typed Context Hook</h2>
+  <p>For hooks that need domain-specific context data, extend <code>IPipelineContext</code>:</p>
+
+  <pre><code>import { IHook, IPipelineContext, HookResult } from 'edge-stream-js';
+
+interface IAuthContext extends IPipelineContext {
+  readonly userId: string;
+  readonly tenantId: string;
+  readonly roles: string[];
+}
+
+export class RoleAuthorizationHook implements IHook&lt;IAuthContext&gt; {
+  readonly name = 'RoleAuthorizationHook';
+  readonly priority = 40;
+
+  private readonly requiredRole: string;
+
+  constructor(requiredRole: string) {
+    this.requiredRole = requiredRole;
+  }
+
+  async execute(context: IAuthContext): Promise&lt;HookResult&gt; {
+    if (!context.roles.includes(this.requiredRole)) {
+      context.abort(`Access denied: requires role '${this.requiredRole}'`);
+      return { continue: false };
+    }
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Complete Hook Checklist</h2>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Choose a priority</h4>
+        <p>Pick a number that places your hook in the right stage. Use 5 for observability, 90–110 for security/normalization, 120–199 for enrichment, 200–299 for processing, 300+ for post-processing.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Define a unique name</h4>
+        <p>The <code>name</code> property is used by HooksMonitor and in all log output. Use PascalCase with "Hook" suffix: <code>'TenantValidationHook'</code>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Implement execute()</h4>
+        <p>Always return a <code>HookResult</code>. Never throw — catch exceptions internally and decide whether to abort or continue. Return <code>{ continue: false }</code> to drop the message.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Register before start()</h4>
+        <p>Call <code>server.incomingPipeline.addHook(new MyCustomHook(...))</code> before <code>edgeStream.start()</code>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h4>Test in isolation</h4>
+        <p>Hooks are plain classes — unit test them by creating a mock <code>IPipelineContext</code> and calling <code>execute()</code> directly.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Testing a Hook</h2>
+  <pre><code>import { describe, it, expect } from 'vitest';
+import { MyCustomHook } from './MyCustomHook';
+
+describe('MyCustomHook', () =&gt; {
+  it('should drop messages not in allowed topics', async () =&gt; {
+    const hook = new MyCustomHook({ allowedTopics: ['workflow.', 'agent.'] });
+
+    const mockContext = {
+      envelope: { meta: { topic: 'other.event', id: 'test-123', serverId: 'bas' } },
+      body: {},
+      metadata: {},
+      isAborted: false,
+      isPaused: false,
+      activityLog: [],
+      abort: vi.fn(),
+      pause: vi.fn(),
+      addActivity: vi.fn(),
+      clearActivityLog: vi.fn(),
+    };
+
+    const result = await hook.execute(mockContext as any);
+    expect(result.continue).toBe(false);
+  });
+
+  it('should pass through allowed topics', async () =&gt; {
+    const hook = new MyCustomHook({ allowedTopics: ['workflow.'] });
+    const mockContext = {
+      envelope: { meta: { topic: 'workflow.started', id: 'test-456', serverId: 'bas' } },
+      metadata: {},
+      addActivity: vi.fn(),
+      ...otherMocks
+    };
+
+    const result = await hook.execute(mockContext as any);
+    expect(result.continue).toBe(true);
+    expect(mockContext.metadata.processedByMyHook).toBe(true);
+  });
+});</code></pre>
+
+  <div class="callout success">
+    <strong>Hooks Are Stateful</strong>
+    Hooks are instantiated once and reused for every message. You can maintain state (counters, caches, dedup sets) inside the hook class. This is intentional — design your hook to be thread-safe if it holds mutable state that async execution could race on.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-activity-logger.html">&#8592; HookActivityLogger</a>
+    <a href="../Guide4_Subscribers/index.html">Next Guide: Subscribers &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Access Control — Application Data | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Application Data</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-schema-design.html">Designing the Data Schema</a>
+  <a href="02-ai-form-generation.html">AI-Generated Forms</a>
+  <a href="03-crud-workflows.html">CRUD Workflow Patterns</a>
+  <a href="04-data-api.html">Exposing Data as an API</a>
+  <a href="05-data-visualization.html">Data Visualization</a>
+  <a href="06-access-control.html" class="active">Access Control</a>
+  <a href="07-example.html">End-to-End Example</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Access Control</h1>
+    <p class="lead">Three layers of access control for Data Ocean application data — tenant isolation (automatic), workflow-level role enforcement (configured), and row-level data scoping (query-level).</p>
+  </div>
+
+  <h2>Access Control Layers</h2>
+  <p>Application data access control is enforced at three independent layers. Each layer provides a different scope of protection:</p>
+
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Where Enforced</th><th>Protection Scope</th><th>Configured By</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Layer 1: Tenant Isolation</strong></td><td>SQL node execution engine</td><td>Prevents cross-tenant data access entirely</td><td>Automatic — no configuration needed</td></tr>
+      <tr><td><strong>Layer 2: Workflow Access</strong></td><td>Workflow trigger authentication</td><td>Controls which users/roles can call a workflow</td><td>Workflow designer (role claims)</td></tr>
+      <tr><td><strong>Layer 3: Row-Level Scoping</strong></td><td>SQL WHERE clause in workflow</td><td>Controls which rows within a tenant a user can see</td><td>Workflow SQL node queries</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Layer 1: Tenant Isolation (Automatic)</h2>
+  <p>Tenant isolation is automatic and non-bypassable. The SQL node execution engine extracts <code>tenantId</code> from the authenticated workflow execution context and makes it available as <code>{{workflow.tenantId}}</code>. The framework validates that this parameter is used in every SQL query.</p>
+  <p>Users authenticated to Tenant A cannot construct a request that accesses Tenant B's data — the <code>tenantId</code> comes from the token, not from the request payload.</p>
+
+  <div class="callout success">
+    <strong>Tenant ID Is Never Caller-Supplied</strong>
+    <p>Do not use <code>{{input.tenantId}}</code> in SQL parameters. Always use <code>{{workflow.tenantId}}</code>, which is sourced from the authenticated session — not from the API caller. Caller-supplied tenant IDs would allow tenant hopping attacks.</p>
+  </div>
+
+  <h2>Layer 2: Workflow Access Control</h2>
+  <p>Configure which roles can trigger each workflow using the workflow's <strong>Access Policy</strong>:</p>
+  <pre><code>// Workflow access policy configuration
+{
+  "workflowId": "lead-delete",
+  "accessPolicy": {
+    "requireAuthentication": true,
+    "allowedRoles": ["SalesManager", "Administrator"],
+    "denyRoles": [],
+    "allowedUsers": [],
+    "requireClaims": []
+  }
+}
+
+// lead-list — accessible to all sales roles
+{
+  "workflowId": "lead-list",
+  "accessPolicy": {
+    "requireAuthentication": true,
+    "allowedRoles": ["SalesRep", "SalesManager", "Administrator", "ReadOnly"]
+  }
+}</code></pre>
+
+  <p>When a user without the required role calls a restricted workflow trigger, the API returns:</p>
+  <pre><code>HTTP 403 Forbidden
+{
+  "error": "Access denied",
+  "requiredRoles": ["SalesManager", "Administrator"],
+  "userRoles": ["SalesRep"]
+}</code></pre>
+
+  <h2>Layer 3: Row-Level Data Scoping</h2>
+  <p>Within a tenant, you can restrict which rows a user can see or modify based on their identity or role. This is implemented in the SQL node query using <code>{{workflow.userId}}</code> and <code>{{workflow.userRoles}}</code> context variables.</p>
+
+  <h3>Sales Rep Sees Only Their Leads</h3>
+  <pre><code>{
+  "query": "SELECT LeadId, FullName, Email, Status, EstimatedValue FROM Lead WHERE TenantId = @tenantId AND IsDeleted = 0 AND (@isSalesManager = 1 OR AssignedToUserId = @userId)",
+  "parameters": {
+    "tenantId": "{{workflow.tenantId}}",
+    "userId": "{{workflow.userId}}",
+    "isSalesManager": "{{workflow.hasRole('SalesManager')}}"
+  }
+}
+-- Result: SalesManagers see all leads; SalesReps see only their assigned leads</code></pre>
+
+  <h3>Role-Based Field Masking</h3>
+  <p>To prevent certain roles from seeing sensitive fields, use SQL CASE expressions to mask values in the query result:</p>
+  <pre><code>SELECT
+    LeadId,
+    FullName,
+    CASE WHEN @isSalesManager = 1 THEN Email ELSE '***@***.***' END AS Email,
+    CASE WHEN @isSalesManager = 1 THEN CAST(EstimatedValue AS nvarchar) ELSE 'Hidden' END AS EstimatedValue,
+    Status
+FROM Lead
+WHERE TenantId = @tenantId
+  AND IsDeleted = 0;</code></pre>
+
+  <h2>Form-Level Access Control</h2>
+  <p>Atlas Forms provides field-level visibility rules based on user roles:</p>
+  <pre><code>// AtlasForms field visibility rule
+{
+  "field": "EstimatedValue",
+  "visibilityRule": {
+    "type": "role",
+    "allowedRoles": ["SalesManager", "Administrator"]
+    // SalesRep users will not see the EstimatedValue field at all
+  }
+}
+
+// Section-level visibility
+{
+  "section": "AI Enrichment Data",
+  "visibilityRule": {
+    "type": "role",
+    "allowedRoles": ["Administrator", "DataEngineer"]
+  }
+}</code></pre>
+
+  <div class="callout warning">
+    <strong>Form-Level Is UI Only — Not a Security Control</strong>
+    <p>Hiding a field in the form designer prevents it from appearing in the UI — but an API caller can still retrieve the value by calling the workflow directly. If a field must be inaccessible to a role, enforce the restriction at the SQL query level (Layer 3) in addition to the form visibility rule.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-data-visualization.html">&#8592; Data Visualization</a>
+    <a href="07-example.html">Next: End-to-End Example &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

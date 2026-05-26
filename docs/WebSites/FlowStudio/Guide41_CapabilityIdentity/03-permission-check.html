@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Permission Check Node — Guide41 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Identity</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-user-lookup.html"><i class="fa-solid fa-user-magnifying-glass"></i> User Lookup</a>
+  <a href="02-role-members.html"><i class="fa-solid fa-users"></i> Role Members</a>
+  <a href="03-permission-check.html" class="active"><i class="fa-solid fa-shield-check"></i> Permission Check</a>
+  <a href="04-actor-context.html"><i class="fa-solid fa-fingerprint"></i> Actor Context</a>
+  <a href="05-managed-identities.html"><i class="fa-solid fa-robot"></i> Managed Identities</a>
+  <a href="06-passport-client.html"><i class="fa-solid fa-passport"></i> Passport Client</a>
+  <a href="07-tenant-scoping.html"><i class="fa-solid fa-building"></i> Tenant Scoping</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Permission Check Node</h1>
+    <p class="lead">Asserting that a user holds a specific permission — the node succeeds silently if the check passes, and routes to the error port if not, blocking the workflow from proceeding.</p>
+  </div>
+
+  <h2>Node Configuration</h2>
+  <pre><code class="language-json">{
+  "nodeType": "PermissionCheck",
+  "name": "assertCanApprove",
+  "config": {
+    "userId": "$context.actorId",
+    "permission": "invoices:approve",
+    "resource": "$output.createInvoice.invoiceId",
+    "failMessage": "Actor does not have invoices:approve permission"
+  }
+}</code></pre>
+
+  <h2>Configuration Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>userId</code></td><td>string / expr</td><td>The user ID to check. Commonly <code>$context.actorId</code> or <code>$output.fetchApprover.userId</code>.</td></tr>
+      <tr><td><code>permission</code></td><td>string</td><td>The permission key to assert. Format: <code>resource:action</code> (e.g., <code>invoices:approve</code>).</td></tr>
+      <tr><td><code>resource</code></td><td>string / expr</td><td>Optional resource ID for resource-scoped permission checks. If omitted, checks global permission.</td></tr>
+      <tr><td><code>failMessage</code></td><td>string</td><td>The error message written to the error port output when the check fails.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Routing Pattern</h2>
+  <p>The <code>PermissionCheckNode</code> produces no data output — it is a gate. Connect the <strong>main</strong> port to the protected path and the <strong>error</strong> port to an access-denied handler:</p>
+  <pre><code>
+PermissionCheckNode (assertCanApprove)
+    │
+    ├── [main] ──→ Protected workflow steps
+    │
+    └── [error] ─→ SendEmail (access denied notification)
+                   └──→ EndNode (terminate)
+  </code></pre>
+
+  <h2>Error Port Output</h2>
+  <pre><code class="language-json">{
+  "error": "Actor does not have invoices:approve permission",
+  "permission": "invoices:approve",
+  "userId": "usr-a1b2c3",
+  "resource": "inv-99887",
+  "checkedAt": "2026-05-25T10:00:00Z"
+}</code></pre>
+
+  <h2>PermissionCheckExecutor</h2>
+  <pre><code class="language-csharp">public class PermissionCheckExecutor : BaseNodeExecutor&lt;PermissionCheckConfig&gt;
+{
+    protected override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+        PermissionCheckConfig config,
+        NodeDataContext ctx,
+        CancellationToken ct)
+    {
+        var userId = _evaluator.Evaluate&lt;string&gt;(config.UserId, ctx);
+        var resource = config.Resource != null
+            ? _evaluator.Evaluate&lt;string&gt;(config.Resource, ctx)
+            : null;
+
+        var hasPermission = await _passport.CheckPermissionAsync(new PermissionCheckRequest
+        {
+            UserId = userId,
+            Permission = config.Permission,
+            Resource = resource,
+            TenantId = ctx.TenantId
+        }, ct);
+
+        if (!hasPermission)
+            return NodeExecutionResult.Fail(new PermissionDeniedException(
+                config.FailMessage ?? $"Permission denied: {config.Permission}"));
+
+        return NodeExecutionResult.Success(null);
+    }
+}</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Defense in depth:</strong> The <code>PermissionCheckNode</code> is a workflow-level gate — useful for business logic enforcement. It does not replace API-level authorization in the backend. Critical operations should be protected at both layers.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-role-members.html">&#8592; Role Members</a>
+    <a href="04-actor-context.html">Next: Actor Context &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

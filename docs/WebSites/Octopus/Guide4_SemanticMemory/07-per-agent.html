@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Per-Agent Knowledge Scoping — Semantic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Semantic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Semantic Memory Overview</a>
+  <a href="01-embedding.html">Embedding Knowledge</a>
+  <a href="02-vector-stores.html">Vector Store Backends</a>
+  <a href="03-indexing.html">Knowledge Indexing</a>
+  <a href="04-retrieval.html">Retrieval at Query Time</a>
+  <a href="05-hybrid-search.html">Hybrid Search</a>
+  <a href="06-reranking.html">Reranking Results</a>
+  <a href="07-per-agent.html" class="active">Per-Agent Knowledge Scoping</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Per-Agent Knowledge Scoping</h1>
+    <p class="lead">Each Octopus agent has its own isolated vector collection for semantic memory. Documents indexed for one agent cannot be retrieved by another agent — even within the same tenant. This prevents knowledge cross-contamination and enforces the principle of least knowledge.</p>
+  </div>
+
+  <h2>Collection Naming Convention</h2>
+  <pre><code>// Collection name format
+string GetCollectionName(AgentComposite agent) =>
+    $"agent_{agent.Id:N}_{agent.TenantId.Replace("-", "_")}";
+
+// Example collection names:
+// agent_5e7d3a1b0c8f4e2a9d6b7c5e3f1a2b4c_tenant_acmecorp
+// agent_8a9f2e4c1b5d7f3e6a8c0d2b4f6e8a0c_tenant_acmecorp
+
+// A Finance agent and HR agent in the same tenant have DIFFERENT collections:
+// → Finance: agent_{financeId}_tenant_acmecorp
+// → HR:      agent_{hrId}_tenant_acmecorp</code></pre>
+
+  <h2>Shared Knowledge Collections</h2>
+  <p>In some cases, multiple agents should share a common knowledge base (e.g., company-wide policies visible to all agents). This is supported via a shared collection that agents opt into:</p>
+  <pre><code>// Shared collection configuration
+public class SharedKnowledgeConfig
+{
+    public bool UseSharedCollection { get; set; } = false;
+    public string? SharedCollectionName { get; set; }    // tenant-scoped shared collection
+    public int SharedTopK { get; set; } = 2;             // results from shared collection
+    // Total results = SemanticTopK (agent-specific) + SharedTopK (shared)
+}
+
+// Retrieval with shared collection
+var agentResults = await _store.SearchAsync(agentCollection, queryEmbedding, topK: 5);
+var sharedResults = config.UseSharedCollection
+    ? await _store.SearchAsync(sharedCollection, queryEmbedding, topK: 2)
+    : Enumerable.Empty&lt;MemoryRecord&gt;();
+
+var combined = agentResults.Concat(sharedResults).ToList();</code></pre>
+
+  <h2>Cross-Agent Access Prevention</h2>
+  <p>The Octopus API enforces collection access. When an agent performs a semantic search, the collection name is derived from the agent's ID — not from any user-provided input. There is no API that allows specifying an arbitrary collection name at retrieval time:</p>
+  <pre><code>// In SemanticMemoryService — collection is always derived from the agent, not from user input
+public async Task&lt;SemanticRetrievalResult&gt; RetrieveAsync(
+    AgentComposite agent,    // only the loaded agent can determine the collection
+    string query, CancellationToken ct)
+{
+    // collection is derived from agent identity — cannot be overridden
+    var collection = GetCollectionName(agent);  // e.g., "agent_5e7d..."
+
+    return await _store.SearchAsync(collection, ...);
+    // User input cannot change which collection is searched
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Design Principle: Isolation by Default</strong>
+    <p>The default is maximum isolation — each agent only searches its own collection. Shared access must be explicitly configured. This means a newly created agent starts with an empty knowledge base and cannot accidentally inherit knowledge from other agents.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-reranking.html">&#8592; Reranking Results</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

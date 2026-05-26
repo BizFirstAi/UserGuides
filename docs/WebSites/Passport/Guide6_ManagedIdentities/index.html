@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Managed Identities Overview — Managed Identities | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Passport</h2>
+    <h1>Managed Identities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-creating.html">Creating a Managed Identity</a>
+  <a href="02-credentials.html">Managed Identity Credentials</a>
+  <a href="03-role-assignment.html">Assigning Roles and Permissions</a>
+  <a href="04-workflow-execution.html">Using in Workflow Execution</a>
+  <a href="05-service-calls.html">Using in Service-to-Service Calls</a>
+  <a href="06-credential-rotation.html">Credential Rotation</a>
+  <a href="07-audit.html">Managed Identity Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Passport</div>
+    <h1>Managed Identities Overview</h1>
+    <p class="lead">Managed identities are non-human Passport principals for automated processes — scheduled workflows, system integrations, and background jobs — with full role-based access control and audit logging.</p>
+  </div>
+
+  <h2>Why Not Use User Accounts for Automation?</h2>
+  <p>Using a personal user account for automation creates serious operational and security risks:</p>
+  <div class="card-grid">
+    <div class="card">
+      <h4><i class="fa-solid fa-triangle-exclamation" style="color:#f87171;margin-right:6px;"></i>Account Lifecycle</h4>
+      <p>When the employee leaves, their account is disabled — breaking all automations that depend on it, often at 2 AM on a Friday.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-triangle-exclamation" style="color:#f87171;margin-right:6px;"></i>Password Rotation</h4>
+      <p>User passwords expire. Automations fail silently until someone discovers the expired password in a production incident.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-triangle-exclamation" style="color:#f87171;margin-right:6px;"></i>Audit Confusion</h4>
+      <p>Audit logs show "Jane Smith ran 500 payroll jobs at 3 AM". Automations obscure the human actions in security logs.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-triangle-exclamation" style="color:#f87171;margin-right:6px;"></i>Excess Permissions</h4>
+      <p>User accounts have all permissions granted for their human role — far more than the automation needs. Violates least privilege.</p>
+    </div>
+  </div>
+
+  <h2>What Is a Managed Identity?</h2>
+  <p>A managed identity is a Passport principal that represents an automated process or system integration rather than a human user. It has:</p>
+  <ul>
+    <li>A stable <code>clientId</code> (GUID) that identifies the system</li>
+    <li>A <code>clientSecret</code> that authenticates it — rotatable without downtime</li>
+    <li>Roles and permissions assigned explicitly — only what the automation needs</li>
+    <li>Full audit trail — all actions appear in logs attributed to the managed identity, not a person</li>
+    <li>No MFA, no session, no login form — pure API authentication</li>
+  </ul>
+
+  <h2>IManagedIdentityService</h2>
+  <pre><code>namespace BizFirst.Essentials.Passport.ManagedIdentities;
+
+public interface IManagedIdentityService
+{
+    Task&lt;ManagedIdentity&gt; CreateAsync(
+        CreateManagedIdentityRequest request,
+        CancellationToken ct = default);
+
+    Task&lt;ManagedIdentity?&gt; GetAsync(
+        Guid managedIdentityId,
+        CancellationToken ct = default);
+
+    Task&lt;IReadOnlyList&lt;ManagedIdentity&gt;&gt; ListAsync(
+        string tenantId,
+        CancellationToken ct = default);
+
+    Task DisableAsync(
+        Guid managedIdentityId,
+        CancellationToken ct = default);
+
+    Task DeleteAsync(
+        Guid managedIdentityId,
+        CancellationToken ct = default);
+}
+
+public class ManagedIdentity
+{
+    public required Guid   Id          { get; init; }
+    public required string ClientId    { get; init; }  // for OAuth client credentials flow
+    public required string TenantId    { get; init; }
+    public required string Name        { get; init; }
+    public string? Description         { get; init; }
+    public bool    IsEnabled           { get; init; } = true;
+    public DateTimeOffset CreatedAt    { get; init; }
+    public DateTimeOffset? LastUsedAt  { get; init; }
+    public IReadOnlyList&lt;string&gt; Roles { get; init; } = [];
+}</code></pre>
+
+  <h2>Authentication Flow</h2>
+  <pre><code">// OAuth 2.0 Client Credentials Flow
+POST /passport/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic base64("clientId:clientSecret")
+
+grant_type=client_credentials
+&scope=openid%20roles
+
+// Response
+{
+  "access_token": "eyJhbGciOiJSUzI1NiJ9...",
+  "token_type":   "Bearer",
+  "expires_in":   3600  // 1 hour
+  // No refresh_token — each call uses client credentials
+}
+
+// Token payload shows it is a managed identity
+{
+  "sub":                  "managed-identity-client-id",
+  "managed_identity_id":  "managed-identity-guid",
+  "is_service_account":   true,
+  "tenant_id":            "tenant-abc",
+  "roles":                ["payroll-executor"],
+  "iss":                  "https://passport.bizfirst.ai",
+  "aud":                  "bizfirstgo-api"
+}</code></pre>
+
+  <h2>Key Differences from User Accounts</h2>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>User Account</th><th>Managed Identity</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Authentication</td><td>Password + optional MFA</td><td>clientId + clientSecret</td></tr>
+      <tr><td>Session</td><td>Long-lived session cookie</td><td>No session — per-call authentication</td></tr>
+      <tr><td>Token type</td><td>Access + refresh + id tokens</td><td>Access token only (no refresh)</td></tr>
+      <tr><td>Token lifetime</td><td>15 min access / 7 day refresh</td><td>1 hour access</td></tr>
+      <tr><td>MFA</td><td>Optional or required</td><td>Not applicable</td></tr>
+      <tr><td>Password expiry</td><td>Yes (configurable)</td><td>No — secrets have no expiry unless explicitly rotated</td></tr>
+      <tr><td>Audit attribution</td><td>Human name + email</td><td>Managed identity name + clientId</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span class="spacer"></span>
+    <a href="01-creating.html">Next: Creating a Managed Identity &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

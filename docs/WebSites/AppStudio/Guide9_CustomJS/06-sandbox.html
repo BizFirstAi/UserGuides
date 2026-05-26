@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Execution Sandbox — Custom JavaScript | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Custom JavaScript</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Custom JS Overview</a>
+  <a href="01-editor.html">Custom JS Editor</a>
+  <a href="02-available-apis.html">Available APIs</a>
+  <a href="03-widget-data.html">Reading Widget Data</a>
+  <a href="04-setting-variables.html">Setting Variables</a>
+  <a href="05-triggering-actions.html">Triggering Actions</a>
+  <a href="06-sandbox.html" class="active">Execution Sandbox</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Execution Sandbox</h1>
+    <p class="lead">Custom JS scripts execute inside an isolated JavaScript sandbox. The sandbox provides a safe, controlled environment by blocking network access, global scope manipulation, DOM access, and unbounded async operations. This protects the platform, other tenants, and the current user's session.</p>
+  </div>
+
+  <h2>What Is Blocked and Why</h2>
+  <table>
+    <thead>
+      <tr><th>Blocked API</th><th>Why blocked</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>fetch</code>, <code>XMLHttpRequest</code></td><td>Scripts must not make unauthorized network calls. All data arrives through the widget's configured data source, which goes through the App Studio security layer.</td></tr>
+      <tr><td><code>window</code>, <code>document</code>, <code>navigator</code></td><td>DOM manipulation could break the App Studio shell, read other widgets' DOM, or leak data across widget boundaries.</td></tr>
+      <tr><td><code>localStorage</code>, <code>sessionStorage</code>, <code>indexedDB</code></td><td>Browser storage is shared across the session. Scripts could read auth tokens or other tenants' data stored by the platform.</td></tr>
+      <tr><td><code>eval</code>, <code>Function()</code></td><td>Dynamic code execution bypasses sandbox restrictions.</td></tr>
+      <tr><td><code>setTimeout</code> / <code>setInterval</code> (unbounded)</td><td>Unbounded async execution could create resource leaks. Short setTimeout (&lt;100ms) is allowed for deferred micro-tasks.</td></tr>
+      <tr><td><code>import</code> / <code>require</code></td><td>Module loading from arbitrary sources is not permitted.</td></tr>
+      <tr><td><code>process</code>, <code>global</code></td><td>Node.js globals — not relevant in browser, blocked to prevent confusion.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What Happens When Blocked APIs Are Called</h2>
+  <p>If a blocked API is called at runtime:</p>
+  <ul>
+    <li>The sandbox throws a <code>SandboxViolationError</code></li>
+    <li>The script execution stops at the point of the violation</li>
+    <li>A sandbox violation error is logged in the designer's editor output panel</li>
+    <li>In production, the violation is silently swallowed — the widget continues rendering with no custom JS side effects</li>
+    <li>Platform administrators can see sandbox violations in the audit log</li>
+  </ul>
+
+  <h2>Execution Time Limit</h2>
+  <p>Scripts have a maximum execution time limit (typically 200ms). Scripts that take longer are terminated:</p>
+  <pre><code>// OK — simple synchronous computation
+function onDataChange(widget, variables) {
+  const total = widget.data.rows.reduce((s, r) => s + r.v, 0);
+  variables.set('total', total);
+}
+
+// PROBLEMATIC — avoid heavy computation on large datasets
+// Processing 50,000 rows synchronously may hit the time limit
+// Consider filtering at the data source level instead
+</code></pre>
+
+  <h2>Sandbox Implementation</h2>
+  <p>The sandbox is implemented using a controlled <code>Function</code> wrapper that replaces the global scope with a proxy object. The proxy exposes only the permitted APIs (<code>widget</code>, <code>variables</code>, <code>actions</code>, <code>context</code>, standard JS builtins) and throws on any property access that isn't on the allowlist.</p>
+  <pre><code>// Conceptual sandbox execution model
+const sandboxedScope = {
+  widget,
+  variables,
+  actions,
+  context,
+  // Standard JS:
+  Array, Object, Math, JSON, Date, String, Number, Boolean,
+  parseInt, parseFloat, isNaN, isFinite,
+  console: { log: sandboxedConsoleLog },
+  // Everything else: throws SandboxViolationError on access
+};
+
+const fn = new Function(...Object.keys(sandboxedScope), scriptSource);
+fn(...Object.values(sandboxedScope));
+</code></pre>
+
+  <h2>Testing for Sandbox Compliance</h2>
+  <p>In the designer editor, click <strong>Test</strong> to run the script in the sandbox with test data. The output panel shows:</p>
+  <ul>
+    <li>Any sandbox violations caught at test time</li>
+    <li><code>console.log</code> output</li>
+    <li>Execution time for the script</li>
+    <li>Variables that were set (simulated)</li>
+  </ul>
+  <p>The editor also marks sandbox violations as red underlines in the code using static analysis, so you can fix them before even running the test.</p>
+
+  <div class="page-nav">
+    <a href="05-triggering-actions.html">&#8592; Triggering Actions</a>
+    <a href="07-examples.html">Next: Examples &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

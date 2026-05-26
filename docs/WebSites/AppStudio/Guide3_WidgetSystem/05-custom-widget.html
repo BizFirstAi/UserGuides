@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Widget — Widget System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>Widget System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Widget System Overview</a>
+  <a href="01-widget-definition.html">Widget Definition</a>
+  <a href="02-widget-placement.html">Widget Placement</a>
+  <a href="03-system-widgets.html">System Widgets</a>
+  <a href="04-form-widget.html">Form Widget</a>
+  <a href="05-custom-widget.html" class="active">Custom Widget</a>
+  <a href="06-configuration-cascade.html">Configuration Cascade</a>
+  <a href="07-widget-registry.html">Widget Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Custom Widget</h1>
+    <p class="lead">Custom Widgets extend App Studio with your own React components, loaded via Module Federation. They integrate fully with the widget system — config schema, data binding, events, and the Properties Editor.</p>
+  </div>
+
+  <h2>Architecture: Module Federation</h2>
+  <p>Custom Widgets are loaded at runtime using <strong>Webpack Module Federation</strong>. Your widget is a separately deployed React application (a "remote") that App Studio (the "host") loads on demand. This means:</p>
+  <ul>
+    <li>Custom widgets are deployed independently — no changes to App Studio itself</li>
+    <li>Widget updates are immediately available to all apps using that widget (on next load)</li>
+    <li>The widget runs in the same React context as App Studio — shared dependencies (React, etc.) are not duplicated</li>
+  </ul>
+
+  <h2>Custom Widget Manifest</h2>
+  <p>To register a custom widget, provide a manifest JSON when calling the Widget Registry API:</p>
+  <pre><code>// POST /api/widget-registry/register
+{
+  "widgetTypeId": "org-chart",
+  "displayName": "Org Chart",
+  "description": "Renders an organizational hierarchy chart",
+  "category": "Custom",
+  "icon": "sitemap",
+
+  // Module Federation endpoint
+  "federationUrl": "https://widgets.myorg.com/org-chart/remoteEntry.js",
+  "federationModule": "OrgChartWidget",  // exported module name
+
+  // Config schema — generates Properties Editor UI
+  "configSchema": {
+    "type": "object",
+    "required": ["dataSource"],
+    "properties": {
+      "dataSource": { "type": "string", "title": "Data Source" },
+      "rootNodeField": { "type": "string", "title": "Root Node Field", "default": "ceo" },
+      "showAvatars": { "type": "boolean", "title": "Show Avatars", "default": true }
+    }
+  },
+
+  // Default config
+  "defaultConfig": {
+    "showAvatars": true
+  },
+
+  // Events this widget can emit (App Studio will show in Actions tab)
+  "events": [
+    { "name": "onNodeClick", "description": "Fired when a node in the chart is clicked" }
+  ]
+}
+</code></pre>
+
+  <h2>Widget Component Interface</h2>
+  <p>Your React component receives standardized props from App Studio:</p>
+  <pre><code>// TypeScript — WidgetRenderProps
+interface WidgetRenderProps {
+  config: Record&lt;string, unknown&gt;;  // Resolved config (tokens already evaluated)
+  context: {
+    userId: string;
+    tenantId: string;
+    roles: string[];
+    name: string;
+  };
+  variables: {
+    get: (name: string) =&gt; unknown;
+    set: (name: string, value: unknown) =&gt; void;
+  };
+  actions: {
+    navigate: (path: string, params?: Record&lt;string, string&gt;) =&gt; void;
+    openModal: (paneId: string) =&gt; void;
+    triggerWorkflow: (processId: string, input: unknown) =&gt; Promise&lt;void&gt;;
+  };
+  emit: (eventName: string, payload?: unknown) =&gt; void; // Fire widget events
+}
+
+// Example widget component
+export default function OrgChartWidget({ config, emit }: WidgetRenderProps) {
+  // config.dataSource is already resolved (tokens evaluated)
+  // config.showAvatars is a boolean
+
+  return (
+    &lt;div&gt;
+      {/* Your custom rendering */}
+      &lt;OrgChartRenderer
+        dataSource={config.dataSource as string}
+        onNodeClick={(node) =&gt; emit("onNodeClick", { nodeId: node.id })}
+      /&gt;
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+
+  <div class="callout warning">
+    <strong>No Direct API Calls from Custom Widgets</strong>
+    <p>Custom Widget components must not call AIExtension.Service or any backend API directly from the component code. Data should be provided through the <code>config.dataSource</code> pattern — App Studio fetches the data and passes it to the widget. This ensures multi-tenant isolation and caching apply to custom widgets too.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-form-widget.html">&#8592; Form Widget</a>
+    <a href="06-configuration-cascade.html">Next: Configuration Cascade &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

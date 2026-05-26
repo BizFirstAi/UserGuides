@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Scanning Overview — Security Scanning | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Security Scanning</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-expression-injection.html">Expression Injection Detection</a>
+  <a href="02-sql-injection.html">SQL Injection Detection</a>
+  <a href="03-dependency-vulnerability.html">Dependency Vulnerability Scan</a>
+  <a href="04-content-policy.html">Content Policy Check</a>
+  <a href="05-scan-results.html">Scan Results</a>
+  <a href="06-false-positives.html">Handling False Positives</a>
+  <a href="07-manual-review.html">Manual Security Review</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Security Scanning</h1>
+    <p class="lead">Every package that passes through InstallHub — whether imported directly or installed from the marketplace — is subject to mandatory security scanning. Scanning is non-optional and cannot be bypassed, even by administrators.</p>
+  </div>
+
+  <h2>Why Mandatory Scanning?</h2>
+  <p>InstallHub packages contain executable workflow logic, AI agent configurations, and business rules. A malicious or compromised package could exfiltrate data, corrupt tenant state, or introduce injection vulnerabilities into running processes. Scanning provides a defense-in-depth layer that operates independently of the package publisher's intentions.</p>
+
+  <h2>When Scanning Runs</h2>
+  <table>
+    <thead>
+      <tr><th>Context</th><th>When</th><th>Blocks On FAIL?</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Direct import (Phase 2)</td><td>Before installation begins</td><td>Yes — import aborted and rolled back</td><td><span class="badge badge-green">Implemented</span></td></tr>
+      <tr><td>Dry-run import</td><td>During dry-run pipeline</td><td>Reported in dry-run result</td><td><span class="badge badge-green">Implemented</span></td></tr>
+      <tr><td>Marketplace submission</td><td>Before listing the package</td><td>Yes — rejected, not listed</td><td><span class="badge badge-yellow">Phase 3 Pending</span></td></tr>
+      <tr><td>Marketplace install</td><td>Before installation begins (re-scan of cached package)</td><td>Yes — install aborted</td><td><span class="badge badge-yellow">Phase 3 Pending</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Checks Performed</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-icon"><i class="fa-solid fa-code"></i></div>
+      <div class="step-label">Expression<br>Injection</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step">
+      <div class="step-icon"><i class="fa-solid fa-database"></i></div>
+      <div class="step-label">SQL<br>Injection</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step">
+      <div class="step-icon"><i class="fa-solid fa-bug"></i></div>
+      <div class="step-label">Dependency<br>CVE</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step">
+      <div class="step-icon"><i class="fa-solid fa-file-shield"></i></div>
+      <div class="step-label">Content<br>Policy</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step">
+      <div class="step-icon"><i class="fa-solid fa-key"></i></div>
+      <div class="step-label">Credential<br>Exposure</div>
+    </div>
+  </div>
+
+  <h2>IPackageSecurityScanner Interface</h2>
+  <pre><code>public interface IPackageSecurityScanner
+{
+    Task&lt;ScanReport&gt; ScanAsync(
+        PackageBundle        bundle,
+        ScanContext          context,
+        CancellationToken    cancellationToken = default);
+}
+
+public record ScanReport
+{
+    public ScanResult          OverallResult  { get; init; }  // Pass, Warn, Fail
+    public IReadOnlyList&lt;ScanFinding&gt; Findings { get; init; }
+    public DateTimeOffset      ScannedAt      { get; init; }
+    public long                DurationMs     { get; init; }
+}
+
+public record ScanFinding
+{
+    public string   Check         { get; init; }
+    public Severity Severity      { get; init; }  // Critical, High, Medium, Low
+    public string   ArtifactType  { get; init; }
+    public string   ArtifactName  { get; init; }
+    public string   Field         { get; init; }
+    public string   Value         { get; init; }
+    public string   Rule          { get; init; }
+    public string   Message       { get; init; }
+}
+
+public enum ScanResult { Pass, Warn, Fail }</code></pre>
+
+  <h2>Result Summary</h2>
+  <table>
+    <thead>
+      <tr><th>Result</th><th>Overall Meaning</th><th>Import Action</th><th>Marketplace Action</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><span class="badge badge-green">PASS</span></td><td>Zero findings across all checks</td><td>Proceeds normally</td><td>Listed with green badge</td></tr>
+      <tr><td><span class="badge badge-yellow">WARN</span></td><td>One or more medium/low findings, no critical/high</td><td>Proceeds with warning in audit log</td><td>Listed with yellow badge; human review recommended</td></tr>
+      <tr><td><span class="badge badge-red">FAIL</span></td><td>One or more critical or high findings</td><td>Blocked — import aborted, package not installed</td><td>Rejected — not listed</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-expression-injection.html">Next: Expression Injection Detection &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

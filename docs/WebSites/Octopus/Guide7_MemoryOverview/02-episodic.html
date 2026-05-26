@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Episodic Memory — Memory Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory System Overview</a>
+  <a href="01-working.html">Working Memory</a>
+  <a href="02-episodic.html" class="active">Episodic Memory</a>
+  <a href="03-semantic.html">Semantic Memory</a>
+  <a href="04-procedural.html">Procedural Memory</a>
+  <a href="05-comparison.html">Comparison Table</a>
+  <a href="06-interaction.html">How Memory Types Interact</a>
+  <a href="07-config.html">Memory Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Episodic Memory</h1>
+    <p class="lead">Episodic memory stores past conversation sessions in SQL Server — the agent's "autobiographical" memory. It records what happened in which conversation, with which user, so the agent can recall relevant past interactions when the same user returns.</p>
+  </div>
+
+  <h2>What Is Episodic Memory?</h2>
+  <p>When a conversation session ends, Octopus persists a summary of that session as an <em>episode</em> in SQL Server. On subsequent turns, episodic memory is searched by user ID and the current message to inject relevant past context into working memory:</p>
+  <pre><code>// Episode stored after a conversation ends
+{
+  "episodeId": "ep_9a3f...",
+  "agentId":   "agent_hr_01",
+  "userId":    "user_mary_k",
+  "startedAt": "2025-03-14T09:22:00Z",
+  "endedAt":   "2025-03-14T09:38:00Z",
+  "summary":   "Mary asked about her annual leave balance and remaining days.",
+  "keyFacts":  ["User prefers formal language", "12 days remaining as of March"],
+  "embedding": [0.012, -0.034, ...]  // Vector for semantic recall
+}</code></pre>
+
+  <h2>Key Characteristics</h2>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Value</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Storage</td><td>SQL Server (<code>Octopus_Episodes</code> table)</td><td>Managed by SqlServerPlugin</td></tr>
+      <tr><td>Lifetime</td><td>Configurable TTL (default 90 days)</td><td>Soft-deleted then purged by retention job</td></tr>
+      <tr><td>Scope</td><td>Per agent + per user</td><td>Agent A cannot read User X's episodes from Agent B</td></tr>
+      <tr><td>Retrieval</td><td>Recency or semantic search</td><td>Top-K most relevant past episodes</td></tr>
+      <tr><td>Privacy</td><td>PII detection + erasure endpoint</td><td>GDPR / CCPA compliant</td></tr>
+    </tbody>
+  </table>
+
+  <h2>How Episodes Are Stored</h2>
+  <p>Episodes are written when a session ends via <code>IEpisodicMemoryStore.CloseEpisodeAsync</code>. The closing process generates a summary using an LLM call (optional), computes an embedding for semantic search, and stores the episode row:</p>
+  <pre><code>public interface IEpisodicMemoryStore
+{
+    Task&lt;Episode&gt;  OpenEpisodeAsync(Guid agentId, string userId, Guid tenantId, CancellationToken ct);
+    Task           AddMessageAsync(Guid episodeId, EpisodeMessage message, CancellationToken ct);
+    Task&lt;Episode&gt;  CloseEpisodeAsync(Guid episodeId, CancellationToken ct);
+    Task&lt;IReadOnlyList&lt;EpisodeSnippet&gt;&gt; SearchAsync(
+        Guid agentId, string userId, string query, int topK, CancellationToken ct);
+}</code></pre>
+
+  <h2>How Episodes Are Recalled</h2>
+  <p>Before each LLM call, <code>MemoryOrchestrator</code> calls <code>SearchAsync</code> with the current user message. Two recall modes are supported:</p>
+  <table>
+    <thead>
+      <tr><th>Mode</th><th>How It Works</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Recency</td><td>Returns the N most recent episodes by <code>EndedAt DESC</code></td><td>Continuity agents — "what did we discuss last time?"</td></tr>
+      <tr><td>Semantic</td><td>Computes query embedding, cosine similarity against stored episode embeddings, returns top-K</td><td>Specific topic recall — "when did we last discuss parental leave?"</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What Gets Injected into Working Memory</h2>
+  <p>Recalled episode snippets are formatted and injected into the context as a "Past Conversations" section between the system prompt and message history:</p>
+  <pre><code>[Past Conversations]
+The following are relevant conversations this user has had with you previously:
+
+Date: 2025-03-14
+Summary: Mary asked about her annual leave balance. 12 days remaining.
+Key facts: Prefers formal English. Has a holiday planned for June.
+---
+Date: 2025-02-01
+Summary: Mary requested clarification on the parental leave policy.
+Key facts: She is expecting in August 2025.
+---
+Use this context to personalise your response.</code></pre>
+
+  <h2>Retention and Privacy</h2>
+  <p>Episodic memory has a configurable TTL and supports full user data erasure to comply with privacy regulations:</p>
+  <ul>
+    <li><strong>Retention TTL</strong>: Episodes older than the configured TTL (default 90 days) are soft-deleted and then purged by a background job</li>
+    <li><strong>User erasure</strong>: <code>EraseUserDataAsync(userId, agentId)</code> hard-deletes all episodes for that user across all sessions</li>
+    <li><strong>PII detection</strong>: Optional pipeline stage that detects and redacts PII before storage</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Full Guide</strong>
+    <p>This is a summary page. The <a href="../Guide3_EpisodicMemory/index.html">Episodic Memory full guide</a> covers episode structure, SQL schema, recall modes with code, episode boundary detection, long-term retention lifecycle, privacy and PII, and the REST API.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-working.html">&#8592; Working Memory</a>
+    <a href="03-semantic.html">Next: Semantic Memory &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

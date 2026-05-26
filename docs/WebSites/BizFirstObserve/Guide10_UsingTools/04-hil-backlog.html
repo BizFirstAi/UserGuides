@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitoring HIL Backlog — Using the Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Using the Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Using the Tools Overview</a>
+  <a href="01-find-execution-logs.html">Find Logs for an Execution</a>
+  <a href="02-trace-slow-node.html">Trace a Slow Node</a>
+  <a href="03-error-analysis.html">Error Analysis Workflow</a>
+  <a href="04-hil-backlog.html" class="active">Monitoring HIL Backlog</a>
+  <a href="05-alert-response.html">Responding to Alerts</a>
+  <a href="06-tenant-isolation.html">Querying as a Tenant Admin</a>
+  <a href="07-common-queries.html">Common Query Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Monitoring HIL Backlog</h1>
+    <p class="lead">Human-in-the-Loop (HIL) workflows pause execution waiting for human approval. A growing backlog means approvers are not keeping up with incoming tasks — which can cascade into SLA breaches. The HIL Analytics dashboard provides real-time and historical visibility into backlog health.</p>
+  </div>
+
+  <h2>The HIL Analytics Dashboard</h2>
+  <p>Open the HIL Analytics dashboard from Grafana Dashboards → BizFirstGO folder. Key panels:</p>
+  <table>
+    <thead>
+      <tr><th>Panel</th><th>Healthy Value</th><th>Action If Unhealthy</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Current Backlog (Gauge)</td><td>Green: &lt; 50 tasks</td><td>Yellow (&gt;50): alert approver managers; Red (&gt;100): escalate</td></tr>
+      <tr><td>Overdue Tasks (Stat)</td><td>0 (zero)</td><td>Any value &gt; 0: immediate action — SLA breached</td></tr>
+      <tr><td>Approval Rate (Pie chart)</td><td>&gt; 80% approved</td><td>High rejection rate may indicate process issues</td></tr>
+      <tr><td>Backlog by Tenant (Bar chart)</td><td>Even distribution</td><td>Single tenant with very high backlog: notify that tenant's admin</td></tr>
+      <tr><td>Suspension Duration (Histogram)</td><td>Most tasks &lt; 4 hours</td><td>Long tail (&gt; 24h): identify and escalate overdue tasks</td></tr>
+    </tbody>
+  </table>
+
+  <h2>HIL Backlog Queries</h2>
+  <pre><code># Current pending HIL task count:
+sum(bizfirst_hil_pending_count)
+
+# Pending tasks broken down by tenant:
+sum by (tenant_id) (bizfirst_hil_pending_count)
+
+# Overdue tasks (past SLA deadline):
+sum(bizfirst_hil_overdue_count)
+
+# Overdue tasks by tenant (to find which tenant has the worst SLA breach):
+sum by (tenant_id) (bizfirst_hil_overdue_count) > 0
+
+# HIL task approval rate over the last hour:
+sum(rate(bizfirst_hil_completed_total{outcome="approved"}[1h]))
+  /
+sum(rate(bizfirst_hil_completed_total[1h]))
+* 100
+
+# Average time-to-completion for HIL tasks (last 24 hours):
+histogram_quantile(0.50,
+  sum(rate(bizfirst_hil_suspension_duration_seconds_bucket[24h])) by (le)
+)</code></pre>
+
+  <h2>Finding Specific Overdue Tasks</h2>
+  <pre><code># Use Loki to find which specific tasks are overdue:
+{job="processengine"} | json | hilStatus = "overdue"
+  | line_format "taskId={{.hilTaskId}} tenant={{.tenantId}} deadline={{.slaDeadline}}"
+
+# Find HIL tasks for a specific workflow type that are overdue:
+{job="processengine"} | json | hilStatus = "overdue" | workflowType = "expense-approval"
+
+# Find tasks assigned to a specific role that are pending:
+{job="processengine"} | json | hilStatus = "pending" | roleRequired = "FinanceManager"
+  | line_format "taskId={{.hilTaskId}} pending since {{.suspendedAt}}"</code></pre>
+
+  <h2>Setting Up HIL Backlog Alerts</h2>
+  <pre><code># The pre-built alert rules include two HIL alerts:
+
+# 1. HILBacklogHigh — fires when backlog > 100 tasks for 15 minutes:
+- alert: HILBacklogHigh
+  expr: sum(bizfirst_hil_pending_count) > 100
+  for: 15m
+  labels:
+    severity: warning
+  annotations:
+    summary: "HIL backlog is high ({{ $value }} pending tasks)"
+
+# 2. HILSLABreached — fires immediately when any task is overdue:
+- alert: HILSLABreached
+  expr: sum(bizfirst_hil_overdue_count) > 0
+  for: 1m
+  labels:
+    severity: critical
+  annotations:
+    summary: "{{ $value }} HIL tasks have breached their SLA deadline"</code></pre>
+
+  <div class="callout warning">
+    <strong>Overdue Tasks Need Immediate Human Action</strong>
+    <p>A firing HILSLABreached alert cannot be resolved by the engineering team — it requires the business process owners to approve or escalate the overdue tasks. When this alert fires, the on-call engineer's job is to: (1) identify which tenant and which tasks are overdue (use the queries above), (2) notify the appropriate business team or process owner, and (3) document the breach for compliance reporting.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-error-analysis.html">&#8592; Error Analysis Workflow</a>
+    <a href="05-alert-response.html">Next: Responding to Alerts &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

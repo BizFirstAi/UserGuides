@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Install the Stack — Setup Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Setup Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Setup Overview</a>
+  <a href="01-prerequisites.html">Prerequisites</a>
+  <a href="02-install-stack.html" class="active">Install the Stack</a>
+  <a href="03-configure-services.html">Configure BizFirstGO Services</a>
+  <a href="04-verify-ingestion.html">Verify Ingestion</a>
+  <a href="05-import-dashboards.html">Import Pre-Built Dashboards</a>
+  <a href="06-configure-alerts.html">Configure Alerts</a>
+  <a href="07-validation-checklist.html">Validation Checklist</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Install the Stack</h1>
+    <p class="lead">BizFirst Observe ships as a Docker Compose configuration for development/staging and a Helm chart collection for Kubernetes production deployments. This page covers both methods with expected output at each step.</p>
+  </div>
+
+  <h2>Method 1: Docker Compose</h2>
+  <p>The recommended approach for development, staging, and smaller production deployments (up to ~20 tenants).</p>
+  <pre><code># Step 1: Get the BizFirst Observe configuration files
+# (Assumed to be in your BizFirstGO repository)
+cd bizfirstgo/infrastructure/observe/
+
+# Step 2: Create required data directories
+mkdir -p data/loki data/prometheus data/tempo data/grafana
+
+# Step 3: Set required environment variables
+# Create a .env file (never commit this to git):
+cat > .env &lt;&lt;'EOF'
+GF_SECURITY_ADMIN_PASSWORD=changeme-production-password
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+PAGERDUTY_KEY=your-pagerduty-integration-key
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+EOF
+
+# Step 4: Start all components
+docker compose up -d
+
+# Expected output:
+# [+] Running 8/8
+#  ✔ Container observe-minio        Started   2.1s
+#  ✔ Container observe-otel-collector Started  1.8s
+#  ✔ Container observe-loki         Started   3.2s
+#  ✔ Container observe-prometheus   Started   2.9s
+#  ✔ Container observe-tempo        Started   2.4s
+#  ✔ Container observe-alertmanager Started   1.7s
+#  ✔ Container observe-node-exporter Started  1.2s
+#  ✔ Container observe-grafana      Started   4.1s</code></pre>
+
+  <pre><code># Step 5: Verify all containers are healthy
+docker compose ps
+
+# Expected output (all containers should show "healthy" or "running"):
+# NAME                     SERVICE           STATUS    PORTS
+# observe-grafana          grafana           running   0.0.0.0:3000->3000/tcp
+# observe-loki             loki              running   0.0.0.0:3100->3100/tcp
+# observe-otel-collector   otel-collector    running   0.0.0.0:4317->4317/tcp, 0.0.0.0:4318->4318/tcp
+# observe-prometheus       prometheus        running   0.0.0.0:9090->9090/tcp
+# observe-tempo            tempo             running   0.0.0.0:3200->3200/tcp
+# observe-alertmanager     alertmanager      running   0.0.0.0:9093->9093/tcp</code></pre>
+
+  <pre><code># Step 6: Check startup logs for errors
+docker compose logs --tail=20 loki
+docker compose logs --tail=20 prometheus
+docker compose logs --tail=20 grafana
+
+# Grafana healthy output includes:
+# level=info msg="HTTP Server Listen" logger=server address=[::]:3000
+
+# Loki healthy output includes:
+# level=info msg="Loki started" version=2.9.x
+
+# Prometheus healthy output includes:
+# msg="Server is ready to receive web requests."</code></pre>
+
+  <h2>Quick Component Health Check</h2>
+  <pre><code># Verify each component responds:
+curl -s http://localhost:3000/api/health | jq .
+# Expected: {"commit":"...","database":"ok","version":"10.x.x"}
+
+curl -s http://localhost:3100/ready
+# Expected: ready
+
+curl -s http://localhost:9090/-/ready
+# Expected: Prometheus Server is Ready.
+
+curl -s http://localhost:3200/ready
+# Expected: ready
+
+curl -s http://localhost:4317 2>&1 | head -1
+# Expected: any response (gRPC endpoint — won't respond to HTTP curl)</code></pre>
+
+  <h2>Method 2: Kubernetes (Helm)</h2>
+  <p>For production deployments on Kubernetes. Uses the community Helm chart umbrella stack.</p>
+  <pre><code># Step 1: Add Helm repositories
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+# Step 2: Create namespace
+kubectl create namespace observe
+
+# Step 3: Install kube-prometheus-stack (Prometheus + Grafana + Alertmanager)
+helm install kube-prom prometheus-community/kube-prometheus-stack \
+  --namespace observe \
+  --values prometheus-values.yaml \
+  --wait
+
+# Step 4: Install Loki stack
+helm install loki grafana/loki-stack \
+  --namespace observe \
+  --values loki-values.yaml \
+  --wait
+
+# Step 5: Install Tempo
+helm install tempo grafana/tempo \
+  --namespace observe \
+  --values tempo-values.yaml \
+  --wait
+
+# Step 6: Install OTel Collector
+helm install otel-collector open-telemetry/opentelemetry-collector \
+  --namespace observe \
+  --values otel-collector-values.yaml \
+  --wait</code></pre>
+
+  <pre><code># Verify all pods are running:
+kubectl get pods -n observe
+
+# Expected output (all pods should show Running / 1/1 or 2/2):
+# NAME                                  READY   STATUS    RESTARTS   AGE
+# grafana-7d9f6b5c8-x2j4p              1/1     Running   0          2m
+# loki-0                                1/1     Running   0          2m
+# prometheus-kube-prom-prometheus-0     2/2     Running   0          2m
+# tempo-0                               1/1     Running   0          2m
+# otel-collector-6b7d9f4c-r8k2m        1/1     Running   0          2m
+# alertmanager-0                        2/2     Running   0          2m</code></pre>
+
+  <h2>Access URLs After Installation</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Docker Compose URL</th><th>Kubernetes (port-forward)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Grafana</td><td><code>http://localhost:3000</code></td><td><code>kubectl port-forward svc/grafana 3000:3000 -n observe</code></td></tr>
+      <tr><td>Prometheus</td><td><code>http://localhost:9090</code></td><td><code>kubectl port-forward svc/prometheus 9090:9090 -n observe</code></td></tr>
+      <tr><td>Alertmanager</td><td><code>http://localhost:9093</code></td><td><code>kubectl port-forward svc/alertmanager 9093:9093 -n observe</code></td></tr>
+      <tr><td>OTel Collector (gRPC)</td><td><code>localhost:4317</code></td><td>Service exposed via NodePort or LoadBalancer</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Default Grafana Credentials</strong>
+    <p>The default Grafana admin username is <code>admin</code>. The password is set via the <code>GF_SECURITY_ADMIN_PASSWORD</code> environment variable in the .env file (Docker Compose) or via the Helm values <code>grafana.adminPassword</code>. Change the default password immediately after first login.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-prerequisites.html">&#8592; Prerequisites</a>
+    <a href="03-configure-services.html">Next: Configure BizFirstGO Services &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

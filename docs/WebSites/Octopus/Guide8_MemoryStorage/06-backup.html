@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backup and Restore — Memory Storage | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Storage</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory Storage Overview</a>
+  <a href="01-sql-tables.html">SQL Tables</a>
+  <a href="02-vector-storage.html">Vector Storage</a>
+  <a href="03-working-storage.html">Working Memory Storage</a>
+  <a href="04-tenant-isolation.html">Tenant Isolation</a>
+  <a href="05-retention.html">Data Retention</a>
+  <a href="06-backup.html" class="active">Backup and Restore</a>
+  <a href="07-migration.html">Migration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Backup and Restore</h1>
+    <p class="lead">Octopus memory data spans two storage systems — SQL Server and a vector database. A complete backup strategy must cover both. This page provides recommended backup procedures, restoration steps, and RPO/RTO guidance for each storage type.</p>
+  </div>
+
+  <h2>Backup Strategy Overview</h2>
+  <table>
+    <thead>
+      <tr><th>Storage</th><th>Backup Method</th><th>Recommended Frequency</th><th>Restore Time</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SQL Server (Episodes, Procedures, Agents)</td><td>SQL Server full + differential + log backups</td><td>Full: daily; Differential: 4-hourly; Log: every 15 min</td><td>Minutes to hours depending on size</td></tr>
+      <tr><td>Qdrant vector collections</td><td>Qdrant snapshot API</td><td>Daily snapshot per collection</td><td>Minutes (snapshot restore)</td></tr>
+      <tr><td>PGVector (if used)</td><td>pg_dump or continuous archiving (WAL)</td><td>Daily dump + WAL streaming</td><td>Minutes to hours</td></tr>
+    </tbody>
+  </table>
+
+  <h2>SQL Server Backup</h2>
+  <pre><code>-- Full backup (run daily via SQL Agent job)
+BACKUP DATABASE [OctopusDB]
+TO DISK = 'D:\Backups\OctopusDB_Full_$(date).bak'
+WITH COMPRESSION, CHECKSUM, STATS = 10;
+
+-- Differential backup (run every 4 hours)
+BACKUP DATABASE [OctopusDB]
+TO DISK = 'D:\Backups\OctopusDB_Diff_$(datetime).bak'
+WITH DIFFERENTIAL, COMPRESSION, CHECKSUM;
+
+-- Transaction log backup (run every 15 minutes)
+BACKUP LOG [OctopusDB]
+TO DISK = 'D:\Backups\OctopusDB_Log_$(datetime).trn'
+WITH COMPRESSION, CHECKSUM;
+
+-- Restore procedure:
+RESTORE DATABASE [OctopusDB] FROM DISK = 'OctopusDB_Full.bak' WITH NORECOVERY;
+RESTORE DATABASE [OctopusDB] FROM DISK = 'OctopusDB_Diff.bak' WITH NORECOVERY;
+RESTORE LOG      [OctopusDB] FROM DISK = 'OctopusDB_Log.trn'  WITH RECOVERY;</code></pre>
+
+  <h2>Qdrant Snapshot Backup</h2>
+  <pre><code># Create a snapshot for each agent collection
+# (call via Qdrant REST API or schedule as a daily script)
+
+# List all collections
+GET http://qdrant:6333/collections
+
+# Create snapshot for a specific collection
+POST http://qdrant:6333/collections/agent_{agentId}/snapshots
+
+# Response:
+# {
+#   "result": {
+#     "name": "agent_7f3a8b2c-2025-03-01-08-00-00.snapshot",
+#     "creation_time": "2025-03-01T08:00:00Z",
+#     "size": 45231872
+#   }
+# }
+
+# Download the snapshot file for off-site storage
+GET http://qdrant:6333/collections/agent_{agentId}/snapshots/{snapshotName}
+
+# Restore a snapshot
+POST http://qdrant:6333/collections/agent_{agentId}/snapshots/recover
+{
+  "location": "http://backup-storage/agent_{agentId}.snapshot"
+}</code></pre>
+
+  <h2>Backup Automation Script (PowerShell)</h2>
+  <pre><code># OctopusBackup.ps1 — Run daily via Windows Task Scheduler or Azure Automation
+
+param(
+    [string]$QdrantUrl       = "http://qdrant:6333",
+    [string]$BackupRootPath  = "D:\OctopusBackups",
+    [string]$SqlInstance     = "localhost",
+    [string]$SqlDatabase     = "OctopusDB"
+)
+
+$date = Get-Date -Format "yyyyMMdd-HHmm"
+
+# 1. SQL Full Backup
+$sqlBackupPath = "$BackupRootPath\SQL\${SqlDatabase}_Full_${date}.bak"
+Invoke-Sqlcmd -ServerInstance $SqlInstance -Query @"
+BACKUP DATABASE [$SqlDatabase]
+TO DISK = '$sqlBackupPath'
+WITH COMPRESSION, CHECKSUM
+"@
+
+# 2. Qdrant: enumerate collections and snapshot each
+$collections = (Invoke-RestMethod "$QdrantUrl/collections").result.collections
+foreach ($col in $collections) {
+    $name = $col.name
+    Invoke-RestMethod "$QdrantUrl/collections/$name/snapshots" -Method POST
+    Write-Output "Snapshotted collection: $name"
+}
+
+Write-Output "Backup complete: $date"</code></pre>
+
+  <h2>Disaster Recovery Checklist</h2>
+  <table>
+    <thead>
+      <tr><th>Step</th><th>Action</th><th>Validation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>Restore SQL Server from full + differential + log backups</td><td>Run <code>SELECT COUNT(*) FROM Octopus_Episodes</code> — count matches pre-failure</td></tr>
+      <tr><td>2</td><td>Run EF Core migrations (<code>dotnet ef database update</code>)</td><td>No migration errors; all tables present</td></tr>
+      <tr><td>3</td><td>Restore Qdrant snapshots for each agent collection</td><td>Collection count and point count match snapshot metadata</td></tr>
+      <tr><td>4</td><td>Start Octopus API servers</td><td>Health endpoint returns 200 OK</td></tr>
+      <tr><td>5</td><td>Test agent conversation end-to-end</td><td>Episodic recall works; semantic search returns results</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>SQL and Vector Backup Timing Must Be Consistent</strong>
+    <p>Agent configurations are stored in SQL. If you restore SQL to time T1 but restore vector collections to time T2 (where T2 &gt; T1), newly indexed documents from T1–T2 may reference agents that no longer exist in the restored SQL database. Always restore both stores to the same point-in-time when possible.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-retention.html">&#8592; Data Retention</a>
+    <a href="07-migration.html">Next: Migration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

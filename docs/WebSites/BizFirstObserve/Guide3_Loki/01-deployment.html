@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploying Loki — Loki Log Aggregation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Loki Log Aggregation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Loki Overview</a>
+  <a href="01-deployment.html" class="active">Deploying Loki</a>
+  <a href="02-ingestion.html">Log Ingestion from BizFirstGO</a>
+  <a href="03-label-strategy.html">Label Strategy</a>
+  <a href="04-logql-basics.html">LogQL Basics</a>
+  <a href="05-logql-examples.html">LogQL for BizFirstGO</a>
+  <a href="06-retention.html">Log Retention in Loki</a>
+  <a href="07-alerts.html">Loki Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Deploying Loki</h1>
+    <p class="lead">Loki can be deployed in single-process mode (all components in one binary) or microservices mode (separate binaries for each component). Single-process is right for most BizFirstGO deployments up to ~10GB logs/day.</p>
+  </div>
+
+  <h2>Deployment Mode Comparison</h2>
+  <table>
+    <thead>
+      <tr><th>Mode</th><th>Best For</th><th>Scalability</th><th>Complexity</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Single-process</strong></td><td>Dev, small-to-medium production (&lt;10GB/day)</td><td>Vertical only</td><td>Simple — one config file, one container</td></tr>
+      <tr><td><strong>Simple scalable</strong></td><td>Medium production (10–100GB/day)</td><td>Horizontal read/write separation</td><td>Medium — 3 components</td></tr>
+      <tr><td><strong>Microservices</strong></td><td>Large production (100GB+/day)</td><td>Full horizontal scaling per component</td><td>High — 6+ separate deployments</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Single-Process Loki Configuration</h2>
+  <pre><code># loki-config.yaml — single-process mode (BizFirstGO default)
+auth_enabled: false  # Set to true for multi-tenant mode
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 720h        # 30 days
+  ingestion_rate_mb: 16         # MB/s per tenant
+  ingestion_burst_size_mb: 32
+  max_streams_per_user: 10000
+  max_label_names_per_series: 15
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  retention_delete_delay: 2h
+  compaction_interval: 10m</code></pre>
+
+  <h2>Production Configuration with S3 Storage</h2>
+  <pre><code># loki-config.yaml — production with S3 backend
+auth_enabled: true  # Enable multi-tenancy (X-Scope-OrgID header)
+
+common:
+  path_prefix: /loki
+  storage:
+    s3:
+      endpoint: s3.us-east-1.amazonaws.com
+      region: us-east-1
+      bucketnames: my-bizfirst-loki-bucket
+      access_key_id: "${AWS_ACCESS_KEY_ID}"
+      secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+  replication_factor: 1
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: s3
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 720h
+  ingestion_rate_mb: 32
+  max_streams_per_user: 50000
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  compaction_interval: 1h</code></pre>
+
+  <h2>Resource Requirements</h2>
+  <table>
+    <thead>
+      <tr><th>Log Volume</th><th>CPU</th><th>RAM</th><th>Local Disk (WAL)</th><th>Object Storage</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>&lt;1 GB/day</td><td>0.5 vCPU</td><td>512 MB</td><td>5 GB</td><td>30 GB/month (30-day retention)</td></tr>
+      <tr><td>1–10 GB/day</td><td>1–2 vCPU</td><td>2–4 GB</td><td>20 GB</td><td>300 GB/month</td></tr>
+      <tr><td>10–100 GB/day</td><td>4–8 vCPU</td><td>8–16 GB</td><td>100 GB SSD</td><td>3 TB/month</td></tr>
+      <tr><td>100+ GB/day</td><td>Microservices mode</td><td>Per-component sizing</td><td>Per-component</td><td>30+ TB/month</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Enable auth_enabled for Multi-Tenant Deployments</strong>
+    <p>If your BizFirstGO deployment serves multiple tenants, set <code>auth_enabled: true</code>. The OTel Collector must include the <code>X-Scope-OrgID: {tenant_id}</code> header when pushing logs to Loki. Without this header, all logs from all tenants are mixed in the default tenant — making it impossible to enforce tenant isolation in log queries.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Loki Overview</a>
+    <a href="02-ingestion.html">Next: Log Ingestion from BizFirstGO &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

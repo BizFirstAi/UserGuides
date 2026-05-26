@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CapabilityRegistry — Guide35_NodeCapabilitiesOverview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Capabilities</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-capability-model.html"><i class="fa-solid fa-cubes"></i> Capability Model</a>
+  <a href="02-declaring.html"><i class="fa-solid fa-code"></i> Declaring Capabilities</a>
+  <a href="03-capability-registry.html" class="active"><i class="fa-solid fa-list-check"></i> CapabilityRegistry</a>
+  <a href="04-palette-integration.html"><i class="fa-solid fa-palette"></i> Palette Integration</a>
+  <a href="05-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <a href="06-capability-map.html"><i class="fa-solid fa-map"></i> Capability Type Map</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>CapabilityRegistry</h1>
+    <p class="lead">The central store of all registered capabilities — how it is populated at startup, query methods, and how downstream systems (palette, security) use it.</p>
+  </div>
+
+  <h2>Registry Interface</h2>
+  <pre><code class="language-csharp">// ProcessEngine/Capabilities/CapabilityRegistry.cs
+public interface ICapabilityRegistry
+{
+    // Get all executor types for a given capability type
+    IReadOnlyList&lt;Type&gt; GetByType(CapabilityType type);
+
+    // Get the capability type for a given executor type
+    CapabilityType? GetByExecutorType(Type executorType);
+
+    // Get all registered capability types
+    IReadOnlyList&lt;CapabilityType&gt; GetAllTypes();
+
+    // Check if a node type string has a registered capability
+    bool HasCapability(string nodeType);
+
+    // Get capability metadata for a node type
+    CapabilityMetadata? GetMetadata(CapabilityType type);
+}</code></pre>
+
+  <h2>Concrete Implementation</h2>
+  <pre><code class="language-csharp">public class CapabilityRegistry : ICapabilityRegistry
+{
+    private readonly Dictionary&lt;CapabilityType, List&lt;Type&gt;&gt; _byType = new();
+    private readonly Dictionary&lt;Type, CapabilityType&gt; _byExecutorType = new();
+    private readonly Dictionary&lt;CapabilityType, CapabilityMetadata&gt; _metadata = new();
+
+    public CapabilityRegistry(IEnumerable&lt;INodeCapability&gt; capabilities)
+    {
+        // Initialize capability type lists
+        foreach (CapabilityType ct in Enum.GetValues&lt;CapabilityType&gt;())
+            _byType[ct] = new List&lt;Type&gt;();
+
+        // Store metadata from each capability implementation
+        foreach (var cap in capabilities)
+            _metadata[cap.Type] = cap.Metadata;
+    }
+
+    public IReadOnlyList&lt;Type&gt; GetByType(CapabilityType type)
+        => _byType.TryGetValue(type, out var list) ? list : Array.Empty&lt;Type&gt;();
+
+    public CapabilityType? GetByExecutorType(Type executorType)
+        => _byExecutorType.TryGetValue(executorType, out var ct) ? ct : null;
+}</code></pre>
+
+  <h2>API Endpoint for the Designer</h2>
+  <p>The backend exposes a capability metadata endpoint that the Flow Studio designer calls to populate the node palette:</p>
+  <pre><code class="language-http">GET /api/flow-studio/capabilities
+Authorization: Bearer {token}
+
+Response:
+[
+  {
+    "type": "Webhook",
+    "displayName": "Webhooks",
+    "description": "HTTP event triggers and outbound calls",
+    "iconClass": "fa-solid fa-webhook",
+    "nodeTypes": ["WebhookTrigger", "WebhookCall"]
+  },
+  {
+    "type": "Messaging",
+    "displayName": "Messaging",
+    "description": "Send messages via Slack, Email, SMS, Push",
+    "iconClass": "fa-solid fa-envelope",
+    "nodeTypes": ["SlackMessage", "Email", "SMS", "PushNotification"]
+  }
+  // ... 10 more
+]</code></pre>
+
+  <h2>TypeScript Registry Client</h2>
+  <pre><code class="language-typescript">// packages/flow-studio-api/src/types/capability.types.ts
+export interface CapabilityInfo {
+  type: string;
+  displayName: string;
+  description: string;
+  iconClass: string;
+  nodeTypes: string[];
+}
+
+// packages/flow-studio-api/src/clients/capabilityApiClient.ts
+export async function fetchCapabilities(): Promise&lt;CapabilityInfo[]&gt; {
+  const res = await apiClient.get('/api/flow-studio/capabilities');
+  return res.data;
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="02-declaring.html">&#8592; Declaring Capabilities</a>
+    <a href="04-palette-integration.html">Next: Palette Integration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

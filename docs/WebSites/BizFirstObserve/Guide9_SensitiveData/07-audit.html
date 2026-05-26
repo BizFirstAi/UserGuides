@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Observability Audit Log — Sensitive Data Handling | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Sensitive Data Handling</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Sensitive Data Overview</a>
+  <a href="01-log-sanitization.html">Log Sanitization in BizFirstGO</a>
+  <a href="02-otel-redaction.html">OTel Collector Redaction</a>
+  <a href="03-label-hygiene.html">Label Hygiene</a>
+  <a href="04-trace-attributes.html">Trace Attribute Filtering</a>
+  <a href="05-loki-access.html">Loki Access Controls</a>
+  <a href="06-gdpr-deletion.html">GDPR Deletion</a>
+  <a href="07-audit.html" class="active">Observability Audit Log</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Observability of the Observability System</h1>
+    <p class="lead">The observability system itself needs oversight — who is querying which logs, who changed an alert rule, who downloaded a dashboard. Grafana's audit log (available in Grafana Enterprise) and Loki's access logs provide this layer of meta-observability.</p>
+  </div>
+
+  <h2>What to Audit in an Observability System</h2>
+  <table>
+    <thead>
+      <tr><th>Event Type</th><th>Why It Matters</th><th>Where Logged</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Grafana login</td><td>Detect unauthorized access attempts</td><td>Grafana audit log / server log</td></tr>
+      <tr><td>Dashboard viewed</td><td>Track which users viewed sensitive dashboards</td><td>Grafana audit log (Enterprise)</td></tr>
+      <tr><td>Explore query executed</td><td>Detect ad-hoc queries that bypass dashboard controls</td><td>Grafana audit log (Enterprise)</td></tr>
+      <tr><td>Alert rule created/modified</td><td>Prevent unauthorized alert suppression</td><td>Grafana audit log / git history</td></tr>
+      <tr><td>Silence created</td><td>Track who silenced which alerts and when</td><td>Grafana alerting UI + audit log</td></tr>
+      <tr><td>Data source modified</td><td>Detect unauthorized data source changes (e.g., pointing to wrong Loki)</td><td>Grafana audit log</td></tr>
+      <tr><td>Loki delete API called</td><td>Track all log deletion requests (GDPR compliance)</td><td>Loki server logs</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Grafana Server Logs (OSS)</h2>
+  <pre><code># Grafana OSS logs basic events to its server log:
+# docker compose logs grafana
+
+# Key log patterns to monitor:
+# Login events:
+grep "Successful Login" grafana.log
+# Format: {"level":"info","msg":"Successful Login","User":"admin@localhost","IP":"192.168.1.100"}
+
+# Failed login attempts (potential brute force):
+grep "Login Failed" grafana.log | wc -l
+
+# Alert rule changes:
+grep "alert rule" grafana.log
+
+# Forward Grafana logs to Loki for searchability:
+# (The OTel Collector can scrape Grafana's log file or receive via Syslog)</code></pre>
+
+  <h2>Grafana Audit Log (Enterprise)</h2>
+  <pre><code># grafana.ini — enable audit logging (Grafana Enterprise)
+[auditing]
+enabled = true
+loggers = loki      # Send audit events to Loki for searchability
+
+[auditing.loki]
+url = http://loki:3100
+basicAuthUser = ""
+basicAuthPassword = ""
+
+# Audit events captured with Enterprise auditing:
+# - HTTP request audit (all API calls with user, action, resource)
+# - Query audit (every Explore query with the full LogQL/PromQL/TraceQL)
+# - Dashboard view audit
+# - Admin action audit
+
+# Query audit log in Loki:
+{job="grafana-audit"} | json | action = "query" | user_email != ""</code></pre>
+
+  <h2>Monitoring the OTel Collector Pipeline</h2>
+  <pre><code># The OTel Collector exposes its own metrics — monitor for pipeline health:
+# In Prometheus, scrape the collector's metrics endpoint (port 8888):
+scrape_configs:
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8888']
+
+# Key metrics to alert on:
+# Drops — telemetry being dropped before reaching backends:
+otelcol_processor_dropped_spans_total > 0
+otelcol_exporter_send_failed_spans_total > 0
+
+# Alert rule for collector drops:
+alert: OtelCollectorDropping
+expr: increase(otelcol_processor_dropped_spans_total[5m]) > 0
+for: 1m
+annotations:
+  summary: "OTel Collector is dropping telemetry — check exporter connectivity"</code></pre>
+
+  <div class="callout info">
+    <strong>Treat the Audit Log as Critical Infrastructure</strong>
+    <p>The Grafana audit log and Loki access logs must be stored separately from the operational logs they are auditing — ideally in a write-once, tamper-evident storage. If an attacker compromises the observability system, they should not be able to erase evidence of their access from the audit log. Consider routing audit logs to a separate, append-only S3 bucket with object lock enabled.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-gdpr-deletion.html">&#8592; GDPR Deletion</a>
+    <a href="../Guide10_UsingTools/index.html">Next Guide: Using the Tools &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

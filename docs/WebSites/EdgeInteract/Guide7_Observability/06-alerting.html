@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alerting — Observability | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.alert-rule{background:var(--surface);border-left:4px solid var(--border);border-radius:0 8px 8px 0;padding:14px 18px;margin:14px 0;}
+.alert-rule.warning{border-left-color:var(--warning);}
+.alert-rule.critical{border-left-color:var(--danger);}
+.alert-rule.info{border-left-color:var(--accent);}
+.alert-rule h4{margin:0 0 6px;font-size:0.88rem;color:var(--text);}
+.alert-rule .ar-meta{display:flex;gap:16px;font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;}
+.alert-rule code{font-size:0.78rem;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Observability</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observability Overview</a>
+  <a href="01-interaction-monitor.html">InteractionMonitor Component</a>
+  <a href="02-response-time.html">Response Time Tracking</a>
+  <a href="03-completion-rate.html">Completion Rate</a>
+  <a href="04-audit-log.html">Interaction Audit Log</a>
+  <a href="05-metrics-emission.html">Metrics to BizFirst Observe</a>
+  <a href="06-alerting.html" class="active">Alerting</a>
+  <a href="07-debugging.html">Debugging Stuck Interactions</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Alerting</h1>
+    <p class="lead">EdgeInteract alert rules are configured in BizFirst Observe (Grafana AlertManager) using Prometheus expressions on the metrics emitted by <code>MetricsInteractionHook</code>. This page defines the recommended alert rules, their thresholds, and alert routing configuration.</p>
+  </div>
+
+  <h2>Recommended Alert Rules</h2>
+
+  <div class="alert-rule critical">
+    <h4>HighInteractionTimeoutRate</h4>
+    <div class="ar-meta">
+      <span>Severity: critical</span>
+      <span>For: 5m</span>
+    </div>
+    <pre><code">expr: |
+  100 * (
+    sum(rate(interaction_timeout_total[5m]))
+    /
+    sum(rate(interaction_published_total[5m]))
+  ) > 15
+annotations:
+  summary: "Interaction timeout rate critically high ({{ $value | printf \"%.1f\" }}%)"
+  description: "More than 15% of interactions are timing out. This indicates a delivery failure or systemic user absence."
+</code></pre>
+  </div>
+
+  <div class="alert-rule warning">
+    <h4>ElevatedInteractionTimeoutRate</h4>
+    <div class="ar-meta">
+      <span>Severity: warning</span>
+      <span>For: 5m</span>
+    </div>
+    <pre><code">expr: |
+  100 * (
+    sum(rate(interaction_timeout_total[5m]))
+    /
+    sum(rate(interaction_published_total[5m]))
+  ) > 5
+annotations:
+  summary: "Interaction timeout rate elevated ({{ $value | printf \"%.1f\" }}%)"
+  description: "More than 5% of interactions are timing out. Monitor for further increase."
+</code></pre>
+  </div>
+
+  <div class="alert-rule critical">
+    <h4>SlowApprovalResponseTime</h4>
+    <div class="ar-meta">
+      <span>Severity: warning</span>
+      <span>For: 15m</span>
+    </div>
+    <pre><code">expr: |
+  histogram_quantile(0.95,
+    sum(rate(interaction_response_time_ms_bucket{type="approval"}[15m]))
+    by (le)
+  ) > 14400000  # 4 hours in ms
+annotations:
+  summary: "Approval response P95 exceeds 4 hours"
+  description: "95% of approvals are taking longer than 4 hours. Review pending approvals and escalation policy."
+</code></pre>
+  </div>
+
+  <div class="alert-rule warning">
+    <h4>GrowingInFlightInteractions</h4>
+    <div class="ar-meta">
+      <span>Severity: warning</span>
+      <span>For: 10m</span>
+    </div>
+    <pre><code">expr: |
+  sum(interaction_in_flight) > 100
+annotations:
+  summary: "More than 100 interactions are currently in-flight"
+  description: "A large number of interactions are pending without response. Check InteractionMonitor and delivery pipeline."
+</code></pre>
+  </div>
+
+  <div class="alert-rule info">
+    <h4>HighBlockedInteractionRate</h4>
+    <div class="ar-meta">
+      <span>Severity: warning</span>
+      <span>For: 5m</span>
+    </div>
+    <pre><code">expr: |
+  100 * (
+    sum(rate(interaction_blocked_total[5m]))
+    /
+    (sum(rate(interaction_published_total[5m])) + sum(rate(interaction_blocked_total[5m])))
+  ) > 10
+labels:
+  team: platform
+annotations:
+  summary: "More than 10% of interactions are being blocked by pre-send hooks"
+  description: "Review rate limit or pre-send hook configuration. Hook blocking by: {{ $labels.blocked_by }}"
+</code></pre>
+  </div>
+
+  <h2>Alert Rules YAML — Full File</h2>
+  <pre><code">groups:
+  - name: edge-interact
+    rules:
+      - alert: HighInteractionTimeoutRate
+        expr: |
+          100 * (sum(rate(interaction_timeout_total[5m])) / sum(rate(interaction_published_total[5m]))) > 15
+        for: 5m
+        labels: { severity: critical, team: platform }
+        annotations:
+          summary: "Interaction timeout rate critically high"
+
+      - alert: ElevatedInteractionTimeoutRate
+        expr: |
+          100 * (sum(rate(interaction_timeout_total[5m])) / sum(rate(interaction_published_total[5m]))) > 5
+        for: 5m
+        labels: { severity: warning, team: platform }
+        annotations:
+          summary: "Interaction timeout rate elevated"
+
+      - alert: SlowApprovalResponseTime
+        expr: |
+          histogram_quantile(0.95, sum(rate(interaction_response_time_ms_bucket{type="approval"}[15m])) by (le)) > 14400000
+        for: 15m
+        labels: { severity: warning, team: platform }
+        annotations:
+          summary: "Approval P95 response time exceeds 4h"
+
+      - alert: GrowingInFlightInteractions
+        expr: sum(interaction_in_flight) > 100
+        for: 10m
+        labels: { severity: warning, team: platform }
+        annotations:
+          summary: "More than 100 in-flight interactions"
+
+      - alert: HighBlockedInteractionRate
+        expr: |
+          100 * (sum(rate(interaction_blocked_total[5m])) / (sum(rate(interaction_published_total[5m])) + sum(rate(interaction_blocked_total[5m])))) > 10
+        for: 5m
+        labels: { severity: warning, team: platform }
+        annotations:
+          summary: "High interaction block rate"
+</code></pre>
+
+  <h2>Alert Routing</h2>
+  <p>In AlertManager, route EdgeInteract alerts to the platform team Slack channel and PagerDuty for critical severity:</p>
+  <pre><code"># alertmanager.yml
+route:
+  routes:
+    - match:
+        team: platform
+        severity: critical
+      receiver: pagerduty-platform
+    - match:
+        team: platform
+      receiver: slack-platform
+
+receivers:
+  - name: pagerduty-platform
+    pagerduty_configs:
+      - routing_key: "&lt;PAGERDUTY_KEY&gt;"
+        description: "{{ .CommonAnnotations.summary }}"
+
+  - name: slack-platform
+    slack_configs:
+      - api_url: "&lt;SLACK_WEBHOOK_URL&gt;"
+        channel: "#platform-alerts"
+        text: "{{ .CommonAnnotations.summary }}\n{{ .CommonAnnotations.description }}"
+</code></pre>
+
+  <div class="callout warning">
+    <strong>Alert Requires MetricsInteractionHook</strong>
+    None of these alerts will fire if <code>MetricsInteractionHook</code> is not registered. Verify with <code>curl /metrics | grep interaction_</code> before configuring alert rules in production.
+  </div>
+
+  <h2>Alert Threshold Reference</h2>
+  <table>
+    <thead><tr><th>Alert</th><th>Threshold</th><th>Window</th><th>Severity</th></tr></thead>
+    <tbody>
+      <tr><td>Timeout rate</td><td>&gt; 5%</td><td>5m</td><td>Warning</td></tr>
+      <tr><td>Timeout rate</td><td>&gt; 15%</td><td>5m</td><td>Critical</td></tr>
+      <tr><td>Approval P95</td><td>&gt; 4h</td><td>15m</td><td>Warning</td></tr>
+      <tr><td>In-flight count</td><td>&gt; 100</td><td>10m</td><td>Warning</td></tr>
+      <tr><td>Blocked rate</td><td>&gt; 10%</td><td>5m</td><td>Warning</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="05-metrics-emission.html">&#8592; Metrics to BizFirst Observe</a>
+    <a href="07-debugging.html">Next: Debugging Stuck Interactions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

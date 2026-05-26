@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowObserverPanelEngine — Observer Panel | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Observer Panel</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observer Panel Overview</a>
+  <a href="01-tab-system.html">Tab System</a>
+  <a href="02-engine.html" class="active">FlowObserverPanelEngine</a>
+  <a href="03-panel-store.html">Observer Panel Store</a>
+  <a href="04-signalr.html">Observer SignalR Hook</a>
+  <a href="05-built-in-tabs.html">Built-In Tabs Summary</a>
+  <a href="06-custom-tabs.html">Adding Custom Tabs</a>
+  <a href="07-panel-constraints.html">Panel Sizing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>FlowObserverPanelEngine</h1>
+    <p class="lead"><code>FlowObserverPanelEngine</code> is the central coordinator of the Observer Panel. It manages tab registration, routes incoming execution events to the correct tabs, and exposes the panel lifecycle API.</p>
+  </div>
+
+  <h2>Engine API</h2>
+  <pre><code>// flow-observer-core/src/engine/FlowObserverPanelEngine.ts
+export class FlowObserverPanelEngine {
+  // Register a tab — can be called before or after panel mount
+  registerTab(descriptor: TabDescriptor): void;
+
+  // Unregister a tab by ID
+  unregisterTab(tabId: string): void;
+
+  // Switch the active tab
+  activateTab(tabId: string): void;
+
+  // Push a raw execution event — distributed to all tabs that care
+  pushExecutionEvent(event: ExecutionEvent): void;
+
+  // Set a badge count on a tab
+  setTabBadge(tabId: string, count: number | null): void;
+
+  // Clear all execution data (called when a new execution starts)
+  clear(): void;
+
+  // Open / close the panel
+  open(): void;
+  close(): void;
+}</code></pre>
+
+  <h2>Event Routing</h2>
+  <p><code>pushExecutionEvent()</code> is the central intake for all SignalR events. Internally the engine dispatches each event to a set of registered handlers. Tabs declare interest by providing an <code>onEvent</code> handler in their <code>TabDescriptor</code>:</p>
+  <pre><code>// Extended TabDescriptor with event handler (internal)
+export interface TabDescriptor {
+  // ...
+  onEvent?: (event: ExecutionEvent) => void;
+}
+
+// Example: LogsTab registers interest in NodeLogEmitted events
+engine.registerTab({
+  id: 'logs',
+  label: 'Logs',
+  component: ExecutionLogsTabContent,
+  order: 30,
+  onEvent: (event) => {
+    if (event.type === 'NodeLogEmitted') {
+      logsStore.appendLog(event);
+    }
+  }
+});</code></pre>
+
+  <h2>Lifecycle: clear()</h2>
+  <p><code>engine.clear()</code> is called when a new execution begins. It:</p>
+  <ul>
+    <li>Resets the log buffer in <code>flowObserverPanelStore</code></li>
+    <li>Clears all tab badges</li>
+    <li>Resets node status entries in the Node List tab</li>
+    <li>Switches the active tab back to <code>execution-status</code></li>
+    <li>Hides the Log Detail tab</li>
+  </ul>
+
+  <h2>Using the Engine in React</h2>
+  <pre><code>// Access the singleton engine via context hook
+import { useFlowObserverPanelEngine } from 'flow-observer-core';
+
+function MyComponent() {
+  const engine = useFlowObserverPanelEngine();
+
+  const handleFocus = () => {
+    engine.activateTab('node-inspector');
+  };
+
+  return &lt;button onClick={handleFocus}&gt;Inspect Selected Node&lt;/button&gt;;
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Singleton per Panel Instance</strong>
+    Each <code>FlowObserverPanel</code> mount creates its own engine instance, stored in a React context. If you embed two Observer Panels on the same page (unusual but supported), they operate independently with separate engines and stores.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-tab-system.html">&#8592; Tab System</a>
+    <a href="03-panel-store.html">Next: Observer Panel Store &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Outgoing Hook — Hooks | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Hooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Hooks Overview</a>
+  <a href="01-normalization-hook.html">NormalizationHook</a>
+  <a href="02-pre-pipeline-hook.html">Pre-Pipeline Hook</a>
+  <a href="03-post-pipeline-hook.html">Post-Pipeline Hook</a>
+  <a href="04-incoming-hook.html">Incoming Hook</a>
+  <a href="05-outgoing-hook.html" class="active">Outgoing Hook</a>
+  <a href="06-activity-logger.html">HookActivityLogger</a>
+  <a href="07-custom-hook.html">Implementing a Custom Hook</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Outgoing Hook</h1>
+    <p class="lead">Outgoing hooks process messages as they leave the application toward the transport — the right place for signing, encryption, auth header injection, and outbound logging.</p>
+  </div>
+
+  <h2>Outgoing Pipeline Trigger</h2>
+  <p>The outgoing pipeline runs when <code>edgeStream.send(serverId, topic, body)</code> or <code>server.send(topic, body)</code> is called. The message travels through <code>server.outgoingPipeline</code> before being serialized and handed to the transport.</p>
+
+  <h2>Auth Token Injection Hook</h2>
+  <pre><code>export class AuthHeaderHook extends BaseHook {
+  readonly name = 'AuthHeaderHook';
+  readonly priority = 50;
+
+  constructor(private authService: AuthService) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const token = await this.authService.getToken();
+    context.envelope.headers = {
+      ...context.envelope.headers,
+      'Authorization': `Bearer ${token}`,
+      'X-Tenant-Id': context.metadata.tenantId as string || '',
+    };
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Message Signing Hook</h2>
+  <pre><code>export class HmacSignatureHook extends BaseHook {
+  readonly name = 'HmacSignatureHook';
+  readonly priority = 60;
+
+  constructor(private secretKey: string) { super(); }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const payload = JSON.stringify(context.body);
+    const keyData = new TextEncoder().encode(this.secretKey);
+    const msgData = new TextEncoder().encode(payload);
+
+    const key = await crypto.subtle.importKey(
+      'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    );
+    const signature = await crypto.subtle.sign('HMAC', key, msgData);
+    const sigHex = Array.from(new Uint8Array(signature))
+      .map(b =&gt; b.toString(16).padStart(2, '0')).join('');
+
+    context.envelope.headers = {
+      ...context.envelope.headers,
+      'X-EdgeStream-Signature': sigHex,
+    };
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Outbound Rate Limit Hook</h2>
+  <pre><code>export class OutboundRateLimitHook extends BaseHook {
+  readonly name = 'OutboundRateLimitHook';
+  readonly priority = 40;
+
+  private queue: Array&lt;() =&gt; void&gt; = [];
+  private lastSent = 0;
+  private readonly minIntervalMs: number;
+
+  constructor(options: { maxPerSecond: number }) {
+    super();
+    this.minIntervalMs = 1000 / options.maxPerSecond;
+  }
+
+  async execute(context: IPipelineContext): Promise&lt;HookResult&gt; {
+    const now = Date.now();
+    const wait = this.minIntervalMs - (now - this.lastSent);
+
+    if (wait &gt; 0) {
+      await new Promise(resolve =&gt; setTimeout(resolve, wait));
+    }
+
+    this.lastSent = Date.now();
+    return { continue: true };
+  }
+}</code></pre>
+
+  <h2>Registration on Outgoing Pipeline</h2>
+  <pre><code>const server = edgeStream.server('bas')!;
+
+server.outgoingPipeline.addHook(new OutboundRateLimitHook({ maxPerSecond: 50 }));
+server.outgoingPipeline.addHook(new AuthHeaderHook(authService));
+server.outgoingPipeline.addHook(new HmacSignatureHook(process.env.HMAC_SECRET!));</code></pre>
+
+  <div class="page-nav">
+    <a href="04-incoming-hook.html">&#8592; Incoming Hook</a>
+    <a href="06-activity-logger.html">Next: HookActivityLogger &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

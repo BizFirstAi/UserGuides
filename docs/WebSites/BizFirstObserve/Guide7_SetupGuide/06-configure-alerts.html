@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Configure Alerts — Setup Guide | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Setup Guide</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Setup Overview</a>
+  <a href="01-prerequisites.html">Prerequisites</a>
+  <a href="02-install-stack.html">Install the Stack</a>
+  <a href="03-configure-services.html">Configure BizFirstGO Services</a>
+  <a href="04-verify-ingestion.html">Verify Ingestion</a>
+  <a href="05-import-dashboards.html">Import Pre-Built Dashboards</a>
+  <a href="06-configure-alerts.html" class="active">Configure Alerts</a>
+  <a href="07-validation-checklist.html">Validation Checklist</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Configure Alerts</h1>
+    <p class="lead">Alert configuration requires two things: a contact point (where to send notifications) and alert rules (what conditions trigger notifications). BizFirst Observe ships with pre-built alert rules for the most critical BizFirstGO conditions. Set up at least one contact point before going to production.</p>
+  </div>
+
+  <h2>Step 1: Add a Contact Point</h2>
+  <p>Navigate to Alerting → Contact points → Add contact point in Grafana. The two most common options for BizFirstGO deployments:</p>
+
+  <h3>Option A: Slack</h3>
+  <pre><code># 1. Create a Slack App and Incoming Webhook URL:
+#    https://api.slack.com/apps → Create App → Incoming Webhooks → Activate → Add Webhook
+
+# 2. In Grafana: Alerting → Contact points → Add contact point
+#    Name: slack-platform
+#    Type: Slack
+#    Webhook URL: https://hooks.slack.com/services/T.../B.../...
+#    Channel: #platform-alerts
+#    Title: {{ if eq .Status "firing" }}ALERT{{ else }}RESOLVED{{ end }}: {{ .CommonLabels.alertname }}
+#    Message:
+#    {{ range .Alerts }}
+#    Summary: {{ .Annotations.summary }}
+#    Severity: {{ .Labels.severity }}
+#    {{ end }}
+
+# 3. Click "Test" to send a test notification to Slack
+# 4. Click "Save contact point"</code></pre>
+
+  <h3>Option B: Email</h3>
+  <pre><code># Configure SMTP in grafana.ini first:
+[smtp]
+enabled = true
+host = smtp.bizfirstai.com:587
+user = grafana-alerts@bizfirstai.com
+password = ${SMTP_PASSWORD}
+from_address = grafana-alerts@bizfirstai.com
+from_name = BizFirst Observe
+
+# Then in Grafana: Alerting → Contact points → Add contact point
+#    Name: email-platform
+#    Type: Email
+#    Addresses: platform@bizfirstai.com; oncall@bizfirstai.com</code></pre>
+
+  <h2>Step 2: Import Alert Rules</h2>
+  <p>BizFirst Observe ships with pre-built alert rules as a Grafana provisioning YAML. Import them via the provisioning directory or via the Grafana API:</p>
+  <pre><code># The alert rules file is at:
+# grafana-provisioning/alerting/alert-rules.yaml
+
+# If provisioning is configured (recommended):
+# Copy alert-rules.yaml to the grafana provisioning alerting directory
+# Grafana auto-loads it within 30 seconds
+
+# Or import via Grafana API:
+curl -X POST http://admin:admin@localhost:3000/api/ruler/grafana/api/v1/rules/BizFirstGO \
+  -H "Content-Type: application/yaml" \
+  --data-binary @alert-rules.yaml</code></pre>
+
+  <h2>Pre-Built Alert Rules Included</h2>
+  <table>
+    <thead>
+      <tr><th>Alert Name</th><th>Condition</th><th>Severity</th><th>For Duration</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>WorkflowErrorRateHigh</td><td>Error rate &gt; 5% for 5 minutes</td><td>critical</td><td>5m</td></tr>
+      <tr><td>WorkflowErrorRateElevated</td><td>Error rate &gt; 1% for 10 minutes</td><td>warning</td><td>10m</td></tr>
+      <tr><td>WorkflowP99LatencyHigh</td><td>P99 latency &gt; 30 seconds</td><td>warning</td><td>5m</td></tr>
+      <tr><td>HILBacklogHigh</td><td>HIL pending count &gt; 100 tasks</td><td>warning</td><td>15m</td></tr>
+      <tr><td>HILSLABreached</td><td>HIL overdue count &gt; 0</td><td>critical</td><td>1m</td></tr>
+      <tr><td>ProcessEngineDown</td><td>No metrics from processengine for 2 minutes</td><td>critical</td><td>2m</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Step 3: Configure Notification Policy</h2>
+  <pre><code># Set the default notification routing in Grafana:
+# Alerting → Notification policies
+
+# Default policy (catches all alerts not matched by specific routes):
+Default receiver: email-platform
+Group by: [alertname, team]
+Group wait: 30s
+Group interval: 5m
+Repeat interval: 4h
+
+# Add a specific route for critical alerts → PagerDuty (if configured):
+# Click "Add nested policy"
+Matcher: severity = critical
+Receiver: pagerduty-critical
+Continue: false  # Don't also send to default</code></pre>
+
+  <h2>Step 4: Test the Alert Pipeline</h2>
+  <pre><code># Send a test alert to verify the full pipeline (contact point → notification):
+# In Grafana: Alerting → Contact points → find your contact point → "Send test"
+# Verify the test message arrives in Slack/email.
+
+# Temporarily lower an alert threshold to trigger a real alert:
+# Example: Lower WorkflowErrorRateHigh threshold from 5% to 0.001%
+# Run a test execution → verify alert fires → verify Slack message
+# Restore the original threshold immediately after testing.
+
+# Check Grafana alert state:
+curl -s http://admin:admin@localhost:3000/api/alertmanager/grafana/api/v2/alerts \
+  | jq '.[].labels.alertname'</code></pre>
+
+  <div class="callout warning">
+    <strong>Configure At Least One Contact Point Before Production</strong>
+    <p>Going to production without a working alert contact point means critical alerts (like ProcessEngineDown or HILSLABreached) fire silently in Grafana with no notification. Always test the full alert pipeline — including a real notification delivery — before the go-live date.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="05-import-dashboards.html">&#8592; Import Pre-Built Dashboards</a>
+    <a href="07-validation-checklist.html">Next: Validation Checklist &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

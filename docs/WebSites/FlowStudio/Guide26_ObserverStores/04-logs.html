@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log Entries — Observer Stores | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Observer Stores</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-panel-store.html">flowObserverPanelStore</a>
+  <a href="02-execution-store.html">executionStore</a>
+  <a href="03-node-statuses.html">Node Statuses</a>
+  <a href="04-logs.html" class="active">Log Entries</a>
+  <a href="05-node-inspector.html">Node Inspector Data</a>
+  <a href="06-subscribing.html">Subscribing in Tab Components</a>
+  <a href="07-resetting.html">Resetting for New Execution</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Log Entries in executionStore</h1>
+    <p class="lead">executionStore.logs is a growing array of LogEntry objects appended by SignalR events during execution. appendLog is idempotent — duplicate logIds are silently discarded. The Logs tab reads this array through a virtual scroller.</p>
+  </div>
+
+  <h2>LogEntry Schema</h2>
+  <pre><code">// logEntry.types.ts
+export interface LogEntry {
+    logId     : string;              // Unique ID — used for deduplication
+    nodeId    : string;              // Source node
+    level     : LogLevel;            // 'Trace' | 'Debug' | 'Info' | 'Warning' | 'Error'
+    message   : string;
+    timestamp : string;              // ISO 8601
+    fields    : Record&lt;string, unknown&gt;; // Structured log fields from INodeLogger
+    traceId  ?: string;              // OTel TraceId — links to distributed trace
+}</code></pre>
+
+  <h2>appendLog — Idempotent Append</h2>
+  <pre><code">appendLog: (entry: LogEntry) => set(state => {
+    // Deduplication: skip if logId already exists
+    if (state.logs.some(l => l.logId === entry.logId)) {
+        return state;  // No change
+    }
+    return { logs: [...state.logs, entry] };
+});
+
+// Called by useExecutionSignalR on NodeLogEmitted events
+connection.on("NodeLogEmitted", (entry: LogEntry) => {
+    useExecutionStore.getState().appendLog(entry);
+});</code></pre>
+
+  <h2>Log Level Color Mapping</h2>
+  <table>
+    <thead><tr><th>Level</th><th>Color</th><th>When to Expect It</th></tr></thead>
+    <tbody>
+      <tr><td>Trace</td><td>Grey (dim)</td><td>Very detailed diagnostic entries — disabled in production by default</td></tr>
+      <tr><td>Debug</td><td>Grey</td><td>Diagnostic info for development</td></tr>
+      <tr><td>Info</td><td>White</td><td>Normal operational messages</td></tr>
+      <tr><td>Warning</td><td>Yellow</td><td>Unexpected but recoverable conditions</td></tr>
+      <tr><td>Error</td><td>Red</td><td>Node threw an exception or returned a failure</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Log Array Growth</h2>
+  <p>The logs array grows unbounded during a run. For long-running workflows with verbose logging, the array can reach tens of thousands of entries. The Logs tab handles this with virtual scrolling — only visible rows are rendered. The store does not cap or truncate the array.</p>
+
+  <div class="callout info">
+    <strong>Historical logs come from the REST API, not SignalR.</strong> When viewing a past execution, logs are fetched via <code>GET /api/executions/{id}/logs</code> (paginated) and batch-appended with <code>appendLog</code>. The display path is identical — same array, same component.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-node-statuses.html">&#8592; Node Statuses</a>
+    <a href="05-node-inspector.html">Next: Node Inspector Data &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

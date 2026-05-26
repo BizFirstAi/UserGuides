@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Handling Responses — Interaction Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>Interaction Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-receiving-interactions.html">Receiving Interaction Requests</a>
+  <a href="02-callback-subscription.html">Callback Subscription</a>
+  <a href="03-response-handling.html" class="active">Handling Responses</a>
+  <a href="04-timeout-handling.html">Handling Timeout</a>
+  <a href="05-multi-user.html">Multi-User Interactions</a>
+  <a href="06-cleanup.html">Subscription Cleanup</a>
+  <a href="07-react-integration.html">React Integration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Handling Responses</h1>
+    <p class="lead">When <code>PublishAndWaitAsync()</code> resolves, you receive a typed <code>InteractionResponse</code>. The response contains the outcome, the respondent's user ID, any response data, and timing information. This page shows how to handle the response in your application code.</p>
+  </div>
+
+  <h2>Reading the Response</h2>
+  <pre><code>// C# — server-side response handling
+var response = await _publisher.PublishAndWaitAsync(request, ct);
+
+// response.Outcome contains the type-specific outcome string
+switch (response.Outcome)
+{
+    case "approved":
+        await _workflow.ContinueWithApproval(
+            correlationId: request.CorrelationId,
+            approvedBy: response.RespondedBy,
+            approvedAt: response.Timestamp,
+            ct: ct);
+        break;
+
+    case "rejected":
+        var comment = response.Data?["comment"]?.ToString();
+        await _workflow.ContinueWithRejection(
+            correlationId: request.CorrelationId,
+            rejectedBy: response.RespondedBy,
+            rejectionReason: comment,
+            ct: ct);
+        break;
+
+    case "abstained":
+        // Escalate to the next approver
+        await _escalation.EscalateAsync(request, ct);
+        break;
+}
+</code></pre>
+
+  <h2>Typed Response Data</h2>
+  <p>For typed response data (e.g., form submission data or selected picker IDs), deserialize <code>response.Data</code>:</p>
+  <pre><code">// Picker response — selectedIds
+if (response.Outcome == "selected")
+{
+    var pickerData = response.Data?.Deserialize&lt;PickerResponseData&gt;();
+    var selectedIds = pickerData?.SelectedIds ?? Array.Empty&lt;string&gt;();
+    await ProcessSelectedOptions(selectedIds, ct);
+}
+
+// Form response — all submitted field values
+if (response.Outcome == "submitted")
+{
+    var formData = response.Data?.Deserialize&lt;Dictionary&lt;string, object&gt;&gt;();
+    await ProcessFormSubmission(formData, ct);
+}
+</code></pre>
+
+  <h2>Response Fields Reference</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>InteractionId</code></td><td>string</td><td>Matches the original request ID</td></tr>
+      <tr><td><code>RespondedBy</code></td><td>string</td><td>User ID of the respondent — important for role-targeted interactions</td></tr>
+      <tr><td><code>Outcome</code></td><td>string</td><td>Type-specific outcome: approved, rejected, confirmed, submitted, selected, acknowledged</td></tr>
+      <tr><td><code>Data</code></td><td>JsonElement?</td><td>Type-specific data; null for simple outcomes</td></tr>
+      <tr><td><code>Timestamp</code></td><td>DateTimeOffset</td><td>When the user responded</td></tr>
+      <tr><td><code>SessionId</code></td><td>string</td><td>EdgeStream session ID of the responding session</td></tr>
+      <tr><td><code>CorrelationId</code></td><td>string?</td><td>Passed through from the request unchanged</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Idempotent Response Processing</h2>
+  <p>In distributed deployments, the same response may occasionally be delivered twice (EdgeStream at-least-once delivery). Protect your response handler with idempotency checks:</p>
+  <pre><code">// Use interactionId as idempotency key
+if (await _idempotencyStore.AlreadyProcessedAsync(response.InteractionId, ct))
+{
+    _logger.LogInformation("Duplicate response for {InteractionId} — ignoring", response.InteractionId);
+    return;
+}
+
+await _idempotencyStore.MarkProcessedAsync(response.InteractionId, ct);
+// ... process the response
+</code></pre>
+
+  <div class="page-nav">
+    <a href="02-callback-subscription.html">&#8592; Callback Subscription</a>
+    <a href="04-timeout-handling.html">Next: Handling Timeout &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Actions — Workflow Store | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Store</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-state-shape.html">Store State Shape</a>
+  <a href="02-node-actions.html" class="active">Node Actions</a>
+  <a href="03-edge-actions.html">Edge Actions</a>
+  <a href="04-viewport-actions.html">Viewport Actions</a>
+  <a href="05-subscribing.html">Subscribing to Slices</a>
+  <a href="06-persistence.html">Persistence</a>
+  <a href="07-react-flow-sync.html">React Flow Sync</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Node Actions</h1>
+    <p class="lead">workflowStore exposes five node mutation actions: addNode, updateNode, removeNode, moveNode, and selectNode. All node mutations are tracked by the history middleware and are undoable with Ctrl+Z.</p>
+  </div>
+
+  <h2>addNode</h2>
+  <pre><code">addNode: (node: WorkflowNode) => void
+
+// Usage — called when dragging a node from the palette onto the canvas
+const { addNode } = useWorkflowStore();
+
+addNode({
+    id      : crypto.randomUUID(),
+    type    : 'ApprovalNode',
+    position: { x: 400, y: 200 },
+    data    : {
+        label       : 'Manager Approval',
+        config      : {},
+        inputPorts  : [{ id: 'in', label: 'In' }],
+        outputPorts : [
+            { id: 'approved', label: 'Approved' },
+            { id: 'rejected', label: 'Rejected' }
+        ]
+    }
+});</code></pre>
+
+  <h2>updateNode</h2>
+  <pre><code">updateNode: (id: string, patch: Partial&lt;WorkflowNode&gt;) => void
+
+// Usage — called by the config form when the user edits a node's settings
+const { updateNode } = useWorkflowStore();
+
+// Update just the config (deep merge on data)
+updateNode('node-abc', {
+    data: {
+        ...existingData,
+        config: {
+            actorId        : '{{$context.managerId}}',
+            timeoutDuration: 'P1D',
+            timeoutBehavior: 'Escalate'
+        }
+    }
+});
+
+// Rename the node label
+updateNode('node-abc', {
+    data: { ...existingData, label: 'Department Head Approval' }
+});
+
+// Note: updateNode triggers a debounced auto-save via the persistence middleware</code></pre>
+
+  <h2>removeNode</h2>
+  <pre><code">removeNode: (id: string) => void
+
+// Usage — called when the user presses Delete on a selected node
+const { removeNode } = useWorkflowStore();
+
+removeNode('node-abc');
+
+// Note: removeNode automatically removes all edges connected to the deleted node
+// The history middleware captures this as a single undoable operation</code></pre>
+
+  <h2>moveNode</h2>
+  <pre><code">moveNode: (id: string, position: XYPosition) => void
+
+// Usage — called by React Flow's onNodeDragStop callback
+const { moveNode } = useWorkflowStore();
+
+// React Flow gives us the new position after the user finishes dragging
+moveNode('node-abc', { x: 600, y: 350 });
+
+// Note: moveNode is only pushed to history on drag END (onNodeDragStop)
+// Intermediate drag positions are NOT tracked — dragging is smooth but produces one history entry</code></pre>
+
+  <h2>selectNode</h2>
+  <pre><code">selectNode: (id: string | null) => void
+
+// Usage — called when the user clicks a node on the canvas
+const { selectNode } = useWorkflowStore();
+
+// Select a node — drives the right panel (config form) to show this node's form
+selectNode('node-abc');
+
+// Deselect all — pass null
+selectNode(null);
+
+// selectNode sets selectedNodes = [id] (single selection)
+// Multi-selection is handled via Shift+Click — sets selectedNodes = [...existing, id]</code></pre>
+
+  <h2>Action Summary</h2>
+  <table>
+    <thead><tr><th>Action</th><th>History Tracked?</th><th>Auto-Save Triggered?</th></tr></thead>
+    <tbody>
+      <tr><td>addNode</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>updateNode</td><td>Yes</td><td>Yes (debounced)</td></tr>
+      <tr><td>removeNode</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>moveNode</td><td>Yes (drag end only)</td><td>Yes</td></tr>
+      <tr><td>selectNode</td><td>No</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Do not mutate node data directly:</strong> Never modify <code>workflowStore.getState().nodes</code> directly. Always go through the actions. Direct mutation bypasses history tracking, auto-save, and React Flow sync.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-state-shape.html">&#8592; Store State Shape</a>
+    <a href="03-edge-actions.html">Next: Edge Actions &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Access Policy Model — Workflow Access Control | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Access Control</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-roles.html">Workflow Roles</a>
+  <a href="02-policy-model.html" class="active">Access Policy Model</a>
+  <a href="03-tenant-isolation.html">Tenant Isolation</a>
+  <a href="04-granting-access.html">Granting Access</a>
+  <a href="05-revoking-access.html">Revoking Access</a>
+  <a href="06-execution-access.html">Execution-Time Access</a>
+  <a href="07-api-enforcement.html">API-Level Enforcement</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Access Policy Model</h1>
+    <p class="lead">Access is stored in the Process_ProcessAccess table — one row per (actor, workflow, role) triple. The ProcessAccessChecker reads this table to evaluate every access request.</p>
+  </div>
+
+  <h2>Database Table: Process_ProcessAccess</h2>
+  <pre><code>CREATE TABLE Process_ProcessAccess (
+    Id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    TenantId    NVARCHAR(100)    NOT NULL,
+    ProcessId   NVARCHAR(100)    NOT NULL,
+    ActorId     NVARCHAR(100)    NOT NULL,   -- userId or groupId
+    ActorType   TINYINT          NOT NULL,   -- 1=User, 2=Group
+    Role        TINYINT          NOT NULL,   -- 1=Owner,2=Editor,3=Viewer,4=Executor
+    GrantedBy   NVARCHAR(100)    NOT NULL,   -- userId who granted
+    GrantedAt   DATETIMEOFFSET   NOT NULL DEFAULT GETUTCDATE(),
+    RevokedAt   DATETIMEOFFSET   NULL,       -- soft delete
+    CONSTRAINT UQ_ProcessAccess UNIQUE (TenantId, ProcessId, ActorId, ActorType)
+);</code></pre>
+
+  <h2>ProcessAccessPolicy C# Model</h2>
+  <pre><code>public class ProcessAccessPolicy
+{
+    public string             Id        { get; set; }
+    public string             TenantId  { get; set; }
+    public string             ProcessId { get; set; }
+    public string             ActorId   { get; set; }
+    public ProcessActorType   ActorType { get; set; }
+    public ProcessAccessRole  Role      { get; set; }
+    public string             GrantedBy { get; set; }
+    public DateTimeOffset     GrantedAt { get; set; }
+    public DateTimeOffset?    RevokedAt { get; set; }
+    public bool               IsActive => RevokedAt == null;
+}</code></pre>
+
+  <h2>IProcessAccessChecker Interface</h2>
+  <pre><code>public interface IProcessAccessChecker
+{
+    Task&lt;bool&gt; CanViewAsync(string userId, string processId, CancellationToken ct);
+    Task&lt;bool&gt; CanEditAsync(string userId, string processId, CancellationToken ct);
+    Task&lt;bool&gt; CanExecuteAsync(string userId, string processId, CancellationToken ct);
+    Task&lt;bool&gt; CanShareAsync(string userId, string processId, CancellationToken ct);
+    Task&lt;bool&gt; CanDeleteAsync(string userId, string processId, CancellationToken ct);
+
+    /// General-purpose check — use when the specific action isn't covered above
+    Task&lt;bool&gt; CheckAsync(string userId, string processId,
+        ProcessAccessRole requiredRole, CancellationToken ct);
+}</code></pre>
+
+  <h2>How Group Access Is Resolved</h2>
+  <p>When evaluating access, the checker:</p>
+  <ol>
+    <li>Looks up all direct user-level policies for (userId, processId).</li>
+    <li>Looks up all groups the user belongs to (via IAM service call, cached).</li>
+    <li>Looks up all group-level policies for those groups against the processId.</li>
+    <li>Takes the highest role across all matches — a user with direct Viewer role but group Editor role gets Editor.</li>
+  </ol>
+  <pre><code>// Effective role resolution pseudocode
+var directRole  = GetDirectRole(userId, processId);
+var groupRoles  = GetGroupRoles(userId, processId);   // via IAM groups
+var effectiveRole = Max(directRole, groupRoles.Max()); // highest wins</code></pre>
+
+  <div class="callout warning">
+    <strong>Revoked policies:</strong> Soft-deleted rows (RevokedAt is set) are excluded from all access checks. Revocation is immediate — the cache is invalidated on revoke.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-roles.html">&#8592; Workflow Roles</a>
+    <a href="03-tenant-isolation.html">Next: Tenant Isolation &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

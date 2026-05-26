@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manual Security Review — Security Scanning | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Security Scanning</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-expression-injection.html">Expression Injection Detection</a>
+  <a href="02-sql-injection.html">SQL Injection Detection</a>
+  <a href="03-dependency-vulnerability.html">Dependency Vulnerability Scan</a>
+  <a href="04-content-policy.html">Content Policy Check</a>
+  <a href="05-scan-results.html">Scan Results</a>
+  <a href="06-false-positives.html">Handling False Positives</a>
+  <a href="07-manual-review.html" class="active">Manual Security Review</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Manual Security Review</h1>
+    <p class="lead">Certain packages trigger a mandatory human security review in addition to the automated scan. Manual review is also required when a package requests Certified trust level status, and is available on request for packages with complex logic.</p>
+  </div>
+
+  <div class="callout warning"><strong>Phase 3 — PENDING</strong> Marketplace manual review is planned but not yet implemented. Direct import WARN/FAIL handling is implemented in Phase 2.</div>
+
+  <h2>When Manual Review Is Triggered</h2>
+  <table>
+    <thead>
+      <tr><th>Trigger</th><th>Who Reviews</th><th>SLA</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Automated scan returns WARN for marketplace submission</td><td>BizFirstGO security team</td><td>3 business days</td></tr>
+      <tr><td>Publisher requests Certified status</td><td>BizFirstGO security team + reviewer</td><td>5 business days</td></tr>
+      <tr><td>Publisher submits a false positive exception request</td><td>BizFirstGO security team</td><td>2 business days</td></tr>
+      <tr><td>Publisher requests manual review (optional, not required)</td><td>BizFirstGO security team</td><td>5 business days</td></tr>
+      <tr><td>Post-listing vulnerability report from the community</td><td>BizFirstGO security team</td><td>24 hours (urgent)</td></tr>
+      <tr><td>Nightly re-scan produces WARN/FAIL for a previously PASS package</td><td>BizFirstGO security team</td><td>48 hours</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What a Manual Reviewer Examines</h2>
+  <p>A human reviewer inspects the full package contents, not just the fields flagged by the automated scanner. The review focuses on:</p>
+  <ul>
+    <li>Understanding the business purpose of each artifact — do the logic and configuration align?</li>
+    <li>Identifying subtle injection patterns that regex-based rules miss (e.g., obfuscated expressions, multi-step injection chains)</li>
+    <li>Reviewing HTTP callback node configurations — what data is sent, to what destination, under what conditions</li>
+    <li>Examining conditional logic paths that could create backdoors or privilege escalation paths in the workflow</li>
+    <li>Validating that the package's claimed functionality matches its actual implementation</li>
+    <li>Checking that all external service integrations are legitimate and appropriately scoped</li>
+  </ul>
+
+  <h2>Requesting an Optional Manual Review</h2>
+  <pre><code>POST /api/marketplace/submissions/{submissionId}/request-manual-review
+Authorization: Bearer {publisherToken}
+{
+  "reason": "This package integrates with three external REST APIs and performs multi-tenant data aggregation. We would like a human review to verify the integration logic is secure before listing."
+}
+
+// Response:
+{
+  "reviewRequestId":  "rev-req-a1b2c3",
+  "status":           "Queued",
+  "estimatedDays":    5,
+  "note":             "Optional manual review requested. Package will not be listed until review is complete."
+}</code></pre>
+
+  <h2>Manual Review Outcome</h2>
+  <table>
+    <thead>
+      <tr><th>Outcome</th><th>Effect</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Approved — PASS</strong></td><td>Package listed with manual-review-cleared note in security badge. Existing WARN findings dismissed.</td></tr>
+      <tr><td><strong>Approved — WARN Accepted</strong></td><td>Package listed. WARN findings remain visible in badge but reviewer has assessed them as non-blocking risks.</td></tr>
+      <tr><td><strong>Rejected</strong></td><td>Publisher receives detailed rejection with specific findings. Package not listed. Publisher must fix and resubmit.</td></tr>
+      <tr><td><strong>Conditional Approval</strong></td><td>Package approved with mandatory usage restrictions (e.g., "Install permitted for Certified publishers only" or "Requires <code>acknowledgeCommunityPackage</code> with explicit note").</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Review Report</h2>
+  <pre><code>GET /api/marketplace/submissions/{submissionId}/manual-review
+
+{
+  "submissionId":  "sub-a1b2c3d4",
+  "reviewId":      "rev-a1b2c3",
+  "status":        "Complete",
+  "outcome":       "Approved",
+  "scanClearance": "WarnAccepted",
+  "reviewer":      "BizFirstGO Security Team",
+  "reviewedAt":    "2026-05-28T14:00:00Z",
+  "notes":         "Medium CVE in form-utils@1.0.0 reviewed. The affected code path (image parsing) is not exercised by this package's form definitions. The dependency is used only for field validation utilities. Risk accepted. Publisher advised to update to 1.0.1 in next release.",
+  "effect":        "Package listed as Community with WARN badge. CVE finding remains visible to installers."
+}</code></pre>
+
+  <h2>Reporting a Security Vulnerability in a Listed Package</h2>
+  <p>If you discover a security vulnerability in a listed marketplace package, use the responsible disclosure endpoint. The report is confidential — only the publisher and BizFirstGO security team can see it.</p>
+  <pre><code>POST /api/marketplace/packages/{packageId}/report-vulnerability
+{
+  "affectedVersion": "3.0.0",
+  "description":     "The ApprovalRules RuleSet in this package contains a condition that bypasses multi-approver requirements when the approver count field is set to zero. This allows a single user to approve their own requests by manipulating form input.",
+  "severity":        "High",
+  "reporterEmail":   "security@myorg.com"   // Optional — for follow-up
+}
+
+// Response:
+{
+  "reportId":       "vr-a1b2c3",
+  "status":         "Received",
+  "message":        "Thank you for your report. BizFirstGO security team will investigate within 24 hours. If the vulnerability is confirmed, the affected version will be flagged and the publisher notified.",
+  "disclosurePolicy": "https://bizfirstai.com/security/responsible-disclosure"
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="06-false-positives.html">&#8592; Handling False Positives</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

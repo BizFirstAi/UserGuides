@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Examples — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html">InteractionProvider</a>
+  <a href="02-use-interaction.html">useInteraction</a>
+  <a href="03-use-receiver.html">useInteractionReceiver</a>
+  <a href="04-use-callback.html">useInteractionCallback</a>
+  <a href="05-use-interaction-history.html">useInteractionHistory</a>
+  <a href="06-cleanup.html">Cleanup and Lifecycle</a>
+  <a href="07-examples.html" class="active">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>Examples</h1>
+    <p class="lead">Complete, real-world examples combining EdgeInteract React bindings for common scenarios: real-time approval flows, confirmation dialogs, and dynamic form collection.</p>
+  </div>
+
+  <h2>Example 1 — Approval Flow (Sending Side)</h2>
+  <p>A component that triggers an approval interaction from the frontend and shows real-time status:</p>
+  <pre><code">import { useInteraction } from 'edge-interact-react';
+import { InteractionTimeoutError } from 'edge-interact-core';
+
+function InvoiceApprovalButton({ invoice, managerId }: Props) {
+  const { sendInteraction, isSending } = useInteraction();
+  const [decision, setDecision] = useState&lt;string | null&gt;(null);
+  const [decidedBy, setDecidedBy] = useState&lt;string&gt;('');
+
+  const requestApproval = async () =&gt; {
+    setDecision(null);
+    try {
+      const response = await sendInteraction({
+        type: 'approval',
+        targetUserId: managerId,
+        title: `Approve Invoice ${invoice.id}`,
+        payload: {
+          context: `Invoice ${invoice.id} from ${invoice.vendor} for ${invoice.amount}.`,
+          fields: [
+            { key: 'vendor', label: 'Vendor',   value: invoice.vendor },
+            { key: 'amount', label: 'Amount',   value: invoice.amount },
+            { key: 'due',    label: 'Due Date', value: invoice.dueDate }
+          ]
+        },
+        timeoutMs: 86_400_000,
+        priority: 'high'
+      });
+
+      setDecision(response.outcome);
+      setDecidedBy(response.respondedBy);
+    } catch (err) {
+      if (err instanceof InteractionTimeoutError) {
+        setDecision('timeout');
+      } else {
+        setDecision('error');
+      }
+    }
+  };
+
+  return (
+    &lt;div&gt;
+      &lt;button onClick={requestApproval} disabled={isSending}&gt;
+        {isSending ? 'Waiting for approval...' : 'Request Approval'}
+      &lt;/button&gt;
+      {decision === 'approved' &amp;&amp; &lt;p&gt;Approved by {decidedBy}&lt;/p&gt;}
+      {decision === 'rejected' &amp;&amp; &lt;p&gt;Rejected by {decidedBy}&lt;/p&gt;}
+      {decision === 'timeout' &amp;&amp; &lt;p&gt;No response received — approval timed out.&lt;/p&gt;}
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+
+  <h2>Example 2 — Confirmation Dialog (Self-Targeted)</h2>
+  <p>The user confirms their own destructive action before it is executed:</p>
+  <pre><code">function DeleteAccountButton({ userId }: { userId: string }) {
+  const { sendInteraction } = useInteraction();
+
+  const handleDelete = async () =&gt; {
+    const response = await sendInteraction({
+      type: 'confirmation',
+      targetUserId: userId,   // targeting the current user themselves
+      title: 'Delete Your Account',
+      payload: {
+        message: 'Are you sure you want to permanently delete your account? All your data will be lost.',
+        confirmLabel: 'Yes, Delete My Account',
+        cancelLabel: 'Cancel',
+        severity: 'danger'
+      },
+      timeoutMs: 60_000 // 1 minute
+    });
+
+    if (response.outcome === 'confirmed') {
+      await accountApi.deleteAccount(userId);
+      navigate('/goodbye');
+    }
+  };
+
+  return &lt;button onClick={handleDelete}&gt;Delete Account&lt;/button&gt;;
+}
+</code></pre>
+
+  <h2>Example 3 — WorkDesk HIL Inbox (Receiving Side)</h2>
+  <p>A full HIL inbox that renders all interaction types with the appropriate components:</p>
+  <pre><code">import { useInteractionReceiver } from 'edge-interact-react';
+import {
+  InteractionContainer,
+  ApprovalComponent,
+  ConfirmationComponent,
+  NotificationComponent,
+  PickerComponent,
+  FormComponent
+} from 'edge-interact-ui';
+
+const RENDERERS: Record&lt;string, React.ComponentType&lt;any&gt;&gt; = {
+  approval: ApprovalComponent,
+  confirmation: ConfirmationComponent,
+  notification: NotificationComponent,
+  picker: PickerComponent,
+  form: FormComponent
+};
+
+function WorkDeskInbox() {
+  const { queue, respond, queueLength } = useInteractionReceiver();
+
+  return (
+    &lt;div className="workdesk-inbox"&gt;
+      &lt;header&gt;
+        &lt;h1&gt;My Inbox&lt;/h1&gt;
+        {queueLength &gt; 0 &amp;&amp; &lt;span className="count"&gt;{queueLength}&lt;/span&gt;}
+      &lt;/header&gt;
+      {queue.map(interaction =&gt; {
+        const Renderer = RENDERERS[interaction.type];
+        if (!Renderer) return null;
+        return (
+          &lt;Renderer
+            key={interaction.interactionId}
+            interaction={interaction}
+            respond={(outcome, data) =&gt; respond(interaction.interactionId, outcome, data)}
+          /&gt;
+        );
+      })}
+      {queueLength === 0 &amp;&amp; &lt;p className="empty"&gt;All caught up!&lt;/p&gt;}
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+
+  <div class="page-nav">
+    <a href="06-cleanup.html">&#8592; Cleanup and Lifecycle</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

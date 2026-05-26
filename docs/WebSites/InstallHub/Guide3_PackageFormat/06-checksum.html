@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checksum — Package Format | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Package Format</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-zip-structure.html">ZIP Structure</a>
+  <a href="02-manifest-schema.html">Manifest Schema</a>
+  <a href="03-artifact-serialization.html">Artifact Serialization</a>
+  <a href="04-versioning.html">Versioning</a>
+  <a href="05-dependencies.html">Dependency Declarations</a>
+  <a href="06-checksum.html" class="active">Checksum</a>
+  <a href="07-readme.html">README.md in Package</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Checksum</h1>
+    <p class="lead">The bundle checksum is a SHA-256 hash that guarantees no artifact was modified after the package was created. The import engine recomputes and verifies it before processing any content.</p>
+  </div>
+
+  <h2>What the Checksum Protects</h2>
+  <p>The checksum detects:</p>
+  <ul>
+    <li>Accidental corruption during transfer or storage</li>
+    <li>Malicious modification of artifact content after export</li>
+    <li>Incomplete downloads where not all bytes arrived</li>
+    <li>Substitution attacks where a trusted package name is used with modified content</li>
+  </ul>
+
+  <h2>What is Hashed</h2>
+  <p>The bundle checksum is SHA-256 of all artifact file contents concatenated <strong>in install order</strong>. The manifest itself is <strong>not</strong> included in the hash (because the manifest contains the hash — a circular dependency).</p>
+  <pre><code>// Install order from manifest: ["ent-44", "rule-305", "form-2005", "thread-2002", "proc-1001"]
+
+// Checksum input = concatenation:
+bytes(artifacts/entities/ent-44.json)
++ bytes(artifacts/rules/rule-305.json)
++ bytes(artifacts/forms/form-2005.json)
++ bytes(artifacts/workflows/thread-2002.json)
++ bytes(artifacts/workflows/proc-1001.json)
+
+// Hash:
+checksum = "sha256:" + hex(SHA256(concatenatedBytes))</code></pre>
+
+  <div class="callout info">
+    <strong>Why In Install Order?</strong>
+    Using install order ensures the hash is deterministic — the same artifacts always produce the same hash regardless of how they appear in the ZIP directory listing (which can vary by ZIP implementation). Install order is canonical because it is topologically sorted.
+  </div>
+
+  <h2>Per-Artifact Hashes</h2>
+  <p>In addition to the bundle checksum, each artifact entry in the manifest includes its own <code>hash</code> field — the SHA-256 of that single artifact file's bytes:</p>
+  <pre><code>{
+  "artifacts": [
+    {
+      "id":   "proc-1001",
+      "file": "artifacts/workflows/proc-1001.json",
+      "hash": "sha256:abc123def456789..."   // SHA-256 of proc-1001.json bytes only
+    }
+  ]
+}</code></pre>
+  <p>On import, the engine verifies both:</p>
+  <ol>
+    <li>Each artifact file individually against its per-artifact hash</li>
+    <li>The full bundle by recomputing the overall checksum</li>
+  </ol>
+  <p>If an individual artifact hash fails but the bundle checksum matches, this indicates a manifest error. If the bundle checksum fails, at least one file was modified.</p>
+
+  <h2>Verification Algorithm</h2>
+  <pre><code>// Import engine verification (pseudocode)
+async VerifyChecksumAsync(zip, manifest):
+
+    // Step 1: verify each artifact individually
+    for artifact in manifest.artifacts:
+        fileBytes = zip.ReadFile(artifact.file)
+        actualHash = "sha256:" + hex(SHA256(fileBytes))
+        if actualHash != artifact.hash:
+            throw ChecksumMismatch(artifact.id, artifact.hash, actualHash)
+
+    // Step 2: verify the full bundle
+    concatenated = []
+    for artifactId in manifest.installOrder:
+        artifact = manifest.FindArtifact(artifactId)
+        fileBytes = zip.ReadFile(artifact.file)
+        concatenated.append(fileBytes)
+
+    actualBundleChecksum = "sha256:" + hex(SHA256(concatenate(concatenated)))
+    if actualBundleChecksum != manifest.checksum:
+        throw BundleChecksumMismatch(manifest.checksum, actualBundleChecksum)</code></pre>
+
+  <h2>Checksum Format</h2>
+  <pre><code>"checksum": "sha256:3a9f1c4e8d2b7f6a1e5c9d3b0a4f8e2c7d1a6b9e3f5c8d2a0b7e4f1c9d3a6b0"
+                ^^^^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                prefix 64 hex characters = 256 bits = SHA-256 output</code></pre>
+  <p>The <code>sha256:</code> prefix is mandatory and allows future support for alternative hash algorithms (e.g., <code>sha512:</code>) without breaking parsers.</p>
+
+  <h2>Computing the Checksum (C# Example)</h2>
+  <pre><code>public static string ComputeBundleChecksum(
+    IReadOnlyList&lt;SerializedArtifact&gt; artifacts,
+    IReadOnlyList&lt;string&gt;             installOrder)
+{
+    using var sha256 = SHA256.Create();
+    using var combined = new MemoryStream();
+
+    // Concatenate artifact bytes in install order
+    foreach (var artifactId in installOrder)
+    {
+        var artifact = artifacts.First(a => a.Id == artifactId);
+        combined.Write(artifact.Bytes);
+    }
+
+    combined.Position = 0;
+    var hash = sha256.ComputeHash(combined);
+    return "sha256:" + Convert.ToHexString(hash).ToLowerInvariant();
+}
+
+public static string ComputeArtifactHash(byte[] artifactBytes)
+{
+    using var sha256 = SHA256.Create();
+    var hash = sha256.ComputeHash(artifactBytes);
+    return "sha256:" + Convert.ToHexString(hash).ToLowerInvariant();
+}</code></pre>
+
+  <h2>Checksum Failure Response</h2>
+  <pre><code>HTTP 400 Bad Request
+{
+  "error":   "ChecksumMismatch",
+  "message": "The bundle checksum in the manifest does not match the computed checksum. The package may have been corrupted or tampered with.",
+  "expected": "sha256:3a9f1c4e...",
+  "actual":   "sha256:7b2c8d5f..."
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Do Not Edit Bundle Contents</strong>
+    Any change to an artifact file inside the ZIP after export will cause checksum verification to fail. Re-export from the source tenant if you need updated content.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-dependencies.html">&#8592; Dependency Declarations</a>
+    <a href="07-readme.html">Next: README.md in Package &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenant Isolation — Memory Storage | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display;flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Storage</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory Storage Overview</a>
+  <a href="01-sql-tables.html">SQL Tables</a>
+  <a href="02-vector-storage.html">Vector Storage</a>
+  <a href="03-working-storage.html">Working Memory Storage</a>
+  <a href="04-tenant-isolation.html" class="active">Tenant Isolation</a>
+  <a href="05-retention.html">Data Retention</a>
+  <a href="06-backup.html">Backup and Restore</a>
+  <a href="07-migration.html">Migration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Tenant Isolation</h1>
+    <p class="lead">Octopus is a multi-tenant system. All SQL-backed memory tables include a <code>TenantId</code> column, and EF Core global query filters ensure every database query is automatically scoped. Vector storage is isolated by agent-scoped collections, which are tied to tenants by agent ownership.</p>
+  </div>
+
+  <h2>SQL Isolation: Global Query Filters</h2>
+  <p>EF Core global query filters are applied on every entity type that carries a <code>TenantId</code>. The current tenant is resolved from the HTTP request JWT and stored in a scoped <code>ITenantContext</code> service:</p>
+  <pre><code>// OctopusDbContext — global query filters applied once, used everywhere
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    // Every entity with TenantId is automatically filtered
+    modelBuilder.Entity&lt;Episode&gt;()
+        .HasQueryFilter(e => e.TenantId == _tenantContext.TenantId
+                          && !e.IsDeleted);
+
+    modelBuilder.Entity&lt;Procedure&gt;()
+        .HasQueryFilter(p => p.TenantId == _tenantContext.TenantId
+                          && p.IsActive && p.IsApproved);
+
+    modelBuilder.Entity&lt;OctopusAgent&gt;()
+        .HasQueryFilter(a => a.TenantId == _tenantContext.TenantId
+                          && a.IsActive);
+}
+
+// ITenantContext — resolved from JWT claims on every request
+public interface ITenantContext
+{
+    Guid TenantId { get; }
+}
+
+public class JwtTenantContext : ITenantContext
+{
+    public Guid TenantId { get; }
+    public JwtTenantContext(IHttpContextAccessor http)
+    {
+        var claim = http.HttpContext?.User?.FindFirst("tenant_id")?.Value
+            ?? throw new UnauthorizedAccessException("tenant_id claim missing");
+        TenantId = Guid.Parse(claim);
+    }
+}</code></pre>
+
+  <h2>Vector Storage Isolation</h2>
+  <p>Semantic memory is isolated at the collection level — each agent has its own vector collection. Because agents are owned by tenants, cross-tenant collection access is impossible without knowing the agentId of a foreign tenant's agent:</p>
+  <pre><code>// Collection name includes agentId — agents are owned by tenants
+// Tenant A's agent → "agent_A1A1A1..."
+// Tenant B's agent → "agent_B2B2B2..."
+
+// The AgentStore validates that the agent belongs to the requesting tenant
+// before any vector store operation:
+public async Task&lt;OctopusAgent&gt; GetAgentAsync(Guid agentId, CancellationToken ct)
+{
+    // EF Core global filter already scopes to TenantId
+    return await _db.Agents.FirstOrDefaultAsync(a => a.AgentId == agentId, ct)
+        ?? throw new NotFoundException($"Agent {agentId} not found in tenant");
+}
+// If Tenant B tries to use Tenant A's agentId, the global filter returns null → 404</code></pre>
+
+  <h2>Isolation Layers Summary</h2>
+  <table>
+    <thead>
+      <tr><th>Storage Type</th><th>Isolation Mechanism</th><th>Enforcement Point</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SQL (Episodes, Procedures, Agents)</td><td>TenantId global query filter on all entities</td><td>EF Core (DbContext)</td></tr>
+      <tr><td>Vector DB (Qdrant)</td><td>Per-agent collection; agent resolved via tenant-scoped AgentStore</td><td>AgentStore + collection naming</td></tr>
+      <tr><td>Vector DB (PGVector)</td><td>Per-agent table + tenant_id column filter</td><td>SQL WHERE clause in all queries</td></tr>
+      <tr><td>Working Memory</td><td>In-process; scoped to the HTTP request and authenticated user</td><td>ASP.NET Core DI scope</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Admin Bypass</h2>
+  <p>Super-admin operations (e.g. tenant deletion, cross-tenant health checks) can bypass global filters using <code>IgnoreQueryFilters()</code>. This is restricted to the platform administration API — not accessible to tenant users:</p>
+  <pre><code>// Super-admin only — purge all data for a tenant
+public async Task PurgeTenantDataAsync(Guid tenantId, CancellationToken ct)
+{
+    // IgnoreQueryFilters() required to cross tenant boundary
+    var episodes = await _db.Episodes
+        .IgnoreQueryFilters()
+        .Where(e => e.TenantId == tenantId)
+        .ToListAsync(ct);
+
+    _db.Episodes.RemoveRange(episodes);
+    await _db.SaveChangesAsync(ct);
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Never Bypass Filters in Tenant-Scoped Code</strong>
+    <p>Only platform-level super-admin code should call <code>IgnoreQueryFilters()</code>. Any tenant-scoped service, API controller, or background job that bypasses global query filters risks exposing cross-tenant data. Code review must flag any non-admin use of <code>IgnoreQueryFilters()</code> as a critical security violation.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-working-storage.html">&#8592; Working Memory Storage</a>
+    <a href="05-retention.html">Next: Data Retention &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

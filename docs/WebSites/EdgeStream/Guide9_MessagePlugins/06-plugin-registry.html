@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Registry — Message Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Plugins</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Message Plugins Overview</a>
+  <a href="01-workflow-event-plugin.html">Workflow Event Plugin</a>
+  <a href="02-agent-message-plugin.html">Agent Message Plugin</a>
+  <a href="03-ui-action-plugin.html">UI Action Plugin</a>
+  <a href="04-system-event-plugin.html">System Event Plugin</a>
+  <a href="05-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="06-plugin-registry.html" class="active">Plugin Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Plugin Registry</h1>
+    <p class="lead">The Plugin Registry maintains a map of topic namespaces to plugin instances. It is used for auto-routing, validation, and discovery — when a message arrives, the registry identifies which plugin owns that topic and routes accordingly.</p>
+  </div>
+
+  <h2>Registered Namespaces</h2>
+  <table>
+    <thead>
+      <tr><th>Namespace</th><th>Plugin</th><th>Server</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>workflow</code></td><td>WorkflowEventPlugin</td><td>bas</td></tr>
+      <tr><td><code>agent</code></td><td>AgentMessagePlugin</td><td>chat</td></tr>
+      <tr><td><code>ui</code></td><td>UiActionPlugin</td><td>bas</td></tr>
+      <tr><td><code>system</code></td><td>SystemEventPlugin</td><td>bas</td></tr>
+      <tr><td><code>hil</code></td><td>(HIL suspension events)</td><td>bas</td></tr>
+      <tr><td><code>notifications</code></td><td>(notification events)</td><td>bas</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Plugin Registry API</h2>
+  <pre><code>import { pluginRegistry } from 'edge-stream-js';
+
+// Register a plugin
+pluginRegistry.register(new InventoryEventPlugin());
+
+// Look up a plugin by topic namespace
+const plugin = pluginRegistry.getByNamespace('inventory');
+// or by a full topic string
+const plugin2 = pluginRegistry.getForTopic('inventory.lowStock');
+
+// Check if a topic is registered
+const isKnown = pluginRegistry.isRegistered('workflow');
+
+// Get all registered namespaces
+const namespaces = pluginRegistry.getNamespaces();
+// ['workflow', 'agent', 'ui', 'system', 'inventory']
+
+// Get all plugins
+const all = pluginRegistry.getAll();</code></pre>
+
+  <h2>Auto-Validation via Registry</h2>
+  <pre><code>// Use the registry to validate incoming messages before processing
+stream.subscribe('bas', 'workflow.*', (envelope) =&gt; {
+  const plugin = pluginRegistry.getForTopic(envelope.meta.topic);
+
+  if (plugin) {
+    const result = plugin.validate(envelope);
+    if (!result.valid) {
+      console.warn('Invalid message:', result.errors);
+      return; // drop invalid message
+    }
+  }
+
+  // Message is valid — proceed
+  workflowStore.handleEvent(envelope.body);
+});</code></pre>
+
+  <h2>Namespace Conflict Detection</h2>
+  <pre><code>// Registering a plugin with a namespace that is already taken throws:
+pluginRegistry.register(new WorkflowEventPlugin()); // 'workflow' → OK
+pluginRegistry.register(new MyWorkflowPlugin());    // 'workflow' → throws Error:
+// "Plugin namespace 'workflow' is already registered by WorkflowEventPlugin"
+
+// To override: deregister first
+pluginRegistry.deregister('workflow');
+pluginRegistry.register(new MyWorkflowPlugin());</code></pre>
+
+  <h2>Application Bootstrap</h2>
+  <pre><code>// Register all plugins at application startup before stream.start()
+import { pluginRegistry } from 'edge-stream-js';
+import { WorkflowEventPlugin } from '@bizfirstgo/workflow-plugin';
+import { AgentMessagePlugin } from '@bizfirstgo/agent-plugin';
+import { UiActionPlugin } from '@bizfirstgo/ui-plugin';
+import { SystemEventPlugin } from '@bizfirstgo/system-plugin';
+
+function bootstrapEdgeStream() {
+  // 1. Register plugins
+  pluginRegistry.register(new WorkflowEventPlugin());
+  pluginRegistry.register(new AgentMessagePlugin());
+  pluginRegistry.register(new UiActionPlugin());
+  pluginRegistry.register(new SystemEventPlugin());
+
+  // 2. Create stream
+  const stream = createEdgeStream({ logLevel: 'info' });
+  stream.registerServer({ id: 'bas', ... });
+  stream.registerServer({ id: 'chat', ... });
+
+  // 3. Apply plugin hooks to servers
+  const basServer = stream.server('bas')!;
+  ['workflow', 'ui', 'system'].forEach(ns =&gt; {
+    const plugin = pluginRegistry.getByNamespace(ns)!;
+    plugin.createDefaultHooks().forEach(hook =&gt;
+      basServer.incomingPipeline.addHook(hook)
+    );
+  });
+
+  const chatServer = stream.server('chat')!;
+  pluginRegistry.getByNamespace('agent')!
+    .createDefaultHooks()
+    .forEach(hook =&gt; chatServer.incomingPipeline.addHook(hook));
+
+  return stream;
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Next: Available Plugins</strong>
+    See the full catalog of pre-built EdgeStream plugins available for BizFirstGO applications. See <a href="../Guide10_AvailablePlugins/index.html">Guide 10: Available Plugins</a>.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-custom-plugin.html">&#8592; Building a Custom Plugin</a>
+    <a href="../Guide10_AvailablePlugins/index.html">Next Guide: Available Plugins &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

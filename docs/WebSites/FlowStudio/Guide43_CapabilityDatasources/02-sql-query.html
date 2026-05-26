@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Query Node — Guide43 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Datasources</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-datasource-registry.html"><i class="fa-solid fa-database"></i> Datasource Registry</a>
+  <a href="02-sql-query.html" class="active"><i class="fa-solid fa-table"></i> SQL Query</a>
+  <a href="03-rest-datasource.html"><i class="fa-solid fa-globe"></i> REST Datasource</a>
+  <a href="04-dataocean.html"><i class="fa-solid fa-water"></i> DataOcean</a>
+  <a href="05-result-mapping.html"><i class="fa-solid fa-arrow-right-arrow-left"></i> Result Mapping</a>
+  <a href="06-parameterization.html"><i class="fa-solid fa-at"></i> Parameterization</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>SQL Query Node</h1>
+    <p class="lead">Executing parameterized SQL queries against registered databases — the <code>SqlQueryNode</code> config, <code>@param</code> style parameters, result shape, and row limit.</p>
+  </div>
+
+  <h2>Node Configuration</h2>
+  <pre><code class="language-json">{
+  "nodeType": "SqlQuery",
+  "name": "queryPendingInvoices",
+  "config": {
+    "datasourceId": "payroll-db",
+    "sql": "SELECT invoice_id, invoice_number, vendor_id, total, currency, submitted_at FROM invoices WHERE status = @status AND vendor_id = @vendorId AND total >= @minAmount ORDER BY submitted_at ASC LIMIT @pageSize OFFSET @offset",
+    "parameters": {
+      "status": "pending-approval",
+      "vendorId": "$output.fetchVendor.entityId",
+      "minAmount": "$json.minimumAmount ?? 0",
+      "pageSize": 50,
+      "offset": 0
+    },
+    "rowLimit": 500,
+    "timeoutSeconds": 30
+  }
+}</code></pre>
+
+  <h2>Configuration Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>datasourceId</code></td><td>string</td><td>Registered datasource ID from <code>IDatasourceRegistry</code></td></tr>
+      <tr><td><code>sql</code></td><td>string</td><td>Parameterized SQL using <code>@param</code> placeholders. Read-only queries only (SELECT).</td></tr>
+      <tr><td><code>parameters</code></td><td>object</td><td>Key-value map of parameter values. Values are expression-evaluated.</td></tr>
+      <tr><td><code>rowLimit</code></td><td>int</td><td>Maximum rows returned. Hard cap: 500. Default: 100.</td></tr>
+      <tr><td><code>timeoutSeconds</code></td><td>int</td><td>Query timeout. Default: 30. Max: 120.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Node Output</h2>
+  <pre><code class="language-json">{
+  "rows": [
+    {
+      "invoice_id": "inv-001",
+      "invoice_number": "INV-2026-001",
+      "vendor_id": "vnd-acme",
+      "total": 4750.00,
+      "currency": "GBP",
+      "submitted_at": "2026-05-20T09:00:00Z"
+    }
+  ],
+  "rowCount": 1
+}</code></pre>
+
+  <h2>SqlQueryExecutor</h2>
+  <pre><code class="language-csharp">protected override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    SqlQueryConfig config,
+    NodeDataContext ctx,
+    CancellationToken ct)
+{
+    var datasource = _registry.GetDatasource(config.DatasourceId);
+    var parameters = _evaluator.EvaluateParameters(config.Parameters, ctx);
+
+    // Validate: only SELECT statements are allowed
+    if (!_sqlValidator.IsSelectOnly(config.Sql))
+        return NodeExecutionResult.Fail(new InvalidOperationException(
+            "SqlQueryNode only allows SELECT statements. Use EntityCreateNode/EntityUpdateNode for writes."));
+
+    using var connection = await _connectionFactory.OpenAsync(datasource, ct);
+    using var cmd = connection.CreateCommand();
+    cmd.CommandText = config.Sql;
+    cmd.CommandTimeout = config.TimeoutSeconds;
+    foreach (var (key, value) in parameters)
+        cmd.Parameters.AddWithValue("@" + key, value ?? DBNull.Value);
+
+    var rows = new List&lt;Dictionary&lt;string, object?&gt;&gt;();
+    using var reader = await cmd.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct) && rows.Count &lt; config.RowLimit)
+    {
+        var row = new Dictionary&lt;string, object?&gt;();
+        for (int i = 0; i &lt; reader.FieldCount; i++)
+            row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+        rows.Add(row);
+    }
+
+    return NodeExecutionResult.Success(new { rows, rowCount = rows.Count });
+}</code></pre>
+
+  <div class="callout callout-warning">
+    <strong>Read-only:</strong> The <code>SqlQueryNode</code> only allows SELECT statements. INSERT, UPDATE, DELETE, and DDL are blocked by the SQL validator. Use Entity nodes for write operations — they enforce tenant isolation, audit logging, and optimistic concurrency that raw SQL bypasses.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-datasource-registry.html">&#8592; Datasource Registry</a>
+    <a href="03-rest-datasource.html">Next: REST Datasource &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

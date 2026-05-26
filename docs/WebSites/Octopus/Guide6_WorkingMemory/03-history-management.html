@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>History Management — Working Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Working Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Working Memory Overview</a>
+  <a href="01-context-window.html">Context Window</a>
+  <a href="02-token-budget.html">Token Budget</a>
+  <a href="03-history-management.html" class="active">History Management</a>
+  <a href="04-pruning-strategies.html">Pruning Strategies</a>
+  <a href="05-knowledge-injection.html">Knowledge Injection</a>
+  <a href="06-tool-call-history.html">Tool Call History in Context</a>
+  <a href="07-context-inspector.html">Context Inspector</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>History Management</h1>
+    <p class="lead">Message history management controls how the growing list of conversation messages is handled as the session gets longer. The goal is to keep the most relevant messages within the token budget while preserving enough context for coherent responses.</p>
+  </div>
+
+  <h2>History Growth Problem</h2>
+  <p>In a long conversation, the message history grows unboundedly. After 50 turns, a typical conversation might be 20,000+ tokens in history alone. With a token budget of 150,000 tokens, there is plenty of room — but with a 8,000-token budget (Ollama local model), the history must be aggressively managed.</p>
+  <p>The <code>ContextPruner</code> is called when the assembled context exceeds the available history budget:</p>
+  <pre><code>public abstract class ContextPruner
+{
+    public abstract Task&lt;IReadOnlyList&lt;LLMMessage&gt;&gt; PruneAsync(
+        IReadOnlyList&lt;LLMMessage&gt; history,
+        int targetTokens,
+        CancellationToken ct = default);
+}
+
+// The three built-in pruning strategies:
+// 1. FIFOPruner — drop oldest messages
+// 2. SummarizePruner — compress old messages via LLM
+// 3. SlidingWindowPruner — keep only the last N turns</code></pre>
+
+  <h2>Minimum History Guarantee</h2>
+  <p>Regardless of budget pressure, Octopus always includes at least the last <code>MinHistoryTurns</code> complete user-assistant pairs in context (default: 3 turns). This prevents the LLM from losing track of the very recent conversation even in extreme budget scenarios:</p>
+  <pre><code>private IReadOnlyList&lt;LLMMessage&gt; EnsureMinHistory(
+    IReadOnlyList&lt;LLMMessage&gt; pruned,
+    IReadOnlyList&lt;LLMMessage&gt; original)
+{
+    int minTurns = _config.MinHistoryTurns;  // default 3
+    var lastTurns = GetLastNTurns(original, minTurns);
+
+    // If pruned result has fewer than min turns, add them back
+    // (may slightly exceed budget — min history is non-negotiable)
+    foreach (var msg in lastTurns)
+    {
+        if (!pruned.Any(m => m.Id == msg.Id))
+            pruned = new[] { msg }.Concat(pruned).ToList();
+    }
+    return pruned;
+}</code></pre>
+
+  <h2>History per Turn Type</h2>
+  <p>Not all history items are equally important. The pruner gives different priority to different message types:</p>
+  <table>
+    <thead>
+      <tr><th>Message Type</th><th>Pruning Priority</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>System (injected context)</td><td>Never pruned</td><td>Knowledge and episodes are rebuilt per turn anyway</td></tr>
+      <tr><td>User messages</td><td>FIFO (oldest first)</td><td>Oldest user questions dropped first</td></tr>
+      <tr><td>Assistant responses</td><td>FIFO (oldest first)</td><td>Paired with user messages — removed together</td></tr>
+      <tr><td>Tool call + result</td><td>FIFO (oldest first)</td><td>Removed as a pair</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-token-budget.html">&#8592; Token Budget</a>
+    <a href="04-pruning-strategies.html">Next: Pruning Strategies &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

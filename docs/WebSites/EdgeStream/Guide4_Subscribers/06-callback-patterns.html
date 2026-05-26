@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Callback Patterns — Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-subscribing.html">Creating a Subscription</a>
+  <a href="02-topic-patterns.html">Topic Patterns</a>
+  <a href="03-topic-matcher.html">TopicMatcher</a>
+  <a href="04-subscription-manager.html">SubscriptionManager</a>
+  <a href="05-subscription-registry.html">SubscriptionRegistry</a>
+  <a href="06-callback-patterns.html" class="active">Callback Patterns</a>
+  <a href="07-unsubscribing.html">Unsubscribing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Callback Patterns</h1>
+    <p class="lead">Subscriber callbacks can be synchronous or async. They receive typed <code>IEnvelope</code> objects and should handle their own errors. Named functions give better observability in HooksMonitor and stack traces.</p>
+  </div>
+
+  <h2>Synchronous Callback</h2>
+  <pre><code>// Sync — fast, ideal for pure state updates
+stream.subscribe('bas', 'workflow.execution.*', (envelope) =&gt; {
+  const { nodeId, status } = envelope.body as WorkflowNodeEvent;
+  workflowStore.setNodeStatus(nodeId, status);
+});</code></pre>
+
+  <h2>Async Callback</h2>
+  <pre><code>// Async — for I/O operations, API calls, database writes
+stream.subscribe('bas', 'hil.approval.*', async (envelope) =&gt; {
+  const request = envelope.body as HilApprovalRequest;
+  await hilStore.addPendingTask(request);
+  await emailService.notifyApprovers(request.approverIds, request.taskId);
+});</code></pre>
+
+  <h2>Named Function Pattern (Recommended)</h2>
+  <p>Use named functions instead of anonymous arrows — the function name appears in observability logs and stack traces:</p>
+  <pre><code>// Named function — better for debugging
+async function handleWorkflowNodeEvent(envelope: IEnvelope&lt;WorkflowNodeEvent&gt;) {
+  try {
+    const { nodeId, status, output } = envelope.body;
+    observerStore.updateNode(nodeId, { status, output });
+  } catch (error) {
+    console.error('[WorkflowSubscriber] Failed to update observer store:', error);
+  }
+}
+
+stream.subscribe('bas', 'workflow.execution.*', handleWorkflowNodeEvent);
+// → SubscriberRegistry shows callbackName: 'handleWorkflowNodeEvent'</code></pre>
+
+  <h2>Discriminated Union Pattern</h2>
+  <pre><code>type AgentEvent =
+  | { eventType: 'token'; token: string }
+  | { eventType: 'tool-call'; toolName: string }
+  | { eventType: 'done' };
+
+stream.subscribe&lt;AgentEvent&gt;('bas', 'agent.chat.*', (envelope) =&gt; {
+  switch (envelope.body.eventType) {
+    case 'token':
+      chatStore.appendToken(envelope.body.token);  // typed ✅
+      break;
+    case 'tool-call':
+      chatStore.showToolCall(envelope.body.toolName);  // typed ✅
+      break;
+    case 'done':
+      chatStore.markComplete();
+      break;
+  }
+});</code></pre>
+
+  <h2>Error Handling in Callbacks</h2>
+  <p>Always catch errors inside callbacks. An uncaught error in one subscriber does not affect others — but it's still logged as a failure in the observability system:</p>
+  <pre><code>stream.subscribe('bas', 'workflow.*', async (envelope) =&gt; {
+  try {
+    await processMessage(envelope.body);
+  } catch (error) {
+    // Safe error handling — never rethrow
+    errorStore.record({
+      error,
+      messageId: envelope.meta.id,
+      topic: envelope.meta.topic
+    });
+  }
+});</code></pre>
+
+  <h2>Topic Guard Pattern</h2>
+  <pre><code>// One subscription with internal routing by topic
+stream.subscribe('bas', 'workflow.*', (envelope) =&gt; {
+  const topic = envelope.meta.topic || '';
+
+  if (topic.includes('.started')) {
+    handleStarted(envelope.body as WorkflowStartedEvent);
+  } else if (topic.includes('.completed')) {
+    handleCompleted(envelope.body as WorkflowCompletedEvent);
+  } else if (topic.includes('.failed')) {
+    handleFailed(envelope.body as WorkflowFailedEvent);
+  }
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="05-subscription-registry.html">&#8592; SubscriptionRegistry</a>
+    <a href="07-unsubscribing.html">Next: Unsubscribing &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

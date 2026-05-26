@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Atlas Forms Integration — Integration | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>WorkDesk</h2>
+    <h1>Integration</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Integration Overview</a>
+  <a href="01-atlas-forms.html" class="active">Atlas Forms</a>
+  <a href="02-flow-studio.html">Flow Studio</a>
+  <a href="03-octopus.html">Octopus</a>
+  <a href="04-app-studio.html">App Studio</a>
+  <a href="05-edgestream.html">EdgeStream</a>
+  <a href="06-passport.html">Passport</a>
+  <a href="07-extension-points.html">Extension Points</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">WorkDesk</div>
+    <h1>Atlas Forms Integration</h1>
+    <p class="lead">Atlas Forms provides the form rendering engine used inside WorkDesk HIL form tasks. When a workflow reaches a HIL form node, the Atlas Form identified by <code>formId</code> is rendered inline in the task card using the <code>FormRenderer</code> component.</p>
+  </div>
+
+  <h2>How It Works</h2>
+  <p>WorkDesk does not build its own form rendering engine. Instead, it uses the Atlas Forms player component library (<code>@bizfirstai/player-components-react</code>) — the same library used in App Studio and standalone form deployments. This ensures form behavior (validation, field types, conditional logic) is identical across all contexts.</p>
+
+  <h2>FormRenderer Props in WorkDesk</h2>
+  <pre><code>import { FormRenderer } from '@bizfirstai/player-components-react';
+
+// Used in FormTaskCard.tsx
+&lt;FormRenderer
+  formId={task.formId!}                    // Atlas Form ID — from HIL task record
+  initialValues={task.initialValues ?? {}} // Pre-populated values from workflow data context
+  mode="edit"                              // "edit" for submission, "view" for read-only review
+  onSubmit={handleFormSubmit}              // Called with formData on valid submission
+  onError={handleFormError}                // Called if form load fails
+  submitLabel="Submit and Continue Workflow"
+  theme="dark"                             // Matches WorkDesk dark theme
+  locale={userLocale}                      // User's locale for field formatting
+/&gt;</code></pre>
+
+  <h2>Form Load Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Task Record Created</h4>
+        <p>WorkDesk task record includes <code>formId</code> (Atlas Form ID) and <code>initialValues</code> (JSON map of field values from workflow data context).</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>FormRenderer Loads Form Definition</h4>
+        <p><code>FormRenderer</code> calls <code>GET /api/atlas-forms/{formId}/definition</code> to fetch the form schema — field types, layout, validation rules, conditional logic.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Form Renders with Initial Values</h4>
+        <p>Fields are rendered with <code>initialValues</code> pre-populated. Read-only fields (if any) show workflow data without allowing edits. Conditional visibility logic activates based on initial values.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>Employee Submits</h4>
+        <p>FormRenderer validates the submission. On success, <code>onSubmit(formData)</code> fires. WorkDesk POSTs the <code>formData</code> to <code>POST /api/executions/{id}/resume</code>.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>View Mode for Review Tasks</h2>
+  <p>Review tasks that display a completed form use <code>FormRenderer</code> with <code>mode="view"</code>. All fields are rendered read-only with their current values — no Submit button, no validation. This allows reviewers to see the exact form state without risking accidental modification.</p>
+
+  <pre><code>// Read-only mode for review tasks
+&lt;FormRenderer
+  formId={task.formId!}
+  initialValues={task.currentFormData}
+  mode="view"              // no submit button, no validation
+  theme="dark"
+/&gt;</code></pre>
+
+  <h2>Error Handling</h2>
+  <table>
+    <thead><tr><th>Error Scenario</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Form definition not found (404)</td><td>Error card shown: "Form configuration error — contact your workflow administrator"</td></tr>
+      <tr><td>Form definition load timeout</td><td>Retry button shown — employee can retry loading the form</td></tr>
+      <tr><td>Initial value type mismatch</td><td>FormRenderer silently discards incompatible initial values and renders the field empty</td></tr>
+      <tr><td>Form validation failure on submit</td><td>FormRenderer highlights invalid fields — WorkDesk submit is not called until all validation passes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Atlas Forms Version Compatibility</strong>
+    <p>WorkDesk uses the <code>@bizfirstai/player-components-react</code> package version pinned to the platform's current Atlas Forms version. When Atlas Forms is updated, WorkDesk's package dependency must be updated together to ensure compatibility.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Integration Overview</a>
+    <a href="02-flow-studio.html">Next: Flow Studio &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

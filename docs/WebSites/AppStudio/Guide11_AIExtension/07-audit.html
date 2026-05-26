@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audit Trail — AI Extension Data Layer | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>App Studio</h2>
+    <h1>AI Extension Data Layer</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-why-no-db.html">Why No Direct Database Access</a>
+  <a href="02-service-api.html">AIExtension.Service API</a>
+  <a href="03-app-config-storage.html">App Config Storage</a>
+  <a href="04-widget-data-storage.html">Widget Data Storage</a>
+  <a href="05-extending.html">Extending the Service Layer</a>
+  <a href="06-caching.html">Service Layer Caching</a>
+  <a href="07-audit.html" class="active">Audit Trail</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">App Studio</div>
+    <h1>Audit Trail</h1>
+    <p class="lead">Every write operation through the AIExtension service layer automatically creates an audit log entry. Controllers do not need to implement audit logic. The audit trail records who changed what, when, and from which operation — providing a complete history of all app definition changes.</p>
+  </div>
+
+  <h2>Audit Log Table</h2>
+  <pre><code>-- AIExt_AppAuditLog
+CREATE TABLE AIExt_AppAuditLog (
+    Id            BIGINT          PRIMARY KEY,
+    TenantId      NVARCHAR(100)   NOT NULL,
+    AppId         NVARCHAR(100)   NOT NULL,
+    EntityType    NVARCHAR(100)   NOT NULL,   -- "App", "Page", "Widget", "Layout"
+    EntityId      NVARCHAR(200)   NOT NULL,   -- e.g., "lead-detail" for a page
+    Action        NVARCHAR(100)   NOT NULL,   -- "Save", "Delete", "Import", "Export"
+    ChangedBy     NVARCHAR(100)   NOT NULL,   -- userId from JWT
+    ChangedAt     DATETIME2       NOT NULL,
+    ClientIp      NVARCHAR(50),              -- IP from request headers
+    DiffJson      NVARCHAR(MAX),             -- JSON diff (before/after) for saves
+    Notes         NVARCHAR(500)             -- Optional: import source version, etc.
+);
+</code></pre>
+
+  <h2>What Is Automatically Audited</h2>
+  <table>
+    <thead>
+      <tr><th>Operation</th><th>Entity</th><th>Action logged</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SaveAppAsync</td><td>App</td><td>"Save" with JSON diff of the app definition</td></tr>
+      <tr><td>DeleteAppAsync</td><td>App</td><td>"Delete"</td></tr>
+      <tr><td>SavePageAsync</td><td>Page</td><td>"Save" with JSON diff of the page config</td></tr>
+      <tr><td>DeletePageAsync</td><td>Page</td><td>"Delete"</td></tr>
+      <tr><td>SaveLayoutAsync</td><td>Layout</td><td>"Save" for each page's widget set</td></tr>
+      <tr><td>ImportAppAsync</td><td>App</td><td>"Import" with bundle version label in Notes</td></tr>
+      <tr><td>ExportAppAsync</td><td>App</td><td>"Export" with requested by userId</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Audit in the Service Layer — Automatic for All Writes</h2>
+  <pre><code>// The audit writer is called inside every write method:
+private async Task WriteAuditLogAsync(
+    string tenantId, string appId, string entityType,
+    string entityId, string action, string changedBy,
+    string? diffJson = null, string? notes = null)
+{
+    var entry = new AppAuditLogEntity
+    {
+        TenantId  = tenantId,
+        AppId     = appId,
+        EntityType = entityType,
+        EntityId  = entityId,
+        Action    = action,
+        ChangedBy = changedBy,
+        ChangedAt = DateTime.UtcNow,
+        ClientIp  = _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString(),
+        DiffJson  = diffJson,
+        Notes     = notes
+    };
+
+    _db.AppAuditLogs.Add(entry);
+    await _db.SaveChangesAsync();
+}
+</code></pre>
+
+  <h2>Reading the Audit Log via the Service API</h2>
+  <pre><code>// IAppStudioService
+Task<IList<AuditEntry>> GetAuditLogAsync(string tenantId, string appId, AuditQuery query);
+
+// AuditQuery supports filtering:
+var query = new AuditQuery
+{
+    From     = DateTime.UtcNow.AddDays(-30),
+    To       = DateTime.UtcNow,
+    Action   = "Save",           // optional filter by action
+    ChangedBy = "user-abc"       // optional filter by user
+};
+
+var log = await _service.GetAuditLogAsync(tenantId, appId, query);
+</code></pre>
+
+  <h2>Viewing the Audit Log in the Designer</h2>
+  <p>App designers can view the audit log for an app directly in the App Studio Designer:</p>
+  <div class="steps">
+    <div class="step">
+      <span class="step-num">1</span>
+      <div>Open the app in App Studio Designer</div>
+    </div>
+    <div class="step">
+      <span class="step-num">2</span>
+      <div>Click the <strong>Audit Log</strong> icon in the left toolbar (clock icon)</div>
+    </div>
+    <div class="step">
+      <span class="step-num">3</span>
+      <div>Browse the chronological list of changes — who changed what, when</div>
+    </div>
+    <div class="step">
+      <span class="step-num">4</span>
+      <div>Click any "Save" entry to view the JSON diff (before/after comparison)</div>
+    </div>
+    <div class="step">
+      <span class="step-num">5</span>
+      <div>Filter by date range, user, or action type using the filter controls</div>
+    </div>
+  </div>
+
+  <div class="callout callout-info">
+    <strong>Audit is non-bypassable</strong>
+    Because all data access goes through <code>IAppStudioService</code>, audit logging is guaranteed for every write. It is structurally impossible for a controller to write to an app definition without creating an audit entry — the service method always calls the audit writer before returning.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-caching.html">&#8592; Service Layer Caching</a>
+    <a href="index.html">Back to Overview &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

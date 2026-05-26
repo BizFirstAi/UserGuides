@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Observer SignalR Hook — Observer Panel | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Observer Panel</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observer Panel Overview</a>
+  <a href="01-tab-system.html">Tab System</a>
+  <a href="02-engine.html">FlowObserverPanelEngine</a>
+  <a href="03-panel-store.html">Observer Panel Store</a>
+  <a href="04-signalr.html" class="active">Observer SignalR Hook</a>
+  <a href="05-built-in-tabs.html">Built-In Tabs Summary</a>
+  <a href="06-custom-tabs.html">Adding Custom Tabs</a>
+  <a href="07-panel-constraints.html">Panel Sizing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Observer SignalR Hook</h1>
+    <p class="lead"><code>useFlowObserverSignalR</code> is the Observer Panel's own SignalR connection — independent from the designer's <code>useExecutionSignalR</code>. This separation allows the Observer Panel to be embedded outside the designer while still receiving real-time execution events.</p>
+  </div>
+
+  <h2>Why a Separate Hook?</h2>
+  <p>The designer's <code>useExecutionSignalR</code> hook manages the canvas-level connection — updating node border colours, triggering re-renders on the React Flow canvas. The Observer Panel has different needs:</p>
+  <ul>
+    <li>It may be mounted separately from the designer (e.g., in a monitoring dashboard)</li>
+    <li>It manages its own log buffer, node status list, and tab state</li>
+    <li>It can operate independently when the designer is not open</li>
+  </ul>
+  <p>In practice, when both are mounted together (the normal case), both hooks connect to the same SignalR hub and the same execution group. The server broadcasts to all group members, so both receive every event.</p>
+
+  <h2>useFlowObserverSignalR</h2>
+  <pre><code>// flow-observer-core/src/hooks/useFlowObserverSignalR.ts
+export function useFlowObserverSignalR(executionId: string) {
+  const engine = useFlowObserverPanelEngine();
+  const store = useFlowObserverPanelStore();
+
+  useEffect(() => {
+    const connection = new HubConnectionBuilder()
+      .withUrl('/hubs/execution', {
+        accessTokenFactory: () => getAuthToken()
+      })
+      .withAutomaticReconnect([1000, 2000, 5000, 10000])
+      .build();
+
+    connection.on('ExecutionEvent', (event: ExecutionEvent) => {
+      // Route all events through the engine
+      engine.pushExecutionEvent(event);
+
+      // Also update store directly for status/progress
+      if (event.type === 'WorkflowExecutionCompleted') {
+        store.setStatus(event.status);
+      }
+      if (event.type === 'NodeExecutionCompleted') {
+        store.incrementCompletedCount();
+      }
+    });
+
+    connection.start()
+      .then(() => connection.invoke('JoinExecutionGroup', executionId));
+
+    return () => { connection.stop(); };
+  }, [executionId]);
+}</code></pre>
+
+  <h2>Connection Relationship Diagram</h2>
+  <table>
+    <thead><tr><th>Hook</th><th>Consumer</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>useExecutionSignalR</code></td><td>Designer canvas</td><td>Update node border colours and canvas execution overlays</td></tr>
+      <tr><td><code>useFlowObserverSignalR</code></td><td>Observer Panel</td><td>Feed log buffer, node list, status tab, Node Inspector</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Two Connections, Same Group</strong>
+    When both hooks are active, the browser maintains two separate WebSocket connections to <code>/hubs/execution</code>. Both join the same execution group. This is expected behaviour — SignalR groups are broadcast-based, so the server sends each event once to the group and both connections receive it. There is no duplication of events in the stores because each hook writes to a different store (<code>designerModeStore</code> vs <code>flowObserverPanelStore</code>).
+  </div>
+
+  <div class="page-nav">
+    <a href="03-panel-store.html">&#8592; Observer Panel Store</a>
+    <a href="05-built-in-tabs.html">Next: Built-In Tabs Summary &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

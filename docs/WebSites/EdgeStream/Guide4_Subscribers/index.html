@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscribers Overview — Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Subscribers Overview</a>
+  <a href="01-subscribing.html">Creating a Subscription</a>
+  <a href="02-topic-patterns.html">Topic Patterns</a>
+  <a href="03-topic-matcher.html">TopicMatcher</a>
+  <a href="04-subscription-manager.html">SubscriptionManager</a>
+  <a href="05-subscription-registry.html">SubscriptionRegistry</a>
+  <a href="06-callback-patterns.html">Callback Patterns</a>
+  <a href="07-unsubscribing.html">Unsubscribing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Subscribers Overview</h1>
+    <p class="lead">Subscribers are typed callbacks that receive message envelopes on matched topic patterns. The SubscriptionManager routes envelopes to matching subscribers after the pipeline completes — with full isolation between callbacks.</p>
+  </div>
+
+  <h2>The Subscription Model</h2>
+  <p>EdgeStream uses a push-based pub/sub model. You register a callback for a topic pattern; when a matching message is processed, your callback is invoked with the complete <code>IEnvelope</code>. No polling, no promise-based waiting — your callback fires the moment the pipeline completes.</p>
+
+  <pre><code>// Basic subscription
+const subscription = edgeStream.subscribe(
+  'bas',                     // server ID
+  'workflow.execution.*',    // topic pattern
+  (envelope: IEnvelope) =&gt; { // callback
+    console.log('Message received:', envelope.body);
+  }
+);
+
+// subscription.id   — unique ID, e.g. 'sub-a1b2c3d4'
+// subscription.active — true while subscribed
+// subscription.unsubscribe() — remove this subscription</code></pre>
+
+  <h2>Core Components</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4>SubscriptionManager</h4>
+      <p>Central registry of all active subscriptions. Receives publish calls from the pipeline and routes envelopes to matching callbacks. One instance per server.</p>
+    </div>
+    <div class="card">
+      <h4>TopicMatcher</h4>
+      <p>Evaluates subscription patterns against message topics using exact match and <code>.*</code> wildcard. No regex — uses efficient string operations.</p>
+    </div>
+    <div class="card">
+      <h4>SubscriptionRegistry</h4>
+      <p>The internal data structure (Map of ID → SubscriberEntry) that SubscriptionManager uses to store and look up subscriptions. Used by observability to enumerate active subscriptions.</p>
+    </div>
+    <div class="card">
+      <h4>ISubscription Handle</h4>
+      <p>Returned by every <code>subscribe()</code> call. Holds the subscription ID and exposes <code>unsubscribe()</code>. Store this reference for cleanup.</p>
+    </div>
+  </div>
+
+  <h2>Subscription Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Register</h4>
+        <p><code>edgeStream.subscribe(serverId, topic, callback)</code> — generates a unique subscription ID (<code>'sub-xxxx'</code>) and stores the entry in SubscriptionManager.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Match</h4>
+        <p>When a message arrives, <code>TopicMatcher.matches(pattern, topic)</code> is called for each subscription. Matching subscriptions are queued for delivery.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Deliver</h4>
+        <p>All matching subscriber callbacks are invoked concurrently. Async callbacks are collected in a <code>Promise.all()</code>. Each callback's error is isolated.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot muted">4</div></div>
+      <div class="body">
+        <h4>Cleanup</h4>
+        <p><code>subscription.unsubscribe()</code> removes the entry from SubscriptionManager. Any future messages no longer invoke this callback.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Topic Pattern Rules</h2>
+  <table>
+    <thead>
+      <tr><th>Pattern</th><th>Matches</th><th>Does Not Match</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>workflow.started</code></td><td><code>workflow.started</code> (exact)</td><td><code>workflow.started.sub</code></td></tr>
+      <tr><td><code>workflow.*</code></td><td><code>workflow.started</code>, <code>workflow.done</code></td><td><code>workflow.node.started</code></td></tr>
+      <tr><td><code>agent.chat.*</code></td><td><code>agent.chat.token</code>, <code>agent.chat.done</code></td><td><code>agent.chat</code>, <code>agent.other</code></td></tr>
+      <tr><td><code>workflow.execution.*</code></td><td><code>workflow.execution.started</code></td><td><code>workflow.execution.node.done</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Always Unsubscribe</strong>
+    Subscriptions remain active until explicitly removed. In React components, always call <code>subscription.unsubscribe()</code> in the cleanup function of <code>useEffect</code>. Leaked subscriptions accumulate and cause memory growth in long-running applications.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-subscribing.html">Next: Creating a Subscription &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

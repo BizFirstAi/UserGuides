@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>edge-stream-workflow-events — Available Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Available Plugins</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Plugin Package Catalog</a>
+  <a href="01-workflow-events.html" class="active">edge-stream-workflow-events</a>
+  <a href="02-agent-messages.html">edge-stream-agent-messages</a>
+  <a href="03-ui-actions.html">edge-stream-ui-actions</a>
+  <a href="04-system-events.html">edge-stream-system-events</a>
+  <a href="05-observability.html">Observability Bundle</a>
+  <a href="06-ancp.html">edge-stream-ancp</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>@edge-stream/workflow-events</h1>
+    <p class="lead">The workflow events package provides TypeScript message types, topic constants, validation, and pipeline hooks for all BizFirstGO workflow execution events. It powers the Flow Studio Observer Panel and any custom workflow monitoring UI.</p>
+  </div>
+
+  <h2>Installation</h2>
+  <pre><code>pnpm add @edge-stream/workflow-events</code></pre>
+
+  <h2>Key Exports</h2>
+  <pre><code>import {
+  WorkflowEventPlugin,     // IMessagePlugin implementation
+  WorkflowTopics,          // topic constants
+  WorkflowEventTypes,      // message type constants
+
+  // TypeScript interfaces
+  type WorkflowStartedEvent,
+  type WorkflowCompletedEvent,
+  type WorkflowFailedEvent,
+  type NodeExecutionStartedEvent,
+  type NodeExecutionCompletedEvent,
+  type NodeExecutionFailedEvent,
+  type WorkflowSuspendedEvent,
+  type WorkflowResumedEvent,
+} from '@edge-stream/workflow-events';</code></pre>
+
+  <h2>Topic Constants</h2>
+  <pre><code>import { WorkflowTopics } from '@edge-stream/workflow-events';
+
+// Use constants instead of string literals — avoids typos
+WorkflowTopics.STARTED              // 'workflow.started'
+WorkflowTopics.COMPLETED            // 'workflow.completed'
+WorkflowTopics.FAILED               // 'workflow.failed'
+WorkflowTopics.SUSPENDED            // 'workflow.suspended'
+WorkflowTopics.RESUMED              // 'workflow.resumed'
+WorkflowTopics.NODE_STARTED         // 'workflow.nodeExecutionStarted'
+WorkflowTopics.NODE_COMPLETED       // 'workflow.nodeExecutionCompleted'
+WorkflowTopics.NODE_FAILED          // 'workflow.nodeExecutionFailed'
+WorkflowTopics.NAMESPACE_PATTERN    // 'workflow.*'</code></pre>
+
+  <h2>Setup</h2>
+  <pre><code>import { WorkflowEventPlugin, WorkflowTopics } from '@edge-stream/workflow-events';
+
+const plugin = new WorkflowEventPlugin();
+
+// Register default hooks (NormalizationHook + WorkflowMapper + AuditLog)
+plugin.createDefaultHooks().forEach(hook =&gt;
+  server.incomingPipeline.addHook(hook)
+);
+
+// Type-safe subscriptions
+stream.subscribe&lt;NodeExecutionCompletedEvent&gt;(
+  'bas',
+  WorkflowTopics.NODE_COMPLETED,
+  (envelope) =&gt; {
+    observerPanel.updateNode(envelope.body.nodeId, 'completed', {
+      duration: envelope.body.durationMs,
+      output: envelope.body.outputData,
+    });
+  }
+);</code></pre>
+
+  <h2>Observer Panel Integration</h2>
+  <pre><code>// Complete Observer Panel setup with typed handlers
+import {
+  WorkflowEventPlugin, WorkflowTopics,
+  type NodeExecutionCompletedEvent, type WorkflowSuspendedEvent,
+} from '@edge-stream/workflow-events';
+
+function setupObserverPanel(stream, executionId: string) {
+  const onNodeComplete = (envelope: IEnvelope&lt;NodeExecutionCompletedEvent&gt;) =&gt; {
+    if (envelope.body.executionId !== executionId) return;
+    panel.markNodeComplete(envelope.body.nodeId, envelope.body.durationMs);
+  };
+
+  const onSuspended = (envelope: IEnvelope&lt;WorkflowSuspendedEvent&gt;) =&gt; {
+    if (envelope.body.executionId !== executionId) return;
+    panel.showHilPrompt(envelope.body.hilTaskId);
+  };
+
+  stream.subscribe('bas', WorkflowTopics.NODE_COMPLETED, onNodeComplete);
+  stream.subscribe('bas', WorkflowTopics.SUSPENDED, onSuspended);
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Plugin Package Catalog</a>
+    <a href="02-agent-messages.html">Next: edge-stream-agent-messages &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

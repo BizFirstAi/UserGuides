@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Inspector Data — Observer Stores | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Observer Stores</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-panel-store.html">flowObserverPanelStore</a>
+  <a href="02-execution-store.html">executionStore</a>
+  <a href="03-node-statuses.html">Node Statuses</a>
+  <a href="04-logs.html">Log Entries</a>
+  <a href="05-node-inspector.html" class="active">Node Inspector Data</a>
+  <a href="06-subscribing.html">Subscribing in Tab Components</a>
+  <a href="07-resetting.html">Resetting for New Execution</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Node Inspector Data</h1>
+    <p class="lead">When the user clicks a node in execution mode, the Inspector tab shows the node's output, input, status, and pinned data. executionStore holds selectedNodeId and nodeInspectorData — updated on node click via an API call.</p>
+  </div>
+
+  <h2>NodeInspectorData Shape</h2>
+  <pre><code">// nodeInspector.ts
+export interface NodeInspectorData {
+    nodeId        : string;
+    nodeLabel     : string;
+    status        : NodeExecutionStatus;
+    inputData     : unknown;   // What this node received as input
+    outputData    : unknown;   // What this node returned as output
+    pinnedData    : unknown;   // Pinned data from Process_NodePinnedData (if any)
+    logs          : LogEntry[]; // Logs emitted by this node during this execution
+    metrics       : NodeMetrics;
+}
+
+export interface NodeMetrics {
+    executionDurationMs : number | null;
+    retryCount          : number;
+    spanId              : string | null;  // OTel span ID — links to trace
+    traceId             : string | null;
+}</code></pre>
+
+  <h2>Selecting a Node in Execution Mode</h2>
+  <pre><code">// When user clicks a node on the canvas in execution mode:
+async function handleNodeClick(nodeId: string) {
+    const { executionId } = useExecutionStore.getState();
+    if (!executionId) return;
+
+    // Set selected node immediately (shows loading state)
+    useExecutionStore.getState().setSelectedNodeId(nodeId);
+    useExecutionStore.getState().setNodeInspectorData(null);  // clear previous
+
+    // Fetch inspector data for this node from the API
+    const data = await executionApiClient.getNodeInspectorData(executionId, nodeId);
+
+    useExecutionStore.getState().setNodeInspectorData(data);
+
+    // Switch Observer Panel to Inspector tab
+    useFlowObserverPanelStore.getState().setActiveTab('node-inspector');
+}</code></pre>
+
+  <h2>Inspector Tab Reading the Data</h2>
+  <pre><code">// NodeInspectorTabContent.tsx
+import { shallow } from 'zustand/shallow';
+
+function NodeInspectorTabContent() {
+    const { selectedNodeId, nodeInspectorData } = useExecutionStore(
+        state => ({
+            selectedNodeId   : state.selectedNodeId,
+            nodeInspectorData: state.nodeInspectorData
+        }),
+        shallow
+    );
+
+    if (!selectedNodeId)      return &lt;p&gt;Click a node to inspect.&lt;/p&gt;;
+    if (!nodeInspectorData)   return &lt;Spinner /&gt;;
+
+    return (
+        &lt;div&gt;
+            &lt;h3&gt;{nodeInspectorData.nodeLabel}&lt;/h3&gt;
+            &lt;StatusBadge status={nodeInspectorData.status.status} /&gt;
+            &lt;JsonSection title="Input"  data={nodeInspectorData.inputData}  /&gt;
+            &lt;JsonSection title="Output" data={nodeInspectorData.outputData} /&gt;
+            {nodeInspectorData.pinnedData &amp;&amp;
+                &lt;JsonSection title="Pinned Data" data={nodeInspectorData.pinnedData} /&gt;}
+        &lt;/div&gt;
+    );
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="04-logs.html">&#8592; Log Entries</a>
+    <a href="06-subscribing.html">Next: Subscribing in Tab Components &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

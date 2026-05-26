@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Message Templating — Guide40 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Messaging</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-slack.html"><i class="fa-brands fa-slack"></i> Slack</a>
+  <a href="02-email.html"><i class="fa-solid fa-envelope"></i> Email</a>
+  <a href="03-sms.html"><i class="fa-solid fa-mobile-alt"></i> SMS</a>
+  <a href="04-push.html"><i class="fa-solid fa-bell"></i> Push Notifications</a>
+  <a href="05-channel-adapter.html"><i class="fa-solid fa-plug"></i> Channel Adapter</a>
+  <a href="06-credentials.html"><i class="fa-solid fa-key"></i> Credentials</a>
+  <a href="07-templating.html" class="active"><i class="fa-solid fa-code"></i> Templating</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Message Templating</h1>
+    <p class="lead">How the Jint expression engine evaluates message fields at send time — interpolating workflow data into text, HTML, and Block Kit payloads using <code>$output</code>, <code>$json</code>, and <code>$context</code> variables.</p>
+  </div>
+
+  <h2>Expression Context</h2>
+  <p>All string fields in messaging node config are evaluated as expressions before sending. The expression context is identical to the rest of the Flow Studio expression engine:</p>
+  <table>
+    <thead><tr><th>Variable</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>$output.{nodeId}</code></td><td>object</td><td>Output of a completed upstream node</td></tr>
+      <tr><td><code>$json</code></td><td>object</td><td>Trigger payload / current loop item</td></tr>
+      <tr><td><code>$context</code></td><td>object</td><td>Execution metadata (executionId, tenantId, actorId, appUrl, workDeskUrl)</td></tr>
+      <tr><td><code>$env</code></td><td>object</td><td>Environment variables exposed to the workflow</td></tr>
+      <tr><td><code>$now</code></td><td>Date</td><td>Current UTC timestamp as JavaScript Date object</td></tr>
+    </tbody>
+  </table>
+
+  <h2>String Interpolation</h2>
+  <p>For simple value injection, use the <code>$variable.path</code> prefix in a string field. The engine detects and substitutes single expressions:</p>
+  <pre><code class="language-json">{
+  "text": "Invoice $output.createInvoice.invoiceNumber is ready for review.",
+  "subject": "Action Required — $output.createInvoice.invoiceNumber ($output.fetchVendor.name)",
+  "body": "Hi $output.fetchEmployee.firstName, your request for $output.createExpense.amount $output.createExpense.currency has been submitted."
+}</code></pre>
+
+  <h2>Full Expression Mode</h2>
+  <p>For computed values, concatenation, or conditional content, use a full JavaScript expression (the entire string is the expression):</p>
+  <pre><code class="language-javascript">// Conditional subject line
+"subject": "$output.reviewDecision.approved ? 'Approved: ' + $output.createInvoice.invoiceNumber : 'Rejected: ' + $output.createInvoice.invoiceNumber"
+
+// Formatted currency amount
+"text": "'Total approved: ' + new Intl.NumberFormat('en-US', { style: 'currency', currency: $output.createInvoice.currency }).format($output.createInvoice.total)"
+
+// Date formatting
+"text": "'Submitted on ' + new Date($output.createExpense.submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })"</code></pre>
+
+  <h2>HTML Body Templating</h2>
+  <p>The <code>bodyHtml</code> field for email nodes supports <code>{{expression}}</code> interpolation inside a larger HTML string. This allows building rich HTML emails with inline data:</p>
+  <pre><code class="language-html">&lt;!-- bodyHtml value --&gt;
+&lt;h2&gt;Hello {{$output.fetchEmployee.firstName}},&lt;/h2&gt;
+&lt;p&gt;Invoice &lt;strong&gt;{{$output.createInvoice.invoiceNumber}}&lt;/strong&gt;
+   for &lt;strong&gt;{{$output.fetchVendor.name}}&lt;/strong&gt;
+   totalling &lt;strong&gt;${{$output.createInvoice.total.toFixed(2)}}&lt;/strong&gt;
+   requires your approval.&lt;/p&gt;
+&lt;table&gt;
+  {{$output.createInvoice.lineItems.map(item =&gt;
+    '&lt;tr&gt;&lt;td&gt;' + item.description + '&lt;/td&gt;&lt;td&gt;$' + item.amount.toFixed(2) + '&lt;/td&gt;&lt;/tr&gt;'
+  ).join('')}}
+&lt;/table&gt;
+&lt;a href="{{$context.workDeskUrl}}/tasks/{{$context.executionId}}"&gt;Review Now&lt;/a&gt;</code></pre>
+
+  <h2>Block Kit Expression Building</h2>
+  <p>The Slack <code>blocks</code> field accepts a JavaScript expression that returns a Block Kit array. Use this to build dynamic blocks from workflow data:</p>
+  <pre><code class="language-javascript">// blocks field — full expression returning an array
+`[
+  {
+    type: 'header',
+    text: { type: 'plain_text', text: 'Expense Report: ' + $output.createExpense.reportName }
+  },
+  {
+    type: 'section',
+    fields: $output.createExpense.items.slice(0, 10).map(item => ({
+      type: 'mrkdwn',
+      text: '*' + item.category + '*\n$' + item.amount.toFixed(2)
+    }))
+  },
+  {
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: $output.reviewDecision.approved
+        ? ':white_check_mark: *Approved* by ' + $output.reviewDecision.approverName
+        : ':x: *Pending approval*'
+    }
+  }
+]`</code></pre>
+
+  <h2>Null-Safe Access</h2>
+  <p>Use null-coalescing and optional chaining to handle missing data gracefully:</p>
+  <pre><code class="language-javascript">// Null-safe with fallback
+"text": "$output.fetchEmployee.displayName ?? $output.fetchEmployee.email ?? 'Unknown user'"
+
+// Optional chaining
+"text": "$output.createInvoice.vendor?.name ?? 'No vendor'"
+
+// Conditional segment
+"body": "'Hello ' + ($output.fetchEmployee.firstName ?? 'there') + ', your request has been received.'"</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Preview in Flow Studio:</strong> The node inspector includes a template preview panel. After configuring a message node, click "Preview" to see the evaluated output using sample data from the most recent test execution. This catches template errors before going live.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-credentials.html">&#8592; Credentials</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

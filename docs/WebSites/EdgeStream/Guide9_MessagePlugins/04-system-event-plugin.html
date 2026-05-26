@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Event Plugin — Message Plugins | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Message Plugins</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Message Plugins Overview</a>
+  <a href="01-workflow-event-plugin.html">Workflow Event Plugin</a>
+  <a href="02-agent-message-plugin.html">Agent Message Plugin</a>
+  <a href="03-ui-action-plugin.html">UI Action Plugin</a>
+  <a href="04-system-event-plugin.html" class="active">System Event Plugin</a>
+  <a href="05-custom-plugin.html">Building a Custom Plugin</a>
+  <a href="06-plugin-registry.html">Plugin Registry</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>System Event Plugin</h1>
+    <p class="lead">The System Event Plugin owns the <code>system.*</code> topic namespace. It carries platform-level events — health status updates, deployment notifications, configuration changes, and tenant-level broadcast messages.</p>
+  </div>
+
+  <h2>Topic Namespace</h2>
+  <pre><code>system.health               // Platform health status update
+system.deployment.started   // Deployment pipeline started
+system.deployment.completed // Deployment finished (success or failure)
+system.config.changed       // Configuration reloaded
+system.tenant.suspended     // Tenant account suspended
+system.maintenance.started  // Maintenance window opened
+system.maintenance.ended    // Maintenance window closed
+system.broadcast            // Admin broadcast to all users</code></pre>
+
+  <h2>Message Formats</h2>
+  <pre><code>// system.health
+interface SystemHealthEvent {
+  serviceId: string;      // e.g., 'process-engine', 'atlas-forms'
+  status: 'healthy' | 'degraded' | 'critical' | 'offline';
+  message?: string;
+  metrics?: {
+    cpuPercent: number;
+    memoryPercent: number;
+    requestsPerSecond: number;
+    errorRate: number;
+  };
+  timestamp: string;
+}
+
+// system.deployment.completed
+interface DeploymentCompletedEvent {
+  deploymentId: string;
+  environment: 'staging' | 'production';
+  version: string;
+  status: 'success' | 'failed' | 'rolledBack';
+  deployedAt: string;
+  services: string[];     // services updated in this deployment
+}
+
+// system.broadcast
+interface SystemBroadcastEvent {
+  id: string;
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  message: string;
+  targetAudience: 'all' | 'admin' | 'tenant';
+  tenantId?: string;      // set when targetAudience === 'tenant'
+  expiresAt?: string;
+}</code></pre>
+
+  <h2>Subscribing to System Events</h2>
+  <pre><code>// System health dashboard
+stream.subscribe('bas', 'system.health', (envelope) =&gt; {
+  const { serviceId, status, metrics } = envelope.body;
+  healthStore.updateService(serviceId, {
+    status,
+    cpu: metrics?.cpuPercent,
+    memory: metrics?.memoryPercent,
+    errorRate: metrics?.errorRate,
+  });
+});
+
+// Maintenance window banner
+stream.subscribe('bas', 'system.maintenance.*', (envelope) =&gt; {
+  const topic = envelope.meta.topic;
+  if (topic === 'system.maintenance.started') {
+    bannerStore.show({
+      type: 'warning',
+      message: 'Maintenance in progress — some features may be unavailable',
+      persistent: true,
+    });
+  } else if (topic === 'system.maintenance.ended') {
+    bannerStore.dismiss();
+  }
+});</code></pre>
+
+  <h2>Admin Broadcast Handling</h2>
+  <pre><code>// system.broadcast — may be tenant-specific
+stream.subscribe('bas', 'system.broadcast', (envelope) =&gt; {
+  const { severity, title, message, targetAudience, tenantId } = envelope.body;
+
+  // Filter: only show if intended for current tenant or all users
+  if (targetAudience === 'tenant' &amp;&amp; tenantId !== currentTenantId) return;
+
+  toastService.show({
+    type: severity === 'critical' ? 'error' : severity,
+    title,
+    message,
+    duration: severity === 'critical' ? 0 : 10000, // persist critical
+  });
+});</code></pre>
+
+  <h2>Combining with TenantBoundaryHook</h2>
+  <p>System events often carry a <code>tenantId</code>. Register a <code>TenantBoundaryHook</code> to automatically filter out events not intended for the current tenant before they reach subscribers:</p>
+  <pre><code>// TenantBoundaryHook filters at priority 130 — before subscriber delivery
+server.incomingPipeline.addHook(new TenantBoundaryHook({
+  currentTenantId: authStore.getTenantId(),
+  tenantIdPath: 'body.tenantId',  // where to find tenantId in the envelope
+  allowNull: true,                // allow messages with no tenantId (global broadcasts)
+}));</code></pre>
+
+  <div class="page-nav">
+    <a href="03-ui-action-plugin.html">&#8592; UI Action Plugin</a>
+    <a href="05-custom-plugin.html">Next: Building a Custom Plugin &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

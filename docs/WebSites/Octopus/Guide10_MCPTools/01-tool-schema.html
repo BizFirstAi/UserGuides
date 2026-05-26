@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Schema — MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">MCP Tools Overview</a>
+  <a href="01-tool-schema.html" class="active">Tool Schema</a>
+  <a href="02-tool-registration.html">Tool Registration</a>
+  <a href="03-tool-call-loop.html">Tool Call Loop</a>
+  <a href="04-tool-results.html">Tool Results</a>
+  <a href="05-built-in-tools.html">Built-In Tools</a>
+  <a href="06-custom-tools.html">Custom Tools</a>
+  <a href="07-tool-security.html">Tool Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Tool Schema</h1>
+    <p class="lead">Every MCP tool has a JSON Schema definition that describes its name, description, and input parameters. The LLM uses this schema to decide when to call the tool and to construct valid input arguments. Well-written schemas are critical to reliable tool selection.</p>
+  </div>
+
+  <h2>ToolDefinition Structure</h2>
+  <pre><code>public class ToolDefinition
+{
+    public string       Name        { get; init; } = string.Empty;
+    public string       Description { get; init; } = string.Empty;
+    public JsonDocument InputSchema { get; init; } = JsonDocument.Parse("{}");
+}
+
+// Example: well-written tool definition
+var leaveTool = new ToolDefinition
+{
+    Name        = "get_employee_leave_balance",
+    Description = "Returns the number of annual leave days remaining for an employee. " +
+                  "Call this when the user asks about their leave balance, remaining days, " +
+                  "or how many days they can take off.",
+    InputSchema = JsonDocument.Parse("""
+    {
+      "type": "object",
+      "properties": {
+        "employeeId": {
+          "type":        "string",
+          "description": "The employee's unique ID (e.g. 'EMP-1042'). " +
+                         "Obtain from the user if not already known."
+        },
+        "year": {
+          "type":        "integer",
+          "description": "The leave year (defaults to current year if not specified)."
+        }
+      },
+      "required": ["employeeId"]
+    }
+    """)
+};</code></pre>
+
+  <h2>JSON Schema Types</h2>
+  <table>
+    <thead>
+      <tr><th>JSON Schema Type</th><th>C# Equivalent</th><th>LLM Behaviour</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>"type": "string"</code></td><td><code>string</code></td><td>LLM passes a quoted string value</td></tr>
+      <tr><td><code>"type": "integer"</code></td><td><code>int</code></td><td>LLM passes a numeric integer</td></tr>
+      <tr><td><code>"type": "number"</code></td><td><code>double</code></td><td>LLM passes a numeric value (may have decimals)</td></tr>
+      <tr><td><code>"type": "boolean"</code></td><td><code>bool</code></td><td>LLM passes <code>true</code> or <code>false</code></td></tr>
+      <tr><td><code>"type": "array"</code></td><td><code>List&lt;T&gt;</code></td><td>LLM passes a JSON array</td></tr>
+      <tr><td><code>"type": "object"</code></td><td><code>class</code></td><td>LLM passes a nested JSON object</td></tr>
+      <tr><td><code>"enum": [...]</code></td><td><code>enum</code></td><td>LLM picks from the specified values</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Writing Effective Descriptions</h2>
+  <p>The tool description is the most important field for reliable tool selection. Guidelines:</p>
+  <ul>
+    <li><strong>State what it does</strong>: "Returns the remaining leave days for an employee"</li>
+    <li><strong>State when to call it</strong>: "Call this when the user asks about leave balance, remaining days..."</li>
+    <li><strong>State what it does NOT do</strong>: "Does not update the balance — use update_leave_balance for that"</li>
+    <li><strong>Keep it under 200 words</strong>: Longer descriptions waste tokens and may confuse the LLM</li>
+    <li><strong>Name parameters explicitly</strong>: Each parameter description should explain what it expects</li>
+  </ul>
+
+  <h2>Schema Anti-Patterns</h2>
+  <table>
+    <thead>
+      <tr><th>Anti-Pattern</th><th>Problem</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Vague description: "Gets leave data"</td><td>LLM doesn't know when to call it</td><td>"Returns remaining annual leave days. Call when user asks about leave balance."</td></tr>
+      <tr><td>All parameters required</td><td>LLM fails if it can't determine a value</td><td>Make optional parameters optional; provide defaults in the handler</td></tr>
+      <tr><td>Overlapping tool names</td><td>LLM picks the wrong one</td><td>Ensure each tool has a distinct, unambiguous purpose</td></tr>
+      <tr><td>No parameter descriptions</td><td>LLM guesses parameter format</td><td>Describe expected format for each parameter</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Generating Schemas from C# Types</h2>
+  <pre><code>// Use a schema generator to avoid hand-writing JSON Schema
+public class LeaveBalanceInput
+{
+    [JsonPropertyName("employeeId")]
+    [Description("The employee's unique ID, e.g. 'EMP-1042'")]
+    public string EmployeeId { get; set; } = string.Empty;
+
+    [JsonPropertyName("year")]
+    [Description("Leave year; defaults to current year if omitted")]
+    public int? Year { get; set; }
+}
+
+// Generate schema using NJsonSchema or System.Text.Json.Schema
+JsonSchema schema = JsonSchema.FromType&lt;LeaveBalanceInput&gt;();
+string jsonSchemaString = schema.ToJson();</code></pre>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; MCP Tools Overview</a>
+    <a href="02-tool-registration.html">Next: Tool Registration &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

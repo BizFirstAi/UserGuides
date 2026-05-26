@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromQL for BizFirstGO — Prometheus Metrics | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Prometheus Metrics</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Prometheus Overview</a>
+  <a href="01-deployment.html">Deploying Prometheus</a>
+  <a href="02-scrape-config.html">Scrape Configuration</a>
+  <a href="03-bizfirst-metrics.html">BizFirst Metrics Reference</a>
+  <a href="04-promql-basics.html">PromQL Basics</a>
+  <a href="05-promql-examples.html" class="active">PromQL for BizFirstGO</a>
+  <a href="06-recording-rules.html">Recording Rules</a>
+  <a href="07-alerting.html">Prometheus Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>PromQL for BizFirstGO</h1>
+    <p class="lead">Ready-to-use PromQL queries for BizFirstGO observability. Use these in Grafana dashboards, Prometheus alert rules, and ad-hoc Explore queries.</p>
+  </div>
+
+  <h2>Workflow Health</h2>
+  <pre><code># Overall workflow execution rate (executions per second)
+sum(rate(bizfirst_workflow_executions_total[5m]))
+
+# Workflow error rate (fraction of failed executions)
+sum(rate(bizfirst_workflow_executions_total{status="failed"}[5m]))
+  /
+sum(rate(bizfirst_workflow_executions_total[5m]))
+
+# Workflow error rate per tenant (for multi-tenant dashboards)
+sum(rate(bizfirst_workflow_executions_total{status="failed"}[5m])) by (tenant_id)
+  /
+sum(rate(bizfirst_workflow_executions_total[5m])) by (tenant_id)
+
+# Active (in-progress) executions
+sum(bizfirst_active_executions)
+
+# Workflow success rate (SLA dashboard)
+(
+  sum(rate(bizfirst_workflow_executions_total{status="success"}[24h]))
+  /
+  sum(rate(bizfirst_workflow_executions_total[24h]))
+) * 100</code></pre>
+
+  <h2>Node Performance</h2>
+  <pre><code># P99 latency per node type
+histogram_quantile(0.99,
+  sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+)
+
+# Average latency per node type
+sum(rate(bizfirst_node_execution_duration_seconds_sum[5m])) by (node_type)
+  /
+sum(rate(bizfirst_node_execution_duration_seconds_count[5m])) by (node_type)
+
+# Slowest node types (top 5 by P99)
+topk(5,
+  histogram_quantile(0.99,
+    sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+  )
+)
+
+# Node error rate by type
+sum(rate(bizfirst_node_errors_total[5m])) by (node_type)
+  /
+sum(rate(bizfirst_node_executions_total[5m])) by (node_type)</code></pre>
+
+  <h2>HIL Metrics</h2>
+  <pre><code># Total HIL backlog across all tenants
+sum(bizfirst_hil_pending_count)
+
+# HIL backlog by tenant
+bizfirst_hil_pending_count
+
+# Percentage of HIL tasks that are overdue
+(sum(bizfirst_hil_overdue_count) / sum(bizfirst_hil_pending_count)) * 100
+
+# P95 HIL suspension duration
+histogram_quantile(0.95,
+  sum(rate(bizfirst_hil_suspension_duration_seconds_bucket[1h])) by (le)
+)
+
+# HIL approval rate
+sum(rate(bizfirst_hil_suspensions_total[5m])) by (outcome)</code></pre>
+
+  <h2>EdgeStream Throughput</h2>
+  <pre><code># Messages per second by topic
+sum(rate(bizfirst_edgestream_messages_total[1m])) by (topic)
+
+# P99 delivery latency by topic
+histogram_quantile(0.99,
+  sum(rate(bizfirst_edgestream_delivery_duration_seconds_bucket[5m])) by (topic, le)
+)
+
+# Message delivery failure rate
+sum(rate(bizfirst_edgestream_messages_total{status="failed"}[5m]))
+  /
+sum(rate(bizfirst_edgestream_messages_total[5m]))
+
+# Subscriber count per topic
+bizfirst_edgestream_subscriber_count</code></pre>
+
+  <h2>Octopus AI Metrics</h2>
+  <pre><code># LLM call rate per second
+sum(rate(bizfirst_octopus_llm_calls_total[1m])) by (model)
+
+# P99 LLM response latency
+histogram_quantile(0.99,
+  sum(rate(bizfirst_octopus_llm_duration_seconds_bucket[5m])) by (model, le)
+)
+
+# Token usage rate (cost tracking)
+sum(rate(bizfirst_octopus_tokens_total[1h])) by (model, type)
+
+# Active agent sessions
+sum(bizfirst_octopus_active_agents) by (tenant_id)</code></pre>
+
+  <div class="page-nav">
+    <a href="04-promql-basics.html">&#8592; PromQL Basics</a>
+    <a href="06-recording-rules.html">Next: Recording Rules &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

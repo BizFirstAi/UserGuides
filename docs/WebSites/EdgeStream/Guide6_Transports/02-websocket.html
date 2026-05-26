@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebSocket Transport — Transports | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Transports</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Transport Overview</a>
+  <a href="01-signalr.html">SignalR Transport</a>
+  <a href="02-websocket.html" class="active">WebSocket Transport</a>
+  <a href="03-sse.html">SSE Transport</a>
+  <a href="04-choosing.html">Choosing a Transport</a>
+  <a href="05-connection-lifecycle.html">Connection Lifecycle</a>
+  <a href="06-custom-transport.html">Custom Transport</a>
+  <a href="07-multiple-transports.html">Multiple Transports</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>WebSocket Transport</h1>
+    <p class="lead"><code>RawWebSocketTransport</code> provides a direct, low-overhead WebSocket connection. It auto-converts <code>http://</code> to <code>ws://</code> and <code>https://</code> to <code>wss://</code>, supports binary (ArrayBuffer) frames, and reconnects automatically with exponential backoff.</p>
+  </div>
+
+  <h2>Configuration</h2>
+  <pre><code>stream.registerServer({
+  id: 'chat',
+  type: 'chat',
+  url: 'wss://chat.bizfirst.com/ws',
+  transportConfig: {
+    type: 'websocket',
+    url: 'wss://chat.bizfirst.com/ws',   // or https:// — auto-converted to wss://
+
+    // Auth via query params (WebSocket cannot send request headers)
+    queryParams: {
+      token: authStore.getToken(),
+      clientId: 'app-client-1',
+    },
+
+    // Connection timeout (default: 10000ms)
+    timeoutMs: 10000,
+
+    // Reconnect configuration
+    reconnect: {
+      maxAttempts: 0,         // 0 = unlimited
+      initialDelayMs: 1000,
+      maxDelayMs: 30000,
+      backoffMultiplier: 2,
+    },
+  }
+});</code></pre>
+
+  <h2>URL Conversion</h2>
+  <p>The transport automatically converts HTTP URLs to WebSocket protocol:</p>
+  <pre><code>// These all result in a wss:// WebSocket connection
+transportConfig: { type: 'websocket', url: 'https://chat.bizfirst.com/ws' }
+transportConfig: { type: 'websocket', url: 'wss://chat.bizfirst.com/ws' }
+
+// These result in ws:// (unencrypted — dev only)
+transportConfig: { type: 'websocket', url: 'http://localhost:5000/ws' }
+transportConfig: { type: 'websocket', url: 'ws://localhost:5000/ws' }</code></pre>
+
+  <h2>Binary Message Support</h2>
+  <p>The WebSocket transport sets <code>binaryType = 'arraybuffer'</code>, so messages arriving as binary frames are passed to the pipeline as <code>ArrayBuffer</code>:</p>
+  <pre><code>// Receive — binary or text, handled transparently
+stream.subscribe('chat', 'agent.*', (envelope) =&gt; {
+  // envelope.raw is string | ArrayBuffer depending on what server sent
+  console.log('Received:', envelope.body);
+});
+
+// Send — pass string or ArrayBuffer
+const server = stream.server('chat')!;
+await server.transport.send(new Uint8Array([0x01, 0x02, 0x03]).buffer);
+await server.transport.send(JSON.stringify({ type: 'ping' }));</code></pre>
+
+  <h2>Automatic Reconnection</h2>
+  <p>When the connection drops, RawWebSocketTransport automatically retries with exponential backoff:</p>
+  <pre><code>// Reconnect internals — calculateRetryDelay with exponential backoff
+// Attempt 1: 1000ms delay
+// Attempt 2: 2000ms delay
+// Attempt 3: 4000ms delay
+// ...
+// Capped at maxDelayMs (default 30000ms)
+
+// maxAttempts: 0 means unlimited retries — the connection never gives up</code></pre>
+
+  <div class="callout warning">
+    <strong>No SignalR Fallback</strong>
+    Unlike SignalR, RawWebSocketTransport does not fall back to SSE or polling if WebSocket is unavailable. If your environment has WebSocket restrictions (proxies, corporate firewalls), use SignalR instead which handles negotiation automatically.
+  </div>
+
+  <h2>Query Parameter Authentication</h2>
+  <p>WebSocket connections cannot send custom headers during the initial handshake. Pass auth tokens via query parameters instead:</p>
+  <pre><code>// Auth via query params — appended to the WebSocket URL
+transportConfig: {
+  type: 'websocket',
+  url: 'wss://chat.bizfirst.com/ws',
+  queryParams: {
+    access_token: authStore.getJwtToken(),
+    tenant: tenantId,
+  }
+}
+// Resulting URL: wss://chat.bizfirst.com/ws?access_token=eyJ...&tenant=acme</code></pre>
+
+  <div class="page-nav">
+    <a href="01-signalr.html">&#8592; SignalR Transport</a>
+    <a href="03-sse.html">Next: SSE Transport &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

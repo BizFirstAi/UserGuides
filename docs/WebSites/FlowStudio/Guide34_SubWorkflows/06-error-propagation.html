@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Error Propagation — Guide34_SubWorkflows | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Sub-Workflows</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-subworkflow-node.html"><i class="fa-solid fa-sitemap"></i> SubWorkflow Node</a>
+  <a href="02-input-mapping.html"><i class="fa-solid fa-right-to-bracket"></i> Input Mapping</a>
+  <a href="03-output-mapping.html"><i class="fa-solid fa-right-from-bracket"></i> Output Mapping</a>
+  <a href="04-sync-mode.html"><i class="fa-solid fa-hourglass-half"></i> Synchronous Mode</a>
+  <a href="05-async-mode.html"><i class="fa-solid fa-bolt"></i> Async Mode</a>
+  <a href="06-error-propagation.html" class="active"><i class="fa-solid fa-triangle-exclamation"></i> Error Propagation</a>
+  <a href="07-nesting.html"><i class="fa-solid fa-layer-group"></i> Nested Sub-Workflows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Error Propagation</h1>
+    <p class="lead">How child workflow failures surface in the parent — sync mode error port, async mode silent failure, and compensation patterns.</p>
+  </div>
+
+  <h2>Sync Mode — Error Port</h2>
+  <p>In synchronous mode, if the child workflow terminates in a <code>Failed</code> state, the SubWorkflow node fires its <strong>error port</strong> in the parent. The error output contains details about what went wrong:</p>
+  <pre><code class="language-json">{
+  "childExecutionId": "exec-101",
+  "failedAt": "2026-05-25T10:05:00Z",
+  "failureReason": "Node 'sendNotification' threw HttpRequestException",
+  "failedNodeId": "sendNotification",
+  "errorMessage": "Connection refused"
+}</code></pre>
+
+  <p>Access in the parent's error handler:</p>
+  <pre><code class="language-javascript">$output.runApproval.failureReason    // "Node 'sendNotification' threw HttpRequestException"
+$output.runApproval.childExecutionId // "exec-101" — for audit lookup</code></pre>
+
+  <h2>Sync Mode — Error Handling Pattern</h2>
+  <pre><code>
+  ┌─────────────────┐
+  │  SubWorkflow    │
+  │  (runApproval)  │
+  └────────┬────────┘
+           │             ┌─────────────────────┐
+           ├─ main ──────▶  Continue parent...  │
+           │             └─────────────────────┘
+           │             ┌─────────────────────┐
+           └─ error ─────▶  LogChildFailure     │
+                         │  + SendAlertEmail    │
+                         └─────────────────────┘
+  </code></pre>
+
+  <h2>Async Mode — Silent Failure</h2>
+  <p>In async mode, the parent does not observe child failures. The child's failure is recorded in the child execution's own audit log but does not affect the parent at all. Strategies for handling async failures:</p>
+  <ul>
+    <li>Design the child to always handle its own errors (never leave a node without an error edge)</li>
+    <li>Use a separate monitoring workflow that polls child execution statuses and alerts on failures</li>
+    <li>Store the <code>childExecutionId</code> in a database entity, then have a background job check status</li>
+  </ul>
+
+  <h2>Cancelled Parent = Cancelled Child</h2>
+  <p>If the parent execution is cancelled while a child is running (in sync mode):</p>
+  <ol>
+    <li>The parent's cancellation token fires</li>
+    <li>The engine sends a cancellation signal to the child execution</li>
+    <li>The child transitions to <code>Cancelled</code></li>
+    <li>The parent also transitions to <code>Cancelled</code></li>
+  </ol>
+  <p>In async mode, cancelling the parent does <strong>not</strong> cancel already-launched child executions. They run to completion independently.</p>
+
+  <div class="callout callout-tip">
+    <strong>Compensation pattern:</strong> In sync mode, use the error port to trigger a compensation sub-workflow that undoes any partial work done by the failed child. This is the saga compensation pattern — fire a rollback workflow from the error handler.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-async-mode.html">&#8592; Async Mode</a>
+    <a href="07-nesting.html">Next: Nested Sub-Workflows &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log Ingestion from BizFirstGO — Loki Log Aggregation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Loki Log Aggregation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Loki Overview</a>
+  <a href="01-deployment.html">Deploying Loki</a>
+  <a href="02-ingestion.html" class="active">Log Ingestion from BizFirstGO</a>
+  <a href="03-label-strategy.html">Label Strategy</a>
+  <a href="04-logql-basics.html">LogQL Basics</a>
+  <a href="05-logql-examples.html">LogQL for BizFirstGO</a>
+  <a href="06-retention.html">Log Retention in Loki</a>
+  <a href="07-alerts.html">Loki Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Log Ingestion from BizFirstGO</h1>
+    <p class="lead">BizFirstGO services push logs to Loki via the OTel Collector's Loki exporter. The OTel Collector receives logs via OTLP, extracts labels from resource and log attributes, and pushes them to Loki's push API.</p>
+  </div>
+
+  <h2>Ingestion Path</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>BizFirstGO Service (Serilog + OTel)</h4><p>Serilog emits structured JSON log events. The OTel Serilog sink converts these to OTel LogRecord format and forwards to the OTel SDK's log pipeline. The SDK batches and sends to the Collector via OTLP/gRPC.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>OTel Collector — OTLP Receiver</h4><p>Collector receives the log batch on port 4317. Resource attributes (service.name, deployment.environment) become Loki labels. Processors apply enrichment and PII redaction.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">3</div></div>
+      <div class="body"><h4>OTel Collector — Loki Exporter → Loki Push API</h4><p>The Loki exporter formats the logs as Loki push API JSON and sends to <code>POST /loki/api/v1/push</code> on the Loki server. Loki ingests into the appropriate stream based on the label set.</p></div>
+    </div>
+  </div>
+
+  <h2>OTel Collector Loki Exporter Configuration</h2>
+  <pre><code># otel-collector-config.yaml — Loki exporter section
+exporters:
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    default_labels_enabled:
+      exporter: false    # Don't add "exporter" label
+      job: true          # Add "job" label from resource
+      instance: true     # Add "instance" label
+      level: true        # Add "level" label from log severity
+    labels:
+      attributes:
+        - service.name    # Becomes label: service_name
+        - deployment.environment  # Becomes label: environment
+      resource:
+        - service.version
+      record:
+        - tenant.id       # Becomes label: tenant_id from log attribute
+
+# Multi-tenant: send X-Scope-OrgID header per tenant
+    headers:
+      X-Scope-OrgID: "${TENANT_ID}"  # Or extract from resource attribute</code></pre>
+
+  <h2>BizFirstGO Log Schema</h2>
+  <p>All BizFirstGO services emit logs in this structured JSON format. The schema is enforced by <code>ObservabilityServiceExtensions.ConfigureLogging()</code>:</p>
+  <pre><code>{
+  "Timestamp": "2026-05-25T14:32:01.1234567Z",
+  "Level": "Error",
+  "Message": "Node execution failed: DataFetchNode timeout after 5000ms",
+  "MessageTemplate": "Node execution failed: {NodeType} timeout after {TimeoutMs}ms",
+  "Properties": {
+    "NodeType": "DataFetchNode",
+    "TimeoutMs": 5000,
+    "executionId": "exec-d1e2f3a4",
+    "workflowId": "wf-8a4c2f91",
+    "tenantId": "tenant-abc-123",
+    "nodeKey": "data-fetch-01",
+    "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "spanId": "00f067aa0ba902b7",
+    "ServiceName": "processengine",
+    "Environment": "production"
+  },
+  "Exception": {
+    "Type": "TimeoutException",
+    "Message": "The operation timed out.",
+    "StackTrace": "..."
+  }
+}</code></pre>
+
+  <h2>Label Extraction from Log Attributes</h2>
+  <p>The OTel Collector's Loki exporter maps OTel resource/log attributes to Loki labels. The mapping is:</p>
+  <table>
+    <thead>
+      <tr><th>OTel Attribute</th><th>Loki Label Name</th><th>Source</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>service.name</code></td><td><code>job</code></td><td>OTel Resource</td></tr>
+      <tr><td><code>deployment.environment</code></td><td><code>environment</code></td><td>OTel Resource</td></tr>
+      <tr><td><code>tenant.id</code></td><td><code>tenant_id</code></td><td>OTel Log Record attribute</td></tr>
+      <tr><td>Severity (OTel LogRecord)</td><td><code>level</code></td><td>OTel LogRecord severity</td></tr>
+      <tr><td><code>service.version</code></td><td><code>version</code></td><td>OTel Resource</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Out-of-Order Log Handling</strong>
+    <p>Loki requires log lines within a stream to arrive in timestamp order. If your BizFirstGO services run as multiple replicas or if logs are buffered and retried, you may see "out of order" ingestion errors. Loki 2.4+ supports configurable out-of-order ingestion with <code>unordered_writes: true</code> in the ingester config — enable this for any production deployment where log delivery order cannot be guaranteed.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-deployment.html">&#8592; Deploying Loki</a>
+    <a href="03-label-strategy.html">Next: Label Strategy &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

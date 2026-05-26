@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suspension/Resume Overview — HIL Suspension & Resume | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>HIL Suspension &amp; Resume</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Overview</a>
+  <a href="01-suspending.html">Triggering Suspension</a>
+  <a href="02-state-persistence.html">Persisting Execution State</a>
+  <a href="03-correlation-token.html">Correlation Tokens</a>
+  <a href="04-resume-api.html">Resume API</a>
+  <a href="05-resume-data.html">Injecting Resume Data</a>
+  <a href="06-continuation.html">Resuming the Engine</a>
+  <a href="07-failure-modes.html">Failure Modes</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>HIL Suspension and Resume — Overview</h1>
+    <p class="lead">A deep-dive into the mechanics of workflow suspension and resume. Understand the state machine, how execution state is persisted to the database, and how a remote resume call restores and continues the workflow.</p>
+  </div>
+
+  <h2>State Machine</h2>
+  <table>
+    <thead><tr><th>State</th><th>Location</th><th>Trigger to Next State</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Running</strong></td><td>In-process memory</td><td>HIL node returns Suspend result</td></tr>
+      <tr><td><strong>Suspending</strong></td><td>In-process (transient)</td><td>ExecutionMemory serialised and written to DB</td></tr>
+      <tr><td><strong>Suspended</strong></td><td>Database only</td><td>POST /api/executions/{executionResId}/resume called</td></tr>
+      <tr><td><strong>Resuming</strong></td><td>In-process (transient)</td><td>State loaded, response data merged</td></tr>
+      <tr><td><strong>Running</strong></td><td>In-process memory</td><td>Engine continues from HIL node's output port</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Key Objects</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h4><i class="fa-solid fa-pause" style="color:var(--accent)"></i> SuspendPayload</h4>
+      <p>Returned by HIL executors. Contains ExecutionResId, actor assignment, task type, and expiry. Tells the engine what to record.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-database" style="color:var(--accent2)"></i> Process_SuspendedExecutions</h4>
+      <p>Database table holding serialised ExecutionMemory, pending node pointer, and correlation token. Durable across restarts.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-key" style="color:var(--accent3)"></i> ExecutionResId</h4>
+      <p>GUID correlation token. Unique per suspension. Used as the resume API URL path parameter. Consumed on first use.</p>
+    </div>
+    <div class="card">
+      <h4><i class="fa-solid fa-play" style="color:var(--accent4)"></i> ResumePayload</h4>
+      <p>Sent by the actor's channel to the resume API. Contains the actor's response data (decision, form values, acknowledgement).</p>
+    </div>
+  </div>
+
+  <h2>Service Architecture</h2>
+  <table>
+    <thead><tr><th>Service</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td><code>HILSuspensionService</code></td><td>Receives Suspend result from engine, serialises ExecutionMemory, writes to DB, generates correlation token</td></tr>
+      <tr><td><code>CorrelationTokenService</code></td><td>Generates and validates ExecutionResIds — checks uniqueness and consumed status</td></tr>
+      <tr><td><code>HILResumeService</code></td><td>Validates resume request, loads suspended state, merges response data, triggers continuation</td></tr>
+      <tr><td><code>IWorkflowContinuationOrchestrator</code></td><td>Re-initialises the engine from loaded state and resumes execution from the suspended node's downstream</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-suspending.html">Next: Triggering Suspension &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

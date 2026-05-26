@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Statuses — Designer Mode Store | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Designer Mode Store</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-state-shape.html">Store State Shape</a>
+  <a href="02-modes.html">Canvas Modes</a>
+  <a href="03-node-statuses.html" class="active">Node Statuses</a>
+  <a href="04-run-progress.html">Run Progress</a>
+  <a href="05-transitions.html">Mode Transitions</a>
+  <a href="06-consuming.html">Consuming in Components</a>
+  <a href="07-status-visualization.html">Status Visualization</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Node Statuses in Execution Mode</h1>
+    <p class="lead">The nodeStatuses map in designerModeStore is keyed by nodeId and holds the execution status of each node. It is populated by SignalR events during a live run and by the execution history API for past runs.</p>
+  </div>
+
+  <h2>Status Values</h2>
+  <table>
+    <thead><tr><th>Status</th><th>Badge Color</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>pending</code></td><td>Grey</td><td>Node has not yet started</td></tr>
+      <tr><td><code>running</code></td><td>Blue (animated)</td><td>Node is currently executing</td></tr>
+      <tr><td><code>success</code></td><td>Green</td><td>Node completed successfully</td></tr>
+      <tr><td><code>failed</code></td><td>Red</td><td>Node threw an error or returned a failure result</td></tr>
+      <tr><td><code>skipped</code></td><td>Yellow</td><td>Node was bypassed (e.g., condition not met)</td></tr>
+      <tr><td><code>suspended</code></td><td>Purple (pulsing)</td><td>Node is paused waiting for human input (HIL)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>setNodeStatus Action</h2>
+  <pre><code">setNodeStatus: (nodeId: string, status: NodeExecutionStatus) => void
+
+// Called by the SignalR handler when a NodeStatusChanged event arrives
+// Also called in bulk when loading a historical run
+
+useDesignerModeStore.getState().setNodeStatus('node-approval', {
+    nodeId      : 'node-approval',
+    status      : 'suspended',
+    startedAt   : '2026-05-25T09:00:00Z',
+    completedAt : null,
+    durationMs  : null,
+    errorMessage: null,
+    retryCount  : 0
+});</code></pre>
+
+  <h2>Live Run — SignalR Wiring</h2>
+  <pre><code">// useExecutionSignalR.ts
+connection.on("NodeStatusChanged", (event: NodeStatusChangedEvent) => {
+    useDesignerModeStore.getState().setNodeStatus(event.nodeId, {
+        nodeId      : event.nodeId,
+        status      : event.status,
+        startedAt   : event.startedAt,
+        completedAt : event.completedAt,
+        durationMs  : event.durationMs,
+        errorMessage: event.errorMessage,
+        retryCount  : event.retryCount
+    });
+
+    // Also sync to executionStore so the Observer Panel sees the same data
+    useExecutionStore.getState().setNodeStatus(event.nodeId, event);
+});</code></pre>
+
+  <h2>Historical Run — Bulk Load</h2>
+  <pre><code">// When loading a past execution for review:
+// GET /api/executions/{executionId}/node-statuses
+// Returns: NodeExecutionStatus[]
+
+const statuses = await executionApiClient.getNodeStatuses(executionId);
+
+statuses.forEach(s =>
+    useDesignerModeStore.getState().setNodeStatus(s.nodeId, s)
+);</code></pre>
+
+  <div class="callout info">
+    <strong>Dual-write on live runs:</strong> Every SignalR NodeStatusChanged event writes to BOTH <code>designerModeStore.nodeStatuses</code> (for canvas overlays) and <code>executionStore.nodeStatuses</code> (for the Observer Panel). They are always kept in sync by the <code>useExecutionSignalR</code> hook.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-modes.html">&#8592; Canvas Modes</a>
+    <a href="04-run-progress.html">Next: Run Progress &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

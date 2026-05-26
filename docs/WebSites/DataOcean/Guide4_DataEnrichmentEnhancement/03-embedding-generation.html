@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Embedding Generation — Data Enrichment &amp; Enhancement | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Data Ocean</h2>
+    <h1>Data Enrichment &amp; Enhancement</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-enrichment-pipeline.html">Enrichment Pipeline Pattern</a>
+  <a href="02-ai-enhancement.html">AI-Driven Enhancement</a>
+  <a href="03-embedding-generation.html" class="active">Embedding Generation</a>
+  <a href="04-ai-ready-database.html">Building an AI-Ready Database</a>
+  <a href="05-data-lineage.html">Data Lineage</a>
+  <a href="06-compliance.html">Compliance and PII</a>
+  <a href="07-speed-benefits.html">AI Speed Benefits</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Data Ocean</div>
+    <h1>Embedding Generation</h1>
+    <p class="lead">How to generate and store vector embeddings for Data Ocean records — enabling semantic similarity search, RAG augmentation for AI agents, and conceptual data clustering across your entire data estate.</p>
+  </div>
+
+  <h2>What Are Embeddings?</h2>
+  <p>A <strong>vector embedding</strong> is a mathematical representation of text content as a high-dimensional numeric array (typically 1536 or 3072 floating-point numbers). Two pieces of text that are semantically similar will have embeddings that are close to each other in vector space — even if they share no keywords.</p>
+  <p>For example, the sentences "I need to cancel my subscription" and "Please close my account" have very different words but very similar meanings — their embeddings will be close in vector space. This enables semantic search that keyword-based search cannot achieve.</p>
+
+  <h2>The IEmbeddingProvider Interface</h2>
+  <p>The Octopus framework provides an <code>IEmbeddingProvider</code> abstraction that workflow nodes use to generate embeddings. The implementation is swappable (Azure OpenAI, OpenAI, Ollama) without changing the workflow:</p>
+  <pre><code>// IEmbeddingProvider interface
+public interface IEmbeddingProvider
+{
+    Task&lt;float[]&gt; GenerateEmbeddingAsync(
+        string text,
+        string? modelId = null,
+        CancellationToken ct = default);
+
+    Task&lt;string&gt; StoreEmbeddingAsync(
+        string collectionName,
+        float[] embedding,
+        Dictionary&lt;string, object&gt; metadata,
+        CancellationToken ct = default);  // Returns embeddingRef (vector store ID)
+}
+
+// Configured provider options:
+// - AzureOpenAIEmbeddingProvider: Uses text-embedding-3-large (3072 dims)
+// - OpenAIEmbeddingProvider: Uses text-embedding-3-small (1536 dims)
+// - OllamaEmbeddingProvider: Uses mxbai-embed-large (local, 1024 dims)</code></pre>
+
+  <h2>Embedding Workflow Node Configuration</h2>
+  <pre><code>// EmbeddingGenerationNode configuration
+{
+  "nodeType": "EmbeddingGenerationNode",
+  "nodeId": "generate-lead-embedding",
+
+  // What text to embed — combine relevant fields for richer semantic representation
+  "inputText": "Lead Name: {{lead.FullName}}\nCompany: {{lead.CompanyName}}\nIndustry: {{lead.Industry}}\nSource: {{lead.Source}}\nNotes: {{lead.Notes}}\nSummary: {{variables.summaryResult.summary}}",
+
+  "collectionName": "leads",     // Vector store collection/index name
+  "metadata": {
+    "tenantId": "{{workflow.tenantId}}",
+    "recordId": "{{input.leadId}}",
+    "recordType": "Lead",
+    "datasourceId": "sales-data-db"
+  },
+  "outputVariable": "embeddingRef"   // Returns the vector store entry ID
+}
+
+// After this node:
+// embeddingRef = "qdrant_abc123..."
+// Write embeddingRef back to Lead table via SqlUpdateNode</code></pre>
+
+  <h2>What Goes Into the Embedding Text</h2>
+  <p>The quality of semantic search depends on what content you embed. Best practices:</p>
+  <table>
+    <thead>
+      <tr><th>Content to Include</th><th>Content to Exclude</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Business content fields (name, description, notes)</td><td>Technical IDs (LeadId, TenantId)</td><td>IDs are meaningless to the embedding model</td></tr>
+      <tr><td>AI-generated summary (SummaryText)</td><td>Status/classification labels</td><td>Summary captures semantic meaning; labels are searchable as exact matches in SQL</td></tr>
+      <tr><td>Category/domain context (industry, product, type)</td><td>Timestamps and audit columns</td><td>Dates don't contribute to semantic meaning</td></tr>
+      <tr><td>Long-form notes and descriptions</td><td>Empty/null fields</td><td>Null fields add noise without value</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Embedding Text Template Example</h3>
+  <pre><code>// Good embedding text for a Lead record:
+"Lead: Jane Smith
+Company: Acme Corp (Software Industry)
+Source: Conference
+Summary: Senior VP of Engineering at a mid-market SaaS company. Expressed strong interest in enterprise workflow automation. Currently using a competitor product but evaluating alternatives. High purchase intent based on conversation notes.
+Notes: Met at Workflow Summit 2026. Asked specifically about multi-tenant support and compliance features. Wants a demo with their IT team."
+
+// This captures the semantic meaning of who this lead is and what they need
+// A search for "enterprise workflow buyer interested in compliance" will find this record</code></pre>
+
+  <h2>Vector Store Architecture</h2>
+  <p>Embeddings are stored in a separate vector store — not in SQL Server. The two stores are linked by the <code>EmbeddingRef</code> column:</p>
+  <pre><code>SQL Server (DataOcean_SalesData)          Vector Store (Qdrant)
+┌──────────────────────────────────┐    ┌─────────────────────────────┐
+│ Lead table                       │    │ leads collection             │
+│   LeadId (PK GUID)               │    │   id: "qdrant_abc123"        │
+│   ...business columns...         │    │   vector: [0.023, -0.891...] │
+│   EmbeddingRef: "qdrant_abc123" ──┼───►│   metadata.recordId: LeadId │
+│   AiProcessedAt: 2026-05-25      │    │   metadata.tenantId: 42      │
+└──────────────────────────────────┘    └─────────────────────────────┘</code></pre>
+
+  <h2>Semantic Search Flow</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h4>User Query</h4>
+        <p>User types a natural language query: "Find leads from the healthcare industry interested in compliance features"</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Query Embedding</h4>
+        <p>The query text is embedded with the same model used for the records. Result: a query vector.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h4>Vector Similarity Search</h4>
+        <p>Qdrant finds the top-K most similar record embeddings using ANN (Approximate Nearest Neighbor) search. Returns embedding IDs with similarity scores.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">4</div></div>
+      <div class="body">
+        <h4>SQL Record Retrieval</h4>
+        <p>The embedding IDs are mapped back to Lead records via <code>WHERE EmbeddingRef IN (...)</code>. Full lead records are returned, ordered by semantic similarity score.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <strong>Keep Embedding and SQL Data in Sync</strong>
+    <p>When a Lead record is updated (especially Notes or key business fields), the embedding should be regenerated. Trigger the embedding workflow on update as well as create. Stale embeddings will produce incorrect similarity search results. The <code>AiProcessedAt</code> timestamp helps identify records whose embedding may be older than the last update (<code>WHERE UpdatedAt > AiProcessedAt</code>).</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-ai-enhancement.html">&#8592; AI-Driven Enhancement</a>
+    <a href="04-ai-ready-database.html">Next: Building an AI-Ready Database &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

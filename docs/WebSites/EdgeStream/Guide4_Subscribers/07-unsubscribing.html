@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unsubscribing — Subscribers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Subscribers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Subscribers Overview</a>
+  <a href="01-subscribing.html">Creating a Subscription</a>
+  <a href="02-topic-patterns.html">Topic Patterns</a>
+  <a href="03-topic-matcher.html">TopicMatcher</a>
+  <a href="04-subscription-manager.html">SubscriptionManager</a>
+  <a href="05-subscription-registry.html">SubscriptionRegistry</a>
+  <a href="06-callback-patterns.html">Callback Patterns</a>
+  <a href="07-unsubscribing.html" class="active">Unsubscribing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Unsubscribing</h1>
+    <p class="lead">Every subscription must be explicitly cleaned up. Leaked subscriptions accumulate, hold closures in memory, and cause stale callback invocations after components are destroyed.</p>
+  </div>
+
+  <h2>The Unsubscribe Pattern</h2>
+  <pre><code>// 1. Store the subscription handle
+const subscription = edgeStream.subscribe('bas', 'workflow.*', handler);
+
+// 2. When done — call unsubscribe()
+subscription.unsubscribe();
+console.log(subscription.active); // false — removed from SubscriptionManager</code></pre>
+
+  <h2>In React useEffect</h2>
+  <pre><code>import { useEffect } from 'react';
+import { useEdgeStream } from 'edge-stream-js-react';
+
+function WorkflowStatusPanel({ workflowId }: { workflowId: string }) {
+  const stream = useEdgeStream();
+
+  useEffect(() =&gt; {
+    const sub = stream.subscribe(
+      'bas',
+      `workflow.${workflowId}.*`,
+      (envelope) =&gt; {
+        setStatus(envelope.body.status);
+      }
+    );
+
+    // Cleanup function — React calls this on unmount or when dependencies change
+    return () =&gt; {
+      sub.unsubscribe();
+    };
+  }, [stream, workflowId]);
+
+  return &lt;div&gt;...&lt;/div&gt;;
+}</code></pre>
+
+  <h2>useSubscription Hook (Automatic Cleanup)</h2>
+  <p>The <code>useSubscription</code> React hook from <code>edge-stream-js-react</code> handles cleanup automatically:</p>
+  <pre><code>import { useSubscription } from 'edge-stream-js-react';
+
+function WorkflowStatus({ workflowId }: { workflowId: string }) {
+  // Subscription is automatically removed on unmount
+  const { isSubscribed, error } = useSubscription(
+    'bas',
+    `workflow.${workflowId}.*`,
+    (envelope) =&gt; setStatus(envelope.body.status)
+  );
+
+  if (error) return &lt;div&gt;Error: {error.message}&lt;/div&gt;;
+  return &lt;div&gt;{isSubscribed ? 'Live' : 'Connecting...'}&lt;/div&gt;;
+}</code></pre>
+
+  <h2>Multiple Subscriptions Cleanup</h2>
+  <pre><code>// Collect multiple subscription handles
+const subscriptions: ISubscription[] = [];
+
+subscriptions.push(stream.subscribe('bas', 'workflow.*', workflowHandler));
+subscriptions.push(stream.subscribe('bas', 'agent.*', agentHandler));
+subscriptions.push(stream.subscribe('bas', 'notifications.*', notifHandler));
+
+// Cleanup all at once
+function cleanup() {
+  subscriptions.forEach(sub =&gt; sub.unsubscribe());
+  subscriptions.length = 0;
+}</code></pre>
+
+  <h2>clear() — Emergency Cleanup</h2>
+  <p>In tests or on full teardown, use <code>subscriptionManager.clear()</code> to remove all subscriptions at once:</p>
+  <pre><code>// Test teardown
+afterEach(() =&gt; {
+  edgeStream.server('bas')!.subscriptionManager.clear();
+});
+
+// Application teardown
+await edgeStream.stop();
+// stop() cleans up transports; subscriptions should be cleaned separately</code></pre>
+
+  <div class="callout danger">
+    <strong>Subscription Leaks</strong>
+    Subscribing in a React component's render body (without useEffect) creates a new subscription on every render. After 100 renders, you have 100 active subscriptions calling the same handler. Always use <code>useEffect</code> with a cleanup function, or use the <code>useSubscription</code> hook.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-callback-patterns.html">&#8592; Callback Patterns</a>
+    <a href="../Guide5_Servers/index.html">Next Guide: Servers &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

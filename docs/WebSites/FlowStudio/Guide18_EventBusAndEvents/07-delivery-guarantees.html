@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Delivery Guarantees — Workflow Event Bus | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Workflow Event Bus</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-interface.html">IWorkflowEventBus</a>
+  <a href="02-built-in-events.html">Built-In Workflow Events</a>
+  <a href="03-event-schema.html">WorkflowEvent Schema</a>
+  <a href="04-publishing.html">Publishing from a Node</a>
+  <a href="05-subscribing.html">Subscribing to Events</a>
+  <a href="06-custom-events.html">Defining Custom Events</a>
+  <a href="07-delivery-guarantees.html" class="active">Delivery Guarantees</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Delivery Guarantees</h1>
+    <p class="lead">The workflow event bus is an in-process, synchronous fan-out. It provides at-most-once delivery within a single process lifetime. For durable delivery, combine it with an external message broker from inside a handler.</p>
+  </div>
+
+  <h2>Guarantee Model</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>Delivery model</td><td>At-most-once — events are not replayed after process restart</td></tr>
+      <tr><td>Ordering</td><td>Events are delivered to handlers in publish order within a single call chain</td></tr>
+      <tr><td>Concurrency</td><td>Concurrent executions publish independently — no cross-execution ordering guarantee</td></tr>
+      <tr><td>Handler failure isolation</td><td>If handler A throws, handler B still runs; publisher is not affected</td></tr>
+      <tr><td>Retry</td><td>No automatic retry — design handlers to be idempotent and self-recovering</td></tr>
+      <tr><td>Persistence</td><td>None — in-memory only, events lost on process restart</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Achieving Durable Delivery</h2>
+  <p>If you need guaranteed delivery (e.g., webhook that must fire even if the app restarts), implement a handler that writes the event to a durable outbox table, then dispatch from the outbox using a background job:</p>
+  <pre><code>// Handler: write to outbox DB table — this is transactional
+public class WorkflowEventOutboxHandler : IWorkflowEventHandler&lt;WorkflowCompleted&gt;
+{
+    private readonly IOutboxRepository _outbox;
+
+    public WorkflowEventOutboxHandler(IOutboxRepository outbox) => _outbox = outbox;
+
+    public async Task HandleAsync(WorkflowCompleted @event, CancellationToken ct)
+    {
+        await _outbox.InsertAsync(new OutboxEntry
+        {
+            Id          = @event.EventId,
+            EventType   = "WorkflowCompleted",
+            Payload     = JsonSerializer.Serialize(@event),
+            CreatedAt   = DateTimeOffset.UtcNow,
+            Status      = OutboxStatus.Pending
+        }, ct);
+    }
+}
+
+// Separate background job reads from outbox and delivers to external systems
+// — this job survives restarts and can retry failed deliveries</code></pre>
+
+  <h2>Handler Exception Handling</h2>
+  <p>By default, the dispatcher catches and logs handler exceptions without rethrowing. This means a handler that crashes does not fail the workflow. If you need a handler failure to fail the workflow, throw from the handler and configure the dispatcher to propagate.</p>
+  <pre><code">// In appsettings.json (or options)
+{
+  "WorkflowEventBus": {
+    "PropagateHandlerExceptions": false,  // default — isolated
+    "LogHandlerExceptions": true
+  }
+}</code></pre>
+
+  <h2>Process Restart Scenarios</h2>
+  <div class="callout warning">
+    <strong>Lost events on restart:</strong> If the process crashes between PublishAsync being called and the handlers completing, those events are lost. This is an inherent limitation of the in-process bus. Design your system so that the workflow execution result (written to the database by the engine) is the source of truth, and event handlers are supplementary notification mechanisms.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-custom-events.html">&#8592; Defining Custom Events</a>
+    <span></span>
+  </div>
+</main>
+</div>
+</body>
+</html>

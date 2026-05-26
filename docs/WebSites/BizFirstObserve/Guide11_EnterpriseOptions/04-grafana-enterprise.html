@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grafana Enterprise — Enterprise Options | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Enterprise Options</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Enterprise Options Overview</a>
+  <a href="01-loki-distributed.html">Loki Distributed Mode</a>
+  <a href="02-thanos.html">Thanos for Metrics HA</a>
+  <a href="03-tempo-ha.html">Tempo HA</a>
+  <a href="04-grafana-enterprise.html" class="active">Grafana Enterprise</a>
+  <a href="05-kubernetes.html">Kubernetes Native Scaling</a>
+  <a href="06-multi-region.html">Multi-Region Observability</a>
+  <a href="07-cost.html">Enterprise Cost Model</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Grafana Enterprise</h1>
+    <p class="lead">Grafana Enterprise adds features required for large-scale corporate deployments: SAML/OIDC SSO, query audit logging, data source caching, fine-grained data source permissions, and scheduled PDF/Excel report generation. It is a drop-in replacement for Grafana OSS — the same configuration applies.</p>
+  </div>
+
+  <h2>Enterprise Feature Comparison</h2>
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>OSS</th><th>Enterprise</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>LDAP integration</td><td>Yes</td><td>Yes (enhanced)</td></tr>
+      <tr><td>SAML 2.0 SSO</td><td>No</td><td>Yes</td></tr>
+      <tr><td>OIDC / OAuth2 SSO</td><td>Yes (generic)</td><td>Yes (Azure AD, Okta, Ping optimized)</td></tr>
+      <tr><td>Query audit log</td><td>No</td><td>Yes — who queried what data source and when</td></tr>
+      <tr><td>Data source permissions</td><td>Basic (role-based)</td><td>Granular (team + user + role)</td></tr>
+      <tr><td>Data source caching</td><td>No</td><td>Yes — reduces backend query load</td></tr>
+      <tr><td>Report generation</td><td>No</td><td>Yes — schedule dashboards as PDF/Excel email reports</td></tr>
+      <tr><td>Team provisioning</td><td>Via API only</td><td>Via provisioning YAML</td></tr>
+    </tbody>
+  </table>
+
+  <h2>SAML SSO Configuration (Grafana Enterprise)</h2>
+  <pre><code># grafana.ini — SAML SSO configuration
+[auth.saml]
+enabled = true
+certificate_path = /etc/grafana/saml/grafana.crt
+private_key_path = /etc/grafana/saml/grafana.key
+idp_metadata_path = /etc/grafana/saml/idp-metadata.xml
+max_issue_delay = 90s
+metadata_valid_duration = 48h
+
+# Map SAML attributes to Grafana user fields:
+assertion_attribute_name = displayName
+assertion_attribute_login = mail
+assertion_attribute_email = mail
+assertion_attribute_groups = memberOf
+
+# Map SAML groups to Grafana org roles:
+role_values_admin = cn=platform-engineering,ou=groups,dc=bizfirstai,dc=com
+role_values_editor = cn=operations,ou=groups,dc=bizfirstai,dc=com
+role_values_viewer = cn=business-users,ou=groups,dc=bizfirstai,dc=com</code></pre>
+
+  <h2>Query Audit Log</h2>
+  <pre><code># grafana.ini — enable query audit logging
+[auditing]
+enabled = true
+loggers = file,loki    # Write to local file AND forward to Loki
+
+[auditing.loki]
+url = http://loki:3100
+basicAuthUser = ""
+
+# Audit log captures:
+# - Every Explore query (LogQL, PromQL, TraceQL) with full query text
+# - Who executed it (user, IP)
+# - Which data source
+# - Response size and duration
+
+# Query the audit log in Grafana Explore (Loki):
+{job="grafana-audit"} | json | action = "data-request" | dataSource = "Loki"
+  | line_format "User={{.user}} Query={{.query}} Duration={{.duration}}ms"</code></pre>
+
+  <div class="callout info">
+    <strong>Enterprise Licensing Is Per Active User</strong>
+    <p>Grafana Enterprise is licensed per active user (users who log in within the billing period). For BizFirstGO deployments where only the platform team uses Grafana directly (and tenant admins use pre-built dashboards via tenant-scoped data sources), the active user count may be surprisingly small — making Enterprise cost-effective compared to building equivalent audit and SSO infrastructure yourself.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-tempo-ha.html">&#8592; Tempo HA</a>
+    <a href="05-kubernetes.html">Next: Kubernetes Native Scaling &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inbound Webhook Trigger — Guide36 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Webhooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-inbound-trigger.html" class="active"><i class="fa-solid fa-arrow-right-to-bracket"></i> Inbound Trigger</a>
+  <a href="02-url-management.html"><i class="fa-solid fa-link"></i> URL Management</a>
+  <a href="03-signature-verification.html"><i class="fa-solid fa-key"></i> Signature Verification</a>
+  <a href="04-outbound-call.html"><i class="fa-solid fa-paper-plane"></i> Outbound Call</a>
+  <a href="05-retry-policy.html"><i class="fa-solid fa-rotate-right"></i> Retry Policy</a>
+  <a href="06-async-response.html"><i class="fa-solid fa-clock-rotate-left"></i> Async Response</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Inbound Webhook Trigger</h1>
+    <p class="lead">The <code>WebhookTriggerNode</code> — how external systems POST to a workflow-specific URL and how the payload becomes available as <code>$json</code>.</p>
+  </div>
+
+  <h2>Node Configuration</h2>
+  <pre><code class="language-json">{
+  "nodeType": "WebhookTrigger",
+  "config": {
+    "credentialId": 1042,
+    "responseMode": "immediate",
+    "responseBody": { "status": "received" },
+    "allowedEventTypes": ["order.created", "order.updated"],
+    "payloadSizeLimitKb": 512
+  }
+}</code></pre>
+
+  <h2>URL Structure</h2>
+  <p>Each workflow thread gets a dedicated webhook URL automatically assigned when the process is published:</p>
+  <pre><code>POST https://api.bizfirstai.com/webhook/{tenantId}/{threadId}
+
+Example:
+POST https://api.bizfirstai.com/webhook/tenant-acme/proc-orders-main</code></pre>
+
+  <h2>Payload to $json Mapping</h2>
+  <p>The full request body (JSON) becomes <code>$json</code>. HTTP headers are accessible via <code>$json._headers</code>. Query parameters are in <code>$json._query</code>:</p>
+  <pre><code class="language-javascript">// Inbound payload: { "event": "order.created", "orderId": "ord-001" }
+$json.event      // → "order.created"
+$json.orderId    // → "ord-001"
+
+// HTTP headers
+$json._headers["X-Source-System"]  // → "shopify"
+
+// Query parameters (?ref=campaign1)
+$json._query.ref   // → "campaign1"</code></pre>
+
+  <h2>Response Modes</h2>
+  <table>
+    <thead><tr><th>Mode</th><th>Behavior</th><th>Use When</th></tr></thead>
+    <tbody>
+      <tr><td><code>immediate</code></td><td>Returns 200 with static body right away; workflow runs async</td><td>Most integrations — don't make the caller wait</td></tr>
+      <tr><td><code>onComplete</code></td><td>HTTP connection held open until workflow finishes; returns workflow output</td><td>Synchronous request/response webhooks (short workflows only)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Executor Pattern</h2>
+  <pre><code class="language-csharp">// ExecutionNodes/Webhooks/WebhookTriggerExecutor.cs
+[NodeCapability(CapabilityType.Webhook)]
+public class WebhookTriggerExecutor : BaseNodeExecutor
+{
+    public override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(NodeExecutionContext ctx)
+    {
+        // $json is already populated by the trigger middleware before this node runs
+        // This executor just validates the payload and routes
+        var eventType = ctx.Json?.GetString("event");
+        var allowedTypes = ctx.GetConfig&lt;string[]&gt;("allowedEventTypes");
+
+        if (allowedTypes?.Length > 0 && !allowedTypes.Contains(eventType))
+            return NodeExecutionResult.Success(
+                new { skipped = true, reason = "event type not in allowlist" },
+                portKey: "filtered");
+
+        return NodeExecutionResult.Success(new
+        {
+            event = eventType,
+            receivedAt = DateTimeOffset.UtcNow,
+            payloadSize = ctx.Json?.ToString().Length ?? 0
+        });
+    }
+}</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Tip:</strong> Use the <code>allowedEventTypes</code> filter to avoid starting workflow executions for event types the workflow doesn't handle. This keeps execution logs clean and prevents unnecessary resource consumption.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-url-management.html">Next: URL Management &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

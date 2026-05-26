@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Post-Install Verification — Import System | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Import System</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-upload.html">Uploading a Package</a>
+  <a href="02-validation.html">Package Validation</a>
+  <a href="03-security-scan.html">Security Scanning</a>
+  <a href="04-id-remapping.html">ID Remapping</a>
+  <a href="05-install.html">Installation</a>
+  <a href="06-verification.html" class="active">Post-Install Verification</a>
+  <a href="07-rollback.html">Rollback on Failure</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Post-Install Verification</h1>
+    <p class="lead">After all artifacts are installed but before the transaction is committed, the engine performs a verification pass to confirm every artifact is queryable and that cross-references resolve correctly.</p>
+  </div>
+
+  <h2>What Verification Checks</h2>
+  <p>Verification runs within the open database transaction — after install, before commit. If verification fails, the transaction is rolled back and the target tenant remains unchanged.</p>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Description</th><th>Failure Action</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Artifact accessibility</td><td>Query each installed artifact by its new ID — confirm it can be retrieved from the database</td><td>Rollback + <code>VerificationFailed</code></td></tr>
+      <tr><td>Cross-reference resolution</td><td>For each artifact, confirm its referenced dependencies exist (e.g., the form ID referenced in a workflow node can be found)</td><td>Rollback + <code>BrokenReference</code></td></tr>
+      <tr><td>Entity schema integrity</td><td>Confirm installed EntitySchemas are valid and queryable by the entity service</td><td>Rollback + <code>EntitySchemaInvalid</code></td></tr>
+      <tr><td>Form load check</td><td>Attempt to load the installed AtlasForm definitions to confirm they parse correctly</td><td>Rollback + <code>FormLoadFailed</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Verification Result in Import Response</h2>
+  <pre><code>{
+  "importId":     "imp-f9a2c1e8-...",
+  "status":       "Success",
+  "verification": {
+    "passed":  true,
+    "checks": [
+      { "artifactId": "ent-2291",   "check": "Accessibility", "result": "Pass" },
+      { "artifactId": "rule-6612",  "check": "Accessibility", "result": "Pass" },
+      { "artifactId": "form-9104",  "check": "Accessibility", "result": "Pass" },
+      { "artifactId": "form-9104",  "check": "CrossReference", "result": "Pass" },
+      { "artifactId": "proc-7823",  "check": "Accessibility", "result": "Pass" },
+      { "artifactId": "proc-7823",  "check": "CrossReference", "result": "Pass" }
+    ]
+  }
+}</code></pre>
+
+  <h2>When Verification Fails</h2>
+  <pre><code>{
+  "importId":     "imp-f9a2c1e8-...",
+  "status":       "Failed",
+  "stage":        "PostInstallVerification",
+  "error":        "BrokenReference",
+  "message":      "ProcessDefinition 'proc-7823' references form 'form-9104' but the form could not be loaded.",
+  "verification": {
+    "passed":  false,
+    "checks": [
+      { "artifactId": "form-9104", "check": "FormLoadFailed", "result": "Fail",
+        "details": "JSON schema validation failed: field 'f3.dataSource.entityId' references 'ent-2291' which does not exist" }
+    ]
+  },
+  "rolledBack": true
+}</code></pre>
+
+  <div class="callout danger">
+    <strong>Transaction Rollback on Verification Failure</strong>
+    If any verification check fails, the transaction is rolled back automatically. The target tenant is left exactly as it was before the import. No partial state is ever committed.
+  </div>
+
+  <h2>Verification Timeout</h2>
+  <p>Verification is subject to a 30-second timeout per package. Large packages (many artifacts) complete verification in parallel where possible. If verification exceeds the timeout, the transaction is rolled back and the import is reported as failed with <code>VerificationTimeout</code>.</p>
+
+  <div class="page-nav">
+    <a href="05-install.html">&#8592; Installation</a>
+    <a href="07-rollback.html">Next: Rollback on Failure &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

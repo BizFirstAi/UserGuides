@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Call Loop — MCP Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>MCP Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">MCP Tools Overview</a>
+  <a href="01-tool-schema.html">Tool Schema</a>
+  <a href="02-tool-registration.html">Tool Registration</a>
+  <a href="03-tool-call-loop.html" class="active">Tool Call Loop</a>
+  <a href="04-tool-results.html">Tool Results</a>
+  <a href="05-built-in-tools.html">Built-In Tools</a>
+  <a href="06-custom-tools.html">Custom Tools</a>
+  <a href="07-tool-security.html">Tool Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Tool Call Loop</h1>
+    <p class="lead">The tool call loop is the agentic reasoning cycle — the LLM calls a tool, receives a result, reasons about it, and may call another tool. The loop continues until the LLM produces a final text response (or the maximum iteration limit is reached).</p>
+  </div>
+
+  <h2>The Agentic Loop</h2>
+  <pre><code>public class AgentReasoningLoop
+{
+    private const int MaxIterations = 10;
+
+    public async Task&lt;AgentResponse&gt; RunAsync(
+        AgentComposite agent,
+        IReadOnlyList&lt;LLMMessage&gt; messages,
+        CancellationToken ct)
+    {
+        var workingMessages = messages.ToList();
+        int iterations = 0;
+
+        while (iterations &lt; MaxIterations)
+        {
+            iterations++;
+
+            // Call the LLM with current messages + tool schemas
+            var response = await _llmProvider.CompleteAsync(
+                workingMessages,
+                agent.ToolRegistry.GetSchemas(),
+                agent.LLMConfig,
+                ct);
+
+            // No tool calls — LLM produced a final text response
+            if (!response.ToolCalls.Any())
+                return new AgentResponse { Content = response.Content };
+
+            // Append the LLM's assistant message (with tool_calls) to history
+            workingMessages.Add(new LLMMessage(Role.Assistant, response));
+
+            // Execute each tool call and append results
+            foreach (var toolCall in response.ToolCalls)
+            {
+                string result = await agent.ToolRegistry.ExecuteAsync(
+                    toolCall, _conversationContext, ct);
+
+                workingMessages.Add(new LLMMessage(Role.Tool)
+                {
+                    ToolCallId = toolCall.Id,
+                    Content    = result
+                });
+            }
+            // Loop continues — LLM sees tool results and produces next response
+        }
+
+        // Max iterations reached — return partial response
+        return new AgentResponse
+        {
+            Content = "I was unable to complete this task within the allowed steps.",
+            IsIncomplete = true
+        };
+    }
+}</code></pre>
+
+  <h2>Parallel Tool Calls</h2>
+  <p>Modern LLMs (Claude 3+, GPT-4o) can request multiple tool calls simultaneously in a single response. Octopus executes them in parallel:</p>
+  <pre><code>// LLM response with parallel tool calls:
+{
+  "role":       "assistant",
+  "tool_calls": [
+    { "id": "tc_01", "name": "get_leave_balance",  "input": { "employeeId": "EMP-1042" } },
+    { "id": "tc_02", "name": "get_manager_details", "input": { "employeeId": "EMP-1042" } }
+  ]
+}
+
+// Octopus executes both in parallel:
+var tasks = response.ToolCalls.Select(tc =>
+    agent.ToolRegistry.ExecuteAsync(tc, context, ct));
+
+var results = await Task.WhenAll(tasks);
+
+// Append all results (maintaining tool_call_id pairing)
+foreach (var (call, result) in response.ToolCalls.Zip(results))
+{
+    workingMessages.Add(new LLMMessage(Role.Tool)
+    {
+        ToolCallId = call.Id,
+        Content    = result
+    });
+}</code></pre>
+
+  <h2>Loop Control Settings</h2>
+  <table>
+    <thead>
+      <tr><th>Setting</th><th>Default</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>MaxToolIterations</code></td><td>10</td><td>Maximum tool call rounds before the loop exits with an incomplete response</td></tr>
+      <tr><td><code>ToolTimeoutSeconds</code></td><td>30</td><td>Timeout per individual tool execution</td></tr>
+      <tr><td><code>ParallelToolExecution</code></td><td>true</td><td>Execute parallel tool calls concurrently; disable if tools have side effects that must be sequential</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Loop Termination Conditions</h2>
+  <table>
+    <thead>
+      <tr><th>Condition</th><th>Behaviour</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>LLM returns text with no tool calls</td><td>Normal exit — text response returned to user</td></tr>
+      <tr><td>Max iterations reached</td><td>Partial exit — incomplete response message returned</td></tr>
+      <tr><td>Tool execution error</td><td>Error result injected into context; LLM decides how to proceed</td></tr>
+      <tr><td>LLM requests <code>end_turn</code> stop reason</td><td>Normal exit — provider-specific stop signal</td></tr>
+      <tr><td>CancellationToken cancelled</td><td>Immediate exit; partial response or error returned</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Max Iterations Prevents Infinite Loops</strong>
+    <p>A poorly written tool or an LLM that keeps calling the same tool can create an infinite loop. The <code>MaxToolIterations</code> limit is a hard safety cap. Set it to the maximum number of steps your most complex task requires — typically 5–10. If you observe agents hitting this limit, investigate whether the tool descriptions are clear enough for the LLM to know when it has enough information.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="02-tool-registration.html">&#8592; Tool Registration</a>
+    <a href="04-tool-results.html">Next: Tool Results &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

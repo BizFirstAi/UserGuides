@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polling Fallback — Real-Time Execution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Real-Time Execution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">SignalR Overview</a>
+  <a href="01-connection.html">Establishing Connection</a>
+  <a href="02-event-types.html">Execution Event Types</a>
+  <a href="03-node-stream.html">Per-Node Log Streaming</a>
+  <a href="04-workflow-stream.html">Workflow-Level Events</a>
+  <a href="05-state-sync.html">Syncing to UI State</a>
+  <a href="06-polling-fallback.html" class="active">Polling Fallback</a>
+  <a href="07-reconnection.html">Reconnection Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Polling Fallback</h1>
+    <p class="lead">When the SignalR WebSocket connection cannot be established or fails permanently after all reconnection attempts, Flow Studio automatically switches to REST API polling every 2 seconds. This ensures execution monitoring works even in restrictive network environments.</p>
+  </div>
+
+  <h2>When Polling Activates</h2>
+  <p>Polling activates automatically when:</p>
+  <ul>
+    <li>The initial WebSocket connection fails (e.g., WebSockets are blocked by a proxy)</li>
+    <li>Reconnection attempts exhaust all retry delays (1s, 2s, 5s, 10s)</li>
+    <li>The browser network monitor detects the WebSocket was closed with a non-recoverable error</li>
+  </ul>
+
+  <h2>useExecutionPolling</h2>
+  <pre><code>// useExecutionPolling.ts
+export function useExecutionPolling(executionId: string, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+
+    const interval = setInterval(async () => {
+      const status = await fetch(
+        `/api/v1/process-engine/executions/${executionId}/status`
+      ).then(r => r.json());
+
+      // Update store with polled status
+      updateStoreFromPolledStatus(status);
+
+      // Stop polling when execution is terminal
+      if (['completed', 'failed', 'cancelled'].includes(status.status)) {
+        clearInterval(interval);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [executionId, enabled]);
+}</code></pre>
+
+  <h2>Polling Limitations vs SignalR</h2>
+  <table>
+    <thead><tr><th>Aspect</th><th>SignalR (WebSocket)</th><th>Polling (REST)</th></tr></thead>
+    <tbody>
+      <tr><td>Latency</td><td>&lt;100ms event delivery</td><td>0–2000ms (depends on poll timing)</td></tr>
+      <tr><td>Log streaming</td><td>Real-time per-entry</td><td>Batched log retrieval per poll</td></tr>
+      <tr><td>Network overhead</td><td>Low (keep-alive pings only)</td><td>Higher (HTTP round-trip every 2s)</td></tr>
+      <tr><td>Node status updates</td><td>Event-driven, exact timing</td><td>Snapshot per poll, may miss rapid transitions</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Polling Shows "Live updates unavailable"</strong>
+    When polling is active, a warning banner appears in the Observer Panel. Node status still updates correctly, but rapid successive status changes (e.g., a node that completes in under 2s) may appear to skip directly to completed without showing the running state.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-state-sync.html">&#8592; Syncing to UI State</a>
+    <a href="07-reconnection.html">Next: Reconnection Handling &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

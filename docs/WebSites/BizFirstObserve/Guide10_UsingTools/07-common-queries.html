@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Common Query Reference — Using the Tools | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Using the Tools</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Using the Tools Overview</a>
+  <a href="01-find-execution-logs.html">Find Logs for an Execution</a>
+  <a href="02-trace-slow-node.html">Trace a Slow Node</a>
+  <a href="03-error-analysis.html">Error Analysis Workflow</a>
+  <a href="04-hil-backlog.html">Monitoring HIL Backlog</a>
+  <a href="05-alert-response.html">Responding to Alerts</a>
+  <a href="06-tenant-isolation.html">Querying as a Tenant Admin</a>
+  <a href="07-common-queries.html" class="active">Common Query Reference</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Common Query Reference</h1>
+    <p class="lead">Ready-to-use LogQL, PromQL, and TraceQL queries for the most common BizFirstGO observability scenarios. Copy, paste, and substitute the placeholder values (shown in brackets).</p>
+  </div>
+
+  <h2>LogQL — Loki Queries</h2>
+
+  <h3>1. Find all logs for a specific execution</h3>
+  <pre><code>{job="processengine", environment="production"} |= "[EXECUTION_ID]"</code></pre>
+
+  <h3>2. Find all error logs in the last 15 minutes</h3>
+  <pre><code>{job="processengine", environment="production", level="error"} | json</code></pre>
+
+  <h3>3. Find logs for a specific tenant</h3>
+  <pre><code>{job="processengine", tenant_id="[TENANT_ID]"} | json | level = "error"</code></pre>
+
+  <h3>4. Count log lines per level (log volume by severity)</h3>
+  <pre><code>sum by (level) (
+  count_over_time({job="processengine"} | json [5m])
+)</code></pre>
+
+  <h3>5. Find HIL suspension events</h3>
+  <pre><code>{job="processengine"} | json | message =~ ".*HIL.*suspend.*"
+  | line_format "taskId={{.hilTaskId}} tenant={{.tenantId}}"</code></pre>
+
+  <h3>6. Find OctopusNode LLM call logs</h3>
+  <pre><code>{job="octopus"} | json | nodeType = "OctopusNode"
+  | line_format "model={{.llmModel}} tokens={{.tokenCount}} duration={{.durationMs}}ms"</code></pre>
+
+  <h3>7. Live stream logs during a deployment</h3>
+  <pre><code>{job="processengine", environment="production"}
+# Click "Live" button in Grafana Explore to stream in real time</code></pre>
+
+  <h2>PromQL — Prometheus Queries</h2>
+
+  <h3>8. Current workflow execution rate</h3>
+  <pre><code>sum(rate(bizfirst_workflow_executions_total[5m]))</code></pre>
+
+  <h3>9. Error rate percentage</h3>
+  <pre><code>sum(rate(bizfirst_workflow_executions_total{status="failed"}[5m]))
+  /
+sum(rate(bizfirst_workflow_executions_total[5m]))
+* 100</code></pre>
+
+  <h3>10. P99 workflow execution latency</h3>
+  <pre><code>histogram_quantile(0.99,
+  sum(rate(bizfirst_workflow_executions_duration_seconds_bucket[5m])) by (le)
+)</code></pre>
+
+  <h3>11. P99 node execution latency by node type</h3>
+  <pre><code>histogram_quantile(0.99,
+  sum(rate(bizfirst_node_execution_duration_seconds_bucket[5m])) by (node_type, le)
+)</code></pre>
+
+  <h3>12. Current HIL backlog by tenant</h3>
+  <pre><code>sum by (tenant_id) (bizfirst_hil_pending_count) > 0</code></pre>
+
+  <h3>13. EdgeStream message throughput by topic</h3>
+  <pre><code>sum by (topic) (rate(bizfirst_edgestream_messages_total[5m]))</code></pre>
+
+  <h3>14. Octopus LLM token usage rate</h3>
+  <pre><code>sum by (model) (rate(bizfirst_octopus_tokens_total[5m]))</code></pre>
+
+  <h2>TraceQL — Tempo Queries</h2>
+
+  <h3>15. Find all error traces</h3>
+  <pre><code>{ status = error }</code></pre>
+
+  <h3>16. Find traces for a specific tenant</h3>
+  <pre><code>{ span.tenant.id = "[TENANT_ID]" }</code></pre>
+
+  <h3>17. Find slow workflow executions (> 10 seconds)</h3>
+  <pre><code>{ rootName = "workflow.execute" && duration > 10s }</code></pre>
+
+  <h3>18. Find traces with slow HttpRequestNode spans</h3>
+  <pre><code>{ span.node.type = "HttpRequestNode" && duration > 5s }</code></pre>
+
+  <h3>19. Find a specific trace by ID</h3>
+  <pre><code># In Grafana Explore → Tempo → TraceId search tab
+# Paste: [TRACE_ID]</code></pre>
+
+  <h3>20. Find HIL traces (suspension + resume)</h3>
+  <pre><code>{ rootName = "workflow.execute" && span.node.type = "ApprovalNode" }</code></pre>
+
+  <div class="page-nav">
+    <a href="06-tenant-isolation.html">&#8592; Querying as a Tenant Admin</a>
+    <a href="../Guide11_EnterpriseOptions/index.html">Next Guide: Enterprise Options &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

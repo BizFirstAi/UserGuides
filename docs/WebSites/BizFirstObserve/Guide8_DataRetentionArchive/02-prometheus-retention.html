@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prometheus Metric Retention — Data Retention & Archive | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Data Retention &amp; Archive</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Data Retention Overview</a>
+  <a href="01-loki-retention.html">Loki Log Retention</a>
+  <a href="02-prometheus-retention.html" class="active">Prometheus Metric Retention</a>
+  <a href="03-tempo-retention.html">Tempo Trace Retention</a>
+  <a href="04-archiving.html">Archiving to Cold Storage</a>
+  <a href="05-backup.html">Backup Strategies</a>
+  <a href="06-compliance.html">Compliance Retention</a>
+  <a href="07-cost-optimization.html">Cost Optimization</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Prometheus Metric Retention</h1>
+    <p class="lead">Prometheus stores metrics in a local time-series database (TSDB) with configurable retention. For long-term metric storage beyond 90 days, use Thanos — which adds remote write to object storage and HA deduplication.</p>
+  </div>
+
+  <h2>Prometheus Local Retention</h2>
+  <pre><code># Set via command-line flags when starting Prometheus:
+prometheus \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --storage.tsdb.retention.time=90d \         # Keep 90 days of data locally
+  --storage.tsdb.retention.size=100GB \       # OR: delete oldest when > 100GB
+  --storage.tsdb.wal-compression \            # Enable WAL compression
+  --web.enable-lifecycle                      # Allow hot reload
+
+# In Docker Compose:
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--storage.tsdb.retention.size=100GB'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./data/prometheus:/prometheus</code></pre>
+
+  <h2>Prometheus TSDB Storage Sizing</h2>
+  <table>
+    <thead>
+      <tr><th>Metric</th><th>Formula</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Bytes per sample</td><td>~1.5 bytes (compressed)</td><td>-</td></tr>
+      <tr><td>Samples per series per day</td><td>samples/day = 86400 / scrape_interval</td><td>86400 / 15 = 5760 samples/day</td></tr>
+      <tr><td>Bytes per series per day</td><td>5760 × 1.5 = ~8.6 KB/series/day</td><td>-</td></tr>
+      <tr><td>Total storage (90 days, 10,000 series)</td><td>10,000 × 8.6 KB × 90 = ~7.7 GB</td><td>Very manageable on local disk</td></tr>
+      <tr><td>Total storage (90 days, 500,000 series)</td><td>500,000 × 8.6 KB × 90 = ~387 GB</td><td>High cardinality — requires disk planning</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Thanos for Long-Term Metric Storage</h2>
+  <p>Prometheus alone is not suitable for retention beyond 1-2 years at high cardinality. Thanos extends Prometheus with object storage and HA:</p>
+  <pre><code># Thanos architecture for BizFirstGO:
+# 1. Thanos Sidecar runs alongside Prometheus — uploads TSDB blocks to S3
+# 2. Thanos Store Gateway reads historical blocks from S3
+# 3. Thanos Querier federates queries across Prometheus + Store Gateway
+
+# prometheus.yml — remote write to Thanos Receive (alternative approach):
+remote_write:
+  - url: http://thanos-receive:19291/api/v1/receive
+    queue_config:
+      max_samples_per_send: 5000
+      max_shards: 10
+      capacity: 10000
+
+# Thanos Sidecar (runs alongside Prometheus):
+thanos sidecar \
+  --tsdb.path=/prometheus \
+  --prometheus.url=http://localhost:9090 \
+  --objstore.config-file=/etc/thanos/s3.yaml \
+  --http-address=0.0.0.0:10902 \
+  --grpc-address=0.0.0.0:10901
+
+# S3 object store config for Thanos:
+# /etc/thanos/s3.yaml
+type: S3
+config:
+  bucket: bizfirst-prometheus-thanos
+  endpoint: s3.amazonaws.com
+  region: us-east-1
+  access_key: ${AWS_ACCESS_KEY}
+  secret_key: ${AWS_SECRET_KEY}</code></pre>
+
+  <div class="callout info">
+    <strong>Downsampling for Long-Term Storage</strong>
+    <p>Thanos Compact can downsample metrics over time — reducing resolution for older data to save storage while preserving trends: raw (15s) → 5-minute averages (after 40 days) → 1-hour averages (after 10 months). Configure downsampling in Thanos Compact to dramatically reduce long-term storage costs.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="01-loki-retention.html">&#8592; Loki Log Retention</a>
+    <a href="03-tempo-retention.html">Next: Tempo Trace Retention &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

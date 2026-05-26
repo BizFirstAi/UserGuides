@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HIL System Overview — Human-in-the-Loop | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Human-in-the-Loop</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">HIL System Overview</a>
+  <a href="01-patterns.html">Three HIL Patterns</a>
+  <a href="02-actor-assignment.html">Actor Assignment</a>
+  <a href="03-hil-node-types.html">HIL Node Types</a>
+  <a href="04-suspension-model.html">Suspension Model</a>
+  <a href="05-task-inbox.html">HIL Task Inbox</a>
+  <a href="06-deadlines.html">Deadlines and Escalation</a>
+  <a href="07-guide-map.html">Guide Map</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>HIL System Overview</h1>
+    <p class="lead">Human-in-the-Loop (HIL) allows workflows to pause at a node, wait for a human decision or data entry, and resume automatically once the actor responds. This guide gives you the complete mental model before diving into specifics.</p>
+  </div>
+
+  <h2>What Is HIL?</h2>
+  <p>Automated workflows often reach points that require human judgment — an approval decision, a data entry step, or a review of AI-generated content. HIL is the mechanism by which a workflow pauses at such a point, notifies the right person, and resumes when they respond.</p>
+  <p>Key properties of the HIL system:</p>
+  <ul>
+    <li><strong>Fully durable:</strong> When a workflow suspends, the entire execution state is serialised and written to the database. The in-process thread is freed — there is no long-running thread holding memory.</li>
+    <li><strong>Channel-agnostic:</strong> Actors can respond through the web UI, a Slack bot, an email link, or any application that calls the resume API. The engine does not care which channel is used.</li>
+    <li><strong>Correlation-token based:</strong> Each suspension generates a unique token that links the actor's response back to the correct execution instance.</li>
+  </ul>
+
+  <h2>The HIL Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>HIL node executes</h4><p>Engine calls the HIL executor. It returns <code>NodeExecutionResult.Suspend(payload)</code>.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>State persisted</h4><p>Engine serialises ExecutionMemory and writes to <code>Process_SuspendedExecutions</code>. A correlation token is generated and stored.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body"><h4>Actor notified</h4><p>A HIL task is created. Notification channels (email, Slack, inbox) are triggered by event handlers.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body"><h4>Actor responds</h4><p>Actor calls POST /api/executions/{executionResId}/resume with their response data.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot success">5</div><div class="line"></div></div>
+      <div class="body"><h4>Execution resumes</h4><p>Engine restores ExecutionMemory, merges response data, and continues from the suspended node's output port.</p></div>
+    </div>
+  </div>
+
+  <h2>Why the Engine Is Freed During Suspension</h2>
+  <p>Workflows can be suspended for hours, days, or indefinitely. If the engine held an in-process thread for each suspended execution, the server would exhaust resources quickly. Instead, suspension is a database operation — the thread is freed and the engine can handle other executions. When resume is called, a new thread is allocated and the state is restored from the database.</p>
+
+  <div class="callout info">
+    <strong>Cross-process resume:</strong> If the server restarts between suspension and resume, the resume API call still works — the state is in the database, not in process memory. Any server instance in the cluster can handle the resume call.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-patterns.html">Next: Three HIL Patterns &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

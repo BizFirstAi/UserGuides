@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Observer Panel Store — Observer Panel | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Observer Panel</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Observer Panel Overview</a>
+  <a href="01-tab-system.html">Tab System</a>
+  <a href="02-engine.html">FlowObserverPanelEngine</a>
+  <a href="03-panel-store.html" class="active">Observer Panel Store</a>
+  <a href="04-signalr.html">Observer SignalR Hook</a>
+  <a href="05-built-in-tabs.html">Built-In Tabs Summary</a>
+  <a href="06-custom-tabs.html">Adding Custom Tabs</a>
+  <a href="07-panel-constraints.html">Panel Sizing</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Observer Panel Store</h1>
+    <p class="lead"><code>flowObserverPanelStore</code> is the Zustand store that holds the Observer Panel's UI state. Tab components subscribe to slices of this store and re-render reactively as execution events arrive.</p>
+  </div>
+
+  <h2>Store Shape</h2>
+  <pre><code>// flow-observer-core/src/store/flowObserverPanelStore.ts
+interface FlowObserverPanelState {
+  // Panel visibility
+  isOpen: boolean;
+  isDocked: boolean;
+  dockPosition: 'right' | 'bottom';
+
+  // Tab management
+  tabs: TabDescriptor[];
+  activeTabId: string;
+
+  // Execution data
+  executionId: string | null;
+  executionStatus: ExecutionStatus | null;
+  executionStartedAt: string | null;
+  executionCompletedAt: string | null;
+  completedNodeCount: number;
+  totalNodeCount: number;
+
+  // Log buffer
+  logs: LogEntry[];           // capped at 10,000 entries
+  selectedLog: LogEntry | null;
+
+  // Node statuses
+  nodeStatuses: Record&lt;string, NodeExecutionState&gt;;
+  selectedNodeId: string | null;
+
+  // Actions
+  setActiveTabId: (id: string) =&gt; void;
+  appendLog: (entry: LogEntry) =&gt; void;
+  incrementCompletedCount: () =&gt; void;
+  setNodeStatus: (nodeId: string, state: NodeExecutionState) =&gt; void;
+  setSelectedNodeId: (nodeId: string | null) =&gt; void;
+  setStatus: (status: ExecutionStatus) =&gt; void;
+  reset: () =&gt; void;
+}</code></pre>
+
+  <h2>Subscribing in Components</h2>
+  <pre><code>// Reading execution status in ExecutionStatusTabContent
+import { useFlowObserverPanelStore } from 'flow-observer-core';
+
+export function ExecutionStatusTabContent() {
+  const status = useFlowObserverPanelStore(s =&gt; s.executionStatus);
+  const completedCount = useFlowObserverPanelStore(s =&gt; s.completedNodeCount);
+  const totalCount = useFlowObserverPanelStore(s =&gt; s.totalNodeCount);
+
+  return (
+    &lt;div&gt;
+      &lt;StatusBadge status={status} /&gt;
+      &lt;ProgressBar value={completedCount} max={totalCount} /&gt;
+    &lt;/div&gt;
+  );
+}</code></pre>
+
+  <h2>Log Buffer Behaviour</h2>
+  <p>The <code>logs</code> array is capped at 10,000 entries. When a new log arrives and the cap is reached, the oldest entry is removed (FIFO eviction). This prevents memory growth during long-running executions with verbose logging.</p>
+  <pre><code>// appendLog action (internal implementation)
+appendLog: (entry) => set(state => {
+  const next = [...state.logs, entry];
+  return { logs: next.length > 10000 ? next.slice(next.length - 10000) : next };
+})</code></pre>
+
+  <h2>Persistence</h2>
+  <p>The following store keys are persisted to <code>localStorage</code> and restored on page load:</p>
+  <ul>
+    <li><code>isOpen</code> — panel stays open across refreshes</li>
+    <li><code>isDocked</code> — floating/docked preference is remembered</li>
+    <li><code>dockPosition</code> — right vs bottom dock remembered</li>
+    <li><code>activeTabId</code> — last viewed tab is restored</li>
+  </ul>
+  <p>Execution data (logs, nodeStatuses, executionId) is NOT persisted — it is always cleared on a new execution.</p>
+
+  <div class="page-nav">
+    <a href="02-engine.html">&#8592; FlowObserverPanelEngine</a>
+    <a href="04-signalr.html">Next: Observer SignalR Hook &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

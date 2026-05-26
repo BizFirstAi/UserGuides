@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>useInteractionReceiver — React Bindings | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeInteract</h2>
+    <h1>React Bindings</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">React Bindings Overview</a>
+  <a href="01-provider.html">InteractionProvider</a>
+  <a href="02-use-interaction.html">useInteraction</a>
+  <a href="03-use-receiver.html" class="active">useInteractionReceiver</a>
+  <a href="04-use-callback.html">useInteractionCallback</a>
+  <a href="05-use-interaction-history.html">useInteractionHistory</a>
+  <a href="06-cleanup.html">Cleanup and Lifecycle</a>
+  <a href="07-examples.html">Examples</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeInteract</div>
+    <h1>useInteractionReceiver</h1>
+    <p class="lead"><code>useInteractionReceiver()</code> is the hook for the <em>receiving</em> side — it gives you the current interaction queue and a respond function. Use it to build custom inbox views or to access the pending interactions in any component.</p>
+  </div>
+
+  <h2>Signature</h2>
+  <pre><code">function useInteractionReceiver(): {
+  /** Current pending interactions, sorted by priority then arrival time */
+  queue: InteractionRequest[];
+
+  /** Number of pending interactions */
+  queueLength: number;
+
+  /** Respond to an interaction */
+  respond: (
+    interactionId: string,
+    outcome: string,
+    data?: unknown
+  ) =&gt; Promise&lt;void&gt;;
+
+  /** Dismiss an interaction without responding (e.g., "remind later") */
+  dismiss: (interactionId: string) =&gt; void;
+
+  /** Is the receiver connected? */
+  isConnected: boolean;
+}
+</code></pre>
+
+  <h2>Building a Custom Inbox</h2>
+  <pre><code">import { useInteractionReceiver } from 'edge-interact-react';
+import { ApprovalComponent, NotificationComponent, PickerComponent } from 'edge-interact-ui';
+
+function WorkDeskHILInbox() {
+  const { queue, respond, queueLength } = useInteractionReceiver();
+
+  return (
+    &lt;div className="hil-inbox"&gt;
+      &lt;h2&gt;Pending Interactions &lt;span className="count"&gt;{queueLength}&lt;/span&gt;&lt;/h2&gt;
+
+      {queueLength === 0 &amp;&amp; (
+        &lt;p className="empty-state"&gt;No pending interactions. Great work!&lt;/p&gt;
+      )}
+
+      {queue.map(interaction =&gt; {
+        const respondFn = (outcome: string, data?: unknown) =&gt;
+          respond(interaction.interactionId, outcome, data);
+
+        return (
+          &lt;div key={interaction.interactionId} className="inbox-item"&gt;
+            &lt;div className="inbox-meta"&gt;
+              &lt;span className="type-badge"&gt;{interaction.type}&lt;/span&gt;
+              {interaction.priority === 'high' &amp;&amp; (
+                &lt;span className="priority-badge"&gt;HIGH PRIORITY&lt;/span&gt;
+              )}
+            &lt;/div&gt;
+
+            {interaction.type === 'approval' &amp;&amp; (
+              &lt;ApprovalComponent interaction={interaction} respond={respondFn} /&gt;
+            )}
+            {interaction.type === 'notification' &amp;&amp; (
+              &lt;NotificationComponent interaction={interaction} respond={respondFn} /&gt;
+            )}
+            {/* ... other types */}
+          &lt;/div&gt;
+        );
+      })}
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+
+  <h2>Admin View — Another User's Interactions</h2>
+  <p>For admin dashboards showing another user's inbox, use <code>useInteractionReceiverForUser(userId)</code>:</p>
+  <pre><code">import { useInteractionReceiverForUser } from 'edge-interact-react';
+
+// Admin monitoring another user's pending interactions (read-only)
+function AdminUserInbox({ targetUserId }: { targetUserId: string }) {
+  const { queue } = useInteractionReceiverForUser(targetUserId);
+
+  return (
+    &lt;div&gt;
+      &lt;h3&gt;{targetUserId}'s Pending Interactions: {queue.length}&lt;/h3&gt;
+      {queue.map(i =&gt; (
+        &lt;div key={i.interactionId}&gt;
+          &lt;strong&gt;{i.type}&lt;/strong&gt;: {i.title}
+        &lt;/div&gt;
+      ))}
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+
+  <div class="callout info">
+    <strong>Queue Is Reactive</strong>
+    The <code>queue</code> array is reactive — when new interactions arrive or are responded to, the component re-renders automatically. No manual subscription management needed.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-use-interaction.html">&#8592; useInteraction</a>
+    <a href="04-use-callback.html">Next: useInteractionCallback &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

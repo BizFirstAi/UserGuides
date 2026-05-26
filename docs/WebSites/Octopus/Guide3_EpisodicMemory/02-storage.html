@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Episode Storage — Episodic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Episodic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Episodic Memory Overview</a>
+  <a href="01-episode-structure.html">Episode Structure</a>
+  <a href="02-storage.html" class="active">Episode Storage</a>
+  <a href="03-recall.html">Recalling Past Episodes</a>
+  <a href="04-episode-boundaries.html">Episode Boundaries</a>
+  <a href="05-long-term.html">Long-Term Episode Retention</a>
+  <a href="06-privacy.html">Privacy and PII</a>
+  <a href="07-api.html">Episodic Memory API</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Episode Storage</h1>
+    <p class="lead">Episodes are persisted to SQL Server via the <code>SqlServerStorage</code> plugin. The messages column stores the full conversation as JSON, while a separate summary embedding enables fast semantic search without loading all message data.</p>
+  </div>
+
+  <h2>SQL Schema — Octopus_Episodes</h2>
+  <pre><code>CREATE TABLE Octopus_Episodes (
+    Id               UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWSEQUENTIALID(),
+    SessionId        UNIQUEIDENTIFIER NOT NULL,
+    AgentId          UNIQUEIDENTIFIER NOT NULL,
+    UserId           UNIQUEIDENTIFIER NOT NULL,
+    TenantId         NVARCHAR(100)    NOT NULL,
+    MessagesJson     NVARCHAR(MAX)    NOT NULL,     -- JSON array
+    ToolCallsJson    NVARCHAR(MAX)    NULL,          -- JSON array
+    Summary          NVARCHAR(2000)   NULL,
+    SummaryEmbedding VARBINARY(MAX)   NULL,          -- float[] binary
+    StartedAt        DATETIMEOFFSET   NOT NULL,
+    EndedAt          DATETIMEOFFSET   NULL,
+    EndReason        NVARCHAR(50)     NULL,          -- 'UserClosed','Timeout','AgentClosed'
+    MessageCount     INT              NOT NULL DEFAULT 0,
+    TotalInputTokens INT              NOT NULL DEFAULT 0,
+    TotalOutputTokens INT             NOT NULL DEFAULT 0,
+    IsArchived       BIT              NOT NULL DEFAULT 0,
+    CreatedAt        DATETIMEOFFSET   NOT NULL DEFAULT SYSUTCDATETIME()
+);
+
+CREATE INDEX IX_Episodes_User_Agent ON Octopus_Episodes (TenantId, UserId, AgentId, StartedAt DESC);
+CREATE INDEX IX_Episodes_Session    ON Octopus_Episodes (SessionId, TenantId);</code></pre>
+
+  <h2>EpisodicMemoryService — StoreAsync</h2>
+  <pre><code>public class EpisodicMemoryService : IEpisodicMemoryStore
+{
+    public async Task StoreAsync(Episode episode, CancellationToken ct = default)
+    {
+        var entity = new EpisodeEntity
+        {
+            Id = episode.Id,
+            SessionId = episode.SessionId,
+            AgentId = episode.AgentId,
+            UserId = episode.UserId,
+            TenantId = episode.TenantId,
+            MessagesJson = JsonSerializer.Serialize(episode.Messages),
+            ToolCallsJson = JsonSerializer.Serialize(episode.ToolCalls),
+            Summary = episode.Summary,
+            SummaryEmbedding = episode.SummaryEmbedding != null
+                ? SerializeEmbedding(episode.SummaryEmbedding)
+                : null,
+            StartedAt = episode.StartedAt,
+            EndedAt = episode.EndedAt,
+            EndReason = episode.EndReason.ToString(),
+            MessageCount = episode.MessageCount,
+            TotalInputTokens = episode.TotalInputTokens,
+            TotalOutputTokens = episode.TotalOutputTokens
+        };
+
+        _db.Episodes.Add(entity);
+        await _db.SaveChangesAsync(ct);
+    }
+}</code></pre>
+
+  <h2>Performance Considerations</h2>
+  <table>
+    <thead>
+      <tr><th>Concern</th><th>Recommendation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>MessagesJson size</td><td>For very long conversations, consider storing messages in a separate table to avoid row bloat</td></tr>
+      <tr><td>Embedding storage</td><td>SummaryEmbedding as VARBINARY is adequate for &lt;1M episodes; at scale, offload embeddings to Qdrant</td></tr>
+      <tr><td>Query performance</td><td>The composite index on (TenantId, UserId, AgentId, StartedAt) covers all common recall queries</td></tr>
+      <tr><td>Archival</td><td>Set <code>IsArchived = 1</code> for episodes older than TTL; exclude from live queries with <code>WHERE IsArchived = 0</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>EF Core Configuration</h2>
+  <pre><code>// OctopusDbContext episode mapping
+modelBuilder.Entity&lt;EpisodeEntity&gt;(e =>
+{
+    e.ToTable("Octopus_Episodes");
+    e.HasKey(x => x.Id);
+    e.Property(x => x.TenantId).IsRequired().HasMaxLength(100);
+    e.HasQueryFilter(x => x.TenantId == _tenantContext.TenantId); // global tenant filter
+    e.Property(x => x.MessagesJson).HasColumnType("nvarchar(max)");
+    e.Property(x => x.SummaryEmbedding).HasColumnType("varbinary(max)");
+});</code></pre>
+
+  <div class="page-nav">
+    <a href="01-episode-structure.html">&#8592; Episode Structure</a>
+    <a href="03-recall.html">Next: Recalling Past Episodes &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

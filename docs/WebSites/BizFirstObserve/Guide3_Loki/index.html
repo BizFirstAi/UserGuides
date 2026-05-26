@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loki Overview — Loki Log Aggregation | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst Observe</h2>
+    <h1>Loki Log Aggregation</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active">Loki Overview</a>
+  <a href="01-deployment.html">Deploying Loki</a>
+  <a href="02-ingestion.html">Log Ingestion from BizFirstGO</a>
+  <a href="03-label-strategy.html">Label Strategy</a>
+  <a href="04-logql-basics.html">LogQL Basics</a>
+  <a href="05-logql-examples.html">LogQL for BizFirstGO</a>
+  <a href="06-retention.html">Log Retention in Loki</a>
+  <a href="07-alerts.html">Loki Alert Rules</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">BizFirst Observe</div>
+    <h1>Loki Overview</h1>
+    <p class="lead">Grafana Loki is the log aggregation engine for BizFirst Observe. It collects structured JSON logs from all BizFirstGO services, indexes them by label set for fast filtering, and makes them queryable via LogQL. Its design prioritizes low storage cost over full-text indexing.</p>
+  </div>
+
+  <h2>Loki's Core Design Philosophy</h2>
+  <p>Loki was designed around a key observation: for modern structured logs, you almost always know <em>which service, environment, and tenant</em> you're looking for before you start searching. Indexing that metadata (labels) is sufficient for fast filtering. The log content itself can remain unindexed and compressed — dramatically reducing storage cost compared to Elasticsearch.</p>
+
+  <h2>How Loki Differs from Elasticsearch</h2>
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>Loki</th><th>Elasticsearch</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Index log content</td><td>No — grep-style filtering after label match</td><td>Yes — inverted index on all fields</td></tr>
+      <tr><td>Storage cost</td><td>Low — compression only, no content index</td><td>High — index is 1–3x raw data</td></tr>
+      <tr><td>Ingest overhead</td><td>Very low — write log lines to stream</td><td>High — tokenize and index every word</td></tr>
+      <tr><td>Query for "all errors in service X"</td><td>Fast — stream selector + level label</td><td>Fast — index lookup</td></tr>
+      <tr><td>Query for "find all logs containing IP 1.2.3.4"</td><td>Slower — full scan of matched streams</td><td>Fast — inverted index</td></tr>
+      <tr><td>Best for</td><td>Structured logs with known label dimensions</td><td>Arbitrary unstructured text search</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Loki's Data Model</h2>
+  <p>Loki organizes logs hierarchically:</p>
+  <ul>
+    <li><strong>Labels</strong> — key-value pairs that identify a log stream (e.g., <code>job="processengine"</code>, <code>tenant_id="t123"</code>)</li>
+    <li><strong>Stream</strong> — all log lines sharing the same label set; identified by the label fingerprint</li>
+    <li><strong>Chunk</strong> — a compressed block of log lines within a stream, covering a time window</li>
+    <li><strong>Log line</strong> — a timestamp + raw text/JSON; not indexed, but filterable after stream selection</li>
+  </ul>
+
+  <h2>BizFirstGO Stream Labels</h2>
+  <p>BizFirstGO services use the following standard labels when pushing logs to Loki:</p>
+  <pre><code># Example stream selector for production errors in ProcessEngine
+{
+  "job": "processengine",
+  "service": "flow-studio-api",
+  "tenant_id": "tenant-abc-123",
+  "environment": "production",
+  "level": "error"
+}
+
+# All log lines with this exact label set form one stream.
+# LogQL stream selector syntax:
+{job="processengine", environment="production", level="error"}</code></pre>
+
+  <h2>High-Cardinality Values — Keep Them Out of Labels</h2>
+  <p>The following values are <strong>not</strong> used as labels — they go into the log line body:</p>
+  <table>
+    <thead>
+      <tr><th>Value</th><th>Why Not a Label</th><th>How to Filter</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>execution_id</code></td><td>Unique per execution — millions of unique values</td><td><code>|= "execution_id=exec-abc"</code></td></tr>
+      <tr><td><code>node_key</code></td><td>Varies per workflow design</td><td><code>|= "node_key=approval-01"</code></td></tr>
+      <tr><td><code>trace_id</code></td><td>Unique per request — very high cardinality</td><td><code>|= "traceId=4bf92f..."</code></td></tr>
+      <tr><td><code>user_id</code></td><td>Millions of unique user IDs possible</td><td><code>|= "userId=user-xyz"</code> (avoid for privacy)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>High-Cardinality Labels Cause Serious Performance Issues</strong>
+    <p>Each unique label combination creates a new stream. If you use <code>execution_id</code> as a label, Loki creates a new stream for every workflow execution — potentially millions of streams. This overwhelms Loki's index and causes memory exhaustion and slow queries. Keep label count low and label cardinality even lower.</p>
+  </div>
+
+  <h2>LogQL in 60 Seconds</h2>
+  <p>LogQL has two parts: the <strong>stream selector</strong> (mandatory, uses <code>{}</code>) and <strong>filter/parse expressions</strong> (optional pipeline):</p>
+  <pre><code># Minimum valid LogQL — all logs from processengine in production
+{job="processengine", environment="production"}
+
+# Add a filter — find lines containing "error"
+{job="processengine"} |= "error"
+
+# Parse JSON and filter a field
+{job="processengine"} | json | level="error"
+
+# Count error rate per minute (metric query, used in alerts + panels)
+rate({job="processengine"} | json | level="error" [1m])</code></pre>
+
+  <h2>Grafana Integration</h2>
+  <p>In Grafana, Loki logs appear in:</p>
+  <ul>
+    <li><strong>Explore</strong> — ad-hoc log queries with time range and live streaming</li>
+    <li><strong>Logs panels</strong> — on dashboards; show log lines inline with metric charts</li>
+    <li><strong>Derived Fields</strong> — automatically renders <code>traceId</code> in log lines as clickable links to Tempo</li>
+    <li><strong>Alert rules</strong> — Loki-based alert rules trigger on log patterns (via Loki ruler)</li>
+  </ul>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-deployment.html">Next: Deploying Loki &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

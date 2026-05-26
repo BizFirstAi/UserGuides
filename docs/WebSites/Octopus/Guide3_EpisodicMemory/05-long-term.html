@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Long-Term Episode Retention — Episodic Memory | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Episodic Memory</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Episodic Memory Overview</a>
+  <a href="01-episode-structure.html">Episode Structure</a>
+  <a href="02-storage.html">Episode Storage</a>
+  <a href="03-recall.html">Recalling Past Episodes</a>
+  <a href="04-episode-boundaries.html">Episode Boundaries</a>
+  <a href="05-long-term.html" class="active">Long-Term Episode Retention</a>
+  <a href="06-privacy.html">Privacy and PII</a>
+  <a href="07-api.html">Episodic Memory API</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Long-Term Episode Retention</h1>
+    <p class="lead">Episodic memory accumulates over time. Octopus provides configurable TTL-based retention, archival of old episodes (keeping summaries while removing full message content), and a background job that enforces the retention policy.</p>
+  </div>
+
+  <h2>Retention Policy Configuration</h2>
+  <pre><code>// Per-agent retention policy
+public class EpisodicRetentionPolicy
+{
+    public int ActiveRetentionDays { get; set; } = 90;   // full data kept 90 days
+    public int ArchiveRetentionDays { get; set; } = 365; // summaries kept 1 year
+    public bool ArchiveOnExpiry { get; set; } = true;    // archive vs. delete
+    public bool DeleteAfterArchivalPeriod { get; set; } = true; // hard delete after 1yr
+}</code></pre>
+
+  <h2>Retention Lifecycle</h2>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body"><h4>Active (0–90 days)</h4><p>Full episode data — messages, tool calls, embedding. All recall modes available including message-level retrieval.</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body"><h4>Archived (90–365 days)</h4><p><code>MessagesJson</code> and <code>ToolCallsJson</code> are cleared. Only <code>Summary</code> and <code>SummaryEmbedding</code> retained. Semantic recall still works; message-level recall returns "archived".</p></div>
+    </div>
+    <div class="pipeline-step">
+      <div class="connector"><div class="dot warn">3</div></div>
+      <div class="body"><h4>Deleted (&gt;365 days)</h4><p>Row is deleted from the table. No recall possible. Summaries are no longer available.</p></div>
+    </div>
+  </div>
+
+  <h2>MemoryRetentionJob</h2>
+  <pre><code>// Runs nightly as a background service
+public class MemoryRetentionJob : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var cutoffArchive = DateTimeOffset.UtcNow.AddDays(-_policy.ActiveRetentionDays);
+            var cutoffDelete  = DateTimeOffset.UtcNow.AddDays(-_policy.ArchiveRetentionDays);
+
+            // Archive: clear message content, keep summary
+            await _db.Episodes
+                .Where(e => e.EndedAt &lt; cutoffArchive && !e.IsArchived)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(e => e.MessagesJson, "[]")
+                    .SetProperty(e => e.ToolCallsJson, "[]")
+                    .SetProperty(e => e.IsArchived, true));
+
+            // Delete: hard delete very old episodes
+            await _db.Episodes
+                .Where(e => e.EndedAt &lt; cutoffDelete && e.IsArchived)
+                .ExecuteDeleteAsync();
+
+            await Task.Delay(TimeSpan.FromHours(24), ct);
+        }
+    }
+}</code></pre>
+
+  <h2>Cross-Session Semantic Recall after Archival</h2>
+  <p>Even after a session is archived (messages cleared), the summary embedding remains. The agent can still "remember" that a topic was discussed without knowing the exact content — the summary provides sufficient context for recall:</p>
+  <pre><code>// A recalled archived episode looks like:
+new EpisodeSnippet {
+    EpisodeId = Guid.Parse("..."),
+    Summary = "User inquired about annual leave balance for 2025. Agent confirmed 12 days remaining.",
+    Date = new DateTimeOffset(2025, 3, 14, ...),
+    RelevanceScore = 0.87f,
+    IsArchived = true   // signals that full message content is unavailable
+}</code></pre>
+
+  <div class="page-nav">
+    <a href="04-episode-boundaries.html">&#8592; Episode Boundaries</a>
+    <a href="06-privacy.html">Next: Privacy and PII &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

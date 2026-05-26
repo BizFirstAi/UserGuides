@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Async Response Pattern — Guide36 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Capability: Webhooks</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-inbound-trigger.html"><i class="fa-solid fa-arrow-right-to-bracket"></i> Inbound Trigger</a>
+  <a href="02-url-management.html"><i class="fa-solid fa-link"></i> URL Management</a>
+  <a href="03-signature-verification.html"><i class="fa-solid fa-key"></i> Signature Verification</a>
+  <a href="04-outbound-call.html"><i class="fa-solid fa-paper-plane"></i> Outbound Call</a>
+  <a href="05-retry-policy.html"><i class="fa-solid fa-rotate-right"></i> Retry Policy</a>
+  <a href="06-async-response.html" class="active"><i class="fa-solid fa-clock-rotate-left"></i> Async Response</a>
+  <a href="07-security.html"><i class="fa-solid fa-shield-halved"></i> Security</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide35_NodeCapabilitiesOverview/06-capability-map.html">&#8592; Capability Map</a>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Async Response Pattern</h1>
+    <p class="lead">Fire an outbound webhook and wait for a callback — the correlation pattern for integrating with systems that process requests asynchronously.</p>
+  </div>
+
+  <h2>The Problem</h2>
+  <p>Many external systems (payment processors, document signing, AI processing) accept a request and return a result via a callback webhook later. The workflow must:</p>
+  <ol>
+    <li>Send the outbound request with a correlation ID and callback URL</li>
+    <li>Suspend and wait for the callback to arrive</li>
+    <li>Resume with the callback payload</li>
+  </ol>
+
+  <h2>Pattern Implementation</h2>
+  <pre><code>
+[GenerateCorrelationId]          // sets $output.corrId.id
+        │
+[WebhookCallNode]                // sends to payment processor
+  body: {
+    amount: $output.cart.total,
+    callbackUrl: $env.WEBHOOK_BASE + "/webhook/tenant/payment-callback",
+    correlationId: $output.corrId.id
+  }
+        │
+[WaitForWebhookNode]             // suspends — waits for inbound call
+  correlationField: "correlationId"
+  correlationValue: $output.corrId.id
+  timeoutSeconds: 300
+        │
+[ProcessPaymentResult]           // continues with callback data
+  $json.status  // "success" | "failed"
+  </code></pre>
+
+  <h2>WaitForWebhookNode Config</h2>
+  <pre><code class="language-json">{
+  "nodeType": "WaitForWebhook",
+  "config": {
+    "webhookId": "wh-payment-callback",
+    "correlationField": "correlationId",
+    "correlationValue": "$output.corrId.id",
+    "timeoutSeconds": 300,
+    "timeoutPort": "timeout"
+  }
+}</code></pre>
+  <p>The engine matches the inbound callback to the suspended execution by comparing <code>correlationField</code> in the callback body to the expected value. When matched, the callback body becomes <code>$json</code> for all nodes after the wait node.</p>
+
+  <h2>Correlation ID Generation</h2>
+  <pre><code class="language-javascript">// Expression to generate a unique correlation ID
+crypto.randomUUID()   // → "3f7a2b1c-..."
+
+// Or use the execution ID as correlation:
+$context.executionId  // already unique per execution</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Use the execution ID:</strong> <code>$context.executionId</code> is already unique per execution and is the simplest correlation ID. Pass it to the external system and instruct them to include it in the callback payload.
+  </div>
+
+  <div class="page-nav">
+    <a href="05-retry-policy.html">&#8592; Retry Policy</a>
+    <a href="07-security.html">Next: Webhook Security &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

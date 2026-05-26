@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Input Mapping — Guide34_SubWorkflows | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Sub-Workflows</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-subworkflow-node.html"><i class="fa-solid fa-sitemap"></i> SubWorkflow Node</a>
+  <a href="02-input-mapping.html" class="active"><i class="fa-solid fa-right-to-bracket"></i> Input Mapping</a>
+  <a href="03-output-mapping.html"><i class="fa-solid fa-right-from-bracket"></i> Output Mapping</a>
+  <a href="04-sync-mode.html"><i class="fa-solid fa-hourglass-half"></i> Synchronous Mode</a>
+  <a href="05-async-mode.html"><i class="fa-solid fa-bolt"></i> Async Mode</a>
+  <a href="06-error-propagation.html"><i class="fa-solid fa-triangle-exclamation"></i> Error Propagation</a>
+  <a href="07-nesting.html"><i class="fa-solid fa-layer-group"></i> Nested Sub-Workflows</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Input Mapping</h1>
+    <p class="lead">How the parent workflow passes data to the child via <code>inputMap</code> — expression evaluation, the child's <code>$json</code> trigger object, and mapping best practices.</p>
+  </div>
+
+  <h2>How inputMap Works</h2>
+  <p>The <code>inputMap</code> is a dictionary where:</p>
+  <ul>
+    <li><strong>Key</strong> = the field name in the child's trigger <code>$json</code> object</li>
+    <li><strong>Value</strong> = an expression evaluated in the <em>parent's</em> context</li>
+  </ul>
+  <p>The executor evaluates all expressions using the parent's <code>$output</code>, <code>$json</code>, and <code>$context</code> variables, then constructs the child's trigger JSON from the result.</p>
+
+  <h2>Example</h2>
+  <pre><code class="language-json">{
+  "inputMap": {
+    "employeeId":      "$output.fetchEmployee.employeeId",
+    "requestAmount":   "$output.parseRequest.amount",
+    "currency":        "$output.parseRequest.currency",
+    "requestedBy":     "$context.actorId",
+    "submittedAt":     "new Date().toISOString()",
+    "notes":           "$output.parseRequest.notes ?? ''"
+  }
+}</code></pre>
+
+  <p>This produces a child trigger payload like:</p>
+  <pre><code class="language-json">{
+  "employeeId": "emp-001",
+  "requestAmount": 2500.00,
+  "currency": "USD",
+  "requestedBy": "user-alice",
+  "submittedAt": "2026-05-25T10:00:00Z",
+  "notes": "Urgent travel expense"
+}</code></pre>
+
+  <p>Inside the child workflow, all these fields are accessible as <code>$json.employeeId</code>, <code>$json.requestAmount</code>, etc.</p>
+
+  <h2>Expression Types in inputMap Values</h2>
+  <table>
+    <thead><tr><th>Expression</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>$output.nodeId.field</code></td><td>Field from parent node output</td></tr>
+      <tr><td><code>$json.field</code></td><td>Field from parent's own trigger data</td></tr>
+      <tr><td><code>$context.actorId</code></td><td>The user who triggered the parent</td></tr>
+      <tr><td><code>"literal string"</code></td><td>Static string value</td></tr>
+      <tr><td><code>42</code></td><td>Static number</td></tr>
+      <tr><td><code>$output.nodeId.list.map(x => x.id)</code></td><td>Transformed array</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Validation</h2>
+  <p>If an inputMap expression references a node that has not yet executed (or was skipped), its value is <code>null</code>. This null propagates into the child's <code>$json</code> unless you provide a fallback:</p>
+  <pre><code class="language-javascript">// Null-safe with fallback
+"$output.optionalStep?.result ?? 'default-value'"</code></pre>
+
+  <div class="callout callout-info">
+    <strong>Child contract:</strong> The child workflow should document its expected <code>$json</code> fields (like a function signature). The inputMap in the parent is the caller's responsibility to satisfy this contract. Mismatched field names cause silent nulls in the child — not validation errors.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-subworkflow-node.html">&#8592; SubWorkflow Node</a>
+    <a href="03-output-mapping.html">Next: Output Mapping &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

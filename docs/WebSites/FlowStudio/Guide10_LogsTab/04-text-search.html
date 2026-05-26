@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Text Search — Logs Tab | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Logs Tab</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Logs Tab Overview</a>
+  <a href="01-log-entry.html">Log Entry Anatomy</a>
+  <a href="02-level-filter.html">Filtering by Level</a>
+  <a href="03-node-filter.html">Filtering by Node</a>
+  <a href="04-text-search.html" class="active">Text Search</a>
+  <a href="05-virtualization.html">Virtual Scrolling</a>
+  <a href="06-sanitization.html">Log Sanitization</a>
+  <a href="07-expand-detail.html">Expanding a Log Entry</a>
+  <a href="08-trace-id.html">OpenTelemetry Trace ID</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Text Search</h1>
+    <p class="lead">The search box in the Logs tab performs a case-insensitive substring match across the <code>message</code> field and the serialized <code>data</code> field. Matching entries are shown; non-matching entries are hidden. The match term is highlighted in results.</p>
+  </div>
+
+  <h2>What Is Searched</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Searched</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>message</code></td><td>Yes</td><td>Full message text (post-sanitization)</td></tr>
+      <tr><td><code>data</code></td><td>Yes</td><td>Serialized to JSON string first, then searched</td></tr>
+      <tr><td><code>level</code></td><td>No</td><td>Use the level filter chips instead</td></tr>
+      <tr><td><code>nodeId</code> / node name</td><td>No</td><td>Use the node filter dropdown instead</td></tr>
+      <tr><td><code>traceId</code></td><td>Yes</td><td>Allows searching by trace ID to find all logs for a specific trace</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Search Implementation</h2>
+  <pre><code>// Case-insensitive substring search
+function matchesSearch(entry: LogEntry, term: string): boolean {
+  if (!term) return true;
+  const lower = term.toLowerCase();
+  const messageMatch = entry.message.toLowerCase().includes(lower);
+  const dataMatch = entry.data
+    ? JSON.stringify(entry.data).toLowerCase().includes(lower)
+    : false;
+  const traceMatch = entry.traceId.toLowerCase().includes(lower);
+  return messageMatch || dataMatch || traceMatch;
+}</code></pre>
+
+  <h2>Debounced Input</h2>
+  <p>The search input is debounced by 200ms to avoid re-filtering the entire log buffer on every keystroke. With a 10,000-entry buffer, filtering is fast but debouncing prevents UI jank during rapid typing:</p>
+  <pre><code>// Debounced search term state
+const [searchTerm, setSearchTerm] = useState('');
+const debouncedTerm = useDebounce(searchTerm, 200);</code></pre>
+
+  <h2>Highlight in Results</h2>
+  <p>Matched portions of the message are wrapped in a highlight span. The highlight uses the accent colour (#fbbf24 — amber) so it is visually distinct from all level colours:</p>
+  <pre><code>// Simple highlight utility
+function highlight(text: string, term: string): ReactNode {
+  if (!term) return text;
+  const parts = text.split(new RegExp(`(${escapeRegex(term)})`, 'gi'));
+  return parts.map((part, i) =&gt;
+    part.toLowerCase() === term.toLowerCase()
+      ? &lt;mark key={i} className="log-highlight"&gt;{part}&lt;/mark&gt;
+      : part
+  );
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Search + Filters Stack</strong>
+    Text search combines with the level filter and node filter. All three constraints must be satisfied for a log entry to appear. For example: <em>level=Error AND node=send-email AND message contains "timeout"</em>.
+  </div>
+
+  <div class="page-nav">
+    <a href="03-node-filter.html">&#8592; Filtering by Node</a>
+    <a href="05-virtualization.html">Next: Virtual Scrolling &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

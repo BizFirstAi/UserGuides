@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Error Handling — Servers | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>EdgeStream</h2>
+    <h1>Servers</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Server Overview</a>
+  <a href="01-creating.html">Creating a Server</a>
+  <a href="02-attaching-transport.html">Attaching a Transport</a>
+  <a href="03-registering-hooks.html">Registering Hooks</a>
+  <a href="04-starting.html">Starting the Server</a>
+  <a href="05-stopping.html">Stopping the Server</a>
+  <a href="06-multi-server.html">Multi-Server Patterns</a>
+  <a href="07-error-handling.html" class="active">Server Error Handling</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">EdgeStream</div>
+    <h1>Server-Level Error Handling</h1>
+    <p class="lead">Handle connection failures, transport errors, and pipeline exceptions at the server level using EdgeStream's lifecycle event system.</p>
+  </div>
+
+  <h2>Lifecycle Events for Error Handling</h2>
+  <pre><code>edgeStream.on('stream:error', (event) =&gt; {
+  console.error('EdgeStream stream error:', event.data?.error);
+  errorMonitoring.captureException(event.data?.error);
+});
+
+edgeStream.on('server:error', (event) =&gt; {
+  console.error(`Server ${event.serverId} error:`, event.data?.error);
+  // Show connection error indicator in UI
+  connectionStore.setError(event.serverId, event.data?.error as string);
+});
+
+edgeStream.on('server:disconnected', (event) =&gt; {
+  console.warn(`Server ${event.serverId} disconnected`);
+  // Show offline indicator — SignalR will auto-reconnect
+  connectionStore.setStatus(event.serverId, 'disconnected');
+});
+
+edgeStream.on('server:connected', (event) =&gt; {
+  console.log(`Server ${event.serverId} reconnected`);
+  connectionStore.setStatus(event.serverId, 'connected');
+});</code></pre>
+
+  <h2>Start Failure Handling</h2>
+  <pre><code>try {
+  await edgeStream.start();
+} catch (error) {
+  console.error('EdgeStream failed to start:', error);
+  // EdgeStream status is now 'error'
+
+  // Options:
+  // 1. Show offline mode UI
+  uiStore.setOfflineMode(true);
+  // 2. Retry after delay
+  setTimeout(() =&gt; edgeStream.start().catch(handleStartError), 5000);
+  // 3. Redirect to reconnection page
+}</code></pre>
+
+  <h2>Transport Error Monitoring</h2>
+  <pre><code>const server = edgeStream.server('bas')!;
+
+server.transport.onError((error) =&gt; {
+  console.error('[BAS Transport] Error:', error.message);
+  metrics.increment('edge_stream.transport_errors', { server: 'bas' });
+});
+
+server.transport.onStatusChange((status) =&gt; {
+  console.log('[BAS Transport] Status:', status);
+  uiStore.updateConnectionStatus('bas', status);
+});</code></pre>
+
+  <h2>Reconnection Behavior</h2>
+  <p>With SignalR transport and <code>maxAttempts: 0</code>, reconnection is automatic and indefinite. The server emits <code>server:disconnected</code> and <code>server:connected</code> events during the reconnection cycle:</p>
+
+  <table>
+    <thead>
+      <tr><th>Event</th><th>When</th><th>SignalR Auto-Reconnect</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>server:disconnected</code></td><td>Transport disconnects</td><td>Reconnect begins automatically</td></tr>
+      <tr><td><code>server:error</code></td><td>Transport error during connect/send</td><td>Retry with backoff</td></tr>
+      <tr><td><code>server:connected</code></td><td>Transport (re)connects</td><td>Normal operation resumes</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Next: Transports</strong>
+    For the full transport reference — SignalR, WebSocket, SSE, HTTP polling — see <a href="../Guide6_Transports/index.html">Guide 6: Transports</a>.
+  </div>
+
+  <div class="page-nav">
+    <a href="06-multi-server.html">&#8592; Multi-Server Patterns</a>
+    <a href="../Guide6_Transports/index.html">Next Guide: Transports &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

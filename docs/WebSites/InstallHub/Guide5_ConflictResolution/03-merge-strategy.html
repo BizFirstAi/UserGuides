@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Merge Strategy — Conflict Resolution | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>InstallHub</h2>
+    <h1>Conflict Resolution</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-conflict-detection.html">Conflict Detection</a>
+  <a href="02-replace-strategy.html">Replace Strategy</a>
+  <a href="03-merge-strategy.html" class="active">Merge Strategy</a>
+  <a href="04-skip-strategy.html">Skip Strategy</a>
+  <a href="05-manual-resolution.html">Manual Resolution</a>
+  <a href="06-default-strategy.html">Default Strategy</a>
+  <a href="07-audit.html">Conflict Audit</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">InstallHub</div>
+    <h1>Merge Strategy</h1>
+    <p class="lead">Merge applies a JSON diff between the existing artifact and the package version — only changed fields are updated. Fields not present in the package are left unchanged. Supported only for config-type artifacts.</p>
+  </div>
+
+  <h2>Merge Eligibility</h2>
+  <table>
+    <thead>
+      <tr><th>Artifact Type</th><th>Merge Supported</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>RuleSet</td><td><span class="badge badge-green">Yes</span></td><td>Array of rules — add new rules, update existing by ruleId</td></tr>
+      <tr><td>EntitySchema</td><td><span class="badge badge-green">Yes</span></td><td>Additive field additions; existing fields preserved</td></tr>
+      <tr><td>AppDefinition</td><td><span class="badge badge-green">Yes</span></td><td>Configuration key-value pairs can be merged</td></tr>
+      <tr><td>ProcessDefinition</td><td><span class="badge badge-red">No</span></td><td>Graph structure makes automated merge ambiguous and unsafe</td></tr>
+      <tr><td>ThreadDefinition</td><td><span class="badge badge-red">No</span></td><td>Same as ProcessDefinition</td></tr>
+      <tr><td>AtlasForm</td><td><span class="badge badge-red">No</span></td><td>Field ordering and action references make merge unreliable</td></tr>
+    </tbody>
+  </table>
+
+  <h2>How Merge Works (RuleSet Example)</h2>
+  <pre><code>// Existing RuleSet in target tenant (rule-6612):
+{
+  "rules": [
+    { "ruleId": "r1", "name": "AutoApproveUnder500", "condition": "amount &lt; 500", "action": "APPROVE" },
+    { "ruleId": "r2", "name": "RequireApproval",      "condition": "amount >= 500", "action": "REQUIRE_APPROVAL" }
+  ]
+}
+
+// Package RuleSet (after remap):
+{
+  "rules": [
+    { "ruleId": "r1", "name": "AutoApproveUnder500", "condition": "amount &lt; 1000", "action": "APPROVE" },
+    { "ruleId": "r3", "name": "HighValueAlert",       "condition": "amount >= 5000", "action": "ALERT" }
+  ]
+}
+
+// Merge result:
+{
+  "rules": [
+    { "ruleId": "r1", "name": "AutoApproveUnder500", "condition": "amount &lt; 1000", "action": "APPROVE" },  // UPDATED
+    { "ruleId": "r2", "name": "RequireApproval",      "condition": "amount >= 500", "action": "REQUIRE_APPROVAL" },  // UNCHANGED
+    { "ruleId": "r3", "name": "HighValueAlert",       "condition": "amount >= 5000", "action": "ALERT" }   // ADDED
+  ]
+}</code></pre>
+
+  <h2>Merge Conflict within a Merge</h2>
+  <p>When the same field is changed in both the existing artifact and the package artifact relative to their common ancestor (three-way merge), the automated merge fails and falls through to manual resolution:</p>
+  <pre><code>{
+  "warning":    "MergeConflict",
+  "message":    "Automated merge failed for 'ApprovalRules' — field 'rules[0].condition' was changed in both the existing artifact and the package.",
+  "field":      "rules[0].condition",
+  "existing":   "amount &lt; 750",
+  "package":    "amount &lt; 1000",
+  "action":     "Manual resolution required — see POST /api/installhub/.../resolve"
+}</code></pre>
+
+  <h2>Merge Diff in ConflictReport</h2>
+  <pre><code>{
+  "artifactType":   "RuleSet",
+  "artifactName":   "ApprovalRules",
+  "mergeSupported": true,
+  "mergeDiff": {
+    "added":   ["rules[2]"],
+    "changed": ["rules[0].condition"],
+    "removed": [],
+    "unchanged": ["rules[1]"]
+  }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Use Merge for Additive Updates</strong>
+    Merge is ideal when the package adds new rules or entity fields without removing existing ones. If the package removes items that exist locally, those removals are NOT applied — use Replace if you want the package version to be definitive.
+  </div>
+
+  <div class="page-nav">
+    <a href="02-replace-strategy.html">&#8592; Replace Strategy</a>
+    <a href="04-skip-strategy.html">Next: Skip Strategy &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

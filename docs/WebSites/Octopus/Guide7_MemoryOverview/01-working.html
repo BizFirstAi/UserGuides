@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Working Memory — Memory Overview | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Octopus</h2>
+    <h1>Memory Overview</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Memory System Overview</a>
+  <a href="01-working.html" class="active">Working Memory</a>
+  <a href="02-episodic.html">Episodic Memory</a>
+  <a href="03-semantic.html">Semantic Memory</a>
+  <a href="04-procedural.html">Procedural Memory</a>
+  <a href="05-comparison.html">Comparison Table</a>
+  <a href="06-interaction.html">How Memory Types Interact</a>
+  <a href="07-config.html">Memory Configuration</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://bizfirstai.github.io/UserGuides/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Octopus</div>
+    <h1>Working Memory</h1>
+    <p class="lead">Working memory is the active LLM context window — what the agent is "thinking about" right now. It is transient, token-constrained, and rebuilt fresh on every conversation turn. This page summarises the key concepts; see the <a href="../Guide6_WorkingMemory/index.html">full Working Memory guide</a> for deep implementation detail.</p>
+  </div>
+
+  <h2>What Is Working Memory?</h2>
+  <p>Every call to an LLM is stateless. The model has no persistent memory between calls — it only knows what appears in the messages array you send it. Working memory is the name Octopus gives to the assembled messages array that is constructed before each LLM call:</p>
+  <pre><code>// Working memory is the messages[] sent to the LLM on every turn:
+[
+  { "role": "system",    "content": "You are Aria, the HR specialist..." },
+  { "role": "user",      "content": "[Retrieved Knowledge]\nSource: HR Policy..." },
+  { "role": "user",      "content": "Hi, how many leave days do I have?" },
+  { "role": "assistant", "content": "You have 12 annual leave days remaining." },
+  { "role": "user",      "content": "Can I take 5 days in June?" }
+]</code></pre>
+
+  <h2>Key Characteristics</h2>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Value</th><th>Implication</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Storage location</td><td>In-process RAM only</td><td>Nothing persists — lost when the request completes</td></tr>
+      <tr><td>Scope</td><td>Single conversation turn</td><td>Rebuilt from scratch on every LLM call</td></tr>
+      <tr><td>Size limit</td><td>Model context window (e.g. 200K tokens)</td><td>Must stay within budget; pruning kicks in when exceeded</td></tr>
+      <tr><td>Content sources</td><td>System prompt + injected knowledge + message history + current message</td><td>All four memory types contribute to working memory</td></tr>
+      <tr><td>Managed by</td><td><code>WorkingMemoryManager</code></td><td>Assembles, injects, prunes, and validates context</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What Goes Into Working Memory</h2>
+  <p>The <code>WorkingMemoryManager</code> assembles working memory from five sources, in this order:</p>
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <strong>System Prompt</strong>
+        <span>Agent persona, goals, instructions. Always first — highest model attention position.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <strong>Matched Procedure</strong>
+        <span>If procedural memory matched a skill, its step-by-step instructions appear here.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <strong>Retrieved Knowledge</strong>
+        <span>Semantic memory chunks retrieved by vector similarity search on the current message.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <strong>Episodic Snippets</strong>
+        <span>Past conversation summaries recalled from SQL — cross-session user context.</span>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <strong>Message History + Current Message</strong>
+        <span>Current session conversation turns, pruned to fit the token budget.</span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Token Budget and Pruning</h2>
+  <p>Every agent has a <code>MaxWorkingMemoryTokens</code> budget. When the assembled context exceeds the budget, the pruner removes the oldest message history turns until it fits. Three pruning strategies are available:</p>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>How It Works</th><th>Cost</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>FIFO</td><td>Drops the oldest turns first</td><td>Zero</td></tr>
+      <tr><td>Summarize</td><td>Condenses old turns via a secondary LLM call before dropping them</td><td>Extra LLM call</td></tr>
+      <tr><td>SlidingWindow</td><td>Always keeps only the last N turn pairs</td><td>Zero</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Why Working Memory Is Transient</h2>
+  <p>Working memory intentionally does not persist between turns. This design means:</p>
+  <ul>
+    <li><strong>No stale context</strong> — each turn is assembled fresh from the authoritative sources (SQL, vector DB, config)</li>
+    <li><strong>Consistent retrieval</strong> — if a new document is indexed mid-conversation, it appears in retrieval on the next turn</li>
+    <li><strong>Stateless agents</strong> — any server can handle any turn; working memory can be reconstructed from the conversation ID</li>
+    <li><strong>No memory leak risk</strong> — the context window can never grow beyond the configured budget across turns</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Full Guide</strong>
+    <p>This is a summary page. The <a href="../Guide6_WorkingMemory/index.html">Working Memory full guide</a> covers context window mechanics, token budgeting, all three pruning strategies with code, knowledge injection position, tool call history management, and the Context Inspector debugging panel.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Memory System Overview</a>
+    <a href="02-episodic.html">Next: Episodic Memory &#8594;</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
