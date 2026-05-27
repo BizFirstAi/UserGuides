@@ -1,21 +1,27 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stripe Node — BizFirstAI</title>
+<title>Stripe Webhook Trigger — BizFirstAI</title>
 <link rel="stylesheet" href="../../styles.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
 .callout{border-radius:6px;padding:14px 18px;margin:18px 0;font-size:14px;line-height:1.6;}
 .callout.info{background:#e6f2fc;border-left:4px solid #0f6cbd;color:#0a3d6b;}
 .callout.warning{background:#fff8e1;border-left:4px solid #f0a500;color:#6b4400;}
+.callout.danger{background:#fde8ec;border-left:4px solid #c82045;color:#7a0b27;}
 table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;}
 th{background:#f0f4f8;text-align:left;padding:10px 14px;font-weight:600;border:1px solid #dde3ea;}
-td{padding:9px 14px;border:1px solid #dde3ea;vertical-align:top;}
-td code{background:#f0f4f8;padding:1px 6px;border-radius:4px;font-size:12.5px;font-family:monospace;}
+td{padding:9px 14px;border:1px solid #dde3ea;vertical-align:top;line-height:1.55;}
+td code,p code{background:#f0f4f8;padding:1px 6px;border-radius:4px;font-size:12.5px;font-family:monospace;}
+pre{background:#1e2736;color:#e8edf3;border-radius:6px;padding:20px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;}
+pre code{background:none;padding:0;color:inherit;}
 ul,ol{margin:10px 0 14px 22px;}
 li{margin-bottom:5px;font-size:14px;}
-h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
+.badge{display:inline-block;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px;margin-left:4px;vertical-align:middle;}
+.badge.required{background:#fde8ec;color:#c82045;}
+.badge.optional{background:#e8f4ff;color:#0a72d6;}
+.form-id{display:inline-block;font-size:11px;font-weight:600;background:#f0f4f8;color:#555;border-radius:4px;padding:2px 8px;margin-left:8px;font-family:monospace;}
 </style>
 <style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
 </head>
@@ -28,102 +34,211 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   </div>
 </div>
 <nav class="sidebar">
-  <div class="sidebar-brand">Stripe<span>Webhook Receiver</span></div>
-  <div class="sidebar-section">This Node</div>
+  <div class="sidebar-brand">Stripe Webhook<span>Trigger Node</span></div>
+  <div class="sidebar-section">Overview</div>
   <a href="index.html" class="active">Overview</a>
-  <a href="01-configuration.html">Configuration</a>
-  <a href="02-input-output.html">Input &amp; Output</a>
-  <a href="03-examples.html">Examples</a>
-  <div class="sidebar-section">Storage &amp; Payments</div>
-  <a href="../MongoDB/">MongoDB</a>
-  <a href="../S3/">AWS S3</a>
   <div class="sidebar-section">Navigation</div>
   <a href="../">&#8592; All Nodes</a>
   <a href="../../">&#8592; Portal</a>
 </nav>
 <main>
   <div class="page-header">
-    <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / Stripe</div>
-    <h1><i class="fa-brands fa-stripe" style="color:#635bff;margin-right:10px;"></i>Stripe</h1>
-    <p class="subtitle">Receive Stripe webhook events and trigger workflows on payment success, failure, refund, and dispute activity.</p>
+    <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / Stripe Webhook Trigger</div>
+    <h1>Stripe Webhook Trigger <span class="form-id">stripe-webhook</span></h1>
+    <p class="subtitle">Receives and validates Stripe webhook events to start payment-related workflows. Uses HMAC-SHA256 with the Stripe webhook signing secret and enforces a 5-minute timestamp window to block replay attacks. Three endpoints are registered automatically: payment success, payment failure, and refund. Supports event type filtering, amount thresholds, and currency restrictions.</p>
   </div>
+
+  <h2>When to Use</h2>
+  <ul>
+    <li><strong>Post-payment fulfillment:</strong> Provision product access, generate a licence key, or send a purchase confirmation email immediately after a <code>charge.succeeded</code> event, without polling the Stripe API.</li>
+    <li><strong>Subscription lifecycle management:</strong> React to <code>payment_intent.succeeded</code> and <code>payment_intent.payment_failed</code> events to activate, suspend, or downgrade customer subscriptions in your system.</li>
+    <li><strong>Failed payment retry workflows:</strong> On a failed charge event, trigger a dunning sequence — send a payment-failure email, schedule a retry after 48 hours, and alert account managers for high-value customers.</li>
+    <li><strong>Invoice reconciliation:</strong> Use <code>charge.succeeded</code> events to auto-reconcile open invoices in your ERP, matching the Stripe customer ID and amount to internal records.</li>
+    <li><strong>Refund notifications:</strong> When a <code>charge.refunded</code> event arrives, trigger a customer notification workflow and update inventory or licence revocation if applicable.</li>
+  </ul>
 
   <div class="callout info">
     <i class="fa-solid fa-circle-info"></i>
-    <strong>This is a webhook receiver node — it does NOT call the Stripe API.</strong> The Stripe node is a trigger that receives inbound webhook events sent by Stripe. When Stripe fires an event to the BizFirst endpoint (e.g. <code>charge.succeeded</code>, <code>payment_intent.payment_failed</code>), this node starts a workflow run and passes the parsed event data to downstream nodes. The settings class is <strong>StripePaymentNodeSettings</strong>.
+    <strong>Three webhook endpoints registered automatically.</strong> The node registers three Stripe webhook paths: <code>/webhooks/payment/success</code>, <code>/webhooks/payment/failure</code>, and <code>/webhooks/refund</code>. Register all three in your Stripe Dashboard under <em>Developers &rarr; Webhooks</em> and point them at the appropriate BizFirstAI endpoint URLs for your deployment.
   </div>
-
-  <h2>Supported Event Types</h2>
-  <table>
-    <tr><th style="width:260px;">Stripe Event</th><th>Meaning</th></tr>
-    <tr><td><code>charge.succeeded</code></td><td>A payment was captured successfully.</td></tr>
-    <tr><td><code>charge.failed</code></td><td>A payment attempt failed.</td></tr>
-    <tr><td><code>charge.refunded</code></td><td>A refund was issued against a charge.</td></tr>
-    <tr><td><code>payment_intent.succeeded</code></td><td>A PaymentIntent was confirmed and funds captured.</td></tr>
-    <tr><td><code>payment_intent.payment_failed</code></td><td>A PaymentIntent failed — card declined or authentication failed.</td></tr>
-    <tr><td><code>charge.dispute.created</code></td><td>A customer opened a dispute (chargeback) against a charge.</td></tr>
-    <tr><td><code>charge.dispute.closed</code></td><td>A dispute was resolved — won, lost, or withdrawn.</td></tr>
-  </table>
-
-  <h2>How to Configure the Stripe Webhook</h2>
-  <p>After saving your Stripe node in BizFirst, register the BizFirst endpoint in your Stripe Dashboard:</p>
-  <ol>
-    <li>In the Stripe Dashboard, go to <strong>Developers &gt; Webhooks &gt; Add endpoint</strong>.</li>
-    <li>Set the <strong>Endpoint URL</strong> to the BizFirst Stripe webhook endpoint provided in the node settings panel.</li>
-    <li>Select the events you want to receive — choose from the 7 supported event types above.</li>
-    <li>After saving, Stripe shows a <strong>Signing Secret</strong> (starts with <code>whsec_</code>). Copy this value.</li>
-    <li>Paste the signing secret into the <strong>WebhookSecret</strong> field in your BizFirst Stripe node settings.</li>
-    <li>BizFirst will now verify every incoming event using Stripe's HMAC signature before starting any workflow.</li>
-  </ol>
 
   <div class="callout warning">
     <i class="fa-solid fa-triangle-exclamation"></i>
-    <strong>Always set WebhookSecret in production.</strong> Without signature verification, anyone who knows your endpoint URL could send fake payment events. With WebhookSecret configured, BizFirst verifies the Stripe signature header on every request and rejects tampered or spoofed payloads.
+    <strong>Timestamp replay protection.</strong> The node rejects Stripe webhook requests where the timestamp embedded in the <code>stripe-signature</code> header is more than 5 minutes old. Ensure your BizFirstAI server clock is synchronised via NTP. Clock skew greater than 5 minutes will cause legitimate events to be rejected.
   </div>
 
-  <h2>Filtering Events</h2>
-  <p>The node settings give you multiple filters to control which events trigger a workflow run:</p>
+  <h2>Configuration</h2>
+  <h3>Security</h3>
+  <table>
+    <tr><th style="width:210px;">Field</th><th style="width:80px;">Required</th><th>Description</th></tr>
+    <tr>
+      <td><code>webhookSecret</code></td>
+      <td><span class="badge required">Required</span></td>
+      <td>Stripe webhook endpoint signing secret in <code>whsec_…</code> format. Found in the Stripe Dashboard under <em>Developers &rarr; Webhooks &rarr; [your endpoint] &rarr; Signing secret</em>. Store in BizFirst Credentials Manager and reference as <code>{{ $credentials.stripe-webhook-secret }}</code>. Never store the raw value in node configuration. Falls back to <code>Stripe:WebhookSecret</code> in <code>appsettings.json</code> if omitted.</td>
+    </tr>
+    <tr>
+      <td><code>enableIdempotencyCheck</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Default <code>false</code>. When <code>true</code>, uses the Stripe event ID (<code>event_id</code>) as a deduplication key to prevent the same event from starting two workflow runs if Stripe retries the delivery.</td>
+    </tr>
+    <tr>
+      <td><code>includeFullEventObject</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Default <code>false</code>. When <code>true</code>, the complete raw Stripe event JSON is written into the output under <code>_raw_event</code>. Useful when downstream nodes need Stripe fields not extracted by default. Increases payload size.</td>
+    </tr>
+  </table>
+
+  <h3>Event Filtering</h3>
+  <table>
+    <tr><th style="width:210px;">Field</th><th style="width:80px;">Required</th><th>Description</th></tr>
+    <tr>
+      <td><code>allowedEventTypes</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Comma-separated list of Stripe event types to process. Other event types are silently ignored. Valid values: <code>charge.succeeded</code>, <code>charge.failed</code>, <code>charge.refunded</code>, <code>payment_intent.succeeded</code>, <code>payment_intent.payment_failed</code>, <code>charge.dispute.created</code>, <code>charge.dispute.closed</code>. Supports wildcard suffix (e.g. <code>charge.*</code>). Leave empty to process all event types.</td>
+    </tr>
+    <tr>
+      <td><code>minimumAmount</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Minimum payment amount in the smallest currency unit (cents for USD). Events with an amount below this threshold are ignored. Default <code>0</code> (no minimum). Example: <code>1000</code> = only process payments of $10.00 USD or more.</td>
+    </tr>
+    <tr>
+      <td><code>maximumAmount</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Maximum payment amount in the smallest currency unit. Events above this threshold are ignored. Default <code>0</code> (no maximum). <code>minimumAmount</code> must be less than or equal to <code>maximumAmount</code> when both are set.</td>
+    </tr>
+    <tr>
+      <td><code>allowedCurrencies</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Comma-separated ISO 4217 currency codes (case-insensitive). Events in other currencies are ignored. Example: <code>USD,EUR,GBP</code>. Leave empty to process all currencies. Each code must be exactly 3 letters.</td>
+    </tr>
+    <tr>
+      <td><code>requireKnownCustomer</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Default <code>false</code>. When <code>true</code>, only processes events that include a non-null Stripe customer ID (<code>customer_id</code>). Useful in B2B scenarios where anonymous or guest checkout events should be excluded.</td>
+    </tr>
+  </table>
+
+  <h2>Sample Configuration JSON</h2>
+  <pre><code>{
+  "webhookSecret": "{{ $credentials.stripe-webhook-secret }}",
+  "allowedEventTypes": "charge.succeeded,charge.refunded,payment_intent.payment_failed",
+  "minimumAmount": 100,
+  "allowedCurrencies": "USD,EUR",
+  "enableIdempotencyCheck": true,
+  "requireKnownCustomer": true
+}</code></pre>
+
+  <h2>Validation Errors</h2>
+  <table>
+    <tr><th style="width:320px;">Error</th><th>Cause</th></tr>
+    <tr><td><code>Unknown event type: &lt;value&gt;</code></td><td>An entry in <code>allowedEventTypes</code> is not in the valid set and does not end with <code>.*</code>.</td></tr>
+    <tr><td><code>MinimumAmount cannot be negative</code></td><td><code>minimumAmount</code> is set to a negative number.</td></tr>
+    <tr><td><code>MaximumAmount cannot be negative</code></td><td><code>maximumAmount</code> is set to a negative number.</td></tr>
+    <tr><td><code>MinimumAmount cannot be greater than MaximumAmount</code></td><td>Both amounts are set and <code>minimumAmount</code> exceeds <code>maximumAmount</code>.</td></tr>
+    <tr><td><code>Invalid currency code: &lt;value&gt;</code></td><td>An entry in <code>allowedCurrencies</code> is not a 3-letter ISO alphabetic code.</td></tr>
+    <tr><td><code>Missing 'stripe-signature' header</code></td><td>The inbound request has no <code>stripe-signature</code> header. The request did not originate from Stripe or was tampered with.</td></tr>
+    <tr><td><code>Invalid signature header format</code></td><td>The <code>stripe-signature</code> header does not match the expected <code>t=timestamp,v1=signature</code> format.</td></tr>
+    <tr><td><code>Webhook timestamp outside acceptable window</code></td><td>The timestamp in the signature header is more than 5 minutes old. Possible replay attack or server clock skew.</td></tr>
+    <tr><td><code>Invalid Stripe signature</code></td><td>The computed HMAC-SHA256 does not match the provided signature. Likely a misconfigured <code>webhookSecret</code>.</td></tr>
+    <tr><td><code>Webhook secret not configured</code></td><td><code>webhookSecret</code> is empty and no fallback exists under <code>Stripe:WebhookSecret</code> in <code>appsettings.json</code>.</td></tr>
+  </table>
+
+  <h2>Output</h2>
+  <h3>Success Port</h3>
+  <table>
+    <tr><th style="width:190px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
+    <tr><td><code>event_id</code></td><td>string</td><td>Unique Stripe event identifier (e.g. <code>evt_1234567890abcdef</code>). Use as an idempotency key for downstream writes.</td></tr>
+    <tr><td><code>event_type</code></td><td>string</td><td>Stripe event type string (e.g. <code>charge.succeeded</code>, <code>charge.refunded</code>).</td></tr>
+    <tr><td><code>payment_intent</code></td><td>string</td><td>Stripe charge or payment intent ID from <code>data.object.id</code> (e.g. <code>ch_…</code> or <code>pi_…</code>).</td></tr>
+    <tr><td><code>amount</code></td><td>number</td><td>Payment amount in the smallest currency unit (e.g. cents). $10.00 USD = <code>1000</code>.</td></tr>
+    <tr><td><code>currency</code></td><td>string</td><td>ISO 4217 currency code in uppercase (e.g. <code>USD</code>, <code>EUR</code>).</td></tr>
+    <tr><td><code>customer_id</code></td><td>string</td><td>Stripe customer ID (e.g. <code>cus_…</code>). Absent when the payment was made without a customer object.</td></tr>
+    <tr><td><code>status</code></td><td>string</td><td>Payment or charge status from the event object (e.g. <code>succeeded</code>, <code>failed</code>, <code>refunded</code>).</td></tr>
+    <tr><td><code>description</code></td><td>string</td><td>Optional description field from the charge or payment intent object.</td></tr>
+    <tr><td><code>metadata</code></td><td>object</td><td>Key-value metadata attached to the Stripe charge or payment intent. Only present when metadata is non-empty.</td></tr>
+    <tr><td><code>timestamp</code></td><td>string</td><td>ISO 8601 UTC timestamp derived from the Stripe event's Unix <code>created</code> field.</td></tr>
+  </table>
+
+  <h3>Error Port</h3>
+  <p>Fires when signature verification fails, the timestamp window is exceeded, the event type is filtered out, or the request body cannot be parsed as valid JSON. The output contains <code>errorCode</code> and <code>message</code> fields. All verification failures are logged for security audit trail purposes.</p>
+
+  <h2>Sample Output JSON — charge.succeeded</h2>
+  <pre><code>{
+  "event_id": "evt_1QaB2cD3eF4gH5iJ6kL7mN8",
+  "event_type": "charge.succeeded",
+  "payment_intent": "ch_3QaB2cRKJHMJBpXx1Y2Z3A4B",
+  "amount": 4999,
+  "currency": "USD",
+  "customer_id": "cus_QaB2cD3eF4gH5iJ",
+  "status": "succeeded",
+  "description": "Subscription — Pro Plan — May 2026",
+  "metadata": {
+    "order_id": "ORD-2026-05-1234",
+    "plan": "pro"
+  },
+  "timestamp": "2026-05-26T08:30:00Z",
+  "_webhook_method": "POST",
+  "_webhook_path": "/webhooks/payment/success",
+  "_webhook_received_at": "2026-05-26T08:30:00.812Z"
+}</code></pre>
+
+  <h2>Expression Reference</h2>
+  <table>
+    <tr><th style="width:360px;">Expression</th><th>Value returned</th></tr>
+    <tr><td><code>{{ $output.stripe.event_type }}</code></td><td>Stripe event type string.</td></tr>
+    <tr><td><code>{{ $output.stripe.event_id }}</code></td><td>Unique event ID for idempotency checks.</td></tr>
+    <tr><td><code>{{ $output.stripe.amount }}</code></td><td>Amount in smallest currency unit (cents).</td></tr>
+    <tr><td><code>{{ $output.stripe.currency }}</code></td><td>ISO 4217 currency code in uppercase.</td></tr>
+    <tr><td><code>{{ $output.stripe.customer_id }}</code></td><td>Stripe customer ID.</td></tr>
+    <tr><td><code>{{ $output.stripe.status }}</code></td><td>Charge or payment status.</td></tr>
+    <tr><td><code>{{ $output.stripe.payment_intent }}</code></td><td>Charge or payment intent ID.</td></tr>
+    <tr><td><code>{{ $output.stripe.metadata.order_id }}</code></td><td>Custom metadata value by key.</td></tr>
+    <tr><td><code>{{ $output.stripe.timestamp }}</code></td><td>ISO 8601 event timestamp.</td></tr>
+  </table>
+
+  <h2>Node Policies &amp; GuardRails</h2>
   <ul>
-    <li><strong>AllowedEventTypes</strong> — restrict to specific event types. Supports wildcards like <code>charge.*</code> or <code>payment_intent.*</code>.</li>
-    <li><strong>MinimumAmount / MaximumAmount</strong> — only process events where the charge amount is within a defined range (in cents). Set to 0 to disable the filter.</li>
-    <li><strong>AllowedCurrencies</strong> — restrict to specific ISO currency codes (e.g. <code>usd</code>, <code>gbp</code>, <code>eur</code>).</li>
-    <li><strong>RequireKnownCustomer</strong> — only process events that have a Stripe customer ID attached.</li>
-    <li><strong>EnableIdempotencyCheck</strong> — deduplicate retried Stripe deliveries using the event signature.</li>
+    <li><strong>Never skip signature verification.</strong> The node uses constant-time HMAC-SHA256 comparison of the raw request body using the signing secret. Do not configure a blank secret. Verification failure routes to the error port and is logged — it does not silently pass through.</li>
+    <li><strong>Store the signing secret in Credentials Manager.</strong> The webhook signing secret grants the ability to spoof Stripe events. Reference it as <code>{{ $credentials.stripe-webhook-secret }}</code>. Rotate it immediately if it is ever exposed.</li>
+    <li><strong>Use <code>event_id</code> as an idempotency key for order fulfillment.</strong> Stripe retries failed webhook deliveries for up to 72 hours. Set <code>enableIdempotencyCheck: true</code> and use <code>{{ $output.stripe.event_id }}</code> as the idempotency key in any downstream node that provisions access, charges a customer, or writes a fulfillment record.</li>
+    <li><strong>Store raw events for replay capability.</strong> Before processing the event, write the raw Stripe event body to a durable store (database or S3). If your fulfillment workflow fails after processing has started, you can replay the event from the stored body without relying on Stripe's retry window.</li>
+    <li><strong>Set amount thresholds for high-value alert workflows.</strong> Use <code>minimumAmount</code> to route large payments (e.g. over $1,000) to a separate workflow that includes fraud review or account manager notification steps.</li>
+    <li><strong>Test with Stripe CLI before production.</strong> Use <code>stripe trigger charge.succeeded</code> via the Stripe CLI to send a signed test event to your development BizFirstAI endpoint. Validate that the signature is accepted, the output fields are populated as expected, and the downstream workflow completes correctly before enabling the endpoint in production.</li>
+    <li><strong>Monitor server clock synchronisation.</strong> The 5-minute timestamp window requires the BizFirstAI server to have accurate system time. Configure NTP synchronisation on all server instances. A clock drift of more than 5 minutes will cause all Stripe webhook events to be rejected as potential replay attacks.</li>
   </ul>
 
-  <h2>What This Node Does Not Do</h2>
-  <p>The Stripe node does not create payment intents, customers, subscriptions, refunds, or invoices. It does not call the Stripe API at all. It only receives and parses events that Stripe sends to it. If you need to call the Stripe API from a workflow, use an HTTP Request node with your Stripe secret key.</p>
+  <h2>Examples</h2>
+  <h3>Post-Payment Fulfillment — Provision Subscription Access</h3>
+  <pre><code>{
+  "webhookSecret": "{{ $credentials.stripe-webhook-secret }}",
+  "allowedEventTypes": "charge.succeeded",
+  "allowedCurrencies": "USD,EUR,GBP",
+  "minimumAmount": 1,
+  "enableIdempotencyCheck": true,
+  "requireKnownCustomer": true
+}</code></pre>
+  <p>Fires only for successful charges linked to a known Stripe customer. The downstream workflow uses <code>{{ $output.stripe.customer_id }}</code> to look up the internal account record, activates the subscribed plan, and sends a purchase confirmation email. The idempotency check prevents double-provisioning if Stripe retries the event.</p>
 
-  <h2>Business Use Cases</h2>
-  <h3>Payment Success — Provision Service</h3>
-  <p>When <code>charge.succeeded</code> or <code>payment_intent.succeeded</code> fires, extract the customer ID and metadata, update the order status in your database, send a receipt email, and provision access to the purchased service — all in a single automated workflow.</p>
-  <h3>Payment Failure — Retry and Notify</h3>
-  <p>When <code>payment_intent.payment_failed</code> fires, check the failure reason, send a personalised recovery email with a payment update link, and schedule a follow-up reminder if no update is received within 3 days.</p>
-  <h3>Refund — Update Order Status</h3>
-  <p>When <code>charge.refunded</code> fires, update the order record to <code>refunded</code>, reverse any access grants or fulfilment steps, and send a refund confirmation to the customer.</p>
-  <h3>Dispute — Pause Account and Alert</h3>
-  <p>When <code>charge.dispute.created</code> fires, immediately pause the customer account, alert the billing team in Slack, and open a case in your CRM with the dispute amount and reason.</p>
-  <h3>All Charge Events via Wildcard</h3>
-  <p>Configure <code>AllowedEventTypes</code> to <code>charge.*</code> to receive all charge lifecycle events in a single workflow and route them using a Switch node on <code>event_type</code>.</p>
+  <h3>Failed Payment Dunning — Retry and Notify</h3>
+  <pre><code>{
+  "webhookSecret": "{{ $credentials.stripe-webhook-secret }}",
+  "allowedEventTypes": "charge.failed,payment_intent.payment_failed",
+  "enableIdempotencyCheck": true,
+  "requireKnownCustomer": true
+}</code></pre>
+  <p>Triggers a dunning workflow whenever a charge fails. The workflow sends a payment failure email to the customer using <code>{{ $output.stripe.customer_id }}</code> and <code>{{ $output.stripe.amount }}</code> to personalise the message, then schedules an automatic retry after 48 hours using a Delay node. If a second attempt fails, an account manager notification is dispatched.</p>
 
-  <h2>In This Guide</h2>
-  <div class="card-grid">
-    <a href="01-configuration.html" class="card">
-      <div class="card-icon"><i class="fa-solid fa-sliders" style="color:var(--accent);"></i></div>
-      <h3>Configuration</h3>
-      <p>All StripePaymentNodeSettings fields — webhook secret, event filters, amount range, currency, and idempotency.</p>
-    </a>
-    <a href="02-input-output.html" class="card">
-      <div class="card-icon"><i class="fa-solid fa-right-left" style="color:var(--accent);"></i></div>
-      <h3>Input &amp; Output</h3>
-      <p>Output field schemas per event type — charge, payment_intent, and dispute events.</p>
-    </a>
-    <a href="03-examples.html" class="card">
-      <div class="card-icon"><i class="fa-solid fa-code" style="color:var(--accent);"></i></div>
-      <h3>Examples</h3>
-      <p>Five examples: payment success provisioning, failure retry, refund order update, dispute response, and wildcard charge filter.</p>
-    </a>
-  </div>
+  <h3>High-Value Payment Alert — Fraud Review Routing</h3>
+  <pre><code>{
+  "webhookSecret": "{{ $credentials.stripe-webhook-secret }}",
+  "allowedEventTypes": "charge.succeeded",
+  "minimumAmount": 100000,
+  "allowedCurrencies": "USD",
+  "enableIdempotencyCheck": true,
+  "includeFullEventObject": false
+}</code></pre>
+  <p>Only processes charges of $1,000 USD or more. Each qualifying payment routes to a fraud-review workflow that posts the payment details — <code>{{ $output.stripe.amount }}</code>, <code>{{ $output.stripe.customer_id }}</code>, and <code>{{ $output.stripe.metadata }}</code> — to an internal Slack channel and creates a review task in Jira. Normal payments below the threshold are handled by a separate workflow with a lower <code>minimumAmount</code> setting.</p>
 </main>
-<script src="/search.js"></script></body>
+<script src="/search.js"></script>
+</body>
 </html>
