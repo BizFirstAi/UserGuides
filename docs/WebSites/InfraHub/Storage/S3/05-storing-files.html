@@ -1,0 +1,530 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Storing Files — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>Tenant-Partitioned File Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html" class="active">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst InfraHub</div>
+    <h1>Storing Files</h1>
+    <p class="subtitle">Complete developer integration reference for <code>IObjectStorageProvider</code></p>
+  </div>
+
+  <!-- TOC -->
+  <div class="callout info">
+    <strong>On This Page</strong>
+    <a href="#three-operations">The Three Operations</a> &nbsp;·&nbsp;
+    <a href="#store-async">StoreAsync</a> &nbsp;·&nbsp;
+    <a href="#get-stream-async">GetStreamAsync</a> &nbsp;·&nbsp;
+    <a href="#exists-async">ExistsAsync</a> &nbsp;·&nbsp;
+    <a href="#store-options">StoreOptions</a> &nbsp;·&nbsp;
+    <a href="#error-handling">Error Handling</a> &nbsp;·&nbsp;
+    <a href="#working-with-streams">Working with Large Files</a> &nbsp;·&nbsp;
+    <a href="#cid-patterns">Metadata Patterns</a>
+  </div>
+
+  <!-- ─── Three Operations ─── -->
+  <h2 id="three-operations">The Three Operations</h2>
+
+  <p>
+    <code>IObjectStorageProvider</code> exposes exactly three methods. Every file workflow in BizFirst AI—whether from a
+    Flow node, an agent callback, or an API controller—uses these three primitives. Understanding them fully is the
+    entire integration surface.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>Signature</th>
+        <th>When to Use</th>
+        <th>Return Type</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>StoreAsync</strong></td>
+        <td><code>StoreAsync(byte[], string, StoreOptions?, CancellationToken)</code></td>
+        <td>Persisting any file (PDF, image, JSON, binary) to storage. Safe to call multiple times with the same bytes—deduplication is automatic.</td>
+        <td><code>Task&lt;string&gt;</code> — the CID</td>
+      </tr>
+      <tr>
+        <td><strong>GetStreamAsync</strong></td>
+        <td><code>GetStreamAsync(string, CancellationToken)</code></td>
+        <td>Retrieving a file by CID. Use to serve downloads, pass bytes to downstream processors, or attach files to responses.</td>
+        <td><code>Task&lt;Stream&gt;</code> — a <code>MemoryStream</code></td>
+      </tr>
+      <tr>
+        <td><strong>ExistsAsync</strong></td>
+        <td><code>ExistsAsync(string, CancellationToken)</code></td>
+        <td>Checking whether a CID is present before retrieval. Use to guard against invalid CIDs, give clean 404s, or verify deduplication results.</td>
+        <td><code>Task&lt;bool&gt;</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ─── StoreAsync ─── -->
+  <h2 id="store-async">StoreAsync — Storing a File</h2>
+
+  <h3>Method Signature</h3>
+  <pre><code><span class="ty">Task</span>&lt;<span class="ty">string</span>&gt; <span class="fn">StoreAsync</span>(
+    <span class="ty">byte</span>[] <span class="pa">content</span>,
+    <span class="ty">string</span> <span class="pa">contentType</span>,
+    <span class="ty">StoreOptions</span>? <span class="pa">options</span> = <span class="kw">null</span>,
+    <span class="ty">CancellationToken</span> <span class="pa">ct</span> = <span class="kw">default</span>)</code></pre>
+
+  <h3>How It Works</h3>
+  <p>
+    <code>StoreAsync</code> returns a <strong>Content ID (CID)</strong> — a stable string that uniquely identifies the
+    bytes you provided. The CID is deterministic: identical bytes always produce the identical CID, regardless of when
+    or by whom the file was stored. This means:
+  </p>
+  <ul>
+    <li>Storing the same invoice PDF twice results in exactly one object in storage — zero duplication cost.</li>
+    <li>The CID is stable across restores and migrations — it never changes for a given file.</li>
+    <li>Any service holding the CID can retrieve the file, without needing to know how it was stored.</li>
+  </ul>
+
+  <p>Internally, the pipeline executes in this order:</p>
+  <ol>
+    <li><strong>Capacity guard</strong> — checks current disk usage against <code>WriteStopThresholdPercent</code>. Throws <code>StorageCapacityException</code> if the threshold is exceeded.</li>
+    <li><strong>SHA-256 hash</strong> — computes the CID from the raw bytes using <code>ICidProvider</code>.</li>
+    <li><strong>ExistsAsync check</strong> — looks up the object key in the configured S3 bucket. If it already exists, returns the CID immediately without re-uploading.</li>
+    <li><strong>PutObject</strong> — if the file is new, streams it to the S3 backend with the specified <code>contentType</code>, ACL, and storage class.</li>
+    <li><strong>Return CID</strong> — returns the stable content-addressable identifier to the caller.</li>
+  </ol>
+
+  <h3>Example 1 — Basic Store (PDF)</h3>
+  <pre><code><span class="cm">// Inject IObjectStorageProvider via constructor</span>
+<span class="ty">string</span> <span class="pa">cid</span> = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+    pdfBytes,
+    <span class="st">"application/pdf"</span>,
+    ct: ct);
+
+<span class="cm">// Persist the CID to your entity</span>
+invoice.DocumentCid = cid;</code></pre>
+
+  <h3>Example 2 — Store with Custom StoreOptions</h3>
+  <pre><code><span class="kw">var</span> opts = <span class="kw">new</span> <span class="ty">StoreOptions</span>(
+    CannedAcl: <span class="st">"private"</span>,
+    StorageClass: <span class="st">"INTELLIGENT_TIERING"</span>);
+
+<span class="ty">string</span> <span class="pa">cid</span> = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+    reportBytes,
+    <span class="st">"application/pdf"</span>,
+    opts,
+    ct);</code></pre>
+
+  <h3>Example 3 — Store an Image</h3>
+  <pre><code><span class="cm">// Store a PNG thumbnail — content type drives browser behaviour on download</span>
+<span class="ty">string</span> <span class="pa">thumbnailCid</span> = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+    imageBytes,
+    <span class="st">"image/png"</span>,
+    ct: ct);
+
+product.ThumbnailCid = thumbnailCid;</code></pre>
+
+  <!-- ─── GetStreamAsync ─── -->
+  <h2 id="get-stream-async">GetStreamAsync — Retrieving a File</h2>
+
+  <h3>Method Signature</h3>
+  <pre><code><span class="ty">Task</span>&lt;<span class="ty">Stream</span>&gt; <span class="fn">GetStreamAsync</span>(<span class="ty">string</span> <span class="pa">cid</span>, <span class="ty">CancellationToken</span> <span class="pa">ct</span> = <span class="kw">default</span>)</code></pre>
+
+  <p>
+    <code>GetStreamAsync</code> returns a <code>MemoryStream</code> containing the full file bytes for the given CID.
+    The stream is positioned at the beginning (position 0) and is ready to read. Always dispose the stream when done.
+  </p>
+
+  <h3>Basic Usage — Dispose Pattern</h3>
+  <pre><code><span class="kw">await using</span> <span class="ty">Stream</span> <span class="pa">stream</span> = <span class="kw">await</span> _storage.<span class="fn">GetStreamAsync</span>(cid, ct);
+<span class="cm">// stream is positioned at 0, ready to read</span>
+<span class="kw">await</span> stream.<span class="fn">CopyToAsync</span>(outputStream, ct);</code></pre>
+
+  <h3>Convert to byte[]</h3>
+  <pre><code><span class="kw">await using</span> <span class="ty">Stream</span> <span class="pa">stream</span> = <span class="kw">await</span> _storage.<span class="fn">GetStreamAsync</span>(cid, ct);
+<span class="kw">using var</span> ms = <span class="kw">new</span> <span class="ty">MemoryStream</span>();
+<span class="kw">await</span> stream.<span class="fn">CopyToAsync</span>(ms, ct);
+<span class="ty">byte</span>[] bytes = ms.<span class="fn">ToArray</span>();</code></pre>
+
+  <h3>Serve as HTTP Response (FileStreamResult)</h3>
+  <pre><code><span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">IActionResult</span>&gt; <span class="fn">DownloadFile</span>(<span class="ty">string</span> <span class="pa">cid</span>, <span class="ty">CancellationToken</span> <span class="pa">ct</span>)
+{
+    <span class="kw">if</span> (!<span class="kw">await</span> _storage.<span class="fn">ExistsAsync</span>(cid, ct))
+        <span class="kw">return</span> <span class="fn">NotFound</span>();
+
+    <span class="ty">Stream</span> stream = <span class="kw">await</span> _storage.<span class="fn">GetStreamAsync</span>(cid, ct);
+
+    <span class="cm">// FileStreamResult disposes the stream after the response is sent</span>
+    <span class="kw">return new</span> <span class="ty">FileStreamResult</span>(stream, <span class="st">"application/pdf"</span>)
+    {
+        FileDownloadName = <span class="st">"document.pdf"</span>
+    };
+}</code></pre>
+
+  <div class="callout warn">
+    <strong>Large File Warning</strong>
+    The stream returned by <code>GetStreamAsync</code> is a <code>MemoryStream</code> backed by the full file bytes.
+    For files over 100 MB, consider using the underlying <code>IS3ObjectService.DownloadStreamAsync</code> directly
+    to avoid buffering the full file in memory. This streams bytes directly from the S3 backend to the HTTP response
+    without loading the entire file into heap memory.
+  </div>
+
+  <!-- ─── ExistsAsync ─── -->
+  <h2 id="exists-async">ExistsAsync — Checking Existence</h2>
+
+  <h3>Method Signature</h3>
+  <pre><code><span class="ty">Task</span>&lt;<span class="ty">bool</span>&gt; <span class="fn">ExistsAsync</span>(<span class="ty">string</span> <span class="pa">cid</span>, <span class="ty">CancellationToken</span> <span class="pa">ct</span> = <span class="kw">default</span>)</code></pre>
+
+  <p>
+    <code>ExistsAsync</code> performs a lightweight <em>HeadObject</em> call against the S3 backend — it does not
+    download the file. Use it in the following situations:
+  </p>
+
+  <ul>
+    <li><strong>Before GetStreamAsync</strong> — Give the caller a clean <code>404 Not Found</code> rather than letting an S3 exception surface. This is the most common use case.</li>
+    <li><strong>Deduplication verification</strong> — After computing a CID yourself (via <code>ICidProvider</code>), check whether the file already exists before calling <code>StoreAsync</code>.</li>
+    <li><strong>Pre-flight checks</strong> — Verify the asset exists before starting an expensive processing pipeline (PDF rendering, OCR, etc.).</li>
+    <li><strong>Soft-delete validation</strong> — Confirm a file is still accessible before issuing a download link to the user.</li>
+  </ul>
+
+  <h3>Standard Guard Pattern</h3>
+  <pre><code><span class="kw">if</span> (!<span class="kw">await</span> _storage.<span class="fn">ExistsAsync</span>(cid, ct))
+    <span class="kw">return</span> <span class="fn">NotFound</span>($<span class="st">"File {cid} not found."</span>);
+
+<span class="ty">Stream</span> stream = <span class="kw">await</span> _storage.<span class="fn">GetStreamAsync</span>(cid, ct);</code></pre>
+
+  <p>
+    Because <code>ExistsAsync</code> is a <em>HeadObject</em>, it is extremely fast and does not count toward data
+    transfer costs on any S3-compatible provider. It is safe to call on every download request.
+  </p>
+
+  <!-- ─── StoreOptions ─── -->
+  <h2 id="store-options">StoreOptions — Per-Request Overrides</h2>
+
+  <h3>Record Definition</h3>
+  <pre><code><span class="kw">public sealed record</span> <span class="ty">StoreOptions</span>(
+    <span class="ty">string</span>? <span class="pa">CannedAcl</span> = <span class="kw">null</span>,
+    <span class="ty">string</span>? <span class="pa">StorageClass</span> = <span class="kw">null</span>)</code></pre>
+
+  <p>
+    <code>StoreOptions</code> allows you to override the global defaults from <code>appsettings.json</code> on a
+    per-call basis. When a field is <code>null</code>, the global default is used. This is useful when one category
+    of files (e.g., archival reports) needs different storage behaviour than the rest.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Type</th>
+        <th>Null Behaviour</th>
+        <th>Common Values</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CannedAcl</code></td>
+        <td><code>string?</code></td>
+        <td>Uses global <code>FileStorage:CannedAcl</code> from configuration</td>
+        <td><code>private</code>, <code>public-read</code>, <code>authenticated-read</code></td>
+      </tr>
+      <tr>
+        <td><code>StorageClass</code></td>
+        <td><code>string?</code></td>
+        <td>Uses global <code>FileStorage:StorageClass</code> from configuration</td>
+        <td><code>STANDARD</code>, <code>REDUCED_REDUNDANCY</code>, <code>INTELLIGENT_TIERING</code>, <code>GLACIER</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Example 1 — Force INTELLIGENT_TIERING for Archival Items</h3>
+  <pre><code><span class="cm">// Long-term archival reports — let AWS automatically move to cheaper tiers</span>
+<span class="kw">var</span> archiveOpts = <span class="kw">new</span> <span class="ty">StoreOptions</span>(StorageClass: <span class="st">"INTELLIGENT_TIERING"</span>);
+
+<span class="ty">string</span> <span class="pa">cid</span> = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+    yearEndReportBytes,
+    <span class="st">"application/pdf"</span>,
+    archiveOpts,
+    ct);</code></pre>
+
+  <h3>Example 2 — Force private ACL for Sensitive Documents</h3>
+  <pre><code><span class="cm">// Payroll documents must never be publicly accessible</span>
+<span class="kw">var</span> sensitiveOpts = <span class="kw">new</span> <span class="ty">StoreOptions</span>(
+    CannedAcl: <span class="st">"private"</span>,
+    StorageClass: <span class="st">"STANDARD"</span>);
+
+<span class="ty">string</span> <span class="pa">cid</span> = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+    payrollPdfBytes,
+    <span class="st">"application/pdf"</span>,
+    sensitiveOpts,
+    ct);</code></pre>
+
+  <div class="callout info">
+    <strong>MinIO Storage Class Compatibility</strong>
+    On MinIO, only <code>STANDARD</code> and <code>REDUCED_REDUNDANCY</code> storage classes are supported.
+    AWS-specific classes (<code>INTELLIGENT_TIERING</code>, <code>GLACIER</code>, <code>DEEP_ARCHIVE</code>) require
+    AWS S3 as the backend. Passing an unsupported class to MinIO will result in the object being stored with
+    <code>STANDARD</code> class silently. Always test StorageClass overrides against your configured backend.
+  </div>
+
+  <!-- ─── Error Handling ─── -->
+  <h2 id="error-handling">Error Handling</h2>
+
+  <p>
+    <code>IObjectStorageProvider</code> surfaces three categories of errors. Each requires a different response
+    strategy at the API layer.
+  </p>
+
+  <h3>StorageCapacityException</h3>
+  <p>
+    Thrown by <code>StoreAsync</code> when disk usage has reached or exceeded <code>WriteStopThresholdPercent</code>
+    (default: 90%). This is a hard stop — the write is refused before any data is transmitted to the S3 backend.
+    Callers should return <strong>HTTP 507 Insufficient Storage</strong>.
+  </p>
+  <p>
+    This exception will not appear during normal operations. It indicates that the MinIO volume is nearly full and
+    an administrator must take action (expand storage or remove obsolete files).
+  </p>
+
+  <h3>OperationCanceledException</h3>
+  <p>
+    Thrown when the <code>CancellationToken</code> is signalled (e.g., the HTTP client disconnected). This exception
+    always propagates — it is never swallowed internally. Handle it at the API layer and return HTTP 499 (or 400).
+  </p>
+
+  <h3>S3 / Network Exceptions</h3>
+  <p>
+    Any exception other than the above two indicates an S3 connectivity or configuration issue (wrong bucket name,
+    invalid credentials, network timeout). Log the full exception with context (CID, tenant, operation) and return
+    an appropriate 500-level response. Do not expose S3 internals in the API response body.
+  </p>
+
+  <h3>Complete Controller-Level Error Handling</h3>
+  <pre><code><span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">IActionResult</span>&gt; <span class="fn">UploadDocument</span>([<span class="ty">FromBody</span>] <span class="ty">UploadRequest</span> <span class="pa">req</span>, <span class="ty">CancellationToken</span> <span class="pa">ct</span>)
+{
+    <span class="kw">try</span>
+    {
+        <span class="ty">string</span> <span class="pa">cid</span> = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(req.Bytes, req.ContentType, ct: ct);
+        <span class="kw">return</span> <span class="fn">Ok</span>(<span class="kw">new</span> { cid });
+    }
+    <span class="kw">catch</span> (<span class="ty">StorageCapacityException</span>)
+    {
+        <span class="kw">return</span> <span class="fn">StatusCode</span>(<span class="nu">507</span>, <span class="st">"Storage capacity exceeded. Contact your administrator."</span>);
+    }
+    <span class="kw">catch</span> (<span class="ty">OperationCanceledException</span>)
+    {
+        <span class="kw">return</span> <span class="fn">StatusCode</span>(<span class="nu">499</span>, <span class="st">"Request cancelled."</span>);
+    }
+    <span class="kw">catch</span> (<span class="ty">Exception</span> ex)
+    {
+        _logger.<span class="fn">LogError</span>(ex, <span class="st">"StoreAsync failed for tenant {TenantID}"</span>, _tenantContext.TenantID);
+        <span class="kw">return</span> <span class="fn">StatusCode</span>(<span class="nu">500</span>, <span class="st">"File storage temporarily unavailable."</span>);
+    }
+}</code></pre>
+
+  <!-- ─── Working with Streams ─── -->
+  <h2 id="working-with-streams">Working with Streams (Incoming Files)</h2>
+
+  <p>
+    In ASP.NET Core controllers, incoming files arrive as <code>IFormFile</code>. The pattern below correctly reads
+    the uploaded bytes into a <code>MemoryStream</code>, then calls <code>StoreAsync</code>. The returned CID can
+    be persisted immediately to your entity.
+  </p>
+
+  <h3>IFormFile Upload Pattern</h3>
+  <pre><code><span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">IActionResult</span>&gt; <span class="fn">UploadFile</span>(<span class="ty">IFormFile</span> <span class="pa">file</span>, <span class="ty">CancellationToken</span> <span class="pa">ct</span>)
+{
+    <span class="kw">using var</span> ms = <span class="kw">new</span> <span class="ty">MemoryStream</span>();
+    <span class="kw">await</span> file.<span class="fn">CopyToAsync</span>(ms, ct);
+    <span class="ty">byte</span>[] bytes = ms.<span class="fn">ToArray</span>();
+
+    <span class="ty">string</span> <span class="pa">cid</span> = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(bytes, file.ContentType, ct: ct);
+    <span class="kw">return</span> <span class="fn">Ok</span>(<span class="kw">new</span> { cid, size = bytes.Length });
+}</code></pre>
+
+  <p>
+    For multipart uploads with multiple files, loop over <code>Request.Form.Files</code> and call
+    <code>StoreAsync</code> for each file. Each call is independent and can be awaited in parallel using
+    <code>Task.WhenAll</code> for throughput:
+  </p>
+
+  <pre><code><span class="kw">var</span> storeTasks = Request.Form.Files
+    .<span class="fn">Select</span>(<span class="kw">async</span> f =>
+    {
+        <span class="kw">using var</span> ms = <span class="kw">new</span> <span class="ty">MemoryStream</span>();
+        <span class="kw">await</span> f.<span class="fn">CopyToAsync</span>(ms, ct);
+        <span class="ty">string</span> cid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(ms.<span class="fn">ToArray</span>(), f.ContentType, ct: ct);
+        <span class="kw">return new</span> { FileName = f.FileName, Cid = cid };
+    });
+
+<span class="kw">var</span> results = <span class="kw">await</span> <span class="ty">Task</span>.<span class="fn">WhenAll</span>(storeTasks);</code></pre>
+
+  <div class="callout warn">
+    <strong>Memory Consideration for Parallel Uploads</strong>
+    When processing multiple large files in parallel, the combined byte arrays are all in memory simultaneously.
+    For file upload endpoints that accept large files, consider processing sequentially with
+    <code>foreach</code> + <code>await</code> rather than <code>Task.WhenAll</code> to avoid large memory spikes.
+  </div>
+
+  <!-- ─── CID Storage Patterns ─── -->
+  <h2 id="cid-patterns">CID Storage Patterns</h2>
+
+  <p>
+    A CID is just a string — a SHA-256 hex hash, typically 64 characters. It is lightweight, stable, and safe to
+    store anywhere you can store a string. Here are the three standard patterns used across the BizFirst AI platform.
+  </p>
+
+  <h3>Pattern 1 — Single CID Column on an Entity</h3>
+  <p>
+    The simplest pattern: add a nullable <code>string</code> column to your entity for each document slot.
+    The CID functions as a pointer into the object store.
+  </p>
+  <pre><code><span class="kw">public class</span> <span class="ty">InvoiceEntity</span>
+{
+    <span class="kw">public int</span> InvoiceID { <span class="kw">get</span>; <span class="kw">set</span>; }
+    <span class="kw">public string</span>? DocumentCid { <span class="kw">get</span>; <span class="kw">set</span>; }  <span class="cm">// points to the PDF in storage</span>
+    <span class="kw">public string</span>? SignedCopyCid { <span class="kw">get</span>; <span class="kw">set</span>; }  <span class="cm">// separate slot for signed version</span>
+}</code></pre>
+
+  <h3>Pattern 2 — Multiple CIDs (Attachments Array)</h3>
+  <p>
+    When an entity has a variable number of attachments, store the CIDs as a serialized array or a related table:
+  </p>
+  <pre><code><span class="kw">public class</span> <span class="ty">SupportTicketEntity</span>
+{
+    <span class="kw">public int</span> TicketID { <span class="kw">get</span>; <span class="kw">set</span>; }
+
+    <span class="cm">// Option A: JSON column (EF Core 8+ natively supported)</span>
+    <span class="kw">public</span> <span class="ty">List</span>&lt;<span class="ty">string</span>&gt; AttachmentCids { <span class="kw">get</span>; <span class="kw">set</span>; } = <span class="kw">new</span>();
+
+    <span class="cm">// Option B: Related table (better for querying individual attachments)</span>
+    <span class="kw">public</span> <span class="ty">ICollection</span>&lt;<span class="ty">TicketAttachmentEntity</span>&gt; Attachments { <span class="kw">get</span>; <span class="kw">set</span>; } = <span class="kw">new</span> <span class="ty">List</span>&lt;<span class="ty">TicketAttachmentEntity</span>&gt;();
+}</code></pre>
+
+  <h3>Pattern 3 — CID as a Foreign Key to a Files Table</h3>
+  <p>
+    The most complete pattern. Store a <code>FilesEntity</code> record alongside the CID, capturing the original
+    filename, content type, upload context, and size. This enables file management UIs without round-tripping to
+    the storage backend for metadata.
+  </p>
+  <pre><code><span class="kw">public class</span> <span class="ty">FileMetadataEntity</span>
+{
+    <span class="kw">public int</span> FileID { <span class="kw">get</span>; <span class="kw">set</span>; }
+    <span class="kw">public string</span> Cid { <span class="kw">get</span>; <span class="kw">set</span>; } = <span class="st">""</span>;          <span class="cm">// FK into object storage</span>
+    <span class="kw">public string</span> OriginalName { <span class="kw">get</span>; <span class="kw">set</span>; } = <span class="st">""</span>;
+    <span class="kw">public string</span> ContentType { <span class="kw">get</span>; <span class="kw">set</span>; } = <span class="st">""</span>;
+    <span class="kw">public long</span>   SizeBytes { <span class="kw">get</span>; <span class="kw">set</span>; }
+    <span class="kw">public</span> <span class="ty">DateTime</span> UploadedAt { <span class="kw">get</span>; <span class="kw">set</span>; }
+    <span class="kw">public int</span>      UploadedBy { <span class="kw">get</span>; <span class="kw">set</span>; }         <span class="cm">// FK to Users table</span>
+}</code></pre>
+
+  <p>
+    With this pattern, your entity simply holds a <code>FileID</code> foreign key. File management (rename, delete
+    metadata, audit who uploaded what) is handled through the <code>FileMetadataEntity</code> without touching the
+    object store.
+  </p>
+
+  <div class="callout info">
+    <strong>CID Uniqueness vs. File Identity</strong>
+    Two different users uploading the same byte-for-byte identical file will receive the same CID. This is intentional
+    — it is the deduplication mechanism. If you need to track "which user uploaded this specific copy", store that
+    context in your <code>FileMetadataEntity</code>, not in the CID itself.
+  </div>
+
+  <!-- ─── Thread Safety ─── -->
+  <h2 id="thread-safety">Thread Safety</h2>
+
+  <p>
+    <code>IObjectStorageProvider</code> is registered as <strong>Scoped</strong> in the DI container — one instance
+    per HTTP request. Do not capture it in a singleton, background service, or static field.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Service</th>
+        <th>DI Lifetime</th>
+        <th>Thread Safety</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>IObjectStorageProvider</code></td>
+        <td><span class="tag orange">Scoped</span></td>
+        <td>One instance per request — safe within a single request context</td>
+        <td>Do not share across threads or background tasks</td>
+      </tr>
+      <tr>
+        <td><code>ICidProvider</code></td>
+        <td><span class="tag green">Singleton</span></td>
+        <td>Fully thread-safe — stateless SHA-256 computation</td>
+        <td>Safe to use from any context, including background services</td>
+      </tr>
+      <tr>
+        <td><code>IS3ObjectService</code></td>
+        <td><span class="tag">Transient</span></td>
+        <td>Each call gets a fresh instance</td>
+        <td>Wraps the S3 HTTP client; safe to use concurrently via the provider</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    If you need to store files from a background service (e.g., a <code>BackgroundService</code> or
+    <code>IHostedService</code>), create a new DI scope for each unit of work:
+  </p>
+
+  <pre><code><span class="kw">using</span> (<span class="kw">var</span> scope = _serviceScopeFactory.<span class="fn">CreateScope</span>())
+{
+    <span class="kw">var</span> storage = scope.ServiceProvider.<span class="fn">GetRequiredService</span>&lt;<span class="ty">IObjectStorageProvider</span>&gt;();
+    <span class="ty">string</span> cid = <span class="kw">await</span> storage.<span class="fn">StoreAsync</span>(bytes, contentType, ct: ct);
+}</code></pre>
+
+  <div class="callout warn">
+    <strong>Never Capture Scoped Services in Singletons</strong>
+    Injecting <code>IObjectStorageProvider</code> into a singleton-lifetime class is a classic ASP.NET Core
+    anti-pattern that leads to stale state, tenant context bleed, and difficult-to-reproduce bugs. Always inject
+    <code>IServiceScopeFactory</code> into singletons and create scopes on demand.
+  </div>
+
+</main>
+</body>
+</html>
+

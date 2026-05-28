@@ -1,0 +1,595 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Use Cases &amp; Business Scenarios — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+.scenario-badge{display:inline-block;background:var(--accent);color:#fff;border-radius:4px;padding:2px 10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-right:8px;vertical-align:middle;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>Tenant-Partitioned File Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html" class="active">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst InfraHub</div>
+    <h1>Use Cases &amp; Business Scenarios</h1>
+    <p class="subtitle">How InfraHub Storage powers real enterprise workflows — from invoice archival and HR document management to AI model artefacts, compliance evidence, multi-tenant isolation, and beyond.</p>
+  </div>
+
+  <div class="callout info">
+    <strong>Prerequisites for All Scenarios</strong>
+    These scenarios assume <code>AddObjectStorage()</code> is registered in <code>Program.cs</code>. Each example injects <code>IObjectStorageProvider</code> — the same interface regardless of whether you are running on MinIO, AWS S3, Cloudflare R2, or Backblaze B2. No scenario requires knowledge of the underlying backend.
+  </div>
+
+  <div class="toc">
+    <h4>Scenarios</h4>
+    <ol>
+      <li><a href="#scenario-1">Invoice &amp; Accounts Payable Archival</a></li>
+      <li><a href="#scenario-2">HR Document Management</a></li>
+      <li><a href="#scenario-3">AI Model Artefacts &amp; Knowledge Base</a></li>
+      <li><a href="#scenario-4">Workflow Attachment Pipeline</a></li>
+      <li><a href="#scenario-5">Multimedia &amp; Media Assets</a></li>
+      <li><a href="#scenario-6">Audit Trail Evidence</a></li>
+      <li><a href="#scenario-7">Data Export &amp; Import Packages</a></li>
+      <li><a href="#scenario-8">Multi-Tenant SaaS Isolation</a></li>
+      <li><a href="#cost">Storage Cost Estimation</a></li>
+    </ol>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="scenario-1"><span class="scenario-badge">Scenario 1</span> Invoice &amp; Accounts Payable Archival</h2>
+
+  <h3>Business Context</h3>
+  <p>Finance teams are legally required to retain every generated invoice as an immutable, auditable record for seven or more years depending on jurisdiction. These documents must be retrievable on demand — for audits, dispute resolution, or customer requests — and must not be alterable after the fact. Traditional file systems or database BLOBs cannot easily guarantee immutability; InfraHub Storage's CID-based design does.</p>
+
+  <p>The CID is a SHA-256 hash of the file content. Any modification to the file would produce a different CID, making silent tampering detectable. Storing the CID alongside the invoice record in the database creates a cryptographic link between the database row and the stored file.</p>
+
+  <h3>Implementation</h3>
+<pre><code><span class="kw">public class</span> <span class="ty">InvoiceService</span>
+{
+    <span class="kw">private readonly</span> <span class="ty">IObjectStorageProvider</span> _storage;
+    <span class="kw">private readonly</span> <span class="ty">IInvoiceRepository</span> _repo;
+
+    <span class="kw">public</span> <span class="ty">InvoiceService</span>(<span class="ty">IObjectStorageProvider</span> storage, <span class="ty">IInvoiceRepository</span> repo)
+    {
+        _storage = storage;
+        _repo = repo;
+    }
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">Invoice</span>&gt; <span class="fn">GenerateAndArchiveAsync</span>(<span class="ty">InvoiceRequest</span> req, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// 1. Generate the PDF bytes (your existing PDF generation logic)</span>
+        <span class="kw">byte</span>[] pdfBytes = <span class="kw">await</span> _pdfGenerator.<span class="fn">RenderInvoicePdfAsync</span>(req, ct);
+
+        <span class="cm">// 2. Store in InfraHub Storage — returns a CID (SHA-256 hex string)</span>
+        <span class="kw">string</span> cid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(pdfBytes, <span class="st">"application/pdf"</span>, <span class="kw">null</span>, ct);
+
+        <span class="cm">// 3. Persist the CID alongside the invoice record in the database</span>
+        <span class="kw">var</span> invoice = <span class="kw">new</span> <span class="ty">Invoice</span>
+        {
+            InvoiceNumber  = req.InvoiceNumber,
+            IssuedOn       = <span class="ty">DateTime</span>.UtcNow,
+            TotalAmount    = req.TotalAmount,
+            PdfCid         = cid          <span class="cm">// link to immutable storage</span>
+        };
+        <span class="kw">await</span> _repo.<span class="fn">SaveAsync</span>(invoice, ct);
+        <span class="kw">return</span> invoice;
+    }
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">Stream</span>&gt; <span class="fn">RetrieveInvoicePdfAsync</span>(<span class="ty">string</span> cid, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// Retrieve the file at any point — even 7 years later</span>
+        <span class="kw">return await</span> _storage.<span class="fn">GetStreamAsync</span>(cid, ct);
+    }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Zero-Cost Deduplication</strong>
+    Re-generating the exact same invoice (identical bytes — same line items, same customer, same date) returns the same CID and stores zero additional bytes. If your system regenerates invoices from templates, this can reduce storage growth dramatically over time.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="scenario-2"><span class="scenario-badge">Scenario 2</span> HR Document Management</h2>
+
+  <h3>Business Context</h3>
+  <p>HR departments handle a high volume of sensitive, personally identifiable documents: employment contracts, passport copies, tax forms, offer letters, and onboarding packs. These documents must be stored securely, accessible only to the appropriate tenant, and — in multi-entity businesses — never mixed across companies. They may also be subject to right-to-erasure requests under GDPR, requiring a clean way to reference and delete specific employee documents.</p>
+
+  <p>With <code>PrependTenantID: true</code>, InfraHub Storage automatically prefixes every key with <code>tenant_{tenantID}/</code>. This means HR documents uploaded for Company A can never be retrieved by Company B, even though they share the same bucket — the key namespacing enforces isolation at the storage layer, not just in application logic.</p>
+
+  <h3>Implementation</h3>
+<pre><code><span class="kw">public class</span> <span class="ty">HrDocumentService</span>
+{
+    <span class="kw">private readonly</span> <span class="ty">IObjectStorageProvider</span> _storage;
+    <span class="kw">private readonly</span> <span class="ty">IEmployeeDocumentRepository</span> _repo;
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">EmployeeDocument</span>&gt; <span class="fn">UploadDocumentAsync</span>(
+        <span class="kw">int</span> employeeID,
+        <span class="kw">string</span> documentType,   <span class="cm">// e.g. "Contract", "Passport", "TaxForm"</span>
+        <span class="ty">Stream</span> fileStream,
+        <span class="kw">string</span> contentType,
+        <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="kw">byte</span>[] bytes = <span class="kw">await</span> fileStream.<span class="fn">ReadAllBytesAsync</span>(ct);
+
+        <span class="cm">// TenantID is resolved automatically from IAiSessionContext —</span>
+        <span class="cm">// the key stored in MinIO will be: tenant_42/a3f9b2c1...</span>
+        <span class="kw">string</span> cid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(bytes, contentType, <span class="kw">null</span>, ct);
+
+        <span class="kw">var</span> doc = <span class="kw">new</span> <span class="ty">EmployeeDocument</span>
+        {
+            EmployeeID   = employeeID,
+            DocumentType = documentType,
+            FileCid      = cid,
+            UploadedOn   = <span class="ty">DateTime</span>.UtcNow,
+            Version      = <span class="kw">await</span> _repo.<span class="fn">GetNextVersionAsync</span>(employeeID, documentType, ct)
+        };
+        <span class="kw">await</span> _repo.<span class="fn">SaveAsync</span>(doc, ct);
+        <span class="kw">return</span> doc;
+    }
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">IReadOnlyList</span>&lt;<span class="ty">EmployeeDocument</span>&gt;&gt; <span class="fn">GetDocumentHistoryAsync</span>(
+        <span class="kw">int</span> employeeID, <span class="kw">string</span> documentType, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// All versions — each upload creates a new CID, old CIDs are never overwritten</span>
+        <span class="kw">return await</span> _repo.<span class="fn">GetAllVersionsAsync</span>(employeeID, documentType, ct);
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Immutability by Design — Version Tracking in the Application Layer</strong>
+    Uploading a revised contract creates a new CID — the previous version is not overwritten. This is intentional: CID-addressed storage is immutable. To support document versioning, store multiple CIDs in the database (one per version). This gives you a full, auditable version history without additional storage infrastructure.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="scenario-3"><span class="scenario-badge">Scenario 3</span> AI Model Artefacts &amp; Knowledge Base</h2>
+
+  <h3>Business Context</h3>
+  <p>Octopus AI agents generate and consume expensive computational artefacts: embedding vectors, model snapshots, knowledge base exports, and pre-computed retrieval indexes. Regenerating these artefacts on every run is computationally wasteful and slow. Persisting them in InfraHub Storage allows agents to check for the existence of a pre-computed artefact before triggering expensive generation — a form of content-addressed caching.</p>
+
+  <p>Because artefacts are identified by the SHA-256 of their content, the same model trained on the same dataset always produces the same CID. This enables deterministic cache hits across agent runs, deployments, and even tenants (when content is shared).</p>
+
+  <h3>Implementation</h3>
+<pre><code><span class="kw">public class</span> <span class="ty">KnowledgeBaseExportService</span>
+{
+    <span class="kw">private readonly</span> <span class="ty">IObjectStorageProvider</span> _storage;
+    <span class="kw">private readonly</span> <span class="ty">IEmbeddingService</span> _embedder;
+
+    <span class="cm">/// &lt;summary&gt;
+    /// Returns the CID of the serialised knowledge snapshot.
+    /// If an identical snapshot already exists, returns immediately — no re-upload.
+    /// &lt;/summary&gt;</span>
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="kw">string</span>&gt; <span class="fn">ExportSnapshotAsync</span>(<span class="ty">KnowledgeBase</span> kb, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="kw">byte</span>[] snapshotBytes = <span class="kw">await</span> _serialiser.<span class="fn">SerialiseAsync</span>(kb, ct);
+
+        <span class="cm">// StoreAsync is idempotent — identical bytes return the same CID</span>
+        <span class="kw">string</span> cid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+            snapshotBytes,
+            <span class="st">"application/octet-stream"</span>,
+            <span class="kw">null</span>,
+            ct);
+
+        <span class="kw">return</span> cid;
+    }
+
+    <span class="cm">/// &lt;summary&gt;
+    /// Check-before-compute pattern: only generate embeddings if not already stored.
+    /// &lt;/summary&gt;</span>
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="kw">byte</span>[]&gt; <span class="fn">GetOrComputeEmbeddingAsync</span>(
+        <span class="kw">string</span> knownCid, <span class="ty">Func</span>&lt;<span class="ty">Task</span>&lt;<span class="kw">byte</span>[]&gt;&gt; computeFn, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="kw">if</span> (<span class="kw">await</span> _storage.<span class="fn">ExistsAsync</span>(knownCid, ct))
+        {
+            <span class="cm">// Cache hit — retrieve without recomputing</span>
+            <span class="kw">using var</span> stream = <span class="kw">await</span> _storage.<span class="fn">GetStreamAsync</span>(knownCid, ct);
+            <span class="kw">return await</span> stream.<span class="fn">ReadAllBytesAsync</span>(ct);
+        }
+
+        <span class="cm">// Cache miss — compute and store for future calls</span>
+        <span class="kw">byte</span>[] computed = <span class="kw">await</span> <span class="fn">computeFn</span>();
+        <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(computed, <span class="st">"application/octet-stream"</span>, <span class="kw">null</span>, ct);
+        <span class="kw">return</span> computed;
+    }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>CID-Addressable Caching</strong>
+    The <code>ExistsAsync</code> check before recomputing is a first-class pattern for AI workloads. Embedding generation for large corpora can take minutes; storing the result and checking existence before recomputing reduces agent execution time significantly for repeated tasks.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="scenario-4"><span class="scenario-badge">Scenario 4</span> Workflow Attachment Pipeline</h2>
+
+  <h3>Business Context</h3>
+  <p>Approval workflows frequently require supporting evidence — expense receipts, signed forms, photos of damage, purchase orders. In a Flow Studio pipeline, a user uploads a file at the start of the workflow; that file needs to be accessible to every subsequent node without being re-uploaded or embedded in the workflow state as raw bytes (which would bloat the workflow context). InfraHub Storage solves this by returning a CID that is lightweight enough to pass as a workflow variable.</p>
+
+  <p>The CID travels through the pipeline as a string. Any node downstream can call <code>GetStreamAsync</code> to retrieve the full file — for PDF rendering, email attachment, virus scanning, OCR, or any other processing step.</p>
+
+  <h3>Pipeline Flow</h3>
+  <div class="pipeline">
+    <div class="pipeline-box">File Upload<br><small>HTTP POST</small></div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-box">StoreAsync<br><small>Returns CID</small></div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-box">CID Variable<br><small>Workflow state</small></div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-box">Approval Node<br><small>Human review</small></div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-box">GetStreamAsync<br><small>Retrieve file</small></div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-box">Email / Process<br><small>Downstream use</small></div>
+  </div>
+
+  <h3>Implementation</h3>
+<pre><code><span class="cm">// Node 1 — Upload handler (HTTP controller or flow node)</span>
+<span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="kw">string</span>&gt; <span class="fn">HandleUploadAsync</span>(
+    <span class="ty">IFormFile</span> file, <span class="ty">CancellationToken</span> ct)
+{
+    <span class="kw">using var</span> ms = <span class="kw">new</span> <span class="ty">MemoryStream</span>();
+    <span class="kw">await</span> file.CopyToAsync(ms, ct);
+    <span class="kw">byte</span>[] bytes = ms.<span class="fn">ToArray</span>();
+
+    <span class="kw">string</span> cid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(bytes, file.ContentType, <span class="kw">null</span>, ct);
+
+    <span class="cm">// Store CID as a workflow variable — flows downstream automatically</span>
+    workflowContext.<span class="fn">SetVariable</span>(<span class="st">"attachment_cid"</span>, cid);
+    <span class="kw">return</span> cid;
+}
+
+<span class="cm">// Node N — downstream node retrieving the attachment for processing</span>
+<span class="kw">public async</span> <span class="ty">Task</span> <span class="fn">ProcessAttachmentAsync</span>(
+    <span class="ty">WorkflowContext</span> ctx, <span class="ty">CancellationToken</span> ct)
+{
+    <span class="kw">string</span> cid = ctx.<span class="fn">GetVariable</span>&lt;<span class="kw">string</span>&gt;(<span class="st">"attachment_cid"</span>);
+
+    <span class="kw">using var</span> fileStream = <span class="kw">await</span> _storage.<span class="fn">GetStreamAsync</span>(cid, ct);
+
+    <span class="cm">// Attach to outbound email, run OCR, virus scan, etc.</span>
+    <span class="kw">await</span> _emailService.<span class="fn">SendWithAttachmentAsync</span>(fileStream, ctx.ApproverEmail, ct);
+}</code></pre>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="scenario-5"><span class="scenario-badge">Scenario 5</span> Multimedia &amp; Media Assets</h2>
+
+  <h3>Business Context</h3>
+  <p>Marketing and reporting workflows generate branded PDFs, data exports, chart images, and presentation decks. These assets are often rendered from templates — the same quarterly report layout applied to different periods or regions. When reports share significant template content, CID-based deduplication means identical byte sequences (unchanged sections, logo images, boilerplate pages) are stored once regardless of how many generated documents reference them at the application layer.</p>
+
+  <p>Media assets can be large — branded PDFs with embedded charts often exceed 10 MB, and some data export packages reach hundreds of megabytes. InfraHub Storage handles these through standard <code>byte[]</code> upload today, with stream-native support planned.</p>
+
+  <h3>Implementation</h3>
+<pre><code><span class="kw">public class</span> <span class="ty">ReportPublishingService</span>
+{
+    <span class="kw">private readonly</span> <span class="ty">IObjectStorageProvider</span> _storage;
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">PublishedReport</span>&gt; <span class="fn">PublishAsync</span>(
+        <span class="ty">ReportRenderResult</span> rendered, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// Store the rendered PDF — dedup means re-running the same report</span>
+        <span class="cm">// template for the same period returns the same CID instantly</span>
+        <span class="kw">string</span> pdfCid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+            rendered.PdfBytes,
+            <span class="st">"application/pdf"</span>,
+            <span class="kw">null</span>,
+            ct);
+
+        <span class="cm">// Optionally store a thumbnail image alongside the PDF</span>
+        <span class="kw">string</span> thumbCid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+            rendered.ThumbnailPngBytes,
+            <span class="st">"image/png"</span>,
+            <span class="kw">null</span>,
+            ct);
+
+        <span class="kw">return new</span> <span class="ty">PublishedReport</span>
+        {
+            PdfCid       = pdfCid,
+            ThumbnailCid = thumbCid,
+            PublishedAt  = <span class="ty">DateTime</span>.UtcNow
+        };
+    }
+}</code></pre>
+
+  <div class="callout warn">
+    <strong>Large File Warning — Current Implementation</strong>
+    The current implementation buffers file content to a <code>MemoryStream</code> before uploading to MinIO. Files over 100 MB should be streamed at the network edge (CDN, reverse proxy) rather than routed through this API to avoid excessive memory pressure on the application container. A streaming <code>StoreStreamAsync</code> overload is planned for a future release.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="scenario-6"><span class="scenario-badge">Scenario 6</span> Audit Trail Evidence</h2>
+
+  <h3>Business Context</h3>
+  <p>Compliance workflows — SOX, ISO 27001, GDPR data processing audits, financial regulatory filings — require timestamped, tamper-evident evidence records. This might be a screenshot of a system state at a point in time, a digitally signed approval PDF, or an exported log bundle. The key requirement is <em>non-repudiation</em>: evidence stored during an audit period must be provably unchanged when retrieved months later.</p>
+
+  <p>InfraHub Storage's immutability property is a perfect fit: because the CID is the SHA-256 hash of the file content, any attempt to silently replace or alter the stored file would produce a different CID — the mismatch is immediately detectable. Storing the CID in a compliance database alongside a timestamp creates an unforgeable link between the event and its evidence file.</p>
+
+  <h3>Implementation</h3>
+<pre><code><span class="kw">public class</span> <span class="ty">ComplianceEvidenceService</span>
+{
+    <span class="kw">private readonly</span> <span class="ty">IObjectStorageProvider</span> _storage;
+    <span class="kw">private readonly</span> <span class="ty">IComplianceRepository</span> _compliance;
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">EvidenceRecord</span>&gt; <span class="fn">StoreEvidenceAsync</span>(
+        <span class="kw">string</span> auditEventID,
+        <span class="kw">byte</span>[] evidenceBytes,
+        <span class="kw">string</span> contentType,
+        <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// Store evidence — returns a deterministic, immutable CID</span>
+        <span class="kw">string</span> cid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(evidenceBytes, contentType, <span class="kw">null</span>, ct);
+
+        <span class="kw">var</span> record = <span class="kw">new</span> <span class="ty">EvidenceRecord</span>
+        {
+            AuditEventID = auditEventID,
+            FileCid       = cid,
+            CapturedAt    = <span class="ty">DateTime</span>.UtcNow,
+            <span class="cm">// ContentHash = cid (the CID IS the SHA-256 hash — no separate hash field needed)</span>
+        };
+
+        <span class="cm">// Persist in the compliance database with timestamp</span>
+        <span class="kw">await</span> _compliance.<span class="fn">RecordEvidenceAsync</span>(record, ct);
+        <span class="kw">return</span> record;
+    }
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="kw">bool</span>&gt; <span class="fn">VerifyIntegrityAsync</span>(
+        <span class="ty">EvidenceRecord</span> record, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// Retrieve the stored file and recompute its SHA-256</span>
+        <span class="kw">using var</span> stream = <span class="kw">await</span> _storage.<span class="fn">GetStreamAsync</span>(record.FileCid, ct);
+        <span class="kw">byte</span>[] bytes = <span class="kw">await</span> stream.<span class="fn">ReadAllBytesAsync</span>(ct);
+        <span class="kw">string</span> computedCid = _cidProvider.<span class="fn">Compute</span>(bytes);
+
+        <span class="cm">// If someone replaced the file, computedCid will not match record.FileCid</span>
+        <span class="kw">return</span> computedCid == record.FileCid;
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Integrity Verification</strong>
+    The <code>VerifyIntegrityAsync</code> pattern re-downloads the stored file and recomputes the CID. If the computed CID matches the stored CID, the file is provably unmodified. This integrity check can be run periodically or as part of an audit export to confirm evidence is pristine.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="scenario-7"><span class="scenario-badge">Scenario 7</span> Data Export &amp; Import Packages</h2>
+
+  <h3>Business Context</h3>
+  <p>InstallHub, data migration pipelines, and tenant onboarding workflows produce ZIP packages containing configuration snapshots, seed data, and schema definitions. These packages are generated on-demand, often large, and have a predictable lifecycle: actively needed during an installation or migration, then dormant and archivable after 30 days, and deletable after a year.</p>
+
+  <p>InfraHub Storage's lifecycle archival rules (configured in MinIO — see the Archival &amp; Lifecycle guide) handle this automatically: objects transition to cold storage at Day 30, reducing cost for the long tail of packages that are rarely accessed after the initial installation window.</p>
+
+  <h3>Implementation</h3>
+<pre><code><span class="kw">public class</span> <span class="ty">InstallPackageService</span>
+{
+    <span class="kw">private readonly</span> <span class="ty">IObjectStorageProvider</span> _storage;
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">InstallManifest</span>&gt; <span class="fn">PublishPackageAsync</span>(
+        <span class="ty">InstallPackage</span> pkg, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// Serialise the installation package to a ZIP archive</span>
+        <span class="kw">byte</span>[] zipBytes = <span class="kw">await</span> _packager.<span class="fn">BuildZipAsync</span>(pkg, ct);
+
+        <span class="kw">string</span> cid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(
+            zipBytes,
+            <span class="st">"application/zip"</span>,
+            <span class="kw">null</span>,
+            ct);
+
+        <span class="kw">return new</span> <span class="ty">InstallManifest</span>
+        {
+            PackageID   = pkg.ID,
+            ArchiveCid  = cid,
+            GeneratedAt = <span class="ty">DateTime</span>.UtcNow,
+            <span class="cm">// Lifecycle policy transitions this to cold storage at Day 30 automatically</span>
+            ExpiresAt   = <span class="ty">DateTime</span>.UtcNow.<span class="fn">AddDays</span>(<span class="nu">365</span>)
+        };
+    }
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">Stream</span>&gt; <span class="fn">DownloadPackageAsync</span>(
+        <span class="kw">string</span> archiveCid, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="kw">return await</span> _storage.<span class="fn">GetStreamAsync</span>(archiveCid, ct);
+    }
+}</code></pre>
+
+  <div class="callout info">
+    <strong>Automatic Lifecycle Archival</strong>
+    Packages older than 30 days automatically move to cold-tier storage via MinIO lifecycle policies, reducing storage costs without any application code changes. Packages are fully retrievable from cold tier — retrieval is slower but the data is never deleted until Day 365. See the <a href="07-archival.html">Archival &amp; Lifecycle</a> guide for policy configuration details.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="scenario-8"><span class="scenario-badge">Scenario 8</span> Multi-Tenant SaaS Isolation</h2>
+
+  <h3>Business Context</h3>
+  <p>In a multi-tenant deployment — where dozens or hundreds of customer organisations share a single BizFirst instance — it is critical that Customer A cannot access Customer B's files, even accidentally. InfraHub Storage enforces this at the storage layer: when <code>PrependTenantID: true</code>, every object key is automatically prefixed with <code>tenant_{tenantID}/</code> before the CID.</p>
+
+  <p>This means isolation is not an application-level concern that can be accidentally bypassed by a bug or missing access check. The storage key itself encodes the tenant boundary. A CID retrieved for tenant 42 (<code>tenant_42/3a7f2e...</code>) is a different object key than the same CID for tenant 99 (<code>tenant_99/3a7f2e...</code>), even if both contain identical content.</p>
+
+  <h3>How TenantID Is Resolved</h3>
+  <p>Developers <strong>never pass TenantID manually</strong>. It is resolved automatically from the platform's <code>IAiSessionContextAccessor</code>, which is populated per-request by the BizFirst authentication middleware from the authenticated session token. This ensures:</p>
+  <ul>
+    <li>No developer can accidentally store or retrieve files for the wrong tenant.</li>
+    <li>No API surface exposes TenantID as a parameter — it cannot be spoofed at the application layer.</li>
+    <li>Background jobs and agents running in a tenant context inherit the correct TenantID automatically.</li>
+  </ul>
+
+  <h3>Key Prefix Table</h3>
+  <table>
+    <thead><tr><th>TenantID</th><th>Object Key in MinIO</th><th>Accessible by Tenant 42?</th><th>Accessible by Tenant 99?</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>42</code></td>
+        <td><code>tenant_42/3a7f2e8d...</code></td>
+        <td><span class="tag green">Yes</span></td>
+        <td><span class="tag red">No</span></td>
+      </tr>
+      <tr>
+        <td><code>99</code></td>
+        <td><code>tenant_99/3a7f2e8d...</code></td>
+        <td><span class="tag red">No</span></td>
+        <td><span class="tag green">Yes</span></td>
+      </tr>
+      <tr>
+        <td><code>42</code></td>
+        <td><code>tenant_42/b81c90f2...</code></td>
+        <td><span class="tag green">Yes</span></td>
+        <td><span class="tag red">No</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Implementation</h3>
+<pre><code><span class="cm">// Application code — TenantID is never mentioned. The platform handles it.</span>
+<span class="kw">public class</span> <span class="ty">TenantDocumentService</span>
+{
+    <span class="kw">private readonly</span> <span class="ty">IObjectStorageProvider</span> _storage;
+    <span class="cm">// IAiSessionContextAccessor is injected internally by IObjectStorageProvider</span>
+    <span class="cm">// Application services do NOT need to inject or handle it.</span>
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="kw">string</span>&gt; <span class="fn">StoreForCurrentTenantAsync</span>(
+        <span class="kw">byte</span>[] data, <span class="kw">string</span> contentType, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// PrependTenantID=true means the stored key will be:
+        // tenant_{currentTenantID}/{sha256_of_data}
+        // No explicit TenantID parameter — isolation is automatic.</span>
+        <span class="kw">return await</span> _storage.<span class="fn">StoreAsync</span>(data, contentType, <span class="kw">null</span>, ct);
+    }
+
+    <span class="kw">public async</span> <span class="ty">Task</span>&lt;<span class="ty">Stream</span>&gt; <span class="fn">GetForCurrentTenantAsync</span>(
+        <span class="kw">string</span> cid, <span class="ty">CancellationToken</span> ct)
+    {
+        <span class="cm">// Only retrieves objects under the current tenant's prefix.
+        // A CID belonging to a different tenant will return null / not found.</span>
+        <span class="kw">return await</span> _storage.<span class="fn">GetStreamAsync</span>(cid, ct);
+    }
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Zero-Trust Isolation</strong>
+    Tenant isolation does not depend on every developer remembering to filter by TenantID. It is enforced automatically at the key-construction layer inside <code>IObjectStorageProvider</code>. Even if application code has a bug that passes a CID from the wrong tenant, the key prefix mismatch will cause a not-found result — not a cross-tenant data leak.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="cost">Storage Cost Estimation</h2>
+
+  <p>The table below provides rough size and volume estimates for common scenarios. Use these as a planning baseline when sizing your MinIO disk allocation or estimating cloud storage spend. Actual figures depend on document complexity, image resolution, and compression ratios.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        <th>Typical File Size</th>
+        <th>Monthly Volume</th>
+        <th>Estimated Storage / Month</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Invoice PDFs</td>
+        <td>150 KB</td>
+        <td>10,000 files</td>
+        <td>~1.5 GB</td>
+      </tr>
+      <tr>
+        <td>HR Documents</td>
+        <td>500 KB</td>
+        <td>500 files</td>
+        <td>~250 MB</td>
+      </tr>
+      <tr>
+        <td>AI Artefacts</td>
+        <td>2 MB</td>
+        <td>200 files</td>
+        <td>~400 MB</td>
+      </tr>
+      <tr>
+        <td>Workflow Attachments</td>
+        <td>1 MB</td>
+        <td>2,000 files</td>
+        <td>~2 GB</td>
+      </tr>
+      <tr>
+        <td>Multimedia / Reports</td>
+        <td>5 MB</td>
+        <td>400 files</td>
+        <td>~2 GB</td>
+      </tr>
+      <tr>
+        <td>Audit Evidence</td>
+        <td>200 KB</td>
+        <td>1,000 files</td>
+        <td>~200 MB</td>
+      </tr>
+      <tr>
+        <td>Data Export Packages</td>
+        <td>20 MB</td>
+        <td>50 packages</td>
+        <td>~1 GB</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Deduplication Reduces Real Storage Significantly</strong>
+    With content-addressable deduplication, actual storage is often 30–70% lower than naive estimates. The same contract template stored for 100 employees occupies the space of one copy — only truly unique bytes are stored. For invoice workflows where many invoices share a common layout, header, and footer, the savings are compounded across every billing cycle. Factor in at least a 40% deduplication discount when sizing disk for template-heavy workflows.
+  </div>
+
+  <h3>Cloud Provider Monthly Pricing Reference (approximate)</h3>
+  <table>
+    <thead><tr><th>Backend</th><th>Storage Price</th><th>Egress Price</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>MinIO (self-hosted)</strong></td>
+        <td>Cost of disk hardware / cloud VM disk</td>
+        <td>Internal network only</td>
+        <td>Lowest total cost for high-volume on-prem workloads</td>
+      </tr>
+      <tr>
+        <td><strong>AWS S3 (Standard)</strong></td>
+        <td>~$0.023 / GB</td>
+        <td>~$0.09 / GB</td>
+        <td>Switch to S3-IA for infrequently accessed archives</td>
+      </tr>
+      <tr>
+        <td><strong>Cloudflare R2</strong></td>
+        <td>~$0.015 / GB</td>
+        <td>$0.00 (free egress)</td>
+        <td>Best cost profile for download-heavy scenarios</td>
+      </tr>
+      <tr>
+        <td><strong>Backblaze B2</strong></td>
+        <td>~$0.006 / GB</td>
+        <td>~$0.01 / GB</td>
+        <td>Lowest storage cost for backup and archival targets</td>
+      </tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>
+

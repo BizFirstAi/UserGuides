@@ -1,0 +1,665 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Backup — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+
+/* Pipeline diagram */
+.pipeline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 20px 0;
+  flex-wrap: wrap;
+}
+.pipeline-node {
+  background: #1e2736;
+  color: #e8edf3;
+  border-radius: 6px;
+  padding: 14px 18px;
+  font-size: 13px;
+  text-align: center;
+  min-width: 140px;
+  border: 1px solid #2d3a4a;
+}
+.pipeline-node .pi-icon {
+  font-size: 20px;
+  margin-bottom: 6px;
+  display: block;
+  color: #0f6cbd;
+}
+.pipeline-node .pi-label {
+  font-weight: 600;
+  display: block;
+  font-size: 12px;
+  color: #c8d4e0;
+}
+.pipeline-node .pi-sub {
+  font-size: 11px;
+  color: #6a849a;
+  margin-top: 3px;
+  display: block;
+}
+.pipeline-arrow {
+  color: #3a5a7a;
+  font-size: 18px;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+.pipeline-arrow i {
+  color: #0f6cbd;
+}
+
+/* Cost table highlight */
+.cost-highlight td:last-child {
+  color: #2db87a;
+  font-weight: 600;
+}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>Tenant-Partitioned File Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html" class="active">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst InfraHub</div>
+    <h1>Backup</h1>
+    <p class="subtitle">Encrypted incremental daily backups with restic and Backblaze B2</p>
+  </div>
+
+  <div class="callout info">
+    <strong>Backup Overview</strong>
+    InfraHub Storage uses <strong>restic</strong> for encrypted incremental backups stored in <strong>Backblaze B2</strong>.
+    Backups run daily at 02:00 UTC, retain <strong>7 daily / 4 weekly / 12 monthly / 2 annual</strong> snapshots,
+    and are <strong>AES-256</strong> encrypted with a key you control. No data is ever stored in plaintext outside
+    your MinIO volume.
+  </div>
+
+  <!-- ─── Why restic + B2 ─── -->
+  <h2 id="why-restic">Why restic + Backblaze B2?</h2>
+
+  <p>
+    The combination of restic and Backblaze B2 provides enterprise-grade data protection at a fraction of the cost
+    of native S3 backup solutions. Both components are production-proven, open-standard, and interoperable with any
+    S3-compatible toolchain.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Why We Chose It</th>
+        <th>Key Properties</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>restic</strong></td>
+        <td>Open-source, actively maintained, zero trust model — encryption happens on the client before any data leaves your host.</td>
+        <td>
+          Block-level deduplication &mdash; only changed blocks are uploaded<br>
+          AES-256-CTR encryption with Poly1305 authentication<br>
+          Git-style snapshot model with tagged retention policies<br>
+          Fast incremental backups — typically completes in under 2 minutes for &lt;50 GB datasets<br>
+          Cross-platform: runs in any Docker container
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Backblaze B2</strong></td>
+        <td>S3-compatible API with significantly lower cost than AWS S3, free egress to Cloudflare and Fastly CDN partners, and a generous free tier.</td>
+        <td>
+          ~$6/TB/month storage (vs. AWS S3 ~$23/TB/month)<br>
+          S3-compatible API — no vendor-specific SDK required<br>
+          Free egress to Cloudflare, Fastly, and other CDN partners<br>
+          10 GB free tier (sufficient for most development backups)<br>
+          99.999999% durability SLA
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ─── Architecture ─── -->
+  <h2 id="architecture">Architecture</h2>
+
+  <p>
+    The backup pipeline runs as a separate Docker container. It mounts the MinIO data volume read-only, so it
+    cannot modify or corrupt production data. Encrypted chunks are pushed directly to Backblaze B2 via the
+    S3-compatible API. The production MinIO service is never paused or disrupted during backup.
+  </p>
+
+  <div class="pipeline">
+    <div class="pipeline-node">
+      <span class="pi-icon"><i class="fa-solid fa-database"></i></span>
+      <span class="pi-label">MinIO Volume</span>
+      <span class="pi-sub">minio-data (read-only mount)</span>
+    </div>
+    <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+    <div class="pipeline-node">
+      <span class="pi-icon"><i class="fa-solid fa-box-archive"></i></span>
+      <span class="pi-label">restic Container</span>
+      <span class="pi-sub">bizfirst-backup</span>
+    </div>
+    <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+    <div class="pipeline-node">
+      <span class="pi-icon"><i class="fa-solid fa-lock"></i></span>
+      <span class="pi-label">AES-256 Encrypt</span>
+      <span class="pi-sub">on-host, pre-upload</span>
+    </div>
+    <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+    <div class="pipeline-node">
+      <span class="pi-icon"><i class="fa-solid fa-cloud-arrow-up"></i></span>
+      <span class="pi-label">Backblaze B2</span>
+      <span class="pi-sub">Encrypted chunks</span>
+    </div>
+  </div>
+
+  <p>The backup schedule is driven by the <strong>ofelia</strong> job scheduler (see <a href="#cron-schedule">Setting Up the Cron Schedule</a>):</p>
+
+  <table>
+    <thead><tr><th>Event</th><th>Schedule</th><th>Details</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Daily backup run</td>
+        <td><span class="tag">02:00 UTC</span></td>
+        <td>Full incremental backup of MinIO data volume; applies retention policy; samples 5% of packs for integrity check</td>
+      </tr>
+      <tr>
+        <td>Retention prune</td>
+        <td>After each backup</td>
+        <td>Automatically removes snapshots outside the retention window; reclaims B2 storage</td>
+      </tr>
+      <tr>
+        <td>Integrity check</td>
+        <td>After each backup</td>
+        <td><code>restic check --read-data-subset=5%</code> — verifies 5% of encrypted packs are readable and uncorrupted</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ─── Docker Compose ─── -->
+  <h2 id="docker-compose">Docker Compose — Backup Service</h2>
+
+  <p>
+    Add the following service to your existing <code>docker-compose.yml</code> alongside the <code>minio</code>
+    service. The backup container mounts the MinIO data volume as read-only and the backup scripts directory.
+  </p>
+
+  <pre><code><span class="cm"># docker-compose.yml — append to existing services block</span>
+
+  backup:
+    image: restic/restic:latest
+    container_name: bizfirst-backup
+    environment:
+      RESTIC_REPOSITORY: <span class="st">s3:https://s3.us-west-004.backblazeb2.com/bizfirst-backup</span>
+      RESTIC_PASSWORD: ${BACKUP_ENCRYPTION_KEY}
+      AWS_ACCESS_KEY_ID: ${B2_APPLICATION_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${B2_APPLICATION_KEY}
+    volumes:
+      - minio-data:/data:ro
+      - ./backup-scripts:/scripts
+    entrypoint: /bin/sh
+    command: /scripts/backup.sh
+    depends_on:
+      - minio</code></pre>
+
+  <p>
+    The container does not run continuously. It is invoked on demand by the cron scheduler (see
+    <a href="#cron-schedule">Setting Up the Cron Schedule</a>). When triggered, it runs <code>backup.sh</code>,
+    completes, and exits. No long-running backup daemon is required.
+  </p>
+
+  <div class="callout info">
+    <strong>Volume Mount: Read-Only</strong>
+    The <code>:ro</code> flag on the <code>minio-data</code> mount ensures the backup container has no write access
+    to the production data volume. Even a compromised backup container cannot modify or delete production files.
+  </div>
+
+  <!-- ─── Backup Script ─── -->
+  <h2 id="backup-script">Backup Script</h2>
+
+  <p>
+    Create the script at <code>./backup-scripts/backup.sh</code> relative to your <code>docker-compose.yml</code>.
+    Ensure it is executable (<code>chmod +x backup.sh</code>). The script handles first-run initialization,
+    backup, retention enforcement, and integrity verification in a single execution.
+  </p>
+
+  <pre><code><span class="cm">#!/bin/sh</span>
+<span class="cm"># backup.sh — restic backup script for InfraHub Storage</span>
+<span class="cm"># Runs inside the bizfirst-backup container</span>
+
+<span class="cm"># Initialize repository if it does not yet exist</span>
+<span class="cm"># (idempotent — safe to run on every invocation)</span>
+restic snapshots > /dev/null 2>&amp;1 || restic init
+
+<span class="cm"># Run incremental backup of the MinIO data volume</span>
+restic backup /data \
+  --tag bizfirst-storage \
+  --hostname bizfirst-minio
+
+<span class="cm"># Apply retention policy and prune orphaned pack files</span>
+restic forget \
+  --keep-daily   7  \
+  --keep-weekly  4  \
+  --keep-monthly 12 \
+  --keep-annual  2  \
+  --prune
+
+<span class="cm"># Verify latest snapshot integrity (samples 5% of pack files)</span>
+<span class="cm"># Full --read-data check can be run manually on a schedule (e.g., monthly)</span>
+restic check --read-data-subset=5%
+
+echo <span class="st">"Backup completed: $(date)"</span></code></pre>
+
+  <p>
+    The <code>--tag bizfirst-storage</code> flag labels every snapshot, making it easy to filter snapshots in
+    <code>restic snapshots --tag bizfirst-storage</code>. The <code>--hostname</code> flag identifies the source
+    host in multi-host restic repositories.
+  </p>
+
+  <!-- ─── Retention Policy ─── -->
+  <h2 id="retention">Retention Policy</h2>
+
+  <p>
+    The retention policy balances recovery granularity against storage cost. Recent backups are kept daily for
+    maximum recovery precision; older backups are consolidated to weekly, monthly, and annual checkpoints.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Policy</th>
+        <th>Count</th>
+        <th>Explanation</th>
+        <th>Recovery Scenario</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Daily</strong></td>
+        <td><span class="tag">7</span></td>
+        <td>One backup per day for the last 7 days</td>
+        <td>Recover from accidental deletion or corruption discovered within the last week</td>
+      </tr>
+      <tr>
+        <td><strong>Weekly</strong></td>
+        <td><span class="tag">4</span></td>
+        <td>One backup per week for the last 4 weeks</td>
+        <td>Recover from issues discovered 1–4 weeks ago (e.g., silent data corruption)</td>
+      </tr>
+      <tr>
+        <td><strong>Monthly</strong></td>
+        <td><span class="tag">12</span></td>
+        <td>One backup per month for the last 12 months</td>
+        <td>Regulatory / compliance restore; recover from ransomware discovered weeks later</td>
+      </tr>
+      <tr>
+        <td><strong>Annual</strong></td>
+        <td><span class="tag">2</span></td>
+        <td>One backup per year for the last 2 years</td>
+        <td>Long-term archival; legal hold scenarios; year-end document recovery</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    With this policy, approximately <strong>25 snapshots</strong> are retained at any given time. Due to restic's
+    block-level deduplication, the total B2 storage consumed by 25 snapshots of a 50 GB dataset is typically
+    <strong>less than 3&times; the dataset size</strong> — restic only stores unique blocks across all snapshots.
+    Snapshots outside the retention window are automatically pruned during each backup run.
+  </p>
+
+  <div class="callout info">
+    <strong>How restic Deduplication Works</strong>
+    restic splits files into variable-length content-defined chunks using a rolling hash. Identical chunks across
+    different snapshots are stored exactly once in the repository. A daily backup of a 50 GB dataset where only
+    1 GB changed overnight uploads approximately 1 GB, not 50 GB. Over a year, total B2 usage typically stays
+    well under 3&times; the dataset size even with 25+ snapshots retained.
+  </div>
+
+  <!-- ─── Cron Schedule ─── -->
+  <h2 id="cron-schedule">Setting Up the Cron Schedule</h2>
+
+  <p>
+    The backup container is triggered by <strong>ofelia</strong>, a Docker-native cron scheduler. Ofelia reads
+    scheduling configuration from Docker container labels and triggers the target container at the configured
+    interval without requiring a separate system cron or SSH access.
+  </p>
+
+  <pre><code><span class="cm"># docker-compose.yml — add alongside the backup service</span>
+
+  backup-scheduler:
+    image: mcuadros/ofelia:latest
+    container_name: bizfirst-backup-scheduler
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      ofelia.job-run.backup.schedule: <span class="st">"0 2 * * *"</span>   <span class="cm"># 02:00 UTC daily</span>
+      ofelia.job-run.backup.container: bizfirst-backup
+    restart: unless-stopped</code></pre>
+
+  <p>
+    The cron expression <code>0 2 * * *</code> means: at minute 0, hour 2, every day, every month, every weekday.
+    Adjust the hour to match your lowest-traffic window if 02:00 UTC is not ideal for your deployment region.
+  </p>
+
+  <table>
+    <thead><tr><th>Field</th><th>Value</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Minute</td><td><code>0</code></td><td>At the top of the hour</td></tr>
+      <tr><td>Hour</td><td><code>2</code></td><td>02:00 UTC</td></tr>
+      <tr><td>Day of month</td><td><code>*</code></td><td>Every day</td></tr>
+      <tr><td>Month</td><td><code>*</code></td><td>Every month</td></tr>
+      <tr><td>Day of week</td><td><code>*</code></td><td>Every weekday</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <strong>Docker Socket Access</strong>
+    Ofelia requires access to <code>/var/run/docker.sock</code> to start and stop containers. This grants the
+    ofelia container elevated privileges. Ensure your Docker host is hardened appropriately and that the ofelia
+    image is pinned to a specific version in production environments.
+  </div>
+
+  <!-- ─── Verifying a Backup ─── -->
+  <h2 id="verifying">Verifying a Backup</h2>
+
+  <p>
+    Always verify your backup configuration after initial setup, and perform periodic manual verifications
+    (at minimum monthly). A backup that has never been verified is not a backup — it is an untested assumption.
+  </p>
+
+  <h3>List All Snapshots</h3>
+  <pre><code><span class="cm"># List all snapshots in the repository</span>
+docker exec bizfirst-backup restic snapshots
+
+<span class="cm"># Filter by tag</span>
+docker exec bizfirst-backup restic snapshots --tag bizfirst-storage
+
+<span class="cm"># Show detailed snapshot info</span>
+docker exec bizfirst-backup restic snapshots --verbose</code></pre>
+
+  <h3>Check Repository Integrity</h3>
+  <pre><code><span class="cm"># Fast structural integrity check (no data download)</span>
+docker exec bizfirst-backup restic check
+
+<span class="cm"># Check with data verification — samples 10% of pack files (recommended monthly)</span>
+docker exec bizfirst-backup restic check --read-data-subset=10%
+
+<span class="cm"># Full data verification — reads ALL pack files from B2 (run quarterly)</span>
+<span class="cm"># This will incur B2 API call costs for large repositories</span>
+docker exec bizfirst-backup restic check --read-data</code></pre>
+
+  <h3>Inspect a Specific Snapshot</h3>
+  <pre><code><span class="cm"># List files in the latest snapshot</span>
+docker exec bizfirst-backup restic ls latest
+
+<span class="cm"># List files in a specific snapshot by ID</span>
+docker exec bizfirst-backup restic ls abc12345
+
+<span class="cm"># Show snapshot stats (unique data, total size)</span>
+docker exec bizfirst-backup restic stats latest</code></pre>
+
+  <div class="callout success">
+    <strong>Expected Output from a Healthy Repository</strong>
+    A successful <code>restic check</code> ends with: <code>no errors were found</code>.
+    If any errors appear, investigate immediately — do not wait for the next scheduled backup. Contact
+    your infrastructure team and consider restoring from a known-good snapshot.
+  </div>
+
+  <!-- ─── Environment Variables ─── -->
+  <h2 id="environment-variables">Environment Variables Required</h2>
+
+  <p>
+    All sensitive values are passed to the backup container as environment variables from your
+    <code>.env</code> file or secrets manager. Never hard-code these values in <code>docker-compose.yml</code>
+    or the backup script.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Variable</th>
+        <th>Description</th>
+        <th>Example Format</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>BACKUP_ENCRYPTION_KEY</code></td>
+        <td>The AES-256 encryption key for the restic repository. This is the <em>only</em> key that can decrypt your backups. If lost, all backups are permanently unreadable.</td>
+        <td>64+ character random string (use a password manager to generate)</td>
+      </tr>
+      <tr>
+        <td><code>B2_APPLICATION_KEY_ID</code></td>
+        <td>Backblaze B2 application key ID. Generated in the B2 dashboard under App Keys. Should be scoped to the backup bucket only.</td>
+        <td><code>0012345abcdef...</code></td>
+      </tr>
+      <tr>
+        <td><code>B2_APPLICATION_KEY</code></td>
+        <td>Backblaze B2 application key secret. Shown only once at creation time — store immediately in your secrets manager.</td>
+        <td><code>K001AbCdEfGhIj...</code></td>
+      </tr>
+      <tr>
+        <td><code>RESTIC_REPOSITORY</code></td>
+        <td>Full restic repository URL pointing to your B2 bucket. Format: <code>s3:https://&lt;endpoint&gt;/&lt;bucket-name&gt;</code></td>
+        <td><code>s3:https://s3.us-west-004.backblazeb2.com/bizfirst-backup</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Critical: BACKUP_ENCRYPTION_KEY Cannot Be Recovered</strong>
+    If you lose <code>BACKUP_ENCRYPTION_KEY</code>, your backups are permanently and irreversibly unreadable.
+    restic uses zero-knowledge encryption — there is no recovery mechanism, no master key, and no support process
+    that can recover your data. Store this key in a password manager (1Password, Bitwarden) AND a hardware-backed
+    secrets manager (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault). Keep at least two independent copies
+    in different locations. Never store it only in the <code>.env</code> file.
+  </div>
+
+  <h3>Generating a Strong Encryption Key</h3>
+  <pre><code><span class="cm"># Linux / macOS — generate a 64-character random key</span>
+openssl rand -base64 48
+
+<span class="cm"># Windows PowerShell</span>
+[Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
+
+<span class="cm"># Or use your password manager's secure password generator (64+ chars, full character set)</span></code></pre>
+
+  <!-- ─── Monitoring ─── -->
+  <h2 id="monitoring">Monitoring Backup Status</h2>
+
+  <p>
+    The backup container writes all output to stdout, which Docker captures as container logs. In a Grafana + Loki
+    setup, these logs are automatically indexed and queryable.
+  </p>
+
+  <h3>Viewing Backup Logs</h3>
+  <pre><code><span class="cm"># View the last backup run logs</span>
+docker logs bizfirst-backup
+
+<span class="cm"># Follow logs of the next backup run (useful during testing)</span>
+docker logs bizfirst-backup --follow
+
+<span class="cm"># View logs with timestamps</span>
+docker logs bizfirst-backup --timestamps</code></pre>
+
+  <h3>Grafana + Loki Alert: Missing Daily Backup</h3>
+  <p>
+    In your Grafana instance, create a Loki-based alert rule that fires when the expected daily
+    "Backup completed" log line has not appeared within 26 hours. The 26-hour window gives a 2-hour
+    grace period beyond the 24-hour schedule interval, accommodating minor delays without false positives.
+  </p>
+
+  <pre><code><span class="cm"># Loki query — counts "Backup completed" lines in last 26 hours</span>
+<span class="cm"># Alert fires when count = 0</span>
+count_over_time(
+  {container="bizfirst-backup"} |= "Backup completed"
+  [26h]
+)</code></pre>
+
+  <p>Configure the alert rule in Grafana as follows:</p>
+
+  <table>
+    <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Data source</td><td>Loki</td></tr>
+      <tr><td>Query</td><td><code>count_over_time({container="bizfirst-backup"} |= "Backup completed" [26h])</code></td></tr>
+      <tr><td>Condition</td><td>IS BELOW <code>1</code></td></tr>
+      <tr><td>Evaluate every</td><td>1h</td></tr>
+      <tr><td>For</td><td>30m (wait 30 min before firing to avoid transient gaps)</td></tr>
+      <tr><td>Alert message</td><td>InfraHub daily backup has not completed in the last 26 hours</td></tr>
+      <tr><td>Severity</td><td>Critical</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <strong>Backup Failure Is a Critical Event</strong>
+    A missed backup means your recovery point objective (RPO) has slipped. If the backup alert fires, investigate
+    immediately: check container logs, verify B2 credentials are valid, confirm the MinIO volume is mounted, and
+    check available disk space on the Docker host. Do not dismiss the alert until the next successful backup has run.
+  </div>
+
+  <h3>Prometheus Metric (Optional)</h3>
+  <p>
+    For teams running Prometheus, the backup script can emit a metric via the Pushgateway at the end of each run.
+    Add the following to the end of <code>backup.sh</code>:
+  </p>
+  <pre><code><span class="cm"># Push backup timestamp metric to Prometheus Pushgateway</span>
+BACKUP_TIMESTAMP=$(date +%s)
+echo "bizfirst_backup_last_success_timestamp $BACKUP_TIMESTAMP" | \
+  curl --data-binary @- \
+  http://pushgateway:9091/metrics/job/restic_backup/instance/bizfirst-minio</code></pre>
+
+  <p>
+    Then create a Prometheus alert on <code>time() - bizfirst_backup_last_success_timestamp &gt; 90000</code>
+    (25 hours) to catch missed backups.
+  </p>
+
+  <!-- ─── Cost Estimate ─── -->
+  <h2 id="cost-estimate">Backup Storage Cost Estimate</h2>
+
+  <p>
+    Backblaze B2 charges <strong>$6.00/TB/month</strong> for storage (as of 2026). With restic's block-level
+    deduplication and incremental backups, the total backup repository size is typically
+    <strong>1.5&times; to 3&times; the current dataset size</strong>, depending on how frequently files change.
+  </p>
+
+  <p>
+    Egress fees are <strong>$0.00</strong> when restoring to a Cloudflare-protected host (Cloudflare is a B2
+    bandwidth alliance partner). For non-Cloudflare egress, B2 charges $0.01/GB after the first 1 GB/day free.
+  </p>
+
+  <table class="cost-highlight">
+    <thead>
+      <tr>
+        <th>MinIO Dataset Size</th>
+        <th>Estimated Repo Size (2&times;)</th>
+        <th>Monthly B2 Cost</th>
+        <th>Annual B2 Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>10 GB</td>
+        <td>~20 GB</td>
+        <td>~$0.12</td>
+        <td>~$1.44</td>
+      </tr>
+      <tr>
+        <td>50 GB</td>
+        <td>~100 GB</td>
+        <td>~$0.60</td>
+        <td>~$7.20</td>
+      </tr>
+      <tr>
+        <td>250 GB</td>
+        <td>~500 GB</td>
+        <td>~$3.00</td>
+        <td>~$36.00</td>
+      </tr>
+      <tr>
+        <td>1 TB</td>
+        <td>~2 TB</td>
+        <td>~$12.00</td>
+        <td>~$144.00</td>
+      </tr>
+      <tr>
+        <td>5 TB</td>
+        <td>~10 TB</td>
+        <td>~$60.00</td>
+        <td>~$720.00</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    For comparison, storing the same backup repository in AWS S3 Standard would cost approximately
+    <strong>3.8&times; more</strong> at $23/TB/month. For most BizFirst AI deployments (under 250 GB of
+    production file data), the total annual backup cost on B2 is under $40.
+  </p>
+
+  <div class="callout info">
+    <strong>B2 Free Tier</strong>
+    The first 10 GB of B2 storage is permanently free, with 1 GB/day of free download. For development
+    and staging environments with small datasets, backup storage costs nothing. Use separate B2 buckets
+    and application keys for production vs. non-production environments.
+  </div>
+
+  <h3>Estimating Your Actual Deduplication Ratio</h3>
+  <p>
+    After your first week of backups, run <code>restic stats</code> to see the actual repository size vs.
+    total data size. This gives you a precise deduplication ratio for your workload:
+  </p>
+  <pre><code><span class="cm"># Show repository statistics including dedup ratio</span>
+docker exec bizfirst-backup restic stats --mode raw-data
+
+<span class="cm"># Example output:</span>
+<span class="cm"># Stats for all snapshots in restore-size mode:</span>
+<span class="cm"># Total File Count:   142,847</span>
+<span class="cm"># Total Size:         48.231 GiB   (your MinIO data size)</span>
+<span class="cm"># Stats for all snapshots in raw-data mode:</span>
+<span class="cm"># Total Blob Count:   89,234</span>
+<span class="cm"># Total Size:         12.441 GiB   (actual B2 usage after dedup)</span></code></pre>
+
+  <p>
+    In the example above, 7 daily snapshots of 48 GB of data occupy only 12 GB in B2 — a
+    <strong>3.9&times; deduplication ratio</strong>. For datasets where files rarely change (archived invoices,
+    completed reports), deduplication ratios above 10&times; are common.
+  </p>
+
+</main>
+</body>
+</html>
+

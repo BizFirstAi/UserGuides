@@ -1,0 +1,465 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Setup &amp; Configuration — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>Tenant-Partitioned File Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html" class="active">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">BizFirst InfraHub</div>
+    <h1>Setup &amp; Configuration</h1>
+    <p class="subtitle">Everything you need to stand up production-ready InfraHub Storage — from Docker infrastructure and bucket creation through DI registration, multi-environment appsettings, environment variable overrides, storage class tuning, and capacity guard configuration.</p>
+  </div>
+
+  <div class="toc">
+    <h4>On This Page</h4>
+    <ol>
+      <li><a href="#infrastructure">Infrastructure Requirements</a></li>
+      <li><a href="#bucket">Create the Storage Bucket</a></li>
+      <li><a href="#di">DI Registration</a></li>
+      <li><a href="#appsettings">Configuration — appsettings.json</a></li>
+      <li><a href="#envvars">Environment Variables</a></li>
+      <li><a href="#storageclass">Setting StorageClass and CannedAcl</a></li>
+      <li><a href="#healthcheck">Health Check</a></li>
+      <li><a href="#capacityguard">Capacity Guard Setup</a></li>
+    </ol>
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="infrastructure">Infrastructure Requirements</h2>
+
+  <p>InfraHub Storage requires an S3-compatible object store. For BizFirst self-hosted deployments the standard choice is <strong>MinIO</strong> — a high-performance, Kubernetes-native object store that is fully S3-API-compatible. For cloud-first deployments, AWS S3, Cloudflare R2, or Backblaze B2 can be used interchangeably through a single configuration switch.</p>
+
+  <p>The fastest way to run MinIO locally or on a production server is via Docker Compose. The configuration below is production-grade: it exposes the S3 API on port 9000 and the MinIO web console on port 9001, uses a named Docker volume for data persistence, enables Prometheus metrics for the capacity guard, and includes a health check so Docker can automatically restart the container on failure.</p>
+
+  <h3>docker-compose.yml</h3>
+<pre><code><span class="cm"># docker-compose.yml — BizFirst MinIO production setup</span>
+<span class="kw">version</span>: <span class="st">'3.8'</span>
+<span class="kw">services</span>:
+  <span class="ty">minio</span>:
+    <span class="pa">image</span>: <span class="st">minio/minio:latest</span>
+    <span class="pa">container_name</span>: <span class="st">bizfirst-minio</span>
+    <span class="pa">command</span>: <span class="st">server /data --console-address ":9001"</span>
+    <span class="pa">ports</span>:
+      - <span class="st">"9000:9000"</span>    <span class="cm"># S3 API</span>
+      - <span class="st">"9001:9001"</span>    <span class="cm"># Web Console</span>
+    <span class="pa">environment</span>:
+      <span class="pa">MINIO_ROOT_USER</span>: <span class="st">${MINIO_ROOT_USER}</span>
+      <span class="pa">MINIO_ROOT_PASSWORD</span>: <span class="st">${MINIO_ROOT_PASSWORD}</span>
+      <span class="pa">MINIO_PROMETHEUS_AUTH_TYPE</span>: <span class="st">public</span>
+    <span class="pa">volumes</span>:
+      - <span class="st">minio-data:/data</span>
+    <span class="pa">restart</span>: <span class="st">unless-stopped</span>
+    <span class="pa">healthcheck</span>:
+      <span class="pa">test</span>: [<span class="st">"CMD"</span>, <span class="st">"curl"</span>, <span class="st">"-f"</span>, <span class="st">"http://localhost:9000/minio/health/live"</span>]
+      <span class="pa">interval</span>: <span class="nu">30s</span>
+      <span class="pa">timeout</span>: <span class="nu">10s</span>
+      <span class="pa">retries</span>: <span class="nu">3</span>
+
+<span class="kw">volumes</span>:
+  <span class="ty">minio-data</span>:</code></pre>
+
+  <div class="callout warn">
+    <strong>Security — Never Hardcode Credentials</strong>
+    Set strong credentials via environment variables in production. Never hardcode secrets in <code>docker-compose.yml</code>. Use a <code>.env</code> file (excluded from source control), Docker secrets, or a secrets manager such as HashiCorp Vault. A minimum 20-character random password is recommended for <code>MINIO_ROOT_PASSWORD</code>.
+  </div>
+
+  <p>To start MinIO:</p>
+<pre><code><span class="cm"># Set credentials in the shell or a .env file before running</span>
+<span class="kw">export</span> <span class="pa">MINIO_ROOT_USER</span>=<span class="st">admin</span>
+<span class="kw">export</span> <span class="pa">MINIO_ROOT_PASSWORD</span>=<span class="st">YourStr0ngPassword!</span>
+
+docker-compose up -d</code></pre>
+
+  <p>Once running, the MinIO web console is accessible at <code>http://localhost:9001</code>. The S3 API endpoint used by InfraHub Storage is <code>http://localhost:9000</code>.</p>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="bucket">Create the Storage Bucket</h2>
+
+  <p>InfraHub Storage requires a single bucket — by default named <code>bizfirst-files</code>. This bucket name must exactly match the <code>FileStorage:BucketName</code> configuration value. All tenant files are stored in this one bucket, namespaced by key prefix (<code>tenant_{tenantID}/</code>). You do not need separate buckets per tenant.</p>
+
+  <h3>Option A — MinIO Web Console</h3>
+  <p>Navigate to <code>http://localhost:9001</code>, sign in with your root credentials, go to <strong>Buckets</strong> &rarr; <strong>Create Bucket</strong>, enter <code>bizfirst-files</code>, and click <strong>Create Bucket</strong>. Leave all options at their defaults — versioning and object locking are not required.</p>
+
+  <h3>Option B — MinIO Client (mc)</h3>
+  <p>The <code>mc</code> command-line client is the fastest way to create buckets from automation scripts or CI pipelines. Install it from <a href="https://min.io/docs/minio/linux/reference/minio-mc.html" target="_blank">min.io/docs</a>, then:</p>
+<pre><code><span class="cm"># Register the local MinIO instance as an alias</span>
+mc alias <span class="kw">set</span> local http://localhost:9000 admin yourpassword
+
+<span class="cm"># Create the bucket</span>
+mc mb local/bizfirst-files
+
+<span class="cm"># Ensure the bucket is private (no anonymous access)</span>
+mc anonymous <span class="kw">set</span> none local/bizfirst-files
+
+<span class="cm"># Verify</span>
+mc ls local/</code></pre>
+
+  <p>The <code>mc anonymous set none</code> command ensures the bucket has no public read or write policy. All access is authenticated through the access key / secret key pair configured in InfraHub Storage.</p>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="di">DI Registration</h2>
+
+  <p>InfraHub Storage is registered with a single extension method call. Add this to your <code>Program.cs</code> (or <code>Startup.cs</code> in older projects):</p>
+<pre><code><span class="cm">// Program.cs</span>
+builder.Services.<span class="fn">AddObjectStorage</span>(builder.Configuration);</code></pre>
+
+  <p><code>AddObjectStorage</code> performs the following registrations in order:</p>
+
+  <table>
+    <thead><tr><th>Registration</th><th>Lifetime</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>Configure&lt;FileStorageSettings&gt;</code></td>
+        <td>Singleton (options)</td>
+        <td>Binds the <code>FileStorage</code> configuration section to the <code>FileStorageSettings</code> record, making settings injectable via <code>IOptions&lt;FileStorageSettings&gt;</code>.</td>
+      </tr>
+      <tr>
+        <td><code>HttpClient</code> (named)</td>
+        <td>Managed by <code>IHttpClientFactory</code></td>
+        <td>A named <code>HttpClient</code> used exclusively by <code>IStorageCapacityGuard</code> to poll MinIO Prometheus metrics at <code>{Endpoint}/minio/v2/metrics/cluster</code>.</td>
+      </tr>
+      <tr>
+        <td><code>AddS3Services</code></td>
+        <td>Various</td>
+        <td>Registers the low-level S3 layer: <code>IS3BucketService</code>, <code>IS3ObjectService</code>, and <code>IS3FolderService</code>. These are internal to InfraHub Storage and are not used directly by application code.</td>
+      </tr>
+      <tr>
+        <td><code>ICidProvider</code></td>
+        <td>Singleton</td>
+        <td>Computes Content IDs (CIDs) from file bytes using SHA-256. Singleton because it is stateless and allocation-free.</td>
+      </tr>
+      <tr>
+        <td><code>IStorageCapacityGuard</code></td>
+        <td>Scoped</td>
+        <td>Polls MinIO disk metrics before each write. Throws <code>StorageCapacityException</code> if usage exceeds <code>WriteStopThresholdPercent</code>.</td>
+      </tr>
+      <tr>
+        <td><code>IObjectStorageProvider</code></td>
+        <td>Scoped</td>
+        <td>The primary application interface — <code>StoreAsync</code>, <code>GetStreamAsync</code>, <code>ExistsAsync</code>. Scoped so it participates in per-request <code>IAiSessionContext</code> for tenant isolation.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>One Interface, Any Backend</strong>
+    Application code always injects <code>IObjectStorageProvider</code> and never references any S3/MinIO-specific type. Switching from MinIO to AWS S3 or Cloudflare R2 requires only a configuration change — no code changes in calling services.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="appsettings">Configuration — appsettings.json</h2>
+
+  <p>All InfraHub Storage settings live under the <code>FileStorage</code> key. Below are complete, ready-to-use examples for the four supported environments. Copy the relevant block into your <code>appsettings.json</code> (or the environment-specific override file) and adjust credentials.</p>
+
+  <h3>Local Development (MinIO)</h3>
+  <p>For local development, MinIO runs in Docker with simple credentials. <code>PrependTenantID</code> is disabled so you can easily browse files in the console without tenant prefixes. <code>WriteStopThresholdPercent: 0</code> disables the capacity guard so it does not interfere with development.</p>
+<pre><code>{
+  <span class="pa">"FileStorage"</span>: {
+    <span class="pa">"BucketName"</span>: <span class="st">"bizfirst-files"</span>,
+    <span class="pa">"Endpoint"</span>: <span class="st">"http://localhost:9000"</span>,
+    <span class="pa">"AccessKey"</span>: <span class="st">"admin"</span>,
+    <span class="pa">"SecretKey"</span>: <span class="st">"admin123"</span>,
+    <span class="pa">"Region"</span>: <span class="st">"us-east-1"</span>,
+    <span class="pa">"ForcePathStyle"</span>: <span class="kw">true</span>,
+    <span class="pa">"PrependTenantID"</span>: <span class="kw">false</span>,
+    <span class="pa">"WriteStopThresholdPercent"</span>: <span class="nu">0</span>
+  }
+}</code></pre>
+
+  <h3>Production (MinIO on Docker)</h3>
+  <p>In production the endpoint points to the Docker service name (<code>minio</code>) rather than <code>localhost</code>. Credentials are injected via environment variables. Tenant isolation is enabled. The capacity guard stops writes at 90% disk usage — tune this value based on your alerting strategy.</p>
+<pre><code>{
+  <span class="pa">"FileStorage"</span>: {
+    <span class="pa">"BucketName"</span>: <span class="st">"bizfirst-files"</span>,
+    <span class="pa">"Endpoint"</span>: <span class="st">"http://minio:9000"</span>,
+    <span class="pa">"AccessKey"</span>: <span class="st">"${MINIO_ACCESS_KEY}"</span>,
+    <span class="pa">"SecretKey"</span>: <span class="st">"${MINIO_SECRET_KEY}"</span>,
+    <span class="pa">"Region"</span>: <span class="st">"us-east-1"</span>,
+    <span class="pa">"ForcePathStyle"</span>: <span class="kw">true</span>,
+    <span class="pa">"PrependTenantID"</span>: <span class="kw">true</span>,
+    <span class="pa">"WriteStopThresholdPercent"</span>: <span class="nu">90.0</span>
+  }
+}</code></pre>
+
+  <h3>AWS S3</h3>
+  <p>For AWS S3, leave <code>Endpoint</code> blank — the SDK resolves the regional endpoint automatically from <code>Region</code>. Set <code>ForcePathStyle</code> to <code>false</code> to use the standard virtual-hosted-style URLs (<code>bucket.s3.region.amazonaws.com</code>). The capacity guard (<code>WriteStopThresholdPercent: 0</code>) is disabled because S3 has effectively unlimited capacity.</p>
+<pre><code>{
+  <span class="pa">"FileStorage"</span>: {
+    <span class="pa">"BucketName"</span>: <span class="st">"my-bizfirst-files"</span>,
+    <span class="pa">"Endpoint"</span>: <span class="st">""</span>,
+    <span class="pa">"AccessKey"</span>: <span class="st">"${AWS_ACCESS_KEY_ID}"</span>,
+    <span class="pa">"SecretKey"</span>: <span class="st">"${AWS_SECRET_ACCESS_KEY}"</span>,
+    <span class="pa">"Region"</span>: <span class="st">"us-east-1"</span>,
+    <span class="pa">"ForcePathStyle"</span>: <span class="kw">false</span>,
+    <span class="pa">"PrependTenantID"</span>: <span class="kw">true</span>,
+    <span class="pa">"WriteStopThresholdPercent"</span>: <span class="nu">0</span>
+  }
+}</code></pre>
+
+  <h3>Cloudflare R2</h3>
+  <p>Cloudflare R2 is S3-compatible with zero egress fees — an excellent cost-efficient choice for large-volume storage. The endpoint must include your Cloudflare Account ID. R2 requires <code>ForcePathStyle: true</code>. The <code>Region</code> value <code>auto</code> lets Cloudflare route to the closest data centre.</p>
+<pre><code>{
+  <span class="pa">"FileStorage"</span>: {
+    <span class="pa">"BucketName"</span>: <span class="st">"bizfirst-files"</span>,
+    <span class="pa">"Endpoint"</span>: <span class="st">"https://ACCOUNT_ID.r2.cloudflarestorage.com"</span>,
+    <span class="pa">"AccessKey"</span>: <span class="st">"${R2_ACCESS_KEY_ID}"</span>,
+    <span class="pa">"SecretKey"</span>: <span class="st">"${R2_SECRET_ACCESS_KEY}"</span>,
+    <span class="pa">"Region"</span>: <span class="st">"auto"</span>,
+    <span class="pa">"ForcePathStyle"</span>: <span class="kw">true</span>,
+    <span class="pa">"PrependTenantID"</span>: <span class="kw">true</span>,
+    <span class="pa">"WriteStopThresholdPercent"</span>: <span class="nu">0</span>
+  }
+}</code></pre>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="envvars">Environment Variables</h2>
+
+  <p>Every <code>FileStorage</code> setting can be overridden at deployment time using environment variables. ASP.NET Core maps double-underscore (<code>__</code>) separators to configuration hierarchy, so <code>FileStorage__BucketName</code> overrides <code>FileStorage:BucketName</code> in <code>appsettings.json</code>.</p>
+
+  <p>This is the recommended pattern for Kubernetes, Docker Compose, and CI/CD pipelines: keep non-sensitive defaults in <code>appsettings.json</code> and inject secrets exclusively through environment variables.</p>
+
+  <table>
+    <thead><tr><th>Environment Variable</th><th>Maps To</th><th>Example Value</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>FileStorage__BucketName</code></td>
+        <td><code>FileStorage:BucketName</code></td>
+        <td><code>bizfirst-files</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__Endpoint</code></td>
+        <td><code>FileStorage:Endpoint</code></td>
+        <td><code>http://minio:9000</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__AccessKey</code></td>
+        <td><code>FileStorage:AccessKey</code></td>
+        <td><code>minio-access-key</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__SecretKey</code></td>
+        <td><code>FileStorage:SecretKey</code></td>
+        <td><code>minio-secret-key</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__Region</code></td>
+        <td><code>FileStorage:Region</code></td>
+        <td><code>us-east-1</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__ForcePathStyle</code></td>
+        <td><code>FileStorage:ForcePathStyle</code></td>
+        <td><code>true</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__PrependTenantID</code></td>
+        <td><code>FileStorage:PrependTenantID</code></td>
+        <td><code>true</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__WriteStopThresholdPercent</code></td>
+        <td><code>FileStorage:WriteStopThresholdPercent</code></td>
+        <td><code>90.0</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__CannedAcl</code></td>
+        <td><code>FileStorage:CannedAcl</code></td>
+        <td><code>private</code></td>
+      </tr>
+      <tr>
+        <td><code>FileStorage__StorageClass</code></td>
+        <td><code>FileStorage:StorageClass</code></td>
+        <td><code>STANDARD</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Kubernetes Secret Pattern</strong>
+    In Kubernetes, mount your S3 credentials as a Secret and expose them as environment variables. This ensures credentials are never stored in ConfigMaps, image layers, or Helm values files committed to source control.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="storageclass">Setting StorageClass and CannedAcl</h2>
+
+  <p>InfraHub Storage supports per-object <code>StorageClass</code> and <code>CannedAcl</code> overrides through <code>StoreOptions</code>. The global defaults applied when no override is provided are:</p>
+  <ul>
+    <li><strong>StorageClass</strong>: <code>STANDARD</code> — full-durability, low-latency storage.</li>
+    <li><strong>CannedAcl</strong>: <code>NoACL</code> — no ACL header is sent, relying on bucket policy for access control (recommended for MinIO and R2).</li>
+  </ul>
+
+  <p>To override the storage class or ACL for a specific file, pass a <code>StoreOptions</code> instance to <code>StoreAsync</code>:</p>
+<pre><code><span class="cm">// Store an infrequently-accessed archive at lower cost</span>
+<span class="kw">var</span> opts = <span class="kw">new</span> <span class="ty">StoreOptions</span>(<span class="pa">CannedAcl</span>: <span class="st">"private"</span>, <span class="pa">StorageClass</span>: <span class="st">"STANDARD_IA"</span>);
+<span class="kw">string</span> cid = <span class="kw">await</span> _storage.<span class="fn">StoreAsync</span>(content, <span class="st">"application/pdf"</span>, opts, ct);</code></pre>
+
+  <h3>Valid StorageClass Values</h3>
+  <table>
+    <thead><tr><th>StorageClass</th><th>Use Case</th><th>MinIO</th><th>AWS S3</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>STANDARD</code></td>
+        <td>Active data, frequent access</td>
+        <td><span class="tag green">Supported</span></td>
+        <td><span class="tag green">Supported</span></td>
+      </tr>
+      <tr>
+        <td><code>REDUCED_REDUNDANCY</code></td>
+        <td>Reproducible, non-critical data</td>
+        <td><span class="tag green">Supported</span></td>
+        <td><span class="tag green">Supported</span></td>
+      </tr>
+      <tr>
+        <td><code>STANDARD_IA</code></td>
+        <td>Infrequent access, rapid retrieval</td>
+        <td><span class="tag orange">N/A</span></td>
+        <td><span class="tag green">Supported</span></td>
+      </tr>
+      <tr>
+        <td><code>ONEZONE_IA</code></td>
+        <td>Infrequent access, single AZ</td>
+        <td><span class="tag orange">N/A</span></td>
+        <td><span class="tag green">Supported</span></td>
+      </tr>
+      <tr>
+        <td><code>INTELLIGENT_TIERING</code></td>
+        <td>Automatic cost optimisation</td>
+        <td><span class="tag orange">N/A</span></td>
+        <td><span class="tag green">Supported</span></td>
+      </tr>
+      <tr>
+        <td><code>GLACIER</code></td>
+        <td>Long-term archive, minutes retrieval</td>
+        <td><span class="tag orange">N/A</span></td>
+        <td><span class="tag green">Supported</span></td>
+      </tr>
+      <tr>
+        <td><code>DEEP_ARCHIVE</code></td>
+        <td>Compliance archive, hours retrieval</td>
+        <td><span class="tag orange">N/A</span></td>
+        <td><span class="tag green">Supported</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>MinIO and Storage Classes</strong>
+    MinIO supports <code>STANDARD</code> and <code>REDUCED_REDUNDANCY</code> only. Sending <code>INTELLIGENT_TIERING</code>, <code>GLACIER</code>, or <code>DEEP_ARCHIVE</code> to a MinIO endpoint will be silently ignored or return an error, depending on the MinIO version. Use these classes only when targeting AWS S3.
+  </div>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="healthcheck">Health Check</h2>
+
+  <p>After completing setup, verify the integration is working correctly before deploying to production. There are two complementary approaches.</p>
+
+  <h3>Option A — Application-Level Probe</h3>
+  <p>Call <code>ExistsAsync</code> with a known non-existent CID. If the provider is correctly configured and can reach MinIO, it returns <code>false</code>. If credentials are wrong, the endpoint is unreachable, or the bucket does not exist, it throws an exception — surfacing the misconfiguration early.</p>
+<pre><code><span class="cm">// Lightweight connectivity probe — inject IObjectStorageProvider</span>
+<span class="kw">bool</span> exists = <span class="kw">await</span> _storage.<span class="fn">ExistsAsync</span>(<span class="st">"health-check-probe"</span>, ct);
+<span class="cm">// Should return false (not throw) if everything is configured correctly</span></code></pre>
+
+  <p>This call is safe to use in ASP.NET Core <code>IHealthCheck</code> implementations. Add it to a <code>/health/ready</code> endpoint to block traffic until the storage layer is confirmed reachable.</p>
+
+  <h3>Option B — MinIO HTTP Liveness Endpoint</h3>
+  <p>MinIO exposes a liveness endpoint that returns HTTP 200 when the server is healthy:</p>
+<pre><code><span class="cm"># From the host or another container in the same network</span>
+curl -f http://minio:9000/minio/health/live
+<span class="cm"># Returns 200 OK when MinIO is running and healthy</span></code></pre>
+
+  <p>This endpoint is also used by the Docker Compose healthcheck definition shown in the Infrastructure Requirements section. Kubernetes liveness probes should target this URL.</p>
+
+  <!-- ─────────────────────────────────────────────── -->
+  <h2 id="capacityguard">Capacity Guard Setup</h2>
+
+  <p>The Capacity Guard prevents writes from filling the disk to 100%, which would cause data loss and MinIO instability. Before every <code>StoreAsync</code> call, <code>IStorageCapacityGuard</code> polls the MinIO Prometheus metrics endpoint and calculates the current disk usage percentage. If usage is at or above <code>WriteStopThresholdPercent</code>, it throws <code>StorageCapacityException</code>, which the caller should surface as an HTTP 507 Insufficient Storage response.</p>
+
+  <h3>How the Guard Reads Disk Usage</h3>
+  <p>The guard fetches the cluster metrics from:</p>
+<pre><code>GET {Endpoint}/minio/v2/metrics/cluster</code></pre>
+
+  <p>It parses two Prometheus gauge metrics from the response body:</p>
+  <ul>
+    <li><code>minio_node_disk_used_bytes</code> — total bytes used across all data drives</li>
+    <li><code>minio_node_disk_total_bytes</code> — total capacity across all data drives</li>
+  </ul>
+
+  <p>Usage percent is computed as <code>(used / total) * 100</code>. If this value is greater than or equal to <code>WriteStopThresholdPercent</code>, the write is blocked.</p>
+
+  <h3>Enabling Prometheus Metrics on MinIO</h3>
+  <p>The MinIO Prometheus metrics endpoint must be publicly accessible (no authentication) for the guard to function. This is configured via the <code>MINIO_PROMETHEUS_AUTH_TYPE: public</code> environment variable in Docker Compose:</p>
+<pre><code><span class="pa">environment</span>:
+  <span class="pa">MINIO_PROMETHEUS_AUTH_TYPE</span>: <span class="st">public</span></code></pre>
+
+  <div class="callout warn">
+    <strong>Network Accessibility Required</strong>
+    The Prometheus metrics endpoint must be accessible from the application container on port 9000. Ensure no firewall, security group, or network policy blocks TCP port 9000 between your application container and the MinIO container. If the guard cannot reach the metrics endpoint within the configured HTTP client timeout, it will either fail open (allow the write) or fail closed (block the write) depending on your error handling policy — check your <code>StorageCapacityException</code> handler.
+  </div>
+
+  <h3>Recommended Threshold Values</h3>
+  <table>
+    <thead><tr><th>Scenario</th><th>WriteStopThresholdPercent</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Local development</td>
+        <td><code>0</code></td>
+        <td>Disabled — no cap. Use only on developer machines.</td>
+      </tr>
+      <tr>
+        <td>Staging / QA</td>
+        <td><code>95</code></td>
+        <td>Permissive — allows maximum utilisation for testing.</td>
+      </tr>
+      <tr>
+        <td>Production (default)</td>
+        <td><code>90</code></td>
+        <td>Stops new writes with 10% headroom for compaction and temp files.</td>
+      </tr>
+      <tr>
+        <td>Production (conservative)</td>
+        <td><code>80</code></td>
+        <td>Use when MinIO volume cannot be easily expanded and downtime is critical to avoid.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Pairing with Prometheus Alerts</strong>
+    The capacity guard is a last-resort safety net — not a substitute for proactive monitoring. Pair it with Prometheus alert rules at 70% (warning), 85% (critical), and 95% (emergency) so ops teams have time to add capacity before the guard starts blocking writes. See the Resiliency &amp; Monitoring guide for alert rule examples.
+  </div>
+</main>
+</body>
+</html>
+

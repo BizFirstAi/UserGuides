@@ -1,0 +1,641 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Architecture Overview — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}
+.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+
+/* Dependency graph box */
+.dep-graph {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  overflow-x: auto;
+  margin: 16px 0;
+  font-size: 13px;
+  line-height: 1.8;
+  box-shadow: var(--shadow);
+  font-family: 'Cascadia Code','Fira Code','Consolas',monospace;
+}
+.dep-graph .dep-wi { color: #4ec9b0; font-weight: 700; }
+.dep-graph .dep-arrow { color: #6a9955; }
+.dep-graph .dep-note { color: #9cdcfe; }
+.dep-graph .dep-call { color: #dcdcaa; }
+
+/* Pipeline with branch */
+.pipeline-branch {
+  margin: 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.pipeline-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.pipeline-box {
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 100px;
+}
+.pipeline-box.alt { border-color: #2db87a; color: #1a7a50; }
+.pipeline-box.muted { border-color: var(--border); color: var(--text-muted); }
+.pipeline-arrow { color: var(--text-muted); font-size: 18px; padding: 0 8px; }
+.pipeline-decision {
+  background: #fff8e6;
+  border: 2px solid #f0a832;
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8a5a00;
+  min-width: 90px;
+  text-align: center;
+}
+.pipeline-split {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pipeline-outcome {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+/* SRP table */
+.srp-table th:nth-child(3) { width: 130px; }
+
+/* Section anchor offset */
+h2[id], h3[id] { scroll-margin-top: 60px; }
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>Tenant-Partitioned File Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html" class="active">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+
+<main>
+
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="breadcrumb"><i class="fa-solid fa-layer-group"></i> BizFirst InfraHub</div>
+    <h1>Architecture Overview</h1>
+    <div class="subtitle">A deep-dive into the four-layer storage foundation — content addressing, tenant isolation, capacity guarding, and the S3-backed object store that powers every file in the platform.</div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h4><i class="fa-solid fa-list"></i> On This Page</h4>
+    <ol>
+      <li><a href="#design-philosophy">Design Philosophy</a></li>
+      <li><a href="#four-work-items">The Four Work Items</a></li>
+      <li><a href="#dependency-graph">Project Dependency Graph</a></li>
+      <li><a href="#contract">The IObjectStorageProvider Contract</a></li>
+      <li><a href="#cid">CID — Content Identity</a></li>
+      <li><a href="#capacity-guard">Capacity Guard</a></li>
+      <li><a href="#srp">SRP Class Decomposition</a></li>
+      <li><a href="#key-strategy">Storage Key Strategy</a></li>
+      <li><a href="#dedup-flow">Deduplication Flow</a></li>
+    </ol>
+  </div>
+
+  <!-- Callout -->
+  <div class="callout info">
+    <strong><i class="fa-solid fa-circle-info"></i> Note</strong>
+    This page explains the internal architecture of InfraHub Storage — projects, interfaces, dependency wiring, and design decisions.
+    If you just want to store a file and move on, start with <a href="02-getting-started.html">Getting Started</a>.
+  </div>
+
+  <!-- Design Philosophy -->
+  <h2 id="design-philosophy">Design Philosophy</h2>
+
+  <p>
+    InfraHub Storage is built around four foundational decisions that govern every design choice in the codebase.
+    Understanding them makes the rest of the architecture self-evident.
+  </p>
+
+  <h3>Content-Addressable Identity (CID)</h3>
+  <p>
+    Every file is identified by its content, not by a caller-assigned name or a database-generated ID.
+    A <strong>CID</strong> (Content Identifier) is the SHA-256 hash of the file's raw bytes, rendered as a lowercase hex string.
+    This means:
+  </p>
+  <ul>
+    <li>Two files with identical content always share the same CID — deduplication is automatic and zero-cost.</li>
+    <li>You can verify integrity at any time by re-hashing the retrieved bytes and comparing to the CID.</li>
+    <li>CIDs are immutable: the content behind a CID never changes.</li>
+    <li>No database lookup is required to locate a file — the CID <em>is</em> the key.</li>
+  </ul>
+
+  <h3>Tenant Isolation at the Key Level</h3>
+  <p>
+    When multi-tenancy is enabled (<code>PrependTenantID=true</code>), every S3 object key is prefixed with
+    <code>tenant_{tenantID}/</code>. This gives strong logical isolation within a shared bucket:
+    one tenant's files are physically unreachable by another tenant's prefix, IAM bucket policies can be
+    scoped to the prefix, and per-tenant data export or purge is a single S3 prefix operation.
+    When single-tenant or testing mode is used (<code>PrependTenantID=false</code>), the prefix is omitted
+    and the CID is used directly.
+  </p>
+
+  <h3>Single Responsibility Split</h3>
+  <p>
+    The storage pipeline is split across three narrow classes, each owning exactly one concern:
+  </p>
+  <ul>
+    <li><code>ICidProvider</code> / <code>Sha256CidProvider</code> — compute the SHA-256 CID from bytes.</li>
+    <li><code>IStorageCapacityGuard</code> / <code>MinioCapacityGuard</code> — check disk capacity via Prometheus before every write.</li>
+    <li><code>S3ObjectStorageProvider</code> — orchestrate the store / retrieve / exists pipeline, delegating CID and capacity concerns to the two services above.</li>
+  </ul>
+  <p>
+    This decomposition means you can swap any piece in isolation — e.g. replace <code>MinioCapacityGuard</code>
+    with a no-op guard in tests, or replace <code>Sha256CidProvider</code> with a Blake3 provider — without
+    touching the orchestration logic.
+  </p>
+
+  <h3>Config-Only Backend Switch</h3>
+  <p>
+    Consumers depend only on <code>IObjectStorageProvider</code> from the domain project (WI-03), which has
+    <strong>zero</strong> external NuGet dependencies. Wiring to MinIO, AWS S3, or any S3-compatible backend
+    is done entirely in configuration — no code changes are required to point a deployment at a different
+    endpoint. This makes infrastructure migrations purely operational.
+  </p>
+
+  <h3>Write-Protect Before Overflow</h3>
+  <p>
+    Before writing any file, the capacity guard queries the MinIO Prometheus metrics endpoint and computes
+    current disk utilization. If utilization equals or exceeds <code>WriteStopThresholdPercent</code>, a
+    <code>StorageCapacityException</code> is thrown immediately, before any bytes are sent to S3. This
+    prevents a storage node from filling to 100% and entering a read-only emergency state.
+  </p>
+
+  <!-- Four Work Items -->
+  <h2 id="four-work-items">The Four Work Items</h2>
+
+  <p>
+    The InfraHub Storage feature is delivered across four .NET projects, each with a clearly scoped
+    responsibility. The table below summarises what lives in each project.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Work Item</th>
+        <th>Project</th>
+        <th>Key Types &amp; Contracts</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="tag">WI-01</span></td>
+        <td><code>BizFirst.Integration.S3.Domain</code></td>
+        <td>
+          <strong>S3Credential</strong> (ServiceURL, AccessKey, SecretKey, Region, ForcePathStyle) —
+          immutable credential record used by the S3 client factory.<br><br>
+          <strong>Result records:</strong>
+          <code>UploadObjectResult</code>, <code>DownloadObjectResult</code>, <code>ExistsObjectResult</code>,
+          <code>StreamObjectResult</code>, <code>CopyObjectResult</code>, <code>DeleteObjectResult</code>,
+          <code>GetManyObjectsResult</code>, and the bucket/folder variants
+          (<code>BucketExists</code>, <code>CreateBucketResult</code>, <code>ListFoldersResult</code>,
+          <code>ListFolderObjectsResult</code>, etc.).
+          All results carry a <code>Success</code> flag and an <code>ErrorMessage</code> so callers
+          never encounter raw S3 exceptions.
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag">WI-02</span></td>
+        <td><code>BizFirst.Integration.S3.Services</code></td>
+        <td>
+          <strong>S3ClientFactory</strong> — builds and caches an <code>IAmazonS3</code> client from an
+          <code>S3Credential</code>. Supports both path-style (MinIO) and virtual-hosted-style (AWS S3) URLs.<br><br>
+          <strong>IS3ObjectService</strong> — object-level operations; includes <code>DownloadStreamAsync</code>
+          (returns a live <code>Stream</code> without buffering the entire body in memory) and
+          <code>ExistsAsync</code> (HEAD request, no data transfer).<br><br>
+          <strong>IS3BucketService</strong> — bucket lifecycle: create, delete, list, check existence.<br><br>
+          <strong>IS3FolderService</strong> — folder (prefix) operations: list, delete by prefix, copy prefix.
+          Depends on WI-01 only.
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag">WI-03</span></td>
+        <td><code>BizFirst.Ai.InfraHub.Storage.Domain</code></td>
+        <td>
+          <strong>IObjectStorageProvider</strong> — the only interface consumers depend on; three methods:
+          <code>StoreAsync</code>, <code>GetStreamAsync</code>, <code>ExistsAsync</code>.<br><br>
+          <strong>StoreOptions</strong> — optional per-call overrides (e.g. <code>ForceOverwrite</code>,
+          <code>CustomMetadata</code>).<br><br>
+          <strong>StorageCapacityException</strong> — thrown when disk utilization exceeds the configured threshold.<br><br>
+          <em>This project has zero external dependencies. It can be referenced by any project without
+          pulling in S3 SDKs or infrastructure concerns.</em>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag">WI-04</span></td>
+        <td><code>BizFirst.Ai.InfraHub.Storage.S3.Services</code></td>
+        <td>
+          <strong>ICidProvider</strong> / <code>Sha256CidProvider</code> — computes SHA-256 CID from raw bytes.<br><br>
+          <strong>IStorageCapacityGuard</strong> / <code>MinioCapacityGuard</code> — reads the Prometheus
+          cluster metrics endpoint, computes utilization, and enforces the write-stop threshold.<br><br>
+          <strong>S3ObjectStorageProvider</strong> — the concrete implementation of
+          <code>IObjectStorageProvider</code>; orchestrates the full pipeline using WI-01, WI-02, WI-03,
+          and the AI session context for TenantID.<br><br>
+          <strong>FileStorageDependencyInjection</strong> — the <code>AddObjectStorage(IConfiguration)</code>
+          extension method that wires everything into the DI container. This is the only type consumers
+          call at startup.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Dependency Graph -->
+  <h2 id="dependency-graph">Project Dependency Graph</h2>
+
+  <p>
+    The dependency arrows flow in one direction only — from higher-level orchestration down to lower-level
+    contracts. Consumer projects never reference WI-04 directly; they only call
+    <code>AddObjectStorage()</code> once at startup and then depend on <code>IObjectStorageProvider</code>
+    from WI-03.
+  </p>
+
+  <div class="dep-graph">
+<span class="dep-wi">BizFirst.Integration.S3.Domain</span>  (WI-01)
+  <span class="dep-arrow">└──</span> <span class="dep-wi">BizFirst.Integration.S3.Services</span>  (WI-02)
+        <span class="dep-note">depends on: WI-01</span>
+
+<span class="dep-wi">BizFirst.Ai.InfraHub.Storage.Domain</span>  (WI-03)
+  <span class="dep-arrow">—</span> no external dependencies <span class="dep-arrow">—</span>
+
+<span class="dep-wi">BizFirst.Ai.InfraHub.Storage.S3.Services</span>  (WI-04)
+  <span class="dep-note">depends on: WI-01  (S3Credential, request/result records)</span>
+  <span class="dep-note">depends on: WI-02  (IS3ObjectService, S3ClientFactory)</span>
+  <span class="dep-note">depends on: WI-03  (IObjectStorageProvider, StoreOptions, StorageCapacityException)</span>
+  <span class="dep-note">depends on: BizFirst.Ai.AiSession.Domain  (IAiSessionContextAccessor → TenantID)</span>
+
+Consumer projects
+  <span class="dep-note">depend on: WI-03  (IObjectStorageProvider only)</span>
+  <span class="dep-call">call: services.AddObjectStorage(config)  ← from WI-04  (startup only)</span>
+  </div>
+
+  <div class="callout info">
+    <strong><i class="fa-solid fa-lightbulb"></i> Why does this structure matter?</strong>
+    By keeping the domain project (WI-03) free of external dependencies, any BizFirst service — including
+    lightweight utilities and library projects — can reference <code>IObjectStorageProvider</code> without
+    pulling in AWS SDK assemblies. The S3 implementation is an infrastructure detail that only enters the
+    process through DI at startup.
+  </div>
+
+  <!-- Contract -->
+  <h2 id="contract">The IObjectStorageProvider Contract</h2>
+
+  <p>
+    The entire InfraHub Storage surface area exposed to application code is just three methods.
+    Every consumer depends on this interface and nothing else from the storage layer.
+  </p>
+
+  <pre><code><span class="kw">public interface</span> <span class="ty">IObjectStorageProvider</span>
+{
+    <span class="cm">/// &lt;summary&gt;</span>
+    <span class="cm">/// Stores raw bytes and returns the stable CID for this content.</span>
+    <span class="cm">/// If identical bytes were stored before, the existing CID is returned immediately</span>
+    <span class="cm">/// (no second upload). Throws StorageCapacityException when disk is full.</span>
+    <span class="cm">/// &lt;/summary&gt;</span>
+    <span class="ty">Task</span>&lt;<span class="ty">string</span>&gt; <span class="fn">StoreAsync</span>(<span class="ty">byte</span>[] <span class="pa">content</span>, <span class="ty">string</span> <span class="pa">contentType</span>,
+        <span class="ty">StoreOptions</span>? <span class="pa">options</span> = <span class="kw">null</span>, <span class="ty">CancellationToken</span> <span class="pa">ct</span> = <span class="kw">default</span>);
+
+    <span class="cm">/// &lt;summary&gt;</span>
+    <span class="cm">/// Returns a live stream for the object identified by the given CID.</span>
+    <span class="cm">/// The caller is responsible for disposing the stream.</span>
+    <span class="cm">/// &lt;/summary&gt;</span>
+    <span class="ty">Task</span>&lt;<span class="ty">Stream</span>&gt; <span class="fn">GetStreamAsync</span>(<span class="ty">string</span> <span class="pa">cid</span>,
+        <span class="ty">CancellationToken</span> <span class="pa">ct</span> = <span class="kw">default</span>);
+
+    <span class="cm">/// &lt;summary&gt;</span>
+    <span class="cm">/// Returns true if the object identified by the given CID currently exists</span>
+    <span class="cm">/// in the bucket (HEAD request — no data transfer).</span>
+    <span class="cm">/// &lt;/summary&gt;</span>
+    <span class="ty">Task</span>&lt;<span class="ty">bool</span>&gt; <span class="fn">ExistsAsync</span>(<span class="ty">string</span> <span class="pa">cid</span>,
+        <span class="ty">CancellationToken</span> <span class="pa">ct</span> = <span class="kw">default</span>);
+}</code></pre>
+
+  <p>
+    The interface intentionally exposes streams rather than byte arrays on retrieval. This allows
+    large files (video, CAD drawings, archived datasets) to be forwarded directly to an HTTP response
+    stream or written to disk without ever materialising the entire file in memory.
+  </p>
+
+  <!-- CID -->
+  <h2 id="cid">CID — Content Identity</h2>
+
+  <p>
+    A CID is the SHA-256 hash of a file's raw bytes, encoded as a 64-character lowercase hexadecimal string.
+    It is computed by <code>Sha256CidProvider</code> using <code>SHA256.HashData(bytes)</code> and
+    <code>Convert.ToHexString(hash).ToLowerInvariant()</code>.
+  </p>
+
+  <h3>Properties</h3>
+  <ul>
+    <li><strong>Deterministic</strong> — the same bytes always produce the same CID, on any machine, at any time.</li>
+    <li><strong>Unique (collision-resistant)</strong> — SHA-256 has a collision resistance of 2<sup>128</sup> operations; practically infinite for file storage purposes.</li>
+    <li><strong>Self-verifying</strong> — to verify a downloaded file, re-hash the bytes and compare to the CID you requested.</li>
+    <li><strong>Immutable</strong> — if the content changes, the CID changes. A CID-addressed object is write-once.</li>
+  </ul>
+
+  <h3>Example</h3>
+  <pre><code><span class="cm">// Input: any byte array</span>
+<span class="ty">byte</span>[] <span class="pa">bytes</span> = <span class="ty">File</span>.<span class="fn">ReadAllBytes</span>(<span class="st">"invoice-2026-001.pdf"</span>);
+
+<span class="cm">// CID output (64-char lowercase hex)</span>
+<span class="st">"3a7f2e9b1c4d8f06a2e5b7d9c1f3e8a04b6c2d7e9f1a3b5c8d0e2f4a6b8c0d2e4"</span></code></pre>
+
+  <h3>Storage Key Format</h3>
+  <p>
+    The S3 object key is derived from the CID according to the <code>PrependTenantID</code> configuration setting:
+  </p>
+
+  <table>
+    <thead>
+      <tr><th>PrependTenantID</th><th>S3 Object Key</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>true</code></td>
+        <td><code>tenant_42/3a7f2e...d2e4</code></td>
+        <td>Multi-tenant SaaS deployments; per-tenant isolation, export, and IAM policies</td>
+      </tr>
+      <tr>
+        <td><code>false</code></td>
+        <td><code>3a7f2e...d2e4</code></td>
+        <td>Single-tenant deployments, development environments, or when a separate bucket per tenant is used</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    The TenantID is resolved at runtime from <code>IAiSessionContextAccessor.CurrentRequestSession.TenantID</code>
+    — the active session context set by the BizFirst platform request pipeline. No tenant ID is passed
+    explicitly by the caller; it flows in automatically through the ambient session context.
+  </p>
+
+  <!-- Capacity Guard -->
+  <h2 id="capacity-guard">Capacity Guard</h2>
+
+  <p>
+    The <code>MinioCapacityGuard</code> is a proactive safeguard against storage exhaustion. It is invoked
+    at the beginning of every <code>StoreAsync</code> call, before any bytes are transferred.
+  </p>
+
+  <h3>How It Works</h3>
+  <ol>
+    <li>
+      Sends an HTTP GET to the MinIO Prometheus endpoint:
+      <code>{Endpoint}/minio/v2/metrics/cluster</code>
+    </li>
+    <li>
+      Parses the Prometheus text format, summing all values for:
+      <ul>
+        <li><code>minio_node_disk_used_bytes</code> — total bytes currently in use across all nodes.</li>
+        <li><code>minio_node_disk_total_bytes</code> — total available bytes across all nodes.</li>
+      </ul>
+    </li>
+    <li>
+      Computes utilization: <code>usedBytes / totalBytes * 100</code>
+    </li>
+    <li>
+      If utilization &gt;= <code>WriteStopThresholdPercent</code>, throws <code>StorageCapacityException</code>
+      with a message that includes the current utilization percentage and the threshold.
+    </li>
+    <li>
+      If utilization is below the threshold, returns immediately and the write proceeds.
+    </li>
+  </ol>
+
+  <div class="callout warn">
+    <strong><i class="fa-solid fa-triangle-exclamation"></i> Prometheus Unavailability</strong>
+    If the Prometheus metrics endpoint is unreachable (network error, MinIO version without metrics support,
+    or the endpoint is behind a firewall), <code>MinioCapacityGuard</code> logs a warning at the
+    <code>Warning</code> log level and <strong>allows the write to proceed</strong>. This is a fail-open
+    posture: storage availability is preferred over false negatives from a monitoring endpoint.
+    Set <code>WriteStopThresholdPercent=0</code> to disable the guard entirely (the check is skipped
+    without any HTTP call).
+  </div>
+
+  <h3>Configuration</h3>
+  <table>
+    <thead>
+      <tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>WriteStopThresholdPercent</code></td>
+        <td><code>90.0</code></td>
+        <td>Disk utilization percentage at which writes are blocked. Set to <code>0</code> to disable.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- SRP Class Decomposition -->
+  <h2 id="srp">SRP Class Decomposition</h2>
+
+  <p>
+    The three concrete classes that make up the WI-04 service layer each own a single, narrow responsibility.
+    This table maps class to responsibility and DI lifetime.
+  </p>
+
+  <table class="srp-table">
+    <thead>
+      <tr>
+        <th>Class</th>
+        <th>Single Responsibility</th>
+        <th>DI Lifetime</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Sha256CidProvider</code></td>
+        <td>Compute a SHA-256 CID from a raw byte array. No I/O, no configuration.</td>
+        <td><span class="tag green">Singleton</span></td>
+        <td>Stateless; safe to share across all requests and threads. <code>SHA256.HashData</code> is thread-safe.</td>
+      </tr>
+      <tr>
+        <td><code>MinioCapacityGuard</code></td>
+        <td>Read the MinIO Prometheus metrics endpoint and enforce the write-stop threshold.</td>
+        <td><span class="tag orange">Scoped</span></td>
+        <td>Scoped so it participates in the same request lifetime as the session context accessor. Uses <code>IHttpClientFactory</code> internally.</td>
+      </tr>
+      <tr>
+        <td><code>S3ObjectStorageProvider</code></td>
+        <td>Orchestrate the store / retrieve / exists pipeline, delegating CID computation and capacity checking to the two services above.</td>
+        <td><span class="tag orange">Scoped</span></td>
+        <td>Depends on <code>IAiSessionContextAccessor</code> (scoped), <code>IS3ObjectService</code> (scoped), <code>ICidProvider</code> (singleton), and <code>IStorageCapacityGuard</code> (scoped).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Storage Key Strategy -->
+  <h2 id="key-strategy">Storage Key Strategy</h2>
+
+  <p>
+    The S3 object key strategy determines how files are organised inside the bucket. The choice is
+    controlled entirely by the <code>PrependTenantID</code> configuration flag.
+  </p>
+
+  <h3>PrependTenantID = true (Multi-Tenant Mode)</h3>
+  <p>
+    Each file is stored under the prefix <code>tenant_{tenantID}/</code> where <code>tenantID</code> is the
+    integer tenant identifier from the active session context. Example key:
+  </p>
+  <pre><code>tenant_42/3a7f2e9b1c4d8f06a2e5b7d9c1f3e8a04b6c2d7e9f1a3b5c8d0e2f4a6b8c0d2e4</code></pre>
+
+  <h3>PrependTenantID = false (Single-Tenant / Testing Mode)</h3>
+  <p>
+    The CID is used directly as the S3 key, with no prefix. Example key:
+  </p>
+  <pre><code>3a7f2e9b1c4d8f06a2e5b7d9c1f3e8a04b6c2d7e9f1a3b5c8d0e2f4a6b8c0d2e4</code></pre>
+
+  <h3>Why Tenant Prefixes?</h3>
+  <ul>
+    <li>
+      <strong>S3-level isolation for compliance</strong> — data sovereignty requirements can be
+      satisfied by restricting IAM/MinIO policies to <code>tenant_{tenantID}/*</code>. No application
+      code changes are needed to enforce the isolation boundary.
+    </li>
+    <li>
+      <strong>Easy per-tenant data export</strong> — a full tenant export is a single S3
+      <code>ListObjectsV2</code> call with the prefix, followed by a bulk download. No database
+      join or file manifest is required.
+    </li>
+    <li>
+      <strong>Zero-cost tenant purge</strong> — deleting all files for a tenant is one
+      <code>DeleteObjects</code> call with prefix-filtered keys.
+    </li>
+    <li>
+      <strong>Observability</strong> — storage usage per tenant can be derived directly from S3
+      prefix-level metrics, without a separate accounting database.
+    </li>
+  </ul>
+
+  <div class="callout info">
+    <strong><i class="fa-solid fa-circle-info"></i> Deduplication and Tenant Prefixes</strong>
+    Because different tenants use different prefixes, the same file content uploaded by tenant 42 and
+    tenant 99 will produce two separate S3 objects (even though the CID portion is identical).
+    Deduplication is scoped per-tenant, not globally. This is intentional: cross-tenant data sharing
+    via S3 key aliases would create an implicit coupling that violates tenant isolation guarantees.
+  </div>
+
+  <!-- Deduplication Flow -->
+  <h2 id="dedup-flow">Deduplication Flow</h2>
+
+  <p>
+    When <code>StoreAsync</code> is called, the following pipeline executes in sequence.
+    The deduplication short-circuit (the <code>ExistsAsync</code> check) means that storing the same
+    file a second time costs only a SHA-256 hash computation and a single S3 HEAD request — no data
+    is transferred.
+  </p>
+
+  <div class="pipeline-branch">
+    <div class="pipeline-row">
+      <div class="pipeline-box">Caller<br><small>StoreAsync(bytes)</small></div>
+      <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+      <div class="pipeline-box">Capacity Guard<br><small>Check disk %</small></div>
+      <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+      <div class="pipeline-box">Sha256CidProvider<br><small>Compute CID</small></div>
+      <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+      <div class="pipeline-box">ExistsAsync<br><small>HEAD request</small></div>
+      <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+      <div class="pipeline-decision">Exists?</div>
+    </div>
+    <div style="margin-left:20px;margin-top:8px;display:flex;flex-direction:column;gap:10px;">
+      <div class="pipeline-outcome">
+        <span style="font-size:12px;font-weight:700;color:#2db87a;min-width:90px;"><i class="fa-solid fa-check"></i> YES</span>
+        <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+        <div class="pipeline-box alt">Return CID<br><small>No upload</small></div>
+      </div>
+      <div class="pipeline-outcome">
+        <span style="font-size:12px;font-weight:700;color:#e05252;min-width:90px;"><i class="fa-solid fa-xmark"></i> NO</span>
+        <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+        <div class="pipeline-box">Upload to S3<br><small>PutObjectAsync</small></div>
+        <div class="pipeline-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+        <div class="pipeline-box alt">Return CID<br><small>New object</small></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Step-by-Step</h3>
+  <ol>
+    <li><strong>Capacity check</strong> — <code>MinioCapacityGuard.GuardAsync(ct)</code> queries Prometheus. If utilization &gt;= threshold, throws <code>StorageCapacityException</code> immediately. No further processing.</li>
+    <li><strong>CID computation</strong> — <code>Sha256CidProvider.Compute(bytes)</code> returns the 64-char hex CID. This is pure CPU work with no I/O.</li>
+    <li><strong>Key construction</strong> — the S3 key is assembled from the CID (and optional tenant prefix).</li>
+    <li><strong>Existence check</strong> — <code>IS3ObjectService.ExistsAsync(bucket, key)</code> issues an S3 HEAD request. This is a single round-trip with no body transfer.</li>
+    <li><strong>Short-circuit on duplicate</strong> — if the object already exists, the CID is returned to the caller immediately. The total cost is: one Prometheus HTTP call + one SHA-256 hash + one S3 HEAD. No upload bandwidth is used.</li>
+    <li><strong>Upload on new content</strong> — if the object does not exist, <code>IS3ObjectService.UploadAsync(bucket, key, bytes, contentType)</code> streams the bytes to S3. On success, the CID is returned.</li>
+  </ol>
+
+  <div class="callout warn">
+    <strong><i class="fa-solid fa-triangle-exclamation"></i> TOCTOU Note</strong>
+    There is a theoretical time-of-check / time-of-use race: two concurrent callers storing the same new
+    file may both pass the <code>ExistsAsync</code> check and both attempt an upload. S3 PUT is idempotent
+    for the same key and content, so the second upload simply overwrites with identical bytes. No data
+    corruption occurs; one upload is wasted. This race is extremely rare in practice and requires no
+    locking mechanism.
+  </div>
+
+  <div style="margin-top:48px;padding-top:20px;border-top:1px solid var(--border);font-size:13px;color:var(--text-muted);">
+    <strong>Next:</strong> <a href="02-getting-started.html">Getting Started — store your first file in 5 minutes</a>
+    &nbsp;·&nbsp;
+    <a href="03-setup.html">Setup &amp; Configuration</a>
+    &nbsp;·&nbsp;
+    <a href="11-configuration.html">Configuration Reference</a>
+  </div>
+
+</main>
+</body>
+</html>
+
