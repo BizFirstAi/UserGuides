@@ -47,42 +47,65 @@ TenantID=3: provider=smtp,    host=mail.company.local</code></pre><h2><i class="
   2,      -- ApiKeyRecord
   1
 );</code></pre><h2><i class="fa-solid fa-code-branch"></i> Code: Same API, Different Providers</h2><pre><code>// The same code works for all tenants!
-public async Task SendWelcomeEmail(int tenantID, string email)
+private readonly IEmailService _emailService;
+private readonly ITenantSettingsService _tenantSettingsService;
+
+public async Task SendWelcomeEmail(int tenantID, string email, CancellationToken ct)
 {
+    // Resolve credential name from tenant settings (defaults to "email-primary")
+    var credentialName = await _tenantSettingsService.GetAsync&lt;string&gt;(
+        tenantID,
+        "EmailCredentialName",
+        defaultValue: "email-primary",
+        ct);
+
     var result = await _emailService.SendAsync(
         tenantID: tenantID,
         to: email,
         subject: "Welcome",
         html: "&lt;p&gt;Welcome to our platform!&lt;/p&gt;",
-        credentialName: "email-primary",  -- Resolved per tenant
-        ct: CancellationToken.None);
+        credentialName: credentialName,  // Resolved per tenant from settings
+        ct: ct);
 
     return result.Success;
 }
 
 // Tenant 1 call: Uses Gmail
-SendWelcomeEmail(tenantID: 1, email: "user@example.com");
+SendWelcomeEmail(tenantID: 1, email: "user@example.com", CancellationToken.None);
+// ↓ Reads TenantSettings: Key='EmailCredentialName', TenantID=1 → "email-primary"
 // ↓ Looks up: AIExt_Credentials WHERE Name='email-primary' AND TenantID=1
 // ↓ Finds Gmail credential
 // ↓ Sends via Gmail
 
 // Tenant 2 call: Uses SES
-SendWelcomeEmail(tenantID: 2, email: "user@example.com");
+SendWelcomeEmail(tenantID: 2, email: "user@example.com", CancellationToken.None);
+// ↓ Reads TenantSettings: Key='EmailCredentialName', TenantID=2 → "email-primary"
 // ↓ Looks up: AIExt_Credentials WHERE Name='email-primary' AND TenantID=2
 // ↓ Finds SES credential
-// ↓ Sends via SES</code></pre><h2><i class="fa-solid fa-exclamation"></i> Multi-Credential Setup</h2><p>Each tenant can have multiple named credentials:</p><pre><code>-- Tenant 1 has two credentials
+// ↓ Sends via SES</code></pre><h2><i class="fa-solid fa-exclamation"></i> Multi-Credential Setup</h2><p>Each tenant can have multiple named credentials and configure which one to use:</p><pre><code>-- Tenant 1 credentials
 INSERT INTO AIExt_Credentials (Name, TenantID, ...)
 VALUES ('email-primary', 1, ...);      -- Main email (Gmail)
 
 INSERT INTO AIExt_Credentials (Name, TenantID, ...)
 VALUES ('email-alerts', 1, ...);       -- Alerts only (SMTP)
 
--- In code:
-SendWelcomeEmail(
-    tenantID: 1,
-    credentialName: "email-primary");  -- Uses Gmail
+-- Configure which credential to use for welcome emails
+INSERT INTO TenantSettings (TenantID, Key, Value)
+VALUES (1, 'EmailCredentialName', 'email-primary');
 
-SendAlert(
-    tenantID: 1,
-    credentialName: "email-alerts");   -- Uses SMTP</code></pre><h2><i class="fa-solid fa-shield"></i> Isolation Guarantees</h2><ul><li>✅ Each tenant's credentials encrypted separately</li><li>✅ Database index ensures fast per-tenant lookups</li><li>✅ No cross-tenant credential leakage possible</li><li>✅ Tenants can't access other tenants' credentials</li><li>✅ Each tenant can change provider independently</li></ul><h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2><ul><li><a href="08-first-time-config.html"><strong>First-Time Configuration</strong></a></li><li><a href="09-production-deployment.html"><strong>Production Deployment</strong></a></li><li><a href="10-switching-providers.html"><strong>Switching Providers</strong></a></li></ul></main></body>
+-- In code, TenantSettings controls which credential is used:
+public async Task SendWelcomeEmail(int tenantID, string email, CancellationToken ct)
+{
+    var credentialName = await _tenantSettingsService.GetAsync&lt;string&gt;(
+        tenantID, "EmailCredentialName", "email-primary", ct);
+    await _emailService.SendAsync(tenantID, email, subject, html, credentialName, ct);
+}
+
+public async Task SendAlert(int tenantID, string email, CancellationToken ct)
+{
+    // Can use a different credential if configured
+    var credentialName = await _tenantSettingsService.GetAsync&lt;string&gt;(
+        tenantID, "EmailAlertCredentialName", "email-alerts", ct);
+    await _emailService.SendAsync(tenantID, email, subject, html, credentialName, ct);
+}</code></pre><h2><i class="fa-solid fa-shield"></i> Isolation Guarantees</h2><ul><li>✅ Each tenant's credentials encrypted separately</li><li>✅ Database index ensures fast per-tenant lookups</li><li>✅ No cross-tenant credential leakage possible</li><li>✅ Tenants can't access other tenants' credentials</li><li>✅ Each tenant can change provider independently</li></ul><h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2><ul><li><a href="08-first-time-config.html"><strong>First-Time Configuration</strong></a></li><li><a href="09-production-deployment.html"><strong>Production Deployment</strong></a></li><li><a href="10-switching-providers.html"><strong>Switching Providers</strong></a></li></ul></main></body>
 </html>

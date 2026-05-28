@@ -10,25 +10,47 @@
 <body>
 <div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
 <nav class="sidebar"><div class="sidebar-brand">Email System<span>Multi-tenant, Multi-provider</span></div><div class="sidebar-section">Configuration</div><a href="06-credentials-design.html">Credentials & Security</a><a href="07-tenant-specific.html">Tenant-Specific Providers</a><a href="08-first-time-config.html">First-Time Configuration</a><div class="sidebar-section">Advanced Topics</div><a href="09-production-deployment.html">Production Deployment</a><a href="10-switching-providers.html" class="active">Switching Providers Mid-Production</a><a href="11-advanced-patterns.html">Advanced Dispatcher Patterns</a><a href="12-sample-json.html">Sample JSON Configurations</a><div class="sidebar-section">Navigation</div><a href="../">&#8592; All Guides</a><a href="../../">&#8592; Portal</a></nav>
-<main><div class="page-header"><div class="breadcrumb"><a href="index.html">Email System</a> / Switching Providers</div><h1>Switching Providers Mid-Production</h1><p class="subtitle">Change email providers without downtime. Instant failover, gradual migration, rollback.</p></div><h2><i class="fa-solid fa-shuffle"></i> Scenarios</h2><h3>Scenario 1: Emergency Failover</h3><p>Current provider (Gmail) is down. Switch to backup (SMTP) instantly:</p><pre><code>-- Disable failing credential
-UPDATE AIExt_Credentials SET Enabled=0 
-WHERE Name='email-primary' AND TenantID=1;
+<main><div class="page-header"><div class="breadcrumb"><a href="index.html">Email System</a> / Switching Providers</div><h1>Switching Providers Mid-Production</h1><p class="subtitle">Change email providers without downtime. Instant failover, gradual migration, rollback.</p></div><h2><i class="fa-solid fa-shuffle"></i> How It Works</h2><p>Credential names are configured per tenant in <code>TenantSettings</code>. When you switch providers, you disable/enable credentials with that name. No code changes needed.</p><h3>Scenario 1: Emergency Failover</h3><p>Current provider (Gmail) is down. Switch to backup (SMTP) instantly:</p><pre><code>-- Determine credential name from TenantSettings (or use default "email-primary")
+SELECT @credentialName = Value
+FROM TenantSettings
+WHERE TenantID=1 AND Key='EmailCredentialName';
+SET @credentialName = ISNULL(@credentialName, 'email-primary');
+
+-- Disable failing credential
+UPDATE AIExt_Credentials SET Enabled=0
+WHERE Name=@credentialName AND TenantID=1;
 
 -- Next email send automatically uses backup credential
--- Zero code changes needed!</code></pre><h3>Scenario 2: Gradual Migration</h3><p>Move from SMTP to SES over 7 days without downtime:</p><pre><code>-- Day 1: Create SES credential (disabled)
+-- Zero code changes needed!</code></pre><h3>Scenario 2: Gradual Migration</h3><p>Move from SMTP to SES over 7 days without downtime:</p><pre><code>-- Get configured credential name
+SELECT @credentialName = Value
+FROM TenantSettings
+WHERE TenantID=1 AND Key='EmailCredentialName';
+SET @credentialName = ISNULL(@credentialName, 'email-primary');
+
+-- Day 1: Create SES credential with same name (disabled)
 INSERT INTO AIExt_Credentials (Name, DisplayMetadata, EncryptedData, TenantID, Enabled)
-VALUES ('email-primary', '{provider:ses,...}', 0x..., 1, 0);
+VALUES (@credentialName, '{provider:ses,...}', 0x..., 1, 0);
 
 -- Days 2-6: Monitor, test
 -- Day 7: Enable SES, disable SMTP
-UPDATE AIExt_Credentials SET Enabled=0 WHERE Name='email-primary' AND provider=SMTP;
-UPDATE AIExt_Credentials SET Enabled=1 WHERE Name='email-primary' AND provider=SES;
+UPDATE AIExt_Credentials SET Enabled=0
+WHERE Name=@credentialName AND TenantID=1 AND DisplayMetadata LIKE '%smtp%';
+UPDATE AIExt_Credentials SET Enabled=1
+WHERE Name=@credentialName AND TenantID=1 AND DisplayMetadata LIKE '%ses%';
 
--- Application continues, no restarts!</code></pre><h3>Scenario 3: Rollback</h3><p>New provider having issues? Revert instantly:</p><pre><code>-- Disable problematic new provider
-UPDATE AIExt_Credentials SET Enabled=0 WHERE Name='email-primary' AND TenantID=1;
+-- Application continues, no restarts!</code></pre><h3>Scenario 3: Rollback</h3><p>New provider having issues? Revert instantly:</p><pre><code>-- Get configured credential name
+SELECT @credentialName = Value
+FROM TenantSettings
+WHERE TenantID=1 AND Key='EmailCredentialName';
+SET @credentialName = ISNULL(@credentialName, 'email-primary');
+
+-- Disable problematic provider
+UPDATE AIExt_Credentials SET Enabled=0
+WHERE Name=@credentialName AND TenantID=1 AND DisplayMetadata LIKE '%ses%';
 
 -- Re-enable previous provider
-UPDATE AIExt_Credentials SET Enabled=1 WHERE Name='email-backup' AND TenantID=1;
+UPDATE AIExt_Credentials SET Enabled=1
+WHERE Name=@credentialName AND TenantID=1 AND DisplayMetadata LIKE '%smtp%';
 
--- All new emails route to backup automatically</code></pre><h2><i class="fa-solid fa-check-circle"></i> Best Practices</h2><ul><li>✅ Always have backup credential ready</li><li>✅ Test new provider before enabling</li><li>✅ Monitor error rates during migration</li><li>✅ Keep old credential for rollback period</li><li>✅ Document switch timestamp for audit trail</li></ul><h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2><ul><li><a href="11-advanced-patterns.html"><strong>Advanced Patterns</strong></a></li></ul></main></body>
+-- All new emails route to previous provider automatically</code></pre><h2><i class="fa-solid fa-check-circle"></i> Best Practices</h2><ul><li>✅ Always have backup credential ready</li><li>✅ Test new provider before enabling</li><li>✅ Monitor error rates during migration</li><li>✅ Keep old credential for rollback period</li><li>✅ Document switch timestamp for audit trail</li></ul><h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2><ul><li><a href="11-advanced-patterns.html"><strong>Advanced Patterns</strong></a></li></ul></main></body>
 </html>

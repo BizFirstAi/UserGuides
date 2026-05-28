@@ -10,31 +10,47 @@
 <body>
 <div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
 <nav class="sidebar"><div class="sidebar-brand">Email System<span>Multi-tenant, Multi-provider</span></div><div class="sidebar-section">Getting Started</div><a href="index.html">Overview</a><a href="01-quickstart.html">Quick Start (5 min)</a><div class="sidebar-section">Providers</div><a href="02-bring-your-own.html">Bring Your Own Provider</a><a href="03-provider-smtp.html">SMTP Configuration</a><a href="04-provider-ses.html">AWS SES Setup</a><a href="05-provider-gmail.html">Gmail OAuth2</a><div class="sidebar-section">Configuration</div><a href="06-credentials-design.html">Credentials & Security</a><a href="07-tenant-specific.html">Tenant-Specific Providers</a><a href="08-first-time-config.html">First-Time Configuration</a><div class="sidebar-section">Advanced Topics</div><a href="09-production-deployment.html" class="active">Production Deployment</a><a href="10-switching-providers.html">Switching Providers Mid-Production</a><a href="11-advanced-patterns.html">Advanced Dispatcher Patterns</a><a href="12-sample-json.html">Sample JSON Configurations</a><div class="sidebar-section">Roadmap & Community</div><a href="13-future-providers.html">Future Providers</a><a href="14-request-provider.html">Request New Provider</a><div class="sidebar-section">Navigation</div><a href="../">&#8592; All Guides</a><a href="../../">&#8592; Portal</a></nav>
-<main><div class="page-header"><div class="breadcrumb"><a href="../../">Portal</a> / <a href="../">WebSites</a> / <a href="index.html">Email System</a> / Production</div><h1>Production Deployment</h1><p class="subtitle">Multi-tenancy, failover, monitoring, high availability. Go live safely.</p></div><h2><i class="fa-solid fa-rocket"></i> Pre-Production Checklist</h2><ul><li>☐ All email services registered in DI</li><li>☐ Credentials encrypted with production KeyVersion</li><li>☐ Database indexes created (<code>IX_AIExt_Credentials_Name_TenantID</code>)</li><li>☐ Load testing completed (5k+ emails)</li><li>☐ Error logging configured</li><li>☐ Monitoring/alerts set up</li><li>☐ Rollback plan documented</li></ul><h2><i class="fa-solid fa-layer-group"></i> HA Configuration</h2><h3>Multi-Provider Failover</h3><pre><code>-- Tenant has two credentials: primary + backup
-INSERT INTO AIExt_Credentials (Name, ...) 
-VALUES ('email-primary', ...);   -- Gmail
+<main><div class="page-header"><div class="breadcrumb"><a href="../../">Portal</a> / <a href="../">WebSites</a> / <a href="index.html">Email System</a> / Production</div><h1>Production Deployment</h1><p class="subtitle">Multi-tenancy, failover, monitoring, high availability. Go live safely.</p></div><h2><i class="fa-solid fa-rocket"></i> Pre-Production Checklist</h2><ul><li>☐ All email services registered in DI</li><li>☐ Credentials encrypted with production KeyVersion</li><li>☐ Database indexes created (<code>IX_AIExt_Credentials_Name_TenantID</code>)</li><li>☐ Load testing completed (5k+ emails)</li><li>☐ Error logging configured</li><li>☐ Monitoring/alerts set up</li><li>☐ Rollback plan documented</li></ul><h2><i class="fa-solid fa-layer-group"></i> HA Configuration</h2><h3>Multi-Provider Failover</h3><pre><code>-- Tenant has two credentials with same name (one enabled, one disabled for failover)
+-- TenantSettings configures which credential name to use
+INSERT INTO TenantSettings (TenantID, Key, Value)
+VALUES (1, 'EmailCredentialName', 'email-primary');
 
-INSERT INTO AIExt_Credentials (Name, ...)
-VALUES ('email-backup', ...);    -- SMTP
+-- Two credentials with same name:
+INSERT INTO AIExt_Credentials (Name, ..., Enabled)
+VALUES ('email-primary', ..., 1);   -- Gmail (enabled)
 
-// In code:
-var result = await _emailService.SendAsync(..., "email-primary", ...);
-if (!result.Success)
-{
-    result = await _emailService.SendAsync(..., "email-backup", ...);
-}</code></pre><h2><i class="fa-solid fa-database"></i> Database Performance</h2><p>Index on credential lookups ensures &lt;10ms response time:</p><pre><code>CREATE NONCLUSTERED INDEX IX_AIExt_Credentials_Name_TenantID
+INSERT INTO AIExt_Credentials (Name, ..., Enabled)
+VALUES ('email-primary', ..., 0);   -- SMTP (disabled, backup)
+
+// In code: EmailService automatically tries all enabled credentials with that name
+var credentialName = await _tenantSettingsService.GetAsync&lt;string&gt;(
+    tenantID: 1, "EmailCredentialName", "email-primary", ct);
+
+var result = await _emailService.SendAsync(
+    tenantID: 1,
+    to: to,
+    credentialName: credentialName,
+    ...);
+// If primary fails, EmailService tries backup automatically (if enabled)</code></pre><h2><i class="fa-solid fa-database"></i> Database Performance</h2><p>Index on credential lookups ensures &lt;10ms response time:</p><pre><code>CREATE NONCLUSTERED INDEX IX_AIExt_Credentials_Name_TenantID
 ON AIExt_Credentials (Name ASC, TenantID ASC)
 WHERE Deleted = 0
-INCLUDE (CredentialID, DisplayMetadata, EncryptedData, ...)</code></pre><h2><i class="fa-solid fa-chart-line"></i> Monitoring</h2><p>Track these metrics:</p><ul><li><strong>Email send rate:</strong> emails/second</li><li><strong>Success rate:</strong> % successful sends</li><li><strong>Error rate:</strong> % failed sends</li><li><strong>Response time:</strong> p50, p95, p99 latency</li><li><strong>Queue depth:</strong> pending emails</li></ul><h2><i class="fa-solid fa-triangle-exclamation"></i> Disaster Recovery</h2><h3>Provider Outage</h3><p>Switch provider instantly:</p><pre><code>-- Current credential fails
-UPDATE AIExt_Credentials 
-SET Enabled = 0 
-WHERE Name='email-primary' AND TenantID=1;
+INCLUDE (CredentialID, DisplayMetadata, EncryptedData, ...)</code></pre><h2><i class="fa-solid fa-chart-line"></i> Monitoring</h2><p>Track these metrics:</p><ul><li><strong>Email send rate:</strong> emails/second</li><li><strong>Success rate:</strong> % successful sends</li><li><strong>Error rate:</strong> % failed sends</li><li><strong>Response time:</strong> p50, p95, p99 latency</li><li><strong>Queue depth:</strong> pending emails</li></ul><h2><i class="fa-solid fa-triangle-exclamation"></i> Disaster Recovery</h2><h3>Provider Outage</h3><p>Switch provider instantly by disabling the failing credential:</p><pre><code>-- Get configured credential name from TenantSettings
+DECLARE @credentialName NVARCHAR(100);
+SELECT @credentialName = Value
+FROM TenantSettings
+WHERE TenantID=1 AND Key='EmailCredentialName';
+SET @credentialName = ISNULL(@credentialName, 'email-primary');
 
--- Activate backup
-UPDATE AIExt_Credentials 
-SET Enabled = 1 
-WHERE Name='email-backup' AND TenantID=1;
+-- Disable the failing credential
+UPDATE AIExt_Credentials
+SET Enabled = 0
+WHERE Name=@credentialName AND TenantID=1 AND [condition to identify failing provider];
 
--- Restart app or wait for next request
-// Application automatically uses enabled credential</code></pre><h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2><ul><li><a href="10-switching-providers.html"><strong>Switching Providers</strong></a></li><li><a href="11-advanced-patterns.html"><strong>Advanced Patterns</strong></a></li></ul></main></body>
+-- Activate backup (if another credential exists with same name)
+UPDATE AIExt_Credentials
+SET Enabled = 1
+WHERE Name=@credentialName AND TenantID=1 AND [condition to identify backup];
+
+-- Application automatically uses next enabled credential
+// Next email send will try available enabled credentials</code></pre><h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2><ul><li><a href="10-switching-providers.html"><strong>Switching Providers</strong></a></li><li><a href="11-advanced-patterns.html"><strong>Advanced Patterns</strong></a></li></ul></main></body>
 </html>

@@ -132,31 +132,43 @@ nav.sidebar{top:40px;height:calc(100vh - 40px);}
   </div>
 
   <h3>Step 3: Call the Email Service from C#</h3>
-  <pre><code>// Inject IEmailService in your service
+  <pre><code>// Inject dependencies
 private readonly IEmailService _emailService;
+private readonly ITenantSettingsService _tenantSettingsService;
 
-public YourService(IEmailService emailService)
+public YourService(IEmailService emailService, ITenantSettingsService tenantSettingsService)
 {
     _emailService = emailService;
+    _tenantSettingsService = tenantSettingsService;
 }
 
-// Send an email
-var result = await _emailService.SendAsync(
-    tenantID: 1,
-    to: "user@example.com",
-    subject: "Welcome to BizFirst",
-    html: "&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;This is a test email.&lt;/p&gt;",
-    credentialName: "email-primary",
-    ct: cancellationToken
-);
+// Send an email (credential name resolved from TenantSettings)
+public async Task SendWelcomeEmail(int tenantID, string to, CancellationToken ct)
+{
+    // Get configured credential name from TenantSettings (defaults to "email-primary")
+    var credentialName = await _tenantSettingsService.GetAsync&lt;string&gt;(
+        tenantID,
+        "EmailCredentialName",
+        defaultValue: "email-primary",
+        ct);
 
-if (result.Success)
-{
-    Console.WriteLine($"Email sent! Message ID: {result.MessageID}");
-}
-else
-{
-    Console.WriteLine($"Failed: {result.ErrorMessage}");
+    var result = await _emailService.SendAsync(
+        tenantID: tenantID,
+        to: to,
+        subject: "Welcome to BizFirst",
+        html: "&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;This is a test email.&lt;/p&gt;",
+        credentialName: credentialName,  // Resolved from tenant settings
+        ct: ct
+    );
+
+    if (result.Success)
+    {
+        Console.WriteLine($"Email sent! Message ID: {result.MessageID}");
+    }
+    else
+    {
+        Console.WriteLine($"Failed: {result.ErrorMessage}");
+    }
 }</code></pre>
 
   <h3>Step 4: Verify Dependency Injection</h3>
@@ -178,10 +190,15 @@ services.AddGmailEmailDispatcher();   // Gmail OAuth2 provider</code></pre>
   <h2><i class="fa-solid fa-lightbulb"></i> Common Issues & Solutions</h2>
 
   <h3>Issue: "Credential not found"</h3>
-  <p><strong>Cause:</strong> Named credential "email-primary" doesn't exist in database for this tenant.</p>
-  <p><strong>Solution:</strong> Verify credential exists:</p>
-  <pre><code>SELECT * FROM AIExt_Credentials
-WHERE Name='email-primary' AND TenantID=1 AND Deleted=0;</code></pre>
+  <p><strong>Cause:</strong> Named credential configured in TenantSettings (or the default "email-primary") doesn't exist for this tenant.</p>
+  <p><strong>Solution:</strong>
+    <ol>
+      <li>Check what credential name is configured: <code>SELECT * FROM TenantSettings WHERE Key='EmailCredentialName' AND TenantID=1;</code></li>
+      <li>If not found, system defaults to "email-primary"</li>
+      <li>Verify that credential exists: <code>SELECT * FROM AIExt_Credentials WHERE Name=@credentialName AND TenantID=1 AND Deleted=0 AND Enabled=1;</code></li>
+      <li>If missing, insert it following Step 2 above</li>
+    </ol>
+  </p>
 
   <h3>Issue: "SMTP authentication failed"</h3>
   <p><strong>Cause:</strong> Username/password incorrect or SMTP server rejects credentials.</p>
