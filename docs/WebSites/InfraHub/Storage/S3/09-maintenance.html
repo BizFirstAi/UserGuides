@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maintenance — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>S3 / MinIO Object Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html" class="active">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> / <a href="../../" style="color:inherit;text-decoration:none;">InfraHub</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Storage S3</a> / Maintenance</div>
+    <h1>Maintenance</h1>
+    <p class="subtitle">Day-to-day operations for InfraHub Storage — capacity checks, backup verification, MinIO console, log review, and routine housekeeping.</p>
+  </div>
+
+  <div class="toc">
+    <h4>On This Page</h4>
+    <ol>
+      <li><a href="#daily-checklist">Daily Checklist</a></li>
+      <li><a href="#weekly-checklist">Weekly Checklist</a></li>
+      <li><a href="#capacity-management">Capacity Management</a></li>
+      <li><a href="#backup-verification">Backup Verification</a></li>
+      <li><a href="#minio-console">MinIO Console</a></li>
+      <li><a href="#log-review">Log Review</a></li>
+      <li><a href="#minio-upgrades">MinIO Upgrades</a></li>
+      <li><a href="#key-rotation">Access Key Rotation</a></li>
+    </ol>
+  </div>
+
+  <h2 id="daily-checklist">Daily Checklist</h2>
+  <table>
+    <thead><tr><th>Check</th><th>Command / Action</th><th>Pass Condition</th></tr></thead>
+    <tbody>
+      <tr><td>MinIO container running</td><td><code>docker ps | grep bizfirst-minio</code></td><td>Status = Up</td></tr>
+      <tr><td>Health endpoint responds</td><td><code>curl -f http://minio:9000/minio/health/live</code></td><td>HTTP 200</td></tr>
+      <tr><td>Disk usage below 80%</td><td>Grafana dashboard or <code>mc admin info local</code></td><td>&lt; 80% used</td></tr>
+      <tr><td>Backup ran last night</td><td>Check backup container logs or Loki alert</td><td>"Backup completed" in logs</td></tr>
+      <tr><td>No capacity exceptions in app logs</td><td>Search Loki for <code>StorageCapacityException</code></td><td>Zero occurrences</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="weekly-checklist">Weekly Checklist</h2>
+  <table>
+    <thead><tr><th>Check</th><th>Command / Action</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>List backup snapshots</td><td><code>docker exec bizfirst-backup restic snapshots</code></td><td>Confirm 7 daily snapshots exist</td></tr>
+      <tr><td>Verify backup integrity</td><td><code>docker exec bizfirst-backup restic check</code></td><td>Detect pack file corruption</td></tr>
+      <tr><td>Review lifecycle rule status</td><td><code>mc ilm ls local/bizfirst-files</code></td><td>Confirm rules are still Enabled</td></tr>
+      <tr><td>Review error rate trend</td><td>Grafana — S3 error rate panel</td><td>Detect gradual degradation</td></tr>
+      <tr><td>Check disk growth rate</td><td>Grafana — Disk Used GB trend over 7 days</td><td>Project time to 80% threshold</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="capacity-management">Capacity Management</h2>
+
+  <h3>Check Current Disk Usage</h3>
+  <pre><code># Summary via MinIO admin
+mc admin info local
+
+# Per-bucket usage
+mc du local/bizfirst-files
+
+# Per-prefix usage (top-level tenant directories)
+mc du local/bizfirst-files --depth 1</code></pre>
+
+  <h3>Identify Large or Unexpected Objects</h3>
+  <pre><code># List objects sorted by size (largest first)
+mc find local/bizfirst-files --larger 50MiB | sort
+
+# Count objects per tenant prefix
+mc ls local/bizfirst-files --recursive | grep "tenant_" | awk '{print $5}' | \
+  sed 's|/.*||' | sort | uniq -c | sort -rn</code></pre>
+
+  <h3>Trigger Lifecycle Processing Manually</h3>
+  <pre><code># Force lifecycle rule evaluation (MinIO 2023+)
+mc admin lifecycle start local/bizfirst-files</code></pre>
+
+  <h3>Expanding Storage Capacity</h3>
+  <div class="steps">
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Stop MinIO</h3><pre><code>docker stop bizfirst-minio</code></pre></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Resize the Docker volume or attach a larger disk</h3><p>On Linux, extend the underlying LVM volume or attach a new disk and mount it. Update docker-compose.yml volume mapping if needed.</p></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Restart MinIO</h3><pre><code>docker start bizfirst-minio</code></pre></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Verify new capacity</h3><pre><code>mc admin info local</code></pre></div></div>
+  </div>
+
+  <h2 id="backup-verification">Backup Verification</h2>
+  <h3>List Snapshots</h3>
+  <pre><code>docker exec bizfirst-backup restic snapshots --tag bizfirst-storage</code></pre>
+
+  <h3>Integrity Check (fast)</h3>
+  <pre><code>docker exec bizfirst-backup restic check</code></pre>
+
+  <h3>Integrity Check with Data Sampling (thorough — run monthly)</h3>
+  <pre><code>docker exec bizfirst-backup restic check --read-data-subset=20%</code></pre>
+
+  <h3>Test Restore to Temporary Directory</h3>
+  <pre><code># Restore latest snapshot to /tmp/test-restore (does not affect live data)
+docker exec bizfirst-backup restic restore latest \
+  --target /tmp/test-restore \
+  --tag bizfirst-storage
+
+# Confirm files are present
+ls /tmp/test-restore/data/
+
+# Clean up
+rm -rf /tmp/test-restore</code></pre>
+
+  <h2 id="minio-console">MinIO Console</h2>
+  <p>The MinIO web console is available at <code>http://minio:9001</code> (or <code>http://localhost:9001</code> in local dev). Log in with the <code>MINIO_ROOT_USER</code> / <code>MINIO_ROOT_PASSWORD</code> credentials.</p>
+  <table>
+    <thead><tr><th>Console Section</th><th>Use for</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Buckets</strong></td><td>View bucket list, object counts, storage used</td></tr>
+      <tr><td><strong>Buckets → Browse</strong></td><td>Inspect individual objects, view metadata, download files</td></tr>
+      <tr><td><strong>Buckets → Lifecycle</strong></td><td>View and edit lifecycle rules without using mc</td></tr>
+      <tr><td><strong>Monitoring</strong></td><td>Real-time metrics — disk usage, request rate, error rate</td></tr>
+      <tr><td><strong>Identity → Users</strong></td><td>Create and manage access keys for the application</td></tr>
+      <tr><td><strong>Identity → Policies</strong></td><td>Configure IAM-style bucket access policies</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <strong>Console access in production</strong>
+    Restrict the MinIO console port (9001) to internal networks only. Do not expose it on a public IP. Use a VPN or bastion host for remote access.
+  </div>
+
+  <h2 id="log-review">Log Review</h2>
+  <h3>Application Logs — Key Patterns to Monitor</h3>
+  <table>
+    <thead><tr><th>Log Message</th><th>Source</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><code>Disk capacity check failed — write proceeding without guard</code></td><td>MinioCapacityGuard</td><td>Prometheus endpoint unreachable — check network</td></tr>
+      <tr><td><code>Write rejected — disk at X%</code></td><td>MinioCapacityGuard</td><td>Disk at threshold — immediate capacity action</td></tr>
+      <tr><td><code>[S3ObjectService.Upload] AWS Error</code></td><td>S3ObjectService</td><td>S3 API error — check credentials and bucket name</td></tr>
+      <tr><td><code>[S3ObjectService.Exists] AWS Error</code></td><td>S3ObjectService</td><td>Connectivity issue — check MinIO container health</td></tr>
+    </tbody>
+  </table>
+
+  <h3>MinIO Container Logs</h3>
+  <pre><code># Last 100 lines
+docker logs bizfirst-minio --tail 100
+
+# Follow in real-time
+docker logs bizfirst-minio -f
+
+# Filter for errors
+docker logs bizfirst-minio 2>&1 | grep -i error</code></pre>
+
+  <h3>Backup Container Logs</h3>
+  <pre><code># Check last backup run
+docker logs bizfirst-backup --tail 50</code></pre>
+
+  <h2 id="minio-upgrades">MinIO Upgrades</h2>
+  <div class="callout warn">
+    <strong>Always test upgrades in a staging environment first</strong>
+    MinIO releases can include breaking changes to the metrics API or behaviour. Verify that the capacity guard and backup scripts continue to work after an upgrade.
+  </div>
+  <div class="steps">
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Take a backup snapshot before upgrading</h3><pre><code>docker exec bizfirst-backup restic backup /data --tag pre-upgrade</code></pre></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Pull the new MinIO image</h3><pre><code>docker pull minio/minio:RELEASE.YYYY-MM-DD...</code></pre></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Stop and recreate the container</h3><pre><code>docker compose up -d --no-deps minio</code></pre></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Verify health and metrics</h3><pre><code>curl -f http://minio:9000/minio/health/live
+curl http://minio:9000/minio/v2/metrics/cluster | grep minio_node_disk</code></pre></div></div>
+  </div>
+
+  <h2 id="key-rotation">Access Key Rotation</h2>
+  <p>Rotate MinIO access keys periodically or after a suspected credential compromise.</p>
+  <div class="steps">
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Create new access key in MinIO Console</h3><p>Navigate to <strong>Identity → Users → serviceaccount → Create Access Key</strong>. Copy the new key ID and secret.</p></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Update environment variables</h3><p>Update <code>MINIO_ACCESS_KEY</code> / <code>MINIO_SECRET_KEY</code> in your secret store (Kubernetes Secret, Docker .env, Vault).</p></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Restart the application</h3><p>The new credentials are picked up on the next container restart (FileStorageSettings is bound at startup).</p></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Delete the old access key</h3><p>In MinIO Console, delete the old key to prevent its further use.</p></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Update backup container</h3><p>Update <code>B2_APPLICATION_KEY_ID</code> / <code>B2_APPLICATION_KEY</code> in the backup container environment if Backblaze B2 keys were also rotated.</p></div></div>
+  </div>
+</main>
+</body>
+</html>

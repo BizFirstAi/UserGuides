@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Resiliency &amp; Monitoring — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>S3 / MinIO Object Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html" class="active">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> / <a href="../../" style="color:inherit;text-decoration:none;">InfraHub</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Storage S3</a> / Resiliency &amp; Monitoring</div>
+    <h1>Resiliency &amp; Monitoring</h1>
+    <p class="subtitle">Prometheus metrics, Grafana dashboards, disk capacity alert thresholds, and incident response runbooks.</p>
+  </div>
+
+  <div class="toc">
+    <h4>On This Page</h4>
+    <ol>
+      <li><a href="#capacity-guard">Application-Level Capacity Guard</a></li>
+      <li><a href="#prometheus-metrics">Prometheus Metrics</a></li>
+      <li><a href="#alert-thresholds">Alert Thresholds</a></li>
+      <li><a href="#prometheus-alert-rules">Prometheus Alert Rules</a></li>
+      <li><a href="#grafana-dashboard">Grafana Dashboard</a></li>
+      <li><a href="#health-endpoints">Health Endpoints</a></li>
+      <li><a href="#incident-runbooks">Incident Runbooks</a></li>
+      <li><a href="#disaster-recovery">Disaster Recovery Targets</a></li>
+    </ol>
+  </div>
+
+  <h2 id="capacity-guard">Application-Level Capacity Guard</h2>
+  <p><code>MinioCapacityGuard</code> is the first line of defence. Before every write, it reads the MinIO Prometheus metrics endpoint, computes disk usage percentage, and throws <code>StorageCapacityException</code> (HTTP 507) if usage meets or exceeds the configured threshold.</p>
+  <table>
+    <thead><tr><th>Setting</th><th>Default</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td><code>WriteStopThresholdPercent</code></td><td><code>90.0</code></td><td>Block all writes at or above this percentage</td></tr>
+      <tr><td><code>WriteStopThresholdPercent = 0</code></td><td>—</td><td>Disable the guard entirely (useful for local dev)</td></tr>
+    </tbody>
+  </table>
+  <div class="callout info">
+    <strong>Fail-open design</strong>
+    If the Prometheus endpoint is unreachable (network partition, MinIO restart), the guard logs a warning and allows the write to proceed. Storage availability is prioritised over capacity enforcement in degraded states.
+  </div>
+
+  <h2 id="prometheus-metrics">Prometheus Metrics</h2>
+  <p>MinIO exposes a Prometheus-compatible metrics endpoint at <code>{Endpoint}/minio/v2/metrics/cluster</code>. The capacity guard reads two metrics:</p>
+  <table>
+    <thead><tr><th>Metric</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>minio_node_disk_used_bytes</code></td><td>Total bytes currently used across all disks</td></tr>
+      <tr><td><code>minio_node_disk_total_bytes</code></td><td>Total disk capacity across all disks</td></tr>
+      <tr><td><code>minio_bucket_objects_count</code></td><td>Object count per bucket (useful for monitoring growth)</td></tr>
+      <tr><td><code>minio_bucket_usage_total_bytes</code></td><td>Actual bytes stored per bucket</td></tr>
+      <tr><td><code>minio_s3_requests_total</code></td><td>Total S3 API request count by type (GET, PUT, DELETE)</td></tr>
+      <tr><td><code>minio_s3_errors_total</code></td><td>Total API errors — useful for detecting connectivity issues</td></tr>
+    </tbody>
+  </table>
+  <p>Enable public Prometheus access in your MinIO Docker configuration:</p>
+  <pre><code>environment:
+  MINIO_PROMETHEUS_AUTH_TYPE: public</code></pre>
+
+  <h2 id="alert-thresholds">Alert Thresholds</h2>
+  <p>Three alert levels are defined for disk usage. Each requires a different response:</p>
+  <table>
+    <thead><tr><th>Level</th><th>Threshold</th><th>Severity</th><th>Required Action</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag green">Info</span></td><td>≥ 70%</td><td>Warning</td><td>Review storage growth rate. Plan capacity expansion within 30 days.</td></tr>
+      <tr><td><span class="tag orange">Warn</span></td><td>≥ 85%</td><td>High</td><td>Immediate capacity review. Expand or archive within 7 days.</td></tr>
+      <tr><td><span class="tag red">Critical</span></td><td>≥ 95%</td><td>Critical</td><td>Emergency — application writes blocked at 90%. Act immediately.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="prometheus-alert-rules">Prometheus Alert Rules</h2>
+  <pre><code>groups:
+  - name: bizfirst-storage
+    rules:
+
+      - alert: StorageDiskHigh
+        expr: |
+          sum(minio_node_disk_used_bytes) /
+          sum(minio_node_disk_total_bytes) * 100 >= 70
+        for: 5m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "MinIO disk usage above 70%"
+          description: "Current usage: {{ $value | humanizePercentage }}"
+
+      - alert: StorageDiskCritical
+        expr: |
+          sum(minio_node_disk_used_bytes) /
+          sum(minio_node_disk_total_bytes) * 100 >= 85
+        for: 2m
+        labels:
+          severity: high
+          team: infra
+        annotations:
+          summary: "MinIO disk usage above 85% — action required"
+          description: "Current usage: {{ $value | humanizePercentage }}"
+
+      - alert: StorageDiskEmergency
+        expr: |
+          sum(minio_node_disk_used_bytes) /
+          sum(minio_node_disk_total_bytes) * 100 >= 95
+        for: 1m
+        labels:
+          severity: critical
+          team: infra
+        annotations:
+          summary: "MinIO disk at 95% — writes will stop at 90%"
+          description: "Current usage: {{ $value | humanizePercentage }}"
+
+      - alert: StorageHighErrorRate
+        expr: rate(minio_s3_errors_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MinIO S3 error rate elevated"
+
+      - alert: StorageBackupMissed
+        expr: time() - bizfirst_last_backup_timestamp > 90000
+        for: 0m
+        labels:
+          severity: high
+        annotations:
+          summary: "Storage backup has not run in over 25 hours"</code></pre>
+
+  <h2 id="grafana-dashboard">Grafana Dashboard</h2>
+  <p>Import the following panel configuration into Grafana (connected to your Prometheus data source):</p>
+  <table>
+    <thead><tr><th>Panel</th><th>Query</th><th>Visualization</th></tr></thead>
+    <tbody>
+      <tr><td>Disk Usage %</td><td><code>sum(minio_node_disk_used_bytes)/sum(minio_node_disk_total_bytes)*100</code></td><td>Gauge (thresholds at 70/85/95)</td></tr>
+      <tr><td>Disk Used (GB)</td><td><code>sum(minio_node_disk_used_bytes)/1e9</code></td><td>Stat</td></tr>
+      <tr><td>Disk Free (GB)</td><td><code>sum(minio_node_disk_free_bytes)/1e9</code></td><td>Stat</td></tr>
+      <tr><td>Objects per Bucket</td><td><code>minio_bucket_objects_count</code></td><td>Bar chart</td></tr>
+      <tr><td>Request Rate</td><td><code>rate(minio_s3_requests_total[5m])</code></td><td>Time series</td></tr>
+      <tr><td>Error Rate</td><td><code>rate(minio_s3_errors_total[5m])</code></td><td>Time series</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="health-endpoints">Health Endpoints</h2>
+  <table>
+    <thead><tr><th>Endpoint</th><th>Purpose</th><th>Expected Response</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /minio/health/live</code></td><td>Liveness — MinIO process is running</td><td>HTTP 200</td></tr>
+      <tr><td><code>GET /minio/health/ready</code></td><td>Readiness — MinIO is ready to serve requests</td><td>HTTP 200</td></tr>
+      <tr><td><code>GET /minio/v2/metrics/cluster</code></td><td>Prometheus metrics scrape endpoint</td><td>HTTP 200 + text/plain metrics</td></tr>
+    </tbody>
+  </table>
+  <pre><code># Quick health check from the application container
+curl -f http://minio:9000/minio/health/live && echo "MinIO is healthy"</code></pre>
+
+  <h2 id="incident-runbooks">Incident Runbooks</h2>
+
+  <h3>Runbook 1 — Disk at 85–90% (StorageDiskCritical alert)</h3>
+  <div class="steps">
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Check current usage</h3><pre><code>mc admin info local</code></pre></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Identify largest buckets/prefixes</h3><pre><code>mc du local/bizfirst-files --depth 2</code></pre></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Trigger manual lifecycle run</h3><pre><code>mc ilm tier ls local
+mc admin lifecycle start local/bizfirst-files</code></pre></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Expand volume if needed</h3><p>Add a new data volume to the MinIO container, or extend the Docker volume on the host.</p></div></div>
+  </div>
+
+  <h3>Runbook 2 — StorageCapacityException in application logs</h3>
+  <p>Application writes are already blocked. The disk is at or above <code>WriteStopThresholdPercent</code> (default 90%).</p>
+  <ol>
+    <li>Immediately review disk usage via MinIO console or <code>mc admin info local</code>.</li>
+    <li>If growth is from a runaway process, stop the process first.</li>
+    <li>Delete or archive large unnecessary objects to bring usage below the threshold.</li>
+    <li>The capacity guard will automatically resume writes once usage drops below the threshold on the next write attempt.</li>
+  </ol>
+  <div class="callout danger">
+    <strong>Do not raise the threshold to clear the alert</strong>
+    Raising <code>WriteStopThresholdPercent</code> above 95% risks MinIO running completely out of disk space, which causes data corruption. Fix the underlying capacity issue instead.
+  </div>
+
+  <h3>Runbook 3 — MinIO container down</h3>
+  <ol>
+    <li>Check container status: <code>docker ps -a | grep minio</code></li>
+    <li>Inspect logs: <code>docker logs bizfirst-minio --tail 100</code></li>
+    <li>Common causes: out of disk space, port conflict, corrupted data volume.</li>
+    <li>Restart: <code>docker start bizfirst-minio</code></li>
+    <li>If data is corrupted, restore from last restic backup. See <a href="10-restore.html">Point-in-Time Restore</a>.</li>
+  </ol>
+
+  <h2 id="disaster-recovery">Disaster Recovery Targets</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>RPO</th><th>RTO</th><th>Method</th></tr></thead>
+    <tbody>
+      <tr><td>MinIO container restart (no data loss)</td><td>0</td><td>&lt; 2 min</td><td>Docker restart</td></tr>
+      <tr><td>Host disk failure (data volume lost)</td><td>&lt; 24 hrs</td><td>&lt; 4 hrs</td><td>restic restore from B2</td></tr>
+      <tr><td>Accidental object deletion</td><td>&lt; 24 hrs</td><td>&lt; 1 hr</td><td>Selective restic restore</td></tr>
+      <tr><td>Full host loss</td><td>&lt; 24 hrs</td><td>&lt; 8 hrs</td><td>New host + restic restore from B2</td></tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

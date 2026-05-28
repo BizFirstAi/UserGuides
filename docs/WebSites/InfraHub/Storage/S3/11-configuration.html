@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Configuration Reference — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>S3 / MinIO Object Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html" class="active">Configuration Reference</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> / <a href="../../" style="color:inherit;text-decoration:none;">InfraHub</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Storage S3</a> / Configuration Reference</div>
+    <h1>Configuration Reference</h1>
+    <p class="subtitle">Complete reference for all FileStorage settings, environment variable names, defaults, valid values, and per-backend configuration examples.</p>
+  </div>
+
+  <div class="toc">
+    <h4>On This Page</h4>
+    <ol>
+      <li><a href="#all-settings">All Settings</a></li>
+      <li><a href="#env-vars">Environment Variable Names</a></li>
+      <li><a href="#per-backend">Per-Backend Examples</a></li>
+      <li><a href="#di-registrations">DI Registrations</a></li>
+      <li><a href="#storeoptions">StoreOptions</a></li>
+      <li><a href="#valid-values">Valid Values</a></li>
+    </ol>
+  </div>
+
+  <h2 id="all-settings">All Settings</h2>
+  <p>All settings live under the <code>"FileStorage"</code> configuration section and are bound to <code>FileStorageSettings</code> via <code>services.Configure&lt;FileStorageSettings&gt;(config.GetSection("FileStorage"))</code>.</p>
+  <table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>BucketName</code></td><td>string</td><td><code>bizfirst-files</code></td><td>Yes</td><td>Name of the S3/MinIO bucket. Must exist before first use.</td></tr>
+      <tr><td><code>Endpoint</code></td><td>string</td><td><em>blank</em></td><td>For MinIO/R2/B2</td><td>Full URL to the S3-compatible endpoint. Leave blank for AWS S3 (uses RegionEndpoint).</td></tr>
+      <tr><td><code>AccessKey</code></td><td>string</td><td>—</td><td>Yes</td><td>S3 access key ID. For MinIO: root user or service account key.</td></tr>
+      <tr><td><code>SecretKey</code></td><td>string</td><td>—</td><td>Yes</td><td>S3 secret access key. Store in a secrets manager — never in appsettings.json for production.</td></tr>
+      <tr><td><code>Region</code></td><td>string</td><td><code>us-east-1</code></td><td>Yes</td><td>AWS region name. For MinIO, any valid region string works (e.g. <code>us-east-1</code>). For R2, use <code>auto</code>.</td></tr>
+      <tr><td><code>ForcePathStyle</code></td><td>bool</td><td><code>true</code></td><td>—</td><td>Must be <code>true</code> for MinIO, R2, B2. Set <code>false</code> for AWS S3 (uses virtual-hosted style).</td></tr>
+      <tr><td><code>PrependTenantID</code></td><td>bool</td><td><code>false</code></td><td>—</td><td>When <code>true</code>, storage key becomes <code>tenant_{tenantID}/{cid}</code>. Enables per-tenant isolation and prefix-level IAM policies.</td></tr>
+      <tr><td><code>CannedAcl</code></td><td>string</td><td><code>NoACL</code></td><td>—</td><td>Default ACL applied to uploaded objects. Overridable per request via <code>StoreOptions.CannedAcl</code>.</td></tr>
+      <tr><td><code>StorageClass</code></td><td>string</td><td><code>STANDARD</code></td><td>—</td><td>Default S3 storage class. Overridable per request via <code>StoreOptions.StorageClass</code>.</td></tr>
+      <tr><td><code>WriteStopThresholdPercent</code></td><td>double</td><td><code>90.0</code></td><td>—</td><td>Block writes when disk usage reaches this percentage. Set <code>0</code> to disable the capacity guard.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="env-vars">Environment Variable Names</h2>
+  <p>ASP.NET Core maps double-underscore (<code>__</code>) to section separator. Any setting can be overridden via environment variable:</p>
+  <table>
+    <thead><tr><th>Environment Variable</th><th>Maps to</th><th>Example Value</th></tr></thead>
+    <tbody>
+      <tr><td><code>FileStorage__BucketName</code></td><td><code>FileStorage:BucketName</code></td><td><code>bizfirst-files</code></td></tr>
+      <tr><td><code>FileStorage__Endpoint</code></td><td><code>FileStorage:Endpoint</code></td><td><code>http://minio:9000</code></td></tr>
+      <tr><td><code>FileStorage__AccessKey</code></td><td><code>FileStorage:AccessKey</code></td><td><code>your-access-key</code></td></tr>
+      <tr><td><code>FileStorage__SecretKey</code></td><td><code>FileStorage:SecretKey</code></td><td><code>your-secret-key</code></td></tr>
+      <tr><td><code>FileStorage__Region</code></td><td><code>FileStorage:Region</code></td><td><code>us-east-1</code></td></tr>
+      <tr><td><code>FileStorage__ForcePathStyle</code></td><td><code>FileStorage:ForcePathStyle</code></td><td><code>true</code></td></tr>
+      <tr><td><code>FileStorage__PrependTenantID</code></td><td><code>FileStorage:PrependTenantID</code></td><td><code>true</code></td></tr>
+      <tr><td><code>FileStorage__CannedAcl</code></td><td><code>FileStorage:CannedAcl</code></td><td><code>NoACL</code></td></tr>
+      <tr><td><code>FileStorage__StorageClass</code></td><td><code>FileStorage:StorageClass</code></td><td><code>STANDARD</code></td></tr>
+      <tr><td><code>FileStorage__WriteStopThresholdPercent</code></td><td><code>FileStorage:WriteStopThresholdPercent</code></td><td><code>90.0</code></td></tr>
+    </tbody>
+  </table>
+  <div class="callout info">
+    <strong>Kubernetes Secret example</strong>
+    <pre><code>apiVersion: v1
+kind: Secret
+metadata:
+  name: bizfirst-storage-secrets
+type: Opaque
+stringData:
+  FileStorage__AccessKey: "your-access-key"
+  FileStorage__SecretKey: "your-secret-key"</code></pre>
+  </div>
+
+  <h2 id="per-backend">Per-Backend Configuration Examples</h2>
+
+  <h3>MinIO — Local Development</h3>
+  <pre><code>{
+  "FileStorage": {
+    "BucketName": "bizfirst-files",
+    "Endpoint": "http://localhost:9000",
+    "AccessKey": "admin",
+    "SecretKey": "admin123",
+    "Region": "us-east-1",
+    "ForcePathStyle": true,
+    "PrependTenantID": false,
+    "WriteStopThresholdPercent": 0
+  }
+}</code></pre>
+
+  <h3>MinIO — Production (Docker)</h3>
+  <pre><code>{
+  "FileStorage": {
+    "BucketName": "bizfirst-files",
+    "Endpoint": "http://minio:9000",
+    "Region": "us-east-1",
+    "ForcePathStyle": true,
+    "PrependTenantID": true,
+    "CannedAcl": "NoACL",
+    "StorageClass": "STANDARD",
+    "WriteStopThresholdPercent": 90.0
+  }
+}
+// AccessKey and SecretKey injected via environment variables</code></pre>
+
+  <h3>AWS S3</h3>
+  <pre><code>{
+  "FileStorage": {
+    "BucketName": "my-bizfirst-prod-files",
+    "Endpoint": "",
+    "Region": "us-east-1",
+    "ForcePathStyle": false,
+    "PrependTenantID": true,
+    "CannedAcl": "NoACL",
+    "StorageClass": "STANDARD",
+    "WriteStopThresholdPercent": 0
+  }
+}
+// AccessKey and SecretKey from IAM role / environment variables</code></pre>
+
+  <h3>Cloudflare R2</h3>
+  <pre><code>{
+  "FileStorage": {
+    "BucketName": "bizfirst-files",
+    "Endpoint": "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com",
+    "Region": "auto",
+    "ForcePathStyle": true,
+    "PrependTenantID": true,
+    "WriteStopThresholdPercent": 0
+  }
+}</code></pre>
+
+  <h3>Backblaze B2</h3>
+  <pre><code>{
+  "FileStorage": {
+    "BucketName": "bizfirst-files",
+    "Endpoint": "https://s3.us-west-004.backblazeb2.com",
+    "Region": "us-west-004",
+    "ForcePathStyle": true,
+    "PrependTenantID": true,
+    "WriteStopThresholdPercent": 0
+  }
+}</code></pre>
+
+  <h2 id="di-registrations">DI Registrations</h2>
+  <p>Calling <code>services.AddObjectStorage(configuration)</code> registers the following:</p>
+  <table>
+    <thead><tr><th>Interface</th><th>Implementation</th><th>Lifetime</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>IOptions&lt;FileStorageSettings&gt;</code></td><td>FileStorageSettings</td><td>Singleton</td><td>Bound from <code>"FileStorage"</code> config section</td></tr>
+      <tr><td><code>IHttpClientFactory</code></td><td>DefaultHttpClientFactory</td><td>Singleton</td><td>Used by MinioCapacityGuard to call Prometheus endpoint</td></tr>
+      <tr><td><code>IS3ObjectService</code></td><td>S3ObjectService</td><td>Scoped</td><td>Registered via <code>AddS3Services()</code></td></tr>
+      <tr><td><code>IS3BucketService</code></td><td>S3BucketService</td><td>Scoped</td><td>Registered via <code>AddS3Services()</code></td></tr>
+      <tr><td><code>IS3FolderService</code></td><td>S3FolderService</td><td>Scoped</td><td>Registered via <code>AddS3Services()</code></td></tr>
+      <tr><td><code>ICidProvider</code></td><td>Sha256CidProvider</td><td><strong>Singleton</strong></td><td>Stateless pure computation — safe as Singleton</td></tr>
+      <tr><td><code>IStorageCapacityGuard</code></td><td>MinioCapacityGuard</td><td>Scoped</td><td>Depends on IHttpClientFactory and IOptions</td></tr>
+      <tr><td><code>IObjectStorageProvider</code></td><td>S3ObjectStorageProvider</td><td>Scoped</td><td>Depends on session context, IS3ObjectService, and all above</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="storeoptions">StoreOptions — Per-Request Overrides</h2>
+  <pre><code>public sealed record StoreOptions(
+    string? CannedAcl    = null,   // null = use FileStorage:CannedAcl global default
+    string? StorageClass = null);  // null = use FileStorage:StorageClass global default</code></pre>
+  <table>
+    <thead><tr><th>Property</th><th>Null behaviour</th><th>Override example</th></tr></thead>
+    <tbody>
+      <tr><td><code>CannedAcl</code></td><td>Uses <code>FileStorage:CannedAcl</code> (default <code>NoACL</code>)</td><td><code>"private"</code>, <code>"public-read"</code></td></tr>
+      <tr><td><code>StorageClass</code></td><td>Uses <code>FileStorage:StorageClass</code> (default <code>STANDARD</code>)</td><td><code>"STANDARD_IA"</code>, <code>"GLACIER"</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="valid-values">Valid Values</h2>
+
+  <h3>CannedAcl valid values</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Meaning</th><th>MinIO support</th></tr></thead>
+    <tbody>
+      <tr><td><code>NoACL</code></td><td>No ACL — bucket policy governs access</td><td>Yes (recommended)</td></tr>
+      <tr><td><code>private</code></td><td>Owner full control, others no access</td><td>Yes</td></tr>
+      <tr><td><code>public-read</code></td><td>Public read, owner write</td><td>Yes</td></tr>
+      <tr><td><code>bucket-owner-full-control</code></td><td>Bucket owner full control</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+
+  <h3>StorageClass valid values</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Description</th><th>MinIO</th><th>AWS S3</th><th>R2</th></tr></thead>
+    <tbody>
+      <tr><td><code>STANDARD</code></td><td>Hot storage — default</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td><code>REDUCED_REDUNDANCY</code></td><td>Lower durability, lower cost</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+      <tr><td><code>STANDARD_IA</code></td><td>Infrequent access — lower storage cost, retrieval fee</td><td>Via tier</td><td>Yes</td><td>No</td></tr>
+      <tr><td><code>INTELLIGENT_TIERING</code></td><td>Auto-tier based on access patterns</td><td>No</td><td>Yes</td><td>No</td></tr>
+      <tr><td><code>GLACIER</code></td><td>Archival — minutes to hours retrieval</td><td>No</td><td>Yes</td><td>No</td></tr>
+      <tr><td><code>DEEP_ARCHIVE</code></td><td>Deep archival — 12 hour retrieval</td><td>No</td><td>Yes</td><td>No</td></tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

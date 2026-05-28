@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bring Your Own Provider | BizFirst Email System</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Email System<span>Multi-tenant, Multi-provider</span></div>
+
+  <div class="sidebar-section">Getting Started</div>
+  <a href="index.html">Overview</a>
+  <a href="01-quickstart.html">Quick Start (5 min)</a>
+
+  <div class="sidebar-section">Providers</div>
+  <a href="02-bring-your-own.html" class="active">Bring Your Own Provider</a>
+  <a href="03-provider-smtp.html">SMTP Configuration</a>
+  <a href="04-provider-ses.html">AWS SES Setup</a>
+  <a href="05-provider-gmail.html">Gmail OAuth2</a>
+
+  <div class="sidebar-section">Configuration</div>
+  <a href="06-credentials-design.html">Credentials & Security</a>
+  <a href="07-tenant-specific.html">Tenant-Specific Providers</a>
+  <a href="08-first-time-config.html">First-Time Configuration</a>
+
+  <div class="sidebar-section">Advanced Topics</div>
+  <a href="09-production-deployment.html">Production Deployment</a>
+  <a href="10-switching-providers.html">Switching Providers Mid-Production</a>
+  <a href="11-advanced-patterns.html">Advanced Dispatcher Patterns</a>
+  <a href="12-sample-json.html">Sample JSON Configurations</a>
+
+  <div class="sidebar-section">Roadmap & Community</div>
+  <a href="13-future-providers.html">Future Providers</a>
+  <a href="14-request-provider.html">Request New Provider</a>
+
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Guides</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">WebSites</a> /
+      <a href="index.html" style="color:inherit;text-decoration:none;">Email System</a> /
+      Bring Your Own Provider
+    </div>
+    <h1>Build Your Own Email Provider</h1>
+    <p class="subtitle">Implement a custom email provider in 10 steps. Complete guide with code examples.</p>
+  </div>
+
+  <div class="callout info">
+    <strong><i class="fa-solid fa-lightbulb"></i> What You'll Learn</strong>
+    How to add a new email provider (SendGrid, Mailgun, custom service, etc.) without modifying core email system code. Plugin architecture allows complete provider isolation.
+  </div>
+
+  <h2><i class="fa-solid fa-hammer"></i> 10-Step Implementation Guide</h2>
+
+  <h3>Step 1: Create a New Service Project</h3>
+  <p>Create a new C# class library project for your provider:</p>
+  <pre><code>BizFirst.Integration.YourProvider.Services
+
+Structure:
+├── BizFirst.Integration.YourProvider.Services.csproj
+├── DependencyInjection.cs
+├── Email/
+│   ├── YourProviderEmailDispatcher.cs
+│   └── IYourProviderEmailService.cs
+├── Services/
+│   └── YourProviderEmailService.cs
+└── GlobalUsings.cs</code></pre>
+
+  <h3>Step 2: Add Project References</h3>
+  <pre><code>&lt;ItemGroup&gt;
+  &lt;ProjectReference Include=".../BizFirst.Ai.Email.Domain.csproj" /&gt;
+&lt;/ItemGroup&gt;</code></pre>
+
+  <h3>Step 3: Define Your Service Interface</h3>
+  <pre><code>// Email/IYourProviderEmailService.cs
+namespace BizFirst.Integration.YourProvider.Services.Email;
+
+public interface IYourProviderEmailService
+{
+    Task&lt;YourProviderEmailResult&gt; SendAsync(
+        YourProviderEmailRequest request,
+        CancellationToken ct = default);
+}
+
+public record YourProviderEmailRequest(
+    string ApiKey,
+    string FromEmail,
+    string ToEmail,
+    string Subject,
+    string Html,
+    string? Text = null,
+    string? FromName = null,
+    List&lt;string&gt;? Cc = null,
+    List&lt;string&gt;? Bcc = null,
+    string? ReplyTo = null);
+
+public record YourProviderEmailResult(
+    bool Success,
+    string? MessageId,
+    string? ErrorCode,
+    string? ErrorMessage);</code></pre>
+
+  <h3>Step 4: Implement the Service</h3>
+  <pre><code>// Services/YourProviderEmailService.cs
+public class YourProviderEmailService : IYourProviderEmailService
+{
+    private readonly HttpClient _httpClient;
+    private readonly ILogger&lt;YourProviderEmailService&gt; _logger;
+
+    public YourProviderEmailService(HttpClient httpClient, ILogger&lt;YourProviderEmailService&gt; logger)
+    {
+        _httpClient = httpClient;
+        _logger = logger;
+    }
+
+    public async Task&lt;YourProviderEmailResult&gt; SendAsync(
+        YourProviderEmailRequest request,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // 1. Build request payload for your provider's API
+            var payload = new
+            {
+                from = request.FromEmail,
+                to = new[] { request.ToEmail },
+                subject = request.Subject,
+                html = request.Html,
+                text = request.Text,
+                cc = request.Cc ?? new(),
+                bcc = request.Bcc ?? new(),
+                reply_to = request.ReplyTo
+            };
+
+            // 2. Call your provider's API
+            var content = new StringContent(
+                JsonSerializer.Serialize(payload),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await _httpClient.PostAsync(
+                "https://api.yourprovider.com/v1/messages/send",
+                content,
+                ct);
+
+            // 3. Handle response
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadAsAsync&lt;dynamic&gt;(ct);
+                return new YourProviderEmailResult(
+                    Success: true,
+                    MessageId: result.id,
+                    ErrorCode: null,
+                    ErrorMessage: null);
+            }
+
+            var error = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError($"SendGrid API error: {error}");
+
+            return new YourProviderEmailResult(
+                Success: false,
+                MessageId: null,
+                ErrorCode: response.StatusCode.ToString(),
+                ErrorMessage: error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending email via provider");
+            return new YourProviderEmailResult(
+                Success: false,
+                MessageId: null,
+                ErrorCode: "EXCEPTION",
+                ErrorMessage: ex.Message);
+        }
+    }
+}</code></pre>
+
+  <h3>Step 5: Create the Dispatcher</h3>
+  <pre><code>// Email/YourProviderEmailDispatcher.cs
+public class YourProviderEmailDispatcher : IEmailDispatcher
+{
+    private readonly IYourProviderEmailService _service;
+    private readonly ILogger&lt;YourProviderEmailDispatcher&gt; _logger;
+
+    public YourProviderEmailDispatcher(
+        IYourProviderEmailService service,
+        ILogger&lt;YourProviderEmailDispatcher&gt; logger)
+    {
+        _service = service;
+        _logger = logger;
+    }
+
+    public async Task&lt;EmailDispatchResult&gt; SendAsync(
+        ISecretRecord credential,
+        EmailProviderMetadata metadata,
+        EmailMessage message,
+        CancellationToken ct = default)
+    {
+        // 1. Cast credential to expected type
+        if (credential is not ApiKeyRecord apiKeyRecord)
+            return EmailDispatchResult.Fail("INVALID_CREDENTIAL", "Credential must be ApiKeyRecord");
+
+        // 2. Build provider-specific request
+        var request = new YourProviderEmailRequest(
+            ApiKey: apiKeyRecord.ApiKey,
+            FromEmail: metadata.FromEmail,
+            ToEmail: message.To,
+            Subject: message.Subject,
+            Html: message.Html,
+            Text: message.Plain,
+            FromName: metadata.FromName,
+            Cc: message.Cc?.Split(';').ToList(),
+            Bcc: message.Bcc?.Split(';').ToList(),
+            ReplyTo: message.ReplyTo);
+
+        // 3. Call service
+        var result = await _service.SendAsync(request, ct);
+
+        // 4. Map to EmailDispatchResult
+        if (result.Success)
+            return EmailDispatchResult.Ok(result.MessageId!);
+
+        _logger.LogError($"Email send failed: {result.ErrorMessage}");
+        return EmailDispatchResult.Fail(
+            result.ErrorCode ?? "UNKNOWN",
+            result.ErrorMessage ?? "Unknown error");
+    }
+}</code></pre>
+
+  <h3>Step 6: Register in Dependency Injection</h3>
+  <pre><code>// DependencyInjection.cs
+namespace BizFirst.Integration.YourProvider.Services;
+
+public static class YourProviderEmailDependencyInjection
+{
+    public static IServiceCollection AddYourProviderEmailDispatcher(
+        this IServiceCollection services)
+    {
+        services.AddScoped&lt;IYourProviderEmailService, YourProviderEmailService&gt;();
+        services.AddScoped&lt;YourProviderEmailDispatcher&gt;();
+
+        // Register HttpClient for your provider's API
+        services.AddHttpClient&lt;IYourProviderEmailService, YourProviderEmailService&gt;(client =&gt;
+        {
+            client.BaseAddress = new Uri("https://api.yourprovider.com");
+            client.DefaultRequestHeaders.Add("User-Agent", "BizFirst/1.0");
+        });
+
+        return services;
+    }
+}</code></pre>
+
+  <h3>Step 7: Register Dispatcher in Factory</h3>
+  <p>Modify <code>EmailDispatcherFactory.cs</code> to handle your new provider:</p>
+  <pre><code>public class EmailDispatcherFactory : IEmailDispatcherFactory
+{
+    private readonly IServiceProvider _serviceProvider;
+
+    public IEmailDispatcher Get(string provider)
+    {
+        return provider.ToOrdinalIgnoreCase() switch
+        {
+            "smtp" => _serviceProvider.GetRequiredService&lt;SmtpEmailDispatcher&gt;(),
+            "ses" => _serviceProvider.GetRequiredService&lt;SesEmailDispatcher&gt;(),
+            "gmail" => _serviceProvider.GetRequiredService&lt;GmailEmailDispatcher&gt;(),
+            "yourprovider" => _serviceProvider.GetRequiredService&lt;YourProviderEmailDispatcher&gt;(),
+            _ => throw new InvalidOperationException($"Unknown provider: {provider}")
+        };
+    }
+}</code></pre>
+
+  <h3>Step 8: Wire Up in Main Application</h3>
+  <p>Add to your application's DI startup:</p>
+  <pre><code>// Program.cs or Startup.cs
+services.AddAiEmailServices();           // Core
+services.AddSmtpEmailDispatcher();       // SMTP
+services.AddSesEmailDispatcher();        // SES
+services.AddGmailEmailDispatcher();      // Gmail
+services.AddYourProviderEmailDispatcher(); // Your new provider</code></pre>
+
+  <h3>Step 9: Create Credential in Database</h3>
+  <pre><code>INSERT INTO AIExt_Credentials (
+  Name,
+  DisplayMetadata,
+  EncryptedData,  -- Your API key (encrypted)
+  TenantID,
+  CredentialTypeID,  -- 2 for ApiKeyRecord
+  Enabled
+) VALUES (
+  'email-yourprovider',
+  '{
+    "provider": "yourprovider",
+    "fromEmail": "noreply@yourdomain.com",
+    "fromName": "Your Company"
+  }',
+  0x...,  -- Encrypted API key
+  1,
+  2,
+  1
+);</code></pre>
+
+  <h3>Step 10: Test Your Provider</h3>
+  <pre><code>var result = await _emailService.SendAsync(
+    tenantID: 1,
+    to: "test@example.com",
+    subject: "Test Email",
+    html: "&lt;p&gt;Test from YourProvider&lt;/p&gt;",
+    credentialName: "email-yourprovider",
+    ct: cancellationToken);
+
+Assert.IsTrue(result.Success);
+Assert.IsNotNull(result.MessageID);</code></pre>
+
+  <h2><i class="fa-solid fa-lightbulb"></i> Important Design Points</h2>
+
+  <div class="callout success">
+    <strong><i class="fa-solid fa-check-circle"></i> Isolation</strong>
+    Your provider code is completely isolated. The core email system doesn't need to know your provider exists.
+  </div>
+
+  <div class="callout info">
+    <strong><i class="fa-solid fa-info-circle"></i> Credential Types</strong>
+    Use the right credential type: PasswordRecord (1) for SMTP, ApiKeyRecord (2) for API keys, OAuth2Record (3) for OAuth2.
+  </div>
+
+  <div class="callout warning">
+    <strong><i class="fa-solid fa-triangle-exclamation"></i> Error Handling</strong>
+    Always return EmailDispatchResult with proper error codes. Never throw exceptions from dispatchers.
+  </div>
+
+  <h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2>
+  <ul>
+    <li><a href="12-sample-json.html"><strong>Sample JSON Configurations</strong></a> — See credential JSON examples</li>
+    <li><a href="06-credentials-design.html"><strong>Credentials Design</strong></a> — Understand encryption and vault</li>
+    <li><a href="14-request-provider.html"><strong>Request New Provider</strong></a> — Submit your provider for inclusion</li>
+  </ul>
+
+</main>
+</body>
+</html>

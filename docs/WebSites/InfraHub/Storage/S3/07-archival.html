@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Archival &amp; Lifecycle — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>S3 / MinIO Object Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html" class="active">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> / <a href="../../" style="color:inherit;text-decoration:none;">InfraHub</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Storage S3</a> / Archival &amp; Lifecycle</div>
+    <h1>Archival &amp; Lifecycle</h1>
+    <p class="subtitle">Automated object tiering, expiry policies, compliance holds, and cost-optimised long-term storage management.</p>
+  </div>
+
+  <div class="toc">
+    <h4>On This Page</h4>
+    <ol>
+      <li><a href="#lifecycle-overview">Lifecycle Overview</a></li>
+      <li><a href="#storage-tiers">Storage Tiers</a></li>
+      <li><a href="#minio-lifecycle-policy">MinIO Lifecycle Policy</a></li>
+      <li><a href="#applying-the-policy">Applying the Policy</a></li>
+      <li><a href="#compliance-holds">Compliance Holds</a></li>
+      <li><a href="#per-tenant-archival">Per-Tenant Archival</a></li>
+      <li><a href="#aws-s3-lifecycle">AWS S3 Lifecycle Rules</a></li>
+      <li><a href="#cost-impact">Cost Impact</a></li>
+      <li><a href="#restoring-archived-objects">Restoring Archived Objects</a></li>
+    </ol>
+  </div>
+
+  <h2 id="lifecycle-overview">Lifecycle Overview</h2>
+  <p>InfraHub Storage applies MinIO object lifecycle rules to automatically manage storage cost and compliance over time. Objects progress through three stages:</p>
+  <div class="pipeline">
+    <div class="pipeline-box" style="border-color:#2db87a;color:#1a7a50"><strong>Day 0–29</strong><br><small>Hot — STANDARD</small></div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box" style="border-color:#f0a832;color:#8a5a00"><strong>Day 30–364</strong><br><small>Cold — STANDARD_IA</small></div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box" style="border-color:#e05252;color:#8a2020"><strong>Day 365+</strong><br><small>Expired / Deleted</small></div>
+  </div>
+  <div class="callout warn">
+    <strong>Default policy</strong>
+    The expiry at Day 365 applies to the default lifecycle rule. Objects under a compliance hold are exempt from expiry until the hold is released.
+  </div>
+
+  <h2 id="storage-tiers">Storage Tiers</h2>
+  <table>
+    <thead><tr><th>Tier</th><th>Storage Class</th><th>Active Days</th><th>Access Pattern</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Hot</strong></td><td><code>STANDARD</code></td><td>0 – 29</td><td>Frequent reads/writes</td><td>Full rate</td></tr>
+      <tr><td><strong>Cold</strong></td><td><code>STANDARD_IA</code></td><td>30 – 364</td><td>Rare access — audit, legal, retrieval on demand</td><td>~40% lower</td></tr>
+      <tr><td><strong>Expired</strong></td><td>—</td><td>365+</td><td>Deleted by MinIO lifecycle engine</td><td>Zero</td></tr>
+    </tbody>
+  </table>
+  <div class="callout info">
+    <strong>MinIO and storage classes</strong>
+    MinIO supports <code>STANDARD</code> and <code>REDUCED_REDUNDANCY</code> natively. The <code>STANDARD_IA</code> tier transition in MinIO is achieved via a lifecycle transition rule that moves objects to a different MinIO tier (requires MinIO Tier configuration). On AWS S3, <code>STANDARD_IA</code> is a native S3 storage class.
+  </div>
+
+  <h2 id="minio-lifecycle-policy">MinIO Lifecycle Policy</h2>
+  <p>The following XML lifecycle policy implements the three-stage model. Apply it to the <code>bizfirst-files</code> bucket.</p>
+  <pre><code>&lt;LifecycleConfiguration&gt;
+  &lt;Rule&gt;
+    &lt;ID&gt;bizfirst-storage-lifecycle&lt;/ID&gt;
+    &lt;Status&gt;Enabled&lt;/Status&gt;
+    &lt;Filter&gt;
+      &lt;Prefix&gt;&lt;/Prefix&gt;  &lt;!-- applies to all objects --&gt;
+    &lt;/Filter&gt;
+
+    &lt;!-- Transition to cold tier at Day 30 --&gt;
+    &lt;Transition&gt;
+      &lt;Days&gt;30&lt;/Days&gt;
+      &lt;StorageClass&gt;STANDARD_IA&lt;/StorageClass&gt;
+    &lt;/Transition&gt;
+
+    &lt;!-- Expire (delete) at Day 365 --&gt;
+    &lt;Expiration&gt;
+      &lt;Days&gt;365&lt;/Days&gt;
+    &lt;/Expiration&gt;
+  &lt;/Rule&gt;
+&lt;/LifecycleConfiguration&gt;</code></pre>
+
+  <h2 id="applying-the-policy">Applying the Policy</h2>
+  <h3>Using the MinIO Client (mc)</h3>
+  <pre><code># Save the policy XML to a file
+mc ilm import local/bizfirst-files &lt; lifecycle.xml
+
+# Verify the rule was applied
+mc ilm ls local/bizfirst-files</code></pre>
+
+  <h3>Using the MinIO Console</h3>
+  <div class="steps">
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Open Bucket Settings</h3><p>In the MinIO Console, navigate to <strong>Buckets → bizfirst-files → Lifecycle</strong>.</p></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Add Transition Rule</h3><p>Click <strong>Add Lifecycle Rule</strong>. Set Prefix to empty (all objects), Transition after 30 days, Storage Class <code>STANDARD_IA</code>.</p></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Add Expiry Rule</h3><p>Add a second rule: Expiry after 365 days. This permanently deletes objects that have not been transitioned to a different tier.</p></div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content"><h3>Save &amp; Verify</h3><p>Click Save. Run <code>mc ilm ls local/bizfirst-files</code> to confirm both rules appear.</p></div></div>
+  </div>
+
+  <h2 id="compliance-holds">Compliance Holds</h2>
+  <p>For objects that must be retained beyond the normal 365-day expiry (e.g. legal hold, audit evidence, regulatory requirement), apply an object lock or use a protected prefix that excludes those objects from the expiry rule.</p>
+
+  <h3>Option 1 — Exclude a Prefix from Expiry</h3>
+  <p>Use a separate lifecycle rule with <code>&lt;Prefix&gt;compliance/&lt;/Prefix&gt;</code> that has no expiry. Store compliance-sensitive objects under the <code>compliance/</code> prefix.</p>
+  <pre><code>&lt;Rule&gt;
+  &lt;ID&gt;compliance-no-expiry&lt;/ID&gt;
+  &lt;Status&gt;Enabled&lt;/Status&gt;
+  &lt;Filter&gt;&lt;Prefix&gt;compliance/&lt;/Prefix&gt;&lt;/Filter&gt;
+  &lt;Transition&gt;
+    &lt;Days&gt;30&lt;/Days&gt;
+    &lt;StorageClass&gt;STANDARD_IA&lt;/StorageClass&gt;
+  &lt;/Transition&gt;
+  &lt;!-- No Expiration element — objects are retained indefinitely --&gt;
+&lt;/Rule&gt;</code></pre>
+
+  <h3>Option 2 — MinIO Object Lock (WORM)</h3>
+  <p>Enable Object Lock on the bucket at creation time. Apply retention locks per object using the MinIO SDK or <code>mc</code>:</p>
+  <pre><code>mc retention set --default COMPLIANCE 2555d local/bizfirst-files
+# 2555 days ≈ 7 years</code></pre>
+  <div class="callout warn">
+    <strong>Object Lock requires bucket-level enablement at creation</strong>
+    Object Lock cannot be added to an existing bucket. Create a dedicated compliance bucket with versioning and object lock enabled.
+  </div>
+
+  <h2 id="per-tenant-archival">Per-Tenant Archival</h2>
+  <p>When <code>PrependTenantID=true</code>, every object key is prefixed with <code>tenant_{tenantID}/</code>. This makes it possible to apply per-tenant lifecycle rules using a prefix filter:</p>
+  <pre><code>&lt;Filter&gt;&lt;Prefix&gt;tenant_42/&lt;/Prefix&gt;&lt;/Filter&gt;</code></pre>
+  <p>Common scenarios:</p>
+  <table>
+    <thead><tr><th>Scenario</th><th>Approach</th></tr></thead>
+    <tbody>
+      <tr><td>Tenant cancels subscription</td><td>Apply immediate expiry rule to <code>tenant_{id}/</code> prefix</td></tr>
+      <tr><td>Tenant requires 7-year retention</td><td>Add no-expiry rule for <code>tenant_{id}/compliance/</code></td></tr>
+      <tr><td>Export tenant data</td><td><code>mc cp --recursive local/bizfirst-files/tenant_42/ ./export/</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="aws-s3-lifecycle">AWS S3 Lifecycle Rules</h2>
+  <p>On AWS S3, lifecycle rules are configured via the AWS Console, CLI, or Terraform. The equivalent policy:</p>
+  <pre><code>aws s3api put-bucket-lifecycle-configuration \
+  --bucket bizfirst-files \
+  --lifecycle-configuration '{
+    "Rules": [{
+      "ID": "bizfirst-storage-lifecycle",
+      "Status": "Enabled",
+      "Filter": {"Prefix": ""},
+      "Transitions": [{"Days": 30, "StorageClass": "STANDARD_IA"}],
+      "Expiration": {"Days": 365}
+    }]
+  }'</code></pre>
+
+  <h2 id="cost-impact">Cost Impact</h2>
+  <table>
+    <thead><tr><th>Scenario</th><th>Without Lifecycle</th><th>With Lifecycle</th><th>Annual Saving</th></tr></thead>
+    <tbody>
+      <tr><td>100 GB dataset, mostly older than 30 days</td><td>$6/month (MinIO B2)</td><td>~$3.60/month</td><td>~40%</td></tr>
+      <tr><td>1 TB dataset, 80% older than 30 days</td><td>$60/month</td><td>~$38/month</td><td>~37%</td></tr>
+      <tr><td>After Day 365 — objects deleted</td><td>Storage grows unbounded</td><td>Capped by expiry</td><td>100% on expired objects</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="restoring-archived-objects">Restoring Archived Objects</h2>
+  <p>Objects in the cold tier (<code>STANDARD_IA</code>) are still directly accessible — retrieval is immediate on MinIO and incurs a small retrieval fee on AWS S3. For objects that have been expired (deleted), recovery requires a restic restore. See <a href="10-restore.html">Point-in-Time Restore</a> for the full procedure.</p>
+  <div class="callout danger">
+    <strong>Expired objects are gone from MinIO</strong>
+    Once an object reaches Day 365 and the lifecycle engine deletes it, it cannot be recovered from MinIO directly. Ensure your restic backups are current and verified before relying on expiry rules.
+  </div>
+</main>
+</body>
+</html>

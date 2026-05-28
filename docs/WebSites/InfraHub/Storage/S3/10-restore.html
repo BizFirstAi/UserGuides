@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Point-in-Time Restore — InfraHub Storage</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar">
+  <div class="sidebar-brand">InfraHub Storage<span>S3 / MinIO Object Storage</span></div>
+  <div class="sidebar-section">Get Started</div>
+  <a href="index.html">Documentation Hub</a>
+  <a href="01-overview.html">Overview</a>
+  <a href="02-getting-started.html">Getting Started</a>
+  <a href="03-setup.html">Setup &amp; Configuration</a>
+  <div class="sidebar-section">Storage</div>
+  <a href="05-storing-files.html">Storing Files</a>
+  <a href="04-use-cases.html">Use Cases &amp; Scenarios</a>
+  <div class="sidebar-section">Data Protection</div>
+  <a href="06-backup.html">Backup</a>
+  <a href="07-archival.html">Archival &amp; Lifecycle</a>
+  <a href="10-restore.html" class="active">Point-in-Time Restore</a>
+  <div class="sidebar-section">Operations</div>
+  <a href="08-resiliency.html">Resiliency &amp; Monitoring</a>
+  <a href="09-maintenance.html">Maintenance</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="11-configuration.html">Configuration Reference</a>
+</nav>
+<main>
+  <div class="page-header">
+    <div class="breadcrumb"><a href="../../../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> / <a href="../../" style="color:inherit;text-decoration:none;">InfraHub</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Storage S3</a> / Point-in-Time Restore</div>
+    <h1>Point-in-Time Restore</h1>
+    <p class="subtitle">Recover files from any restic snapshot — selective file restore, full bucket restore, disaster recovery, and RTO targets.</p>
+  </div>
+
+  <div class="callout info">
+    <strong>Before you restore</strong>
+    Restores read from Backblaze B2 — ensure the <code>RESTIC_REPOSITORY</code>, <code>RESTIC_PASSWORD</code>, and B2 credentials are available in the backup container. Run <code>restic snapshots</code> first to confirm the snapshot you need exists.
+  </div>
+
+  <div class="toc">
+    <h4>On This Page</h4>
+    <ol>
+      <li><a href="#snapshot-model">Snapshot Model</a></li>
+      <li><a href="#list-snapshots">List Available Snapshots</a></li>
+      <li><a href="#selective-restore">Selective File Restore</a></li>
+      <li><a href="#full-restore">Full Bucket Restore</a></li>
+      <li><a href="#disaster-recovery">Disaster Recovery Procedure</a></li>
+      <li><a href="#rto-rpo">RTO &amp; RPO Targets</a></li>
+      <li><a href="#restore-verification">Restore Verification</a></li>
+    </ol>
+  </div>
+
+  <h2 id="snapshot-model">Snapshot Model</h2>
+  <p>restic takes a snapshot of the MinIO data volume (<code>/data</code>) once per day. Each snapshot is a point-in-time view of the entire MinIO data directory including all buckets, all tenants, and all object metadata. Snapshots are stored encrypted in Backblaze B2 as deduplicated blocks — only changed blocks are stored per backup.</p>
+  <table>
+    <thead><tr><th>Snapshot Age</th><th>Availability</th><th>Policy</th></tr></thead>
+    <tbody>
+      <tr><td>0–7 days</td><td>7 daily snapshots guaranteed</td><td>Keep daily</td></tr>
+      <tr><td>8–28 days</td><td>4 weekly snapshots</td><td>Keep weekly</td></tr>
+      <tr><td>1–12 months</td><td>12 monthly snapshots</td><td>Keep monthly</td></tr>
+      <tr><td>1–2 years</td><td>2 annual snapshots</td><td>Keep annual</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="list-snapshots">List Available Snapshots</h2>
+  <pre><code># List all snapshots
+docker exec bizfirst-backup restic snapshots
+
+# Example output:
+# ID        Time                 Host           Tags
+# -------------------------------------------------------------------------
+# a1b2c3d4  2026-05-27 02:00:03  bizfirst-minio  bizfirst-storage
+# e5f6g7h8  2026-05-26 02:00:01  bizfirst-minio  bizfirst-storage
+# ...
+
+# List with full details
+docker exec bizfirst-backup restic snapshots --json | jq '.[].time'
+
+# Find snapshot closest to a specific time
+docker exec bizfirst-backup restic snapshots \
+  --tag bizfirst-storage \
+  --json | jq '.[] | select(.time >= "2026-05-20")'</code></pre>
+
+  <h2 id="selective-restore">Selective File Restore</h2>
+  <p>Use this to recover one or a few specific files without restoring the entire bucket. The CID is the filename within the MinIO data directory structure.</p>
+
+  <h3>Recover a Single Object by CID</h3>
+  <pre><code># Find which snapshot contains the object (search by approximate date)
+docker exec bizfirst-backup restic ls a1b2c3d4 | grep "3a7f2eb4c9"
+
+# Restore only that object to a staging directory
+docker exec bizfirst-backup restic restore a1b2c3d4 \
+  --target /tmp/restore-staging \
+  --include "*3a7f2eb4c9*"
+
+# The file is now in /tmp/restore-staging — copy it back to MinIO
+docker cp bizfirst-backup:/tmp/restore-staging/... .
+mc cp ./recovered-file local/bizfirst-files/tenant_42/3a7f2eb4c9...</code></pre>
+
+  <h3>Recover All Objects for a Tenant</h3>
+  <pre><code># Restore the entire tenant_42 prefix from yesterday's snapshot
+docker exec bizfirst-backup restic restore latest \
+  --target /tmp/tenant-restore \
+  --include "*/tenant_42/*"
+
+# Re-upload to MinIO
+mc cp --recursive /tmp/tenant-restore/data/ local/bizfirst-files/</code></pre>
+
+  <h3>Recover Objects Modified Before a Timestamp</h3>
+  <pre><code># Find the snapshot just before an incident (e.g. accidental batch delete at 14:30)
+docker exec bizfirst-backup restic snapshots \
+  --tag bizfirst-storage \
+  --json | jq '.[] | select(.time < "2026-05-27T14:30:00")'
+
+# Restore from that snapshot
+docker exec bizfirst-backup restic restore SNAPSHOT_ID \
+  --target /tmp/pre-incident \
+  --include "*/bizfirst-files/*"</code></pre>
+
+  <h2 id="full-restore">Full Bucket Restore</h2>
+  <p>Use when the entire MinIO data volume is lost (disk failure, container volume corruption, or accidental deletion).</p>
+  <div class="steps">
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Stop the MinIO container</h3>
+      <pre><code>docker stop bizfirst-minio</code></pre>
+    </div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Clear the damaged data volume</h3>
+      <pre><code>docker volume rm minio-data
+docker volume create minio-data</code></pre>
+      <div class="callout danger"><strong>This deletes all current data</strong> Only proceed if the volume is confirmed corrupted or intentionally being replaced from backup.</div>
+    </div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Restore the snapshot into the new volume</h3>
+      <pre><code>docker run --rm \
+  -v minio-data:/restore-target \
+  -e RESTIC_REPOSITORY="$RESTIC_REPOSITORY" \
+  -e RESTIC_PASSWORD="$RESTIC_PASSWORD" \
+  -e AWS_ACCESS_KEY_ID="$B2_APPLICATION_KEY_ID" \
+  -e AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY" \
+  restic/restic:latest \
+  restore latest --target /restore-target --tag bizfirst-storage</code></pre>
+    </div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Restart MinIO</h3>
+      <pre><code>docker start bizfirst-minio</code></pre>
+    </div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Verify data integrity</h3>
+      <pre><code>mc ls local/bizfirst-files --recursive | wc -l
+mc admin info local</code></pre>
+    </div></div>
+  </div>
+
+  <h2 id="disaster-recovery">Disaster Recovery Procedure</h2>
+  <p>For a full host loss — new server, fresh MinIO install, restore from B2:</p>
+  <div class="steps">
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Provision new host and install Docker</h3>
+      <p>Install Docker on the new host. Copy docker-compose.yml and .env from source control.</p>
+    </div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Set credentials from your secrets store</h3>
+      <p>Set <code>RESTIC_REPOSITORY</code>, <code>RESTIC_PASSWORD</code>, <code>B2_APPLICATION_KEY_ID</code>, <code>B2_APPLICATION_KEY</code>, <code>MINIO_ROOT_USER</code>, <code>MINIO_ROOT_PASSWORD</code>.</p>
+    </div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Create the data volume and restore</h3>
+      <pre><code>docker volume create minio-data
+docker run --rm \
+  -v minio-data:/restore-target \
+  -e RESTIC_REPOSITORY="$RESTIC_REPOSITORY" \
+  -e RESTIC_PASSWORD="$RESTIC_PASSWORD" \
+  -e AWS_ACCESS_KEY_ID="$B2_APPLICATION_KEY_ID" \
+  -e AWS_SECRET_ACCESS_KEY="$B2_APPLICATION_KEY" \
+  restic/restic:latest \
+  restore latest --target /restore-target</code></pre>
+    </div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Start MinIO and verify</h3>
+      <pre><code>docker compose up -d minio
+curl -f http://localhost:9000/minio/health/live
+mc admin info local</code></pre>
+    </div></div>
+    <div class="step"><div class="step-num"></div><div class="step-content">
+      <h3>Update DNS / load balancer to point to new host</h3>
+      <p>Update the application's <code>FileStorage__Endpoint</code> if the MinIO hostname changed.</p>
+    </div></div>
+  </div>
+
+  <h2 id="rto-rpo">RTO &amp; RPO Targets</h2>
+  <table>
+    <thead><tr><th>Incident</th><th>RPO (max data loss)</th><th>RTO (recovery time)</th></tr></thead>
+    <tbody>
+      <tr><td>Container restart (no data loss)</td><td>0</td><td>&lt; 2 minutes</td></tr>
+      <tr><td>Accidental object deletion</td><td>&lt; 24 hours</td><td>&lt; 1 hour</td></tr>
+      <tr><td>Disk volume corruption</td><td>&lt; 24 hours</td><td>&lt; 4 hours</td></tr>
+      <tr><td>Full host failure</td><td>&lt; 24 hours</td><td>&lt; 8 hours</td></tr>
+      <tr><td>Region outage (with B2 restore)</td><td>&lt; 24 hours</td><td>&lt; 8 hours</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <strong>RPO assumes daily backups ran successfully</strong>
+    Data written after the last successful backup snapshot will be lost in a full volume failure. Verify nightly backup completion in your daily checklist. See <a href="09-maintenance.html">Maintenance</a>.
+  </div>
+
+  <h2 id="restore-verification">Restore Verification</h2>
+  <p>After any restore, verify that the recovered data is consistent:</p>
+  <pre><code># 1. Count objects in bucket
+mc ls local/bizfirst-files --recursive | wc -l
+
+# 2. Sample-test a known CID
+mc stat local/bizfirst-files/tenant_42/3a7f2eb4c9...
+
+# 3. Check MinIO server reports healthy
+mc admin info local
+
+# 4. Run a test store + retrieve via the application
+# (call ExistsAsync on a known CID, then StoreAsync with new content)</code></pre>
+</main>
+</body>
+</html>
