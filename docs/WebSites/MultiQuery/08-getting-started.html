@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Getting Started — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html" class="active">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+<div class="page-header">
+  <div>
+    <span class="tag">Setup</span>
+  </div>
+  <h1>Getting Started</h1>
+  <p class="lead">Go from zero to your first Multi-Query result in three steps — write a template, store it, call it.</p>
+</div>
+
+<h2>Prerequisites</h2>
+<p>Before you begin, confirm the following are in place:</p>
+<ol>
+  <li>
+    <strong>JWT Bearer token with the <code>TenantAdmin</code> role.</strong> All Multi-Query endpoints require a valid JWT issued by the BizFirst identity service. The token must include the <code>TenantAdmin</code> role claim and a valid <code>TenantID</code> claim. Contact your platform administrator if you do not have one.
+  </li>
+  <li>
+    <strong>SQL Server database with at least one table.</strong> The Multi-Query engine connects to the BizFirst platform database via <code>SqlServerDeriveEngine</code>. Your target tables must exist and be accessible to the platform service account.
+  </li>
+  <li>
+    <strong>Access to the <code>dbo.Shared_Configurations</code> table.</strong> Templates are stored as JSON values in this table. You need INSERT permission on the table, or access to an admin UI that manages configuration records.
+  </li>
+</ol>
+
+<h2>Step 1 — Write Your Template</h2>
+<p>
+  Start with a minimal two-level template. The root query fetches <strong>Departments</strong>; the child query fetches the <strong>Employees</strong> belonging to each department, referencing the parent's primary key via <code>@parent.DepartmentID</code>.
+</p>
+<pre><code>{
+  "name": "Departments with Employees",
+  "sql": "SELECT DepartmentID, DepartmentName, ManagerID, CostCentreCode
+          FROM   Departments
+          WHERE  TenantID = @TenantID
+            AND  Deleted  = 0
+            AND  Archived = 0
+          ORDER BY DepartmentName",
+  "recordType": "Department",
+  "isTemplate": true,
+  "parameters": [],
+  "options": {
+    "outputFormat": "json",
+    "outputFormatTemplate": "fragment",
+    "maxDepth": 5,
+    "cacheSeconds": 60
+  },
+  "children": [
+    {
+      "collectionName": "employees",
+      "sql": "SELECT EmployeeID, FirstName, LastName, JobTitle,
+                     EmploymentType, HireDate, IsActive
+              FROM   Employees
+              WHERE  DepartmentID = @parent.DepartmentID
+                AND  TenantID     = @TenantID
+                AND  Deleted      = 0
+              ORDER BY LastName, FirstName",
+      "recordType": "Employee",
+      "isTemplate": false,
+      "children": []
+    }
+  ]
+}</code></pre>
+
+<p>Save this JSON to a local file (e.g., <code>MY_FIRST_TEMPLATE.json</code>) for the next step.</p>
+
+<div class="callout info">
+  <strong><i class="fa-solid fa-circle-info"></i> isTemplate: true</strong>
+  <p><code>"isTemplate": true</code> marks the root record. Only root records are directly addressable via the API — the engine fetches all children automatically during query execution. Child and grandchild records must always have <code>"isTemplate": false</code>.</p>
+</div>
+
+<h2>Step 2 — Store the Template</h2>
+<p>
+  Insert the template JSON into <code>dbo.Shared_Configurations</code>. The <code>Code</code> column becomes the catalogue code used in all API calls and expression directives.
+</p>
+<pre><code>INSERT INTO dbo.Shared_Configurations
+  (Code,                   [Value],
+   TenantID, AppDomainID,  DataDomainID, DataSegmentID,
+   ClientAccountID,        SourceAppID,
+   IsActive, Deleted,      Archived,
+   CreatedBy, CreatedOn,   LastModifiedBy, LastModifiedOn)
+VALUES
+  ('MY_FIRST_TEMPLATE',
+   -- Paste your QueryTemplate JSON here as a string
+   '{
+     "name": "Departments with Employees",
+     "sql":  "SELECT DepartmentID, ...",
+     "recordType": "Department",
+     "isTemplate": true,
+     "parameters": [],
+     "options": { "outputFormat": "json", "cacheSeconds": 60 },
+     "children": [...]
+   }',
+   42,   -- TenantID
+   1,    -- AppDomainID
+   1,    -- DataDomainID
+   1,    -- DataSegmentID
+   1001, -- ClientAccountID
+   'BizFirstPayroll',  -- SourceAppID
+   1,    -- IsActive
+   0,    -- Deleted
+   0,    -- Archived
+   1,    -- CreatedBy (admin user ID)
+   GETDATE(),
+   1,
+   GETDATE());</code></pre>
+
+<p>
+  Adjust the identity columns (<code>TenantID</code>, <code>AppDomainID</code>, <code>ClientAccountID</code>, etc.) to match your environment. The <code>Code</code> value (<code>MY_FIRST_TEMPLATE</code>) is what you pass to the API.
+</p>
+
+<h2>Step 3 — Execute</h2>
+<p>
+  Call the JSON endpoint with your Bearer token. The engine looks up the template by code, injects <code>TenantID</code> from the JWT, and returns the nested result.
+</p>
+
+<h3>Request</h3>
+<pre><code>GET /api/v1/expressions/multiquery/MY_FIRST_TEMPLATE.json
+Host: api.bizfirstai.com
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...</code></pre>
+
+<h3>Expected Response Shape</h3>
+<pre><code>[
+  {
+    "DepartmentID": 1,
+    "DepartmentName": "Engineering",
+    "ManagerID": 44,
+    "CostCentreCode": "ENG-001",
+    "employees": [
+      {
+        "EmployeeID": 101,
+        "FirstName": "Alice",
+        "LastName": "Nguyen",
+        "JobTitle": "Senior Engineer",
+        "EmploymentType": "FullTime",
+        "HireDate": "2022-03-14",
+        "IsActive": true
+      },
+      {
+        "EmployeeID": 108,
+        "FirstName": "James",
+        "LastName": "Osei",
+        "JobTitle": "Engineering Lead",
+        "EmploymentType": "FullTime",
+        "HireDate": "2019-07-01",
+        "IsActive": true
+      }
+    ]
+  },
+  {
+    "DepartmentID": 2,
+    "DepartmentName": "Finance",
+    "ManagerID": 12,
+    "CostCentreCode": "FIN-001",
+    "employees": [
+      {
+        "EmployeeID": 204,
+        "FirstName": "Priya",
+        "LastName": "Sharma",
+        "JobTitle": "Payroll Analyst",
+        "EmploymentType": "FullTime",
+        "HireDate": "2021-01-18",
+        "IsActive": true
+      }
+    ]
+  }
+]</code></pre>
+
+<p>
+  Each root record (Department) contains its child collection (<code>employees</code>) nested inline. The engine executes one query per level, per parent row, and assembles the tree in memory before responding.
+</p>
+
+<h2>Next Steps</h2>
+<div class="card-grid">
+  <div class="card">
+    <h3><i class="fa-solid fa-pen-to-square"></i> Writing Templates</h3>
+    <p>Complete reference for every field in the QueryTemplate JSON schema — parameters, options, children, and SQL guidelines.</p>
+    <a href="09-template-authoring.html">Read the reference &rarr;</a>
+  </div>
+  <div class="card">
+    <h3><i class="fa-solid fa-at"></i> @parent Tokens</h3>
+    <p>Learn how to use <code>@parent.ColumnName</code>, chained <code>@parent.parent.ColumnName</code>, and the <code>@parent.id</code> shorthand.</p>
+    <a href="10-parent-tokens.html">Read the guide &rarr;</a>
+  </div>
+  <div class="card">
+    <h3><i class="fa-solid fa-brackets-curly"></i> Expression Directive</h3>
+    <p>Embed Multi-Query results into workflow nodes, email templates, form fields, and API responses using the directive token.</p>
+    <a href="15-op-expression-directive.html">Read the guide &rarr;</a>
+  </div>
+  <div class="card">
+    <h3><i class="fa-solid fa-shield-halved"></i> Security</h3>
+    <p>Understand role requirements, TenantID injection, service account permissions, and best practices for production deployments.</p>
+    <a href="16-security.html">Read the guide &rarr;</a>
+  </div>
+</div>
+
+<div class="page-nav">
+  <a href="07-uc-expression-embedding.html"><i class="fa-solid fa-arrow-left"></i> Expression Embedding</a>
+  <a href="09-template-authoring.html">Writing Templates <i class="fa-solid fa-arrow-right"></i></a>
+</div>
+
+</main>
+</div>
+</body>
+</html>

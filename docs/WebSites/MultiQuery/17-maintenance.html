@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maintenance — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html" class="active">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Administration &middot; Operations</span>
+    <h1>Maintenance</h1>
+    <p class="lead">Day-to-day management of templates, troubleshooting common problems, and monitoring Multi-Query performance.</p>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2>Managing Templates</h2>
+  <p>Templates live in the <code>dbo.Shared_Configurations</code> table. Each template is a row with a <code>Code</code> (the catalogue code) and a <code>Value</code> (the JSON template definition). No application restart is required after updating a template — the engine loads the template JSON per-request.</p>
+
+  <div class="steps">
+    <div class="step">
+      <strong>Locate the template</strong>
+      <p>Query <code>dbo.Shared_Configurations</code> by <code>Code</code> and <code>TenantID</code>. The <code>Code</code> must exactly match the catalogue code used in the directive or REST endpoint path.</p>
+      <pre><code>SELECT ID, Code, Value, IsActive, Deleted, LastModifiedOn
+FROM dbo.Shared_Configurations
+WHERE Code = 'PAYROLL_DEPT_SUMMARY'
+  AND TenantID = @TenantID
+  AND Deleted = 0;</code></pre>
+    </div>
+    <div class="step">
+      <strong>Update the JSON value</strong>
+      <p>Modify the <code>Value</code> column with the new template JSON. If you maintain a version field inside the JSON object (e.g., <code>"version": 2</code>), increment it to support change tracking and rollback.</p>
+      <pre><code>UPDATE dbo.Shared_Configurations
+SET Value = @newTemplateJson,
+    LastModifiedOn = GETDATE(),
+    LastModifiedBy = @editorUserID
+WHERE Code = 'PAYROLL_DEPT_SUMMARY'
+  AND TenantID = @TenantID;</code></pre>
+    </div>
+    <div class="step">
+      <strong>Set audit columns</strong>
+      <p>Always update <code>LastModifiedOn</code> (DATETIME) and <code>LastModifiedBy</code> (INT user ID) when saving changes. This supports audit trail queries and rollback identification.</p>
+    </div>
+    <div class="step">
+      <strong>Verify — no restart needed</strong>
+      <p>Templates are resolved per-request from the database. The change takes effect immediately on the next API call or expression evaluation. Confirm by calling the execute endpoint and inspecting the response.</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Disabling a Template</h2>
+  <p>To temporarily block execution of a template without deleting it, set the <code>IsActive</code> flag to <code>0</code>. The engine will return an HTTP <code>404 Not Found</code> for direct API calls, and the expression directive will return an empty string.</p>
+
+  <pre><code>UPDATE dbo.Shared_Configurations
+SET IsActive = 0,
+    LastModifiedOn = GETDATE(),
+    LastModifiedBy = @editorUserID
+WHERE Code = 'PAYROLL_DEPT_SUMMARY'
+  AND TenantID = @TenantID;</code></pre>
+
+  <p>Re-enable the template by setting <code>IsActive = 1</code>. This is the preferred approach for rollbacks during incident response — it is faster than restoring JSON content.</p>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Soft-Deleting a Template</h2>
+  <p>For permanent removal, set <code>Deleted = 1</code>. This has the same operational effect as <code>IsActive = 0</code> (callers receive 404 / empty string), but additionally signals that the record is logically deleted and should be excluded from administrative listings and exports.</p>
+
+  <pre><code>UPDATE dbo.Shared_Configurations
+SET Deleted = 1,
+    LastModifiedOn = GETDATE(),
+    LastModifiedBy = @editorUserID
+WHERE Code = 'PAYROLL_DEPT_SUMMARY'
+  AND TenantID = @TenantID;</code></pre>
+
+  <p>Soft-deleted records are never physically removed. This preserves the audit trail and allows recovery if a deletion was made in error.</p>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Troubleshooting</h2>
+  <p>The following accordion sections cover the most common failure modes. Expand each section for diagnostic steps.</p>
+
+  <details style="border:1px solid var(--border,#dde3ee);border-radius:6px;margin-bottom:.75rem;overflow:hidden;">
+    <summary style="padding:.85rem 1.1rem;font-weight:600;cursor:pointer;background:var(--surface-2,#f4f6fb);list-style:none;display:flex;align-items:center;gap:.5rem;">
+      <i class="fa-solid fa-circle-question" style="color:var(--accent,#4f6ef7);"></i> 404 Template Not Found
+    </summary>
+    <div style="padding:1rem 1.25rem;">
+      <p>The engine could not locate a matching row in <code>dbo.Shared_Configurations</code>. Check the following in order:</p>
+      <ol style="line-height:2.2;">
+        <li>The <code>Code</code> column value exactly matches the code used in the URL or directive (case-sensitive comparison depending on database collation)</li>
+        <li>The <code>TenantID</code> column matches the TenantID in the caller's JWT — use the JWT debugger to confirm the <code>CurrentTenantIDWithCheck_Int</code> claim</li>
+        <li><code>IsActive</code> is <code>1</code> — a value of <code>0</code> causes the engine to treat the template as absent</li>
+        <li><code>Deleted</code> is <code>0</code> — a value of <code>1</code> soft-deletes the template and produces the same result</li>
+        <li>The row exists for the correct environment (dev/staging/prod may have separate databases)</li>
+      </ol>
+    </div>
+  </details>
+
+  <details style="border:1px solid var(--border,#dde3ee);border-radius:6px;margin-bottom:.75rem;overflow:hidden;">
+    <summary style="padding:.85rem 1.1rem;font-weight:600;cursor:pointer;background:var(--surface-2,#f4f6fb);list-style:none;display:flex;align-items:center;gap:.5rem;">
+      <i class="fa-solid fa-circle-question" style="color:var(--accent,#4f6ef7);"></i> Empty Child Collection
+    </summary>
+    <div style="padding:1rem 1.25rem;">
+      <p>The parent query returns rows but a child query returns an empty array, even though data should exist.</p>
+      <ol style="line-height:2.2;">
+        <li>Verify that the <code>@parent.ColumnName</code> token in the child SQL exactly matches the column name returned by the parent query. SQL Server column names are case-insensitive at the DB level but the <code>@parent</code> token parser may be case-sensitive — use the exact alias as written in the parent <code>SELECT</code> list.</li>
+        <li>Add a <code>@parent.id</code> reference to the child query and run it manually using a known parent ID to confirm the JOIN condition returns rows.</li>
+        <li>Check that the parent column referenced is not aliased differently in the SELECT clause vs the <code>@parent.ColumnName</code> reference.</li>
+        <li>Confirm the child query also includes <code>WHERE TenantID = @TenantID</code> — missing tenant filter can cause zero rows when data exists under a different tenant.</li>
+      </ol>
+    </div>
+  </details>
+
+  <details style="border:1px solid var(--border,#dde3ee);border-radius:6px;margin-bottom:.75rem;overflow:hidden;">
+    <summary style="padding:.85rem 1.1rem;font-weight:600;cursor:pointer;background:var(--surface-2,#f4f6fb);list-style:none;display:flex;align-items:center;gap:.5rem;">
+      <i class="fa-solid fa-circle-question" style="color:var(--accent,#4f6ef7);"></i> Slow Queries
+    </summary>
+    <div style="padding:1rem 1.25rem;">
+      <p>Multi-Query executes one SQL statement per node in the template tree, multiplied by the number of parent rows. Performance compounds quickly without proper indexing and filtering.</p>
+      <ol style="line-height:2.2;">
+        <li>Enable <code>cacheSeconds</code> on the template root — for reference data that changes infrequently, caching eliminates repeated SQL round-trips</li>
+        <li>Add database indexes on all foreign key columns used in <code>@parent</code> joins</li>
+        <li>Tighten the parent row filter — the fewer rows the root query returns, the fewer child executions are required</li>
+        <li>Reduce <code>maxDepth</code> in the template JSON to limit recursion depth for self-referential trees</li>
+        <li>Replace <code>SELECT *</code> with explicit column lists — wide rows increase network transfer cost</li>
+        <li>Use SQL Server Query Store to identify the slowest individual statements within a Multi-Query execution</li>
+      </ol>
+    </div>
+  </details>
+
+  <details style="border:1px solid var(--border,#dde3ee);border-radius:6px;margin-bottom:.75rem;overflow:hidden;">
+    <summary style="padding:.85rem 1.1rem;font-weight:600;cursor:pointer;background:var(--surface-2,#f4f6fb);list-style:none;display:flex;align-items:center;gap:.5rem;">
+      <i class="fa-solid fa-circle-question" style="color:var(--accent,#4f6ef7);"></i> 401 Unauthorized
+    </summary>
+    <div style="padding:1rem 1.25rem;">
+      <p>The JWT failed validation. Common causes:</p>
+      <ul style="line-height:2.2;">
+        <li>Token has expired — check the <code>exp</code> claim. Obtain a fresh token and retry.</li>
+        <li>Issuer mismatch — the <code>iss</code> claim does not match <code>JWT:Issuer</code> in app settings. Confirm the token was issued by the correct BizFirst identity server.</li>
+        <li>Audience mismatch — the <code>aud</code> claim does not match <code>JWT:Audience</code>. Ensure the token was requested for the correct API audience.</li>
+        <li>Clock skew exceeded — server and client clocks are more than 5 minutes apart. Synchronize server time via NTP.</li>
+        <li>Signing key mismatch — the token was signed with a different key than what is configured in <code>JWT:Key</code>.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details style="border:1px solid var(--border,#dde3ee);border-radius:6px;margin-bottom:.75rem;overflow:hidden;">
+    <summary style="padding:.85rem 1.1rem;font-weight:600;cursor:pointer;background:var(--surface-2,#f4f6fb);list-style:none;display:flex;align-items:center;gap:.5rem;">
+      <i class="fa-solid fa-circle-question" style="color:var(--accent,#4f6ef7);"></i> 403 Forbidden
+    </summary>
+    <div style="padding:1rem 1.25rem;">
+      <p>The token is valid but the authenticated user does not hold an authorized role. The <code>[AuthorizeTenantAdminAttribute]</code> requires the <code>Admin</code> or <code>TenantAdmin</code> role. Verify that the user's account has been granted one of these roles for the relevant tenant in BizFirst Identity administration.</p>
+    </div>
+  </details>
+
+  <details style="border:1px solid var(--border,#dde3ee);border-radius:6px;margin-bottom:.75rem;overflow:hidden;">
+    <summary style="padding:.85rem 1.1rem;font-weight:600;cursor:pointer;background:var(--surface-2,#f4f6fb);list-style:none;display:flex;align-items:center;gap:.5rem;">
+      <i class="fa-solid fa-circle-question" style="color:var(--accent,#4f6ef7);"></i> Expression Directive Returns Empty
+    </summary>
+    <div style="padding:1rem 1.25rem;">
+      <p>When <code>{{multi-query:sqlserver.CODE}}</code> evaluates to an empty string inside a workflow or template:</p>
+      <ol style="line-height:2.2;">
+        <li>Check the platform log for a warning message referencing the directive key — this will identify whether the failure is a missing template, a missing parameter, or an engine resolution failure</li>
+        <li>Confirm that all <code>@paramName</code> parameters referenced in the template SQL are present in the <code>EvaluationContext</code> before the node that evaluates the directive</li>
+        <li>Add a <strong>Set Expression Context</strong> node earlier in the workflow to explicitly populate required parameters</li>
+        <li>Verify the template code is correct — a typo in the directive token produces a 404 internally which is silently converted to an empty string</li>
+        <li>Check <code>IsActive</code> and <code>Deleted</code> on the template row, as described in the 404 section above</li>
+      </ol>
+    </div>
+  </details>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Performance Tips</h2>
+  <ul style="line-height:2.4;">
+    <li>Use <code>cacheSeconds</code> in the template root for data that changes on a known schedule (e.g., payroll periods, org structures) — a value of <code>300</code> eliminates repeated SQL execution across concurrent users</li>
+    <li>Filter parent rows as tightly as possible — every additional parent row multiplies the number of child queries executed</li>
+    <li>Avoid <code>SELECT *</code> in all query levels — specify only the columns you need to minimize row size and network transfer overhead</li>
+    <li>Add composite indexes on FK columns used in <code>@parent</code> join conditions, including <code>TenantID</code> as a leading column</li>
+    <li>Use <code>maxDepth</code> to cap recursion depth on self-referential templates (e.g., org chart) to prevent unbounded tree walks</li>
+    <li>For HTML output, prefer the fragment variant over standalone for embedded use — it avoids the overhead of generating a full document shell</li>
+    <li>Monitor per-template execution time in BizFirst Observe and set alerts when a template consistently exceeds an acceptable latency threshold</li>
+  </ul>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Monitoring</h2>
+
+  <div class="callout info">
+    <strong>BizFirst Observe integration</strong><br>
+    Rate limit counters, per-template execution time, SQL row counts, and error rates are emitted as BizFirst Observe metrics under the <code>MultiQuery.*</code> metric namespace. Set up Grafana alerts on the <code>MultiQuery.Execute</code> error rate and P95 latency metrics to detect template regressions before they impact users. The <code>templateCode</code> label is included on all metrics, enabling per-template dashboards.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div class="page-nav">
+    <a href="16-security.html"><i class="fa-solid fa-arrow-left"></i> Security &amp; Permissions</a>
+    <a href="18-evolution.html">Evolution &amp; Versioning <i class="fa-solid fa-arrow-right"></i></a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

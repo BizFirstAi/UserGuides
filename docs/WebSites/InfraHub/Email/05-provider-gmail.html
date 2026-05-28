@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gmail OAuth2 | BizFirst Email System</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar"><div class="sidebar-brand">Email System<span>Multi-tenant, Multi-provider</span></div><div class="sidebar-section">Getting Started</div><a href="index.html">Overview</a><a href="01-quickstart.html">Quick Start (5 min)</a><div class="sidebar-section">Providers</div><a href="02-bring-your-own.html">Bring Your Own Provider</a><a href="03-provider-smtp.html">SMTP Configuration</a><a href="04-provider-ses.html">AWS SES Setup</a><a href="05-provider-gmail.html" class="active">Gmail OAuth2</a><div class="sidebar-section">Configuration</div><a href="06-credentials-design.html">Credentials & Security</a><a href="07-tenant-specific.html">Tenant-Specific Providers</a><a href="08-first-time-config.html">First-Time Configuration</a><div class="sidebar-section">Advanced Topics</div><a href="09-production-deployment.html">Production Deployment</a><a href="10-switching-providers.html">Switching Providers Mid-Production</a><a href="11-advanced-patterns.html">Advanced Dispatcher Patterns</a><a href="12-sample-json.html">Sample JSON Configurations</a><div class="sidebar-section">Roadmap & Community</div><a href="13-future-providers.html">Future Providers</a><a href="14-request-provider.html">Request New Provider</a><div class="sidebar-section">Navigation</div><a href="../">&#8592; All Guides</a><a href="../../">&#8592; Portal</a></nav>
+<main><div class="page-header"><div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">WebSites</a> / <a href="index.html" style="color:inherit;text-decoration:none;">Email System</a> / Gmail OAuth2</div><h1>Gmail OAuth2 Setup</h1><p class="subtitle">Send emails via Gmail using OAuth2. Free, quota-limited (100 emails/day). Automatic token refresh.</p></div><div class="callout success"><strong><i class="fa-solid fa-check-circle"></i> Best For</strong> Low-volume transactional email, testing, development, organizations using Google Workspace.</div><h2><i class="fa-solid fa-sliders"></i> Gmail OAuth2 Parameters</h2><table><thead><tr><th>Parameter</th><th>Type</th><th>Required</th><th>Example</th></tr></thead><tbody><tr><td><code>provider</code></td><td>string</td><td>✅</td><td>gmail</td></tr><tr><td><code>fromEmail</code></td><td>string</td><td>✅</td><td>user@gmail.com</td></tr><tr><td><code>fromName</code></td><td>string</td><td>❌</td><td>Your App</td></tr></tbody></table><h2><i class="fa-solid fa-key"></i> OAuth2 Setup</h2><h3>1. Create Google Cloud Project</h3><pre><code>1. Go to Google Cloud Console (console.cloud.google.com)
+2. Create new project: "BizFirst Email"
+3. Enable Gmail API
+4. Create OAuth2 credentials (Desktop app type)
+5. Download JSON credentials</code></pre><h3>2. Get Authorization Code</h3><pre><code>// First-time only: Get user consent
+GET https://accounts.google.com/o/oauth2/v2/auth?
+  client_id=YOUR_CLIENT_ID
+  scope=https://www.googleapis.com/auth/gmail.send
+  redirect_uri=http://localhost:8080/callback
+  response_type=code</code></pre><h3>3. Exchange Code for Tokens</h3><pre><code>POST https://oauth2.googleapis.com/token
+Content-Type: application/x-www-form-urlencoded
+
+code=AUTH_CODE
+client_id=YOUR_CLIENT_ID
+client_secret=YOUR_CLIENT_SECRET
+redirect_uri=http://localhost:8080/callback
+grant_type=authorization_code
+
+Response:
+{
+  "access_token": "ya29.xxx",
+  "expires_in": 3600,
+  "refresh_token": "1//xxx",
+  "scope": "https://www.googleapis.com/auth/gmail.send",
+  "token_type": "Bearer"
+}</code></pre><h3>4. Create Credential in Database</h3><pre><code>INSERT INTO AIExt_Credentials (
+  Name, DisplayMetadata, EncryptedData, TenantID, CredentialTypeID
+) VALUES (
+  'email-gmail',
+  '{
+    "provider": "gmail",
+    "fromEmail": "user@gmail.com",
+    "fromName": "Your Company"
+  }',
+  0x...,  -- Encrypted: {accessToken, refreshToken, expiresAt}
+  1, 3    -- OAuth2Record type
+);</code></pre><h2><i class="fa-solid fa-refresh"></i> Automatic Token Refresh</h2><p>The system automatically refreshes expired tokens. Store refresh_token securely:</p><pre><code>// Stored in encrypted credential
+{
+  "accessToken": "ya29.current_token",
+  "refreshToken": "1//refresh_token_here",
+  "expiresAt": "2026-05-28T14:30:00Z"
+}</code></pre><p>When access token expires, the system uses refresh_token to obtain a new one.</p><h2><i class="fa-solid fa-triangle-exclamation"></i> Quota Limitations</h2><ul><li>100 emails/day for development accounts</li><li>Gmail itself has limits: 500 recipients, 25MB per email</li><li>Request production quota increase in Google Cloud Console</li></ul><h2><i class="fa-solid fa-check-list"></i> Testing</h2><pre><code>var result = await _emailService.SendAsync(
+    tenantID: 1,
+    to: "test@example.com",
+    subject: "Gmail Test",
+    html: "&lt;p&gt;Gmail OAuth2 working!&lt;/p&gt;",
+    credentialName: "email-gmail",
+    ct: CancellationToken.None);</code></pre><h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2><ul><li><a href="06-credentials-design.html"><strong>Credentials Design</strong></a> — Understand OAuth2 storage</li><li><a href="09-production-deployment.html"><strong>Production Deployment</strong></a></li></ul></main></body>
+</html>

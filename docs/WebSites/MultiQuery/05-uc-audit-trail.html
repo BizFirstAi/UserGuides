@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Use Case: Audit Trails — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html" class="active">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+<div class="page-header">
+  <div>
+    <span class="tag">Use Case</span>
+    <span class="tag">Compliance</span>
+  </div>
+  <h1>Use Case: Audit Trails</h1>
+  <p class="lead">Fetch an entity record and all its change events, before/after values, and the approvals that drove them — in a single Multi-Query call.</p>
+</div>
+
+<h2>Scenario</h2>
+<p>
+  A compliance officer needs to reconstruct the complete state of a payroll record at any point in time. In a traditional approach, this requires manual joins across three separate tables — <code>PayrollRecords</code>, <code>AuditEvents</code>, and <code>AuditEventFields</code> — plus a fourth join to <code>ApprovalRecords</code> to understand what triggered each change. Writing, maintaining, and securing that query across multiple consumer systems is complex, slow to execute at scale, and difficult to audit in itself.
+</p>
+<p>
+  Multi-Query solves this by defining the entire tree once in a stored template. Compliance reports, API calls, and embedded expressions all share the same vetted SQL, ensuring that every audit query is consistent, read-only, and tenant-scoped.
+</p>
+
+<h2>Template Design</h2>
+<p>
+  The template has three levels: the root <strong>PayrollRecord</strong>, its child <strong>AuditEvents</strong>, and each event's grandchild <strong>AuditEventFields</strong> (the field-level before/after values). A fourth sibling child collects the <strong>ApprovalRecords</strong> that authorized each audit event.
+</p>
+<pre><code>{
+  "name": "Payroll Record Audit Trail",
+  "sql": "SELECT RecordID, EmployeeID, PeriodStart, PeriodEnd, GrossPay, NetPay,
+                 Status, CreatedOn, CreatedBy, LastModifiedOn, LastModifiedBy
+          FROM   PayrollRecords
+          WHERE  RecordID  = @RecordID
+            AND  TenantID  = @TenantID",
+  "recordType": "PayrollRecord",
+  "isTemplate": true,
+  "parameters": [
+    { "name": "RecordID", "type": "int", "defaultValue": null }
+  ],
+  "options": {
+    "outputFormat": "json",
+    "outputFormatTemplate": "fragment",
+    "maxDepth": 5,
+    "cacheSeconds": 0
+  },
+  "children": [
+    {
+      "collectionName": "auditEvents",
+      "sql": "SELECT AuditEventID, EntityID, EntityType, EventType,
+                     EventTimestamp, InitiatedBy, SourceSystem
+              FROM   AuditEvents
+              WHERE  EntityID   = @parent.RecordID
+                AND  EntityType = 'PayrollRecord'
+                AND  TenantID   = @TenantID
+              ORDER BY EventTimestamp DESC",
+      "recordType": "AuditEvent",
+      "isTemplate": false,
+      "children": [
+        {
+          "collectionName": "fieldChanges",
+          "sql": "SELECT FieldChangeID, AuditEventID, FieldName,
+                         OldValue, NewValue, ChangeReason
+                  FROM   AuditEventFields
+                  WHERE  AuditEventID = @parent.AuditEventID
+                    AND  TenantID     = @TenantID",
+          "recordType": "AuditEventField",
+          "isTemplate": false,
+          "children": []
+        },
+        {
+          "collectionName": "approvals",
+          "sql": "SELECT ApprovalID, AuditEventID, ApproverID, ApproverName,
+                         DecisionStatus, DecisionTimestamp, Comments
+                  FROM   ApprovalRecords
+                  WHERE  AuditEventID = @parent.AuditEventID
+                    AND  TenantID     = @TenantID",
+          "recordType": "ApprovalRecord",
+          "isTemplate": false,
+          "children": []
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+<p>Store this JSON in <code>dbo.Shared_Configurations</code> with a catalogue code such as <code>MQ_PAYROLL_AUDIT_TRAIL</code>.</p>
+
+<h2>Sample Output</h2>
+<p>Calling <code>GET /api/v1/expressions/multiquery/MQ_PAYROLL_AUDIT_TRAIL.json?RecordID=4821</code> returns a compact nested JsonArray tree:</p>
+<pre><code>[
+  {
+    "RecordID": 4821,
+    "EmployeeID": 1109,
+    "PeriodStart": "2025-11-01",
+    "PeriodEnd": "2025-11-30",
+    "GrossPay": 6800.00,
+    "NetPay": 4956.50,
+    "Status": "Posted",
+    "LastModifiedOn": "2025-12-02T10:14:22Z",
+    "LastModifiedBy": 44,
+    "auditEvents": [
+      {
+        "AuditEventID": 90021,
+        "EntityID": 4821,
+        "EntityType": "PayrollRecord",
+        "EventType": "StatusChange",
+        "EventTimestamp": "2025-12-02T10:14:22Z",
+        "InitiatedBy": 44,
+        "SourceSystem": "PayrollEngine",
+        "fieldChanges": [
+          {
+            "FieldName": "Status",
+            "OldValue": "PendingApproval",
+            "NewValue": "Posted",
+            "ChangeReason": "Manager approval received"
+          }
+        ],
+        "approvals": [
+          {
+            "ApprovalID": 5501,
+            "ApproverName": "Sarah Thompson",
+            "DecisionStatus": "Approved",
+            "DecisionTimestamp": "2025-12-02T10:12:05Z",
+            "Comments": "Verified against timesheet data"
+          }
+        ]
+      },
+      {
+        "AuditEventID": 89944,
+        "EntityType": "PayrollRecord",
+        "EventType": "FieldUpdate",
+        "EventTimestamp": "2025-12-01T16:30:01Z",
+        "InitiatedBy": 29,
+        "SourceSystem": "BizFirstPayroll",
+        "fieldChanges": [
+          {
+            "FieldName": "GrossPay",
+            "OldValue": "6500.00",
+            "NewValue": "6800.00",
+            "ChangeReason": "Overtime hours added"
+          }
+        ],
+        "approvals": []
+      }
+    ]
+  }
+]</code></pre>
+
+<div class="callout warning">
+  <strong><i class="fa-solid fa-triangle-exclamation"></i> Read-Only Enforcement</strong>
+  <p>Audit template SQLs must be read-only <code>SELECT</code> statements. Never use the <strong>run-direct</strong> endpoint for audit trail retrieval — always use the <code>GET</code> endpoints only. Run-direct is reserved for administrative script execution under elevated authorization and must never expose audit data pathways.</p>
+</div>
+
+<h2>Compliance Considerations</h2>
+
+<h3>Data Retention</h3>
+<p>
+  Audit trail templates query live tables. Your organization's data retention policy governs how long <code>AuditEvents</code> and <code>AuditEventFields</code> rows are preserved. Do not rely on the Multi-Query engine for archival — use dedicated retention jobs and confirm that the underlying tables comply with your regulatory requirements (SOC 2, GDPR, HIPAA, etc.).
+</p>
+
+<h3>Immutability</h3>
+<p>
+  Audit tables should be protected by database-level permissions so that only the audit service account can INSERT. The Multi-Query template service account must have <strong>SELECT</strong> only on <code>AuditEvents</code>, <code>AuditEventFields</code>, and <code>ApprovalRecords</code>. Grant the minimum required privilege and audit access to the template storage table (<code>dbo.Shared_Configurations</code>) itself.
+</p>
+
+<h3>Cache Setting</h3>
+<p>
+  Audit endpoints must set <code>"cacheSeconds": 0</code>. Caching an audit trail response would mean a compliance officer could receive stale data — potentially hiding a recent change event. The zero-cache setting ensures every call reflects the current database state in real time.
+</p>
+
+<h3>TenantID Injection</h3>
+<p>
+  The <code>TenantID</code> parameter is injected automatically from the caller's JWT. It is never accepted from the query string or request body. This guarantees that tenant A cannot retrieve audit records belonging to tenant B, even if they know the <code>RecordID</code>.
+</p>
+
+<div class="page-nav">
+  <a href="04-uc-org-chart.html"><i class="fa-solid fa-arrow-left"></i> Org Chart</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots <i class="fa-solid fa-arrow-right"></i></a>
+</div>
+
+</main>
+</div>
+</body>
+</html>

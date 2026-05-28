@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Use Case: Payroll Reporting — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html" class="active">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="page-header-tags">
+      <span class="tag">Use Case</span>
+      <span class="tag">SQL Server</span>
+    </div>
+    <h1>Use Case: Payroll Reporting</h1>
+    <p class="lead">Build a complete payroll report in a single Multi-Query call — employees, their payslips, and line-item deductions, all in one JSON or HTML response.</p>
+  </div>
+
+  <h2>Scenario</h2>
+  <p>A payroll administrator needs to generate a departmental pay run summary. The report must show every active employee in a given department, and for each employee it must list every payslip issued in the current pay period, and for each payslip it must list every deduction line — tax, pension, healthcare, and other withholdings. The final document is passed to a PDF generation service and also stored as a structured JSON archive.</p>
+  <p>Without Multi-Query this requires either a complex SQL JOIN that produces a flat result set needing reassembly, or a cascade of N+1 queries — one employee fetch followed by one payslip fetch per employee followed by one deductions fetch per payslip. For a department of 80 employees with an average of 2 payslips and 6 deductions each, that naive approach produces 80 &times; 2 &times; 6 = 960 separate queries. Multi-Query reduces this to 3 database round-trips regardless of record volume.</p>
+
+  <h2>Template Design</h2>
+  <p>The template is a 3-level JSON document. The root level selects employees; the first child level selects payslips per employee; the second child (grandchild) level selects deductions per payslip.</p>
+
+<pre><code>{
+  "name": "Departmental Payroll Report",
+  "sql": "SELECT EmployeeID, FirstName, LastName, JobTitle, BaseSalary
+          FROM Employees
+          WHERE DepartmentID = @DepartmentID
+            AND Deleted = 0
+            AND TenantID = @TenantID
+          ORDER BY LastName, FirstName",
+  "recordType": "Employee",
+  "isTemplate": true,
+  "parameters": [
+    { "name": "DepartmentID", "type": "int", "defaultValue": null }
+  ],
+  "options": {
+    "outputFormat": "json",
+    "maxDepth": 5,
+    "cacheSeconds": 60
+  },
+  "children": [
+    {
+      "collectionName": "payslips",
+      "sql": "SELECT PayslipID, PayPeriodStart, PayPeriodEnd,
+                     GrossPay, NetPay, Status
+              FROM Payslips
+              WHERE EmployeeID = @parent.EmployeeID
+                AND TenantID = @TenantID
+              ORDER BY PayPeriodEnd DESC",
+      "recordType": "Payslip",
+      "isTemplate": false,
+      "children": [
+        {
+          "collectionName": "deductions",
+          "sql": "SELECT DeductionID, DeductionType, Description,
+                         Amount, IsPreTax
+                  FROM PayslipDeductions
+                  WHERE PayslipID = @parent.PayslipID
+                    AND TenantID = @TenantID
+                  ORDER BY DeductionType",
+          "recordType": "PayslipDeduction",
+          "isTemplate": false,
+          "children": []
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <strong>Note on <code>cacheSeconds</code>:</strong> The <code>cacheSeconds</code> option prevents re-executing identical queries within the same time window. In this example it is set to 60 seconds, which is appropriate for a report that runs multiple times during a pay run review. Set to <code>0</code> to disable caching entirely — for example, when the template is used in a live dashboard that must always reflect the latest committed data.
+  </div>
+
+  <h2>Storing the Template</h2>
+  <p>Insert the template into <code>dbo.Shared_Configurations</code> with a unique catalogue code. The engine resolves templates by this code at execution time.</p>
+
+<pre><code>INSERT INTO dbo.Shared_Configurations
+    (Code, [Value], CreatedOn, CreatedBy, TenantID, AppDomainID)
+VALUES
+    (
+        'PAYROLL_REPORT_DEPT',
+        '{ ... JSON template from above ... }',
+        GETUTCDATE(),
+        1,          -- system user ID
+        @TenantID,
+        @AppDomainID
+    );</code></pre>
+
+  <p>To update an existing template, use an UPDATE on <code>Code = 'PAYROLL_REPORT_DEPT'</code>. No application restart or deployment is required — the engine reads the current value from the database at each execution.</p>
+
+  <h2>Executing the Template</h2>
+  <p>Call the JSON endpoint with the <code>DepartmentID</code> parameter as a query-string value. Include a valid Bearer JWT carrying the <code>TenantAdmin</code> role.</p>
+
+<pre><code>GET /api/v1/expressions/multiquery/PAYROLL_REPORT_DEPT.json?DepartmentID=42
+
+Authorization: Bearer eyJhbGci...</code></pre>
+
+  <p>Alternatively, use the base endpoint and specify the format explicitly:</p>
+
+<pre><code>GET /api/v1/expressions/multiquery/PAYROLL_REPORT_DEPT?DepartmentID=42&amp;outputFormat=json
+
+Authorization: Bearer eyJhbGci...</code></pre>
+
+  <h2>Sample JSON Output</h2>
+  <p>The response is a compact nested JsonArray. Each employee record contains a <code>payslips</code> array; each payslip record contains a <code>deductions</code> array.</p>
+
+<pre><code>[
+  {
+    "EmployeeID": 1001,
+    "FirstName": "Sarah",
+    "LastName": "Chen",
+    "JobTitle": "Senior Accountant",
+    "BaseSalary": 72000.00,
+    "payslips": [
+      {
+        "PayslipID": 5510,
+        "PayPeriodStart": "2026-05-01",
+        "PayPeriodEnd": "2026-05-31",
+        "GrossPay": 6000.00,
+        "NetPay": 4312.50,
+        "Status": "Finalised",
+        "deductions": [
+          {
+            "DeductionID": 90021,
+            "DeductionType": "IncomeTax",
+            "Description": "PAYE Income Tax",
+            "Amount": 1200.00,
+            "IsPreTax": false
+          },
+          {
+            "DeductionID": 90022,
+            "DeductionType": "Pension",
+            "Description": "Employee Pension Contribution",
+            "Amount": 360.00,
+            "IsPreTax": true
+          },
+          {
+            "DeductionID": 90023,
+            "DeductionType": "NationalInsurance",
+            "Description": "Employee NI Contribution",
+            "Amount": 127.50,
+            "IsPreTax": false
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "EmployeeID": 1002,
+    "FirstName": "Marcus",
+    "LastName": "Okafor",
+    "JobTitle": "Payroll Analyst",
+    "BaseSalary": 58000.00,
+    "payslips": [ "..." ]
+  }
+]</code></pre>
+
+  <h2>Using the Result in a PDF Generator</h2>
+  <p>Because the output is already a fully nested structure, the PDF generation service can traverse it directly without any client-side reassembly. Bind the outer array to employee rows, nest payslip rows inside each employee section, and nest deduction rows inside each payslip section — using the same JSON path in each template binding expression.</p>
+
+  <table class="data-table">
+    <thead>
+      <tr><th>Report Section</th><th>JSON Path</th><th>Key Fields</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Employee header</td><td><code>$[*]</code></td><td>FullName, JobTitle, BaseSalary</td></tr>
+      <tr><td>Payslip row</td><td><code>$[*].payslips[*]</code></td><td>PayPeriod, GrossPay, NetPay, Status</td></tr>
+      <tr><td>Deduction line</td><td><code>$[*].payslips[*].deductions[*]</code></td><td>DeductionType, Description, Amount</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="02-use-cases.html" class="page-nav-prev">&larr; Previous: Use Cases Overview</a>
+    <a href="04-uc-org-chart.html" class="page-nav-next">Next: Org Chart &rarr;</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

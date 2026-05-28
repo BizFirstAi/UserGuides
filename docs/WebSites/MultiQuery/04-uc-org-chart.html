@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Use Case: Org Chart — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html" class="active">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="page-header-tags">
+      <span class="tag">Use Case</span>
+      <span class="tag">HTML Output</span>
+    </div>
+    <h1>Use Case: Org Chart</h1>
+    <p class="lead">Render a live organisational hierarchy — departments, teams, and individuals — as an expandable HTML table powered by a single Multi-Query template. No front-end assembly code required.</p>
+  </div>
+
+  <h2>Scenario</h2>
+  <p>An HR administrator needs a live, browseable organisational chart embedded inside an Atlas form dashboard. The chart must show every department, each team within a department, and each employee within a team — with the ability to collapse and expand sections interactively. The data must always reflect the current state of the database; it cannot be a stale snapshot.</p>
+  <p>Rather than building a bespoke front-end component with its own data-fetching logic, the team uses Multi-Query's HTML output mode. The template is stored once, the engine renders the expandable table, and the result is embedded in the Atlas Display control via an expression directive. When HR updates department or team membership in the underlying tables, the chart automatically reflects the change on the next page load — no code deployment required.</p>
+
+  <h2>Template Design</h2>
+  <p>The template uses a 3-level hierarchy: Departments (root) &rarr; Teams (child) &rarr; Employees (grandchild). The <code>outputFormat</code> is set to <code>"html"</code> and <code>outputFormatTemplate</code> to <code>"standalone"</code> so the engine wraps the table in a complete HTML document with inline CSS and expand/collapse JavaScript.</p>
+
+<pre><code>{
+  "name": "Full Organisational Chart",
+  "sql": "SELECT DepartmentID, DepartmentCode, DepartmentName,
+                 CostCentre, HeadCount
+          FROM Departments
+          WHERE Deleted = 0
+            AND TenantID = @TenantID
+          ORDER BY DepartmentName",
+  "recordType": "Department",
+  "isTemplate": true,
+  "parameters": [],
+  "options": {
+    "outputFormat": "html",
+    "outputFormatTemplate": "standalone",
+    "maxDepth": 5,
+    "cacheSeconds": 120
+  },
+  "children": [
+    {
+      "collectionName": "teams",
+      "sql": "SELECT TeamID, TeamName, TeamLead, HeadCount
+              FROM Teams
+              WHERE DepartmentID = @parent.DepartmentID
+                AND Deleted = 0
+                AND TenantID = @TenantID
+              ORDER BY TeamName",
+      "recordType": "Team",
+      "isTemplate": false,
+      "children": [
+        {
+          "collectionName": "employees",
+          "sql": "SELECT EmployeeID, FirstName, LastName,
+                         JobTitle, EmploymentType, StartDate
+                  FROM Employees
+                  WHERE TeamID = @parent.TeamID
+                    AND Deleted = 0
+                    AND TenantID = @TenantID
+                  ORDER BY LastName, FirstName",
+          "recordType": "Employee",
+          "isTemplate": false,
+          "children": []
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+  <h2>HTML Output Mode</h2>
+  <p>When <code>outputFormat</code> is set to <code>"html"</code>, the engine renders an expandable cascaded table rather than a JSON array. Each level of the hierarchy appears as an indented nested table row group. Clicking a parent row expands or collapses its child rows.</p>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Value</th>
+        <th>Effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>outputFormat</code></td>
+        <td><code>"html"</code></td>
+        <td>Returns an HTML table instead of a JSON array.</td>
+      </tr>
+      <tr>
+        <td><code>outputFormatTemplate</code></td>
+        <td><code>"standalone"</code></td>
+        <td>Wraps the table in a complete <code>&lt;!DOCTYPE html&gt;</code> document with inline CSS and JavaScript. Suitable for <code>&lt;iframe&gt;</code> embedding or saving as a self-contained file.</td>
+      </tr>
+      <tr>
+        <td><code>outputFormatTemplate</code></td>
+        <td><code>"fragment"</code></td>
+        <td>Returns only the <code>&lt;table&gt;</code> element. Suitable for injection into an existing page that already provides the surrounding document structure and stylesheet.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <i class="fa-solid fa-circle-check"></i>
+    <strong>HTML output includes inline expand/collapse JavaScript — no external dependencies required.</strong>
+    The standalone document is fully self-contained. It does not load jQuery, React, or any external library. The expand/collapse behaviour is implemented in vanilla JavaScript inlined by the engine at render time.
+  </div>
+
+  <h2>Endpoints</h2>
+  <p>There are two ways to request HTML output for this template.</p>
+
+  <h3>Using the <code>.html</code> suffix endpoint</h3>
+<pre><code>GET /api/v1/expressions/multiquery/ORG_CHART_FULL.html
+
+Authorization: Bearer eyJhbGci...</code></pre>
+
+  <p>This endpoint always returns HTML. The <code>outputFormatTemplate</code> (<code>fragment</code> vs <code>standalone</code>) is determined by the template's <code>options</code> setting.</p>
+
+  <h3>Using query-string overrides on the base endpoint</h3>
+<pre><code>GET /api/v1/expressions/multiquery/ORG_CHART_FULL
+    ?outputFormat=html
+    &amp;outputFormatTemplate=standalone
+
+Authorization: Bearer eyJhbGci...</code></pre>
+
+  <p>Query-string values override the template's <code>options</code> for this specific request only. This allows a single template to serve both JSON consumers and HTML consumers without maintaining two separate template records.</p>
+
+  <h2>Storing the Template</h2>
+<pre><code>INSERT INTO dbo.Shared_Configurations
+    (Code, [Value], CreatedOn, CreatedBy, TenantID, AppDomainID)
+VALUES
+    (
+        'ORG_CHART_FULL',
+        '{ ... JSON template from above ... }',
+        GETUTCDATE(),
+        1,
+        @TenantID,
+        @AppDomainID
+    );</code></pre>
+
+  <h2>Embedding in an Atlas Form</h2>
+  <p>Add a Display control to the Atlas form and set its expression to the following directive. The expression engine resolves the directive at render time, calls the Multi-Query endpoint internally, and injects the returned HTML into the control's output.</p>
+
+<pre><code>{{multi-query:sqlserver.ORG_CHART_FULL|outputFormat=html|outputFormatTemplate=standalone}}</code></pre>
+
+  <p>The pipe-separated options after the template code are directive-level overrides and behave identically to the query-string overrides on the REST endpoint. They are applied only for this expression invocation and do not modify the stored template.</p>
+
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>
+    <strong>Caching in expression context:</strong> When the directive is evaluated inside an expression, the <code>cacheSeconds</code> value from the template options applies. Setting <code>cacheSeconds: 120</code> means the org chart HTML is regenerated at most once every two minutes, even if many users open the same Atlas form simultaneously. Adjust this value based on how frequently your department and team data changes.
+  </div>
+
+  <h2>Viewing the Output</h2>
+  <p>The standalone HTML document produced by the engine contains:</p>
+  <ul>
+    <li>A <code>&lt;style&gt;</code> block with table formatting, level-indent spacing, expand/collapse toggle icons, and alternating row colours.</li>
+    <li>A <code>&lt;table&gt;</code> with one row per Department, each expandable to show its Teams, each Team expandable to show its Employees.</li>
+    <li>A <code>&lt;script&gt;</code> block implementing click-to-expand behaviour with smooth row-height transitions.</li>
+  </ul>
+  <p>The table columns rendered per level are derived directly from the SQL SELECT list. To customise which columns appear, adjust the SELECT clause in the template's SQL — no engine configuration change is needed.</p>
+
+  <div class="page-nav">
+    <a href="03-uc-payroll-reporting.html" class="page-nav-prev">&larr; Previous: Payroll Reporting</a>
+    <a href="05-uc-audit-trail.html" class="page-nav-next">Next: Audit Trails &rarr;</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

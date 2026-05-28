@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>What is Multi-Query? — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html" class="active">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <div class="page-header-tags">
+      <span class="tag">Concept</span>
+    </div>
+    <h1>What is Multi-Query?</h1>
+    <p class="lead">A template-driven engine that fetches a root SQL query and recursively fetches child collections, building a complete record tree in one API call. No N+1 problems, no manual joins, no multi-round-trip orchestration code.</p>
+  </div>
+
+  <h2>The Problem It Solves</h2>
+  <p>Enterprise applications frequently need to retrieve hierarchical data — an employee with all their payslips, each payslip with its deductions, or a department with all its teams and members. Traditionally this forces one of three painful approaches:</p>
+
+  <div class="callout warning">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <strong>Common anti-patterns before Multi-Query</strong>
+    <ul>
+      <li><strong>N+1 queries:</strong> Fetch 50 employees, then issue 50 individual payslip queries — one per employee — resulting in 51 database round-trips for a single report.</li>
+      <li><strong>Mega joins:</strong> Write a single SQL statement with multiple JOIN clauses and GROUP BY aggregations, then re-flatten the result in application code, duplicating parent columns for every child row.</li>
+      <li><strong>Multiple API calls:</strong> Call <code>/employees</code>, then for each ID call <code>/payslips?employeeId=X</code>, then for each payslip call <code>/deductions?payslipId=Y</code> — client code becomes fragile orchestration logic scattered across front-end components.</li>
+    </ul>
+    Each approach adds latency, maintenance burden, or both — and none of them are tenant-safe by default.
+  </div>
+
+  <h2>How It Works</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-number">1</div>
+      <div class="step-body">
+        <strong>Author a Template in JSON</strong>
+        <p>Write a <code>QueryTemplate</code> JSON document defining the root SQL query, any caller-supplied parameters, output options, and one or more child collection definitions. Each child carries its own SQL and can have further grandchild collections.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-number">2</div>
+      <div class="step-body">
+        <strong>Store in <code>dbo.Shared_Configurations</code></strong>
+        <p>Insert a row where <code>Code</code> is your unique catalogue code (e.g. <code>PAYROLL_REPORT_DEPT</code>) and <code>Value</code> is the serialised JSON template. The engine reads from this table at execution time; no deployment is required to add or update a template.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-number">3</div>
+      <div class="step-body">
+        <strong>Call via REST or Expression Directive</strong>
+        <p>Issue a GET request to <code>/api/v1/expressions/multiquery/{templateCode}</code> with a valid Bearer JWT, or embed the directive <code>{{multi-query:sqlserver.TEMPLATE_CODE}}</code> inside any BizFirst expression. Parameters declared in the template are passed as query-string values.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-number">4</div>
+      <div class="step-body">
+        <strong>Engine Injects TenantID, Executes the Tree</strong>
+        <p>The <code>SqlServerDeriveEngine</code> extracts the caller's <code>TenantID</code> from the JWT, then executes the root query. For every root row returned it executes each child query, substituting <code>@parent.ColumnName</code> tokens with values from that row and <code>@TenantID</code> with the verified tenant. The process repeats recursively up to <code>maxDepth</code> levels.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Architecture</h2>
+  <p>The Multi-Query Engine is composed of five project layers, each with a clearly bounded responsibility:</p>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Layer</th>
+        <th>Project</th>
+        <th>Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge-core">Domain</span></td>
+        <td><code>BizFirst.Domain</code></td>
+        <td>Defines <code>QueryTemplate</code>, <code>ChildCollection</code>, <code>QueryParameter</code>, and <code>QueryOptions</code> domain models. No infrastructure dependencies.</td>
+      </tr>
+      <tr>
+        <td><span class="badge-core">Services</span></td>
+        <td><code>BizFirst.Services</code></td>
+        <td>Contains the engine orchestration logic: template resolution, recursive child execution, result tree assembly, and cache management.</td>
+      </tr>
+      <tr>
+        <td><span class="badge-flow">SQL Server Infrastructure</span></td>
+        <td><code>BizFirst.Infrastructure.SqlServer</code></td>
+        <td>Implements the <code>SqlServerDeriveEngine</code>: ADO.NET query execution, <code>@parent</code> token substitution, and tenant parameter injection.</td>
+      </tr>
+      <tr>
+        <td><span class="badge-flow">Api.Base</span></td>
+        <td><code>BizFirst.Api.Base</code></td>
+        <td>Provides shared controller base classes, JWT parsing, tenant context resolution, and the expression directive handler.</td>
+      </tr>
+      <tr>
+        <td><span class="badge-flow">Api</span></td>
+        <td><code>BizFirst.Api</code></td>
+        <td>Exposes the REST endpoints: execute JSON, execute HTML, run-stored, and run-direct. Enforces <code>TenantAdmin</code> role on all routes.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Key Concepts</h2>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Concept</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Template Code</strong></td>
+        <td>A unique string identifier stored in <code>dbo.Shared_Configurations.Code</code>. Used in REST paths and expression directives to address the template.</td>
+      </tr>
+      <tr>
+        <td><strong>QueryTemplate JSON</strong></td>
+        <td>The JSON document that defines the complete query tree: root SQL, parameters, options, and child collections. Stored in <code>dbo.Shared_Configurations.Value</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>ChildCollection</strong></td>
+        <td>A nested query definition inside a <code>QueryTemplate</code>. Each collection has a <code>collectionName</code>, its own SQL, and may contain further child collections for deeper hierarchies.</td>
+      </tr>
+      <tr>
+        <td><strong>@parent Tokens</strong></td>
+        <td>Placeholder syntax (<code>@parent.ColumnName</code>, <code>@parent.id</code>, <code>@parent.parent.ColumnName</code>) in child SQL that is replaced at runtime with column values from the current parent row.</td>
+      </tr>
+      <tr>
+        <td><strong>outputFormat</strong></td>
+        <td>Controls whether the engine returns <code>json</code> (compact nested JsonArray) or <code>html</code> (expandable cascaded HTML table). Declared in template options; can be overridden per-request.</td>
+      </tr>
+      <tr>
+        <td><strong>TenantID Injection</strong></td>
+        <td>The engine reads the caller's verified <code>TenantID</code> from the JWT and injects it as a SQL parameter in every query in the tree. Callers have no mechanism to supply or override this value.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <i class="fa-solid fa-circle-check"></i>
+    <strong>Every execution is tenant-isolated.</strong>
+    The TenantID extracted from the caller's JWT is the only TenantID used — there is no override path. A template that omits <code>AND TenantID = @TenantID</code> from its SQL will have <code>@TenantID</code> injected as a parameter regardless; template authors must include the predicate in their WHERE clause to apply it.
+  </div>
+
+  <h2>What Multi-Query Is Not</h2>
+  <p>Multi-Query is not a general-purpose ORM, a graph database interface, or a replacement for stored procedures that perform complex business logic. It is optimised for <em>read</em> operations — fetching structured record trees for reporting, display, and export. Write operations, transactional logic, and complex aggregations should continue to use the appropriate BizFirst service layer.</p>
+
+  <div class="page-nav">
+    <a href="index.html" class="page-nav-prev">&larr; Previous: Introduction (Hub)</a>
+    <a href="02-use-cases.html" class="page-nav-next">Next: Use Cases Overview &rarr;</a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

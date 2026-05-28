@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>@parent Tokens — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html" class="active">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <h1>@parent Tokens</h1>
+    <span class="tag">Reference</span>
+    <span class="tag">SQL</span>
+    <p class="lead">The @parent token system lets child queries reference columns from their ancestor rows — driving correlated sub-queries across any depth.</p>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ SYNTAX -->
+  <h2>Syntax</h2>
+  <p>
+    When a Multi-Query template defines nested query nodes, each child SQL can reference columns
+    from any ancestor row in the current execution stack using the <code>@parent</code> prefix.
+    The engine resolves these tokens at runtime by inspecting the ancestor context stack built
+    up as it walks the result tree from root to leaf.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Token</th>
+        <th>Resolves to</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>@parent.ColumnName</code></td>
+        <td>The value of <em>ColumnName</em> on the immediate parent row</td>
+        <td>Most common form. Column name is case-insensitive.</td>
+      </tr>
+      <tr>
+        <td><code>@parent.id</code></td>
+        <td>Shortcut for the first identity / primary-key column of the parent result set</td>
+        <td>Convenient for single-PK tables. Avoid for composite keys — see warning below.</td>
+      </tr>
+      <tr>
+        <td><code>@parent.parent.ColumnName</code></td>
+        <td>The value of <em>ColumnName</em> on the grandparent row (two levels up)</td>
+        <td>Useful when a third-level query needs data from the root or mid-level ancestor.</td>
+      </tr>
+      <tr>
+        <td><code>@parent.parent.parent.ColumnName</code></td>
+        <td>The value of <em>ColumnName</em> on the great-grandparent row (three levels up)</td>
+        <td>Pattern continues for any depth; chain additional <code>.parent</code> segments as needed.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════ HOW RESOLUTION WORKS -->
+  <h2>How Resolution Works</h2>
+  <p>
+    Understanding the resolution lifecycle helps you write efficient templates and diagnose
+    unexpected empty collections. The engine follows a depth-first traversal:
+  </p>
+
+  <ol class="steps">
+    <li class="step">
+      <strong>Root query executes.</strong>
+      The top-level SQL in the template runs against the database with only the injected
+      <code>@TenantID</code> and any caller-supplied query parameters. Every row in the result
+      set is pushed onto the ancestor context stack, one row at a time, before the engine
+      descends into that row's child queries.
+    </li>
+    <li class="step">
+      <strong>Child SQL is parameterised per parent row.</strong>
+      For each parent row, the engine walks the template's child query definitions. Every
+      occurrence of <code>@parent.X</code> in the child SQL is substituted with the actual
+      column value from the current parent row before the child query is sent to the database.
+      The child executes as a normal parameterised query — no string interpolation occurs.
+    </li>
+    <li class="step">
+      <strong>Recursion continues depth-first.</strong>
+      The process is fully recursive. Each child row is itself pushed onto the ancestor
+      context stack and becomes the parent for any grandchild queries defined under it.
+      <code>@parent.parent.X</code> in a grandchild query resolves by walking two levels up
+      the stack — to the original root row — and reading column <em>X</em> from that record.
+    </li>
+    <li class="step">
+      <strong>Stack unwinds after leaf nodes.</strong>
+      Once all children of a given row have been collected, the engine pops that row off the
+      context stack and advances to the next sibling row at the same level. The final output
+      is a complete nested structure reflecting the full record tree.
+    </li>
+  </ol>
+
+  <!-- ═══════════════════════════════════════════════════════ EXAMPLES -->
+  <h2>Examples</h2>
+
+  <h3>Direct Parent Reference</h3>
+  <p>
+    This is the most common pattern: a child query filtered by a column from its immediate
+    parent row. Here, <code>Payslips</code> is a child of <code>Employees</code>, and each
+    payslip query is scoped to one employee:
+  </p>
+  <pre><code>-- Child SQL for the "payslips" collection node
+SELECT
+    ps.PayslipID,
+    ps.Period,
+    ps.GrossPay,
+    ps.NetPay,
+    ps.ProcessedOn
+FROM dbo.Payslips ps
+WHERE ps.EmployeeID = @parent.EmployeeID
+  AND ps.TenantID  = @TenantID
+ORDER BY ps.Period DESC;</code></pre>
+
+  <h3>Grandparent Reference</h3>
+  <p>
+    When a third-level query (e.g. <code>DeductionDetails</code> under <code>Deductions</code>
+    under <code>Payslips</code>) needs a column from the grandparent
+    <code>Payslips</code> row — or the great-grandparent <code>Employees</code> row — chain
+    additional <code>.parent</code> segments:
+  </p>
+  <pre><code>-- Child SQL for "deductionDetails" (three levels deep)
+-- Needs DepartmentID from the Employees row (great-grandparent)
+SELECT
+    dd.DeductionDetailID,
+    dd.LineDescription,
+    dd.AppliedAmount,
+    dd.RuleRef
+FROM dbo.DeductionDetails dd
+WHERE dd.DepartmentID = @parent.parent.DepartmentID
+  AND dd.TenantID     = @TenantID
+ORDER BY dd.DeductionDetailID;</code></pre>
+
+  <h3>Using the @parent.id Shortcut</h3>
+  <p>
+    For simple single-column primary keys, <code>@parent.id</code> saves you from repeating
+    the column name. The engine resolves it to the value of the first identity column in the
+    parent result set:
+  </p>
+  <pre><code>-- Equivalent to @parent.EmployeeID when EmployeeID is the first PK column
+SELECT *
+FROM dbo.EmployeeAddresses
+WHERE EmployeeID = @parent.id
+  AND TenantID   = @TenantID;</code></pre>
+
+  <!-- ═══════════════════════════════════════════════════════ PERFORMANCE -->
+  <h2>Performance Guidance</h2>
+
+  <div class="callout warning">
+    <strong><i class="fa-solid fa-triangle-exclamation"></i> N+1 Query Pattern</strong>
+    <p>
+      Each <code>@parent</code> join executes <em>N</em> queries — one per parent row.
+      For large parent datasets, apply <code>WHERE</code> filters on the parent query to
+      reduce the result set before descending into children. Consider adding date ranges,
+      status filters, or pagination parameters to root and intermediate queries.
+    </p>
+    <p>
+      Use the <code>cacheSeconds</code> property on any query node to cache repeated calls
+      that carry the same effective parameters. Cached results are served from memory without
+      hitting the database, dramatically reducing load on high-traffic reporting endpoints.
+    </p>
+  </div>
+
+  <p>Additional performance recommendations:</p>
+  <ul>
+    <li>Index all columns referenced by <code>@parent.X</code> tokens (e.g. <code>EmployeeID</code> on <code>dbo.Payslips</code>).</li>
+    <li>Include <code>TenantID</code> as the leading column in all covering indexes to enable tenant-scoped index seeks.</li>
+    <li>Avoid <code>SELECT *</code> on wide tables — project only the columns consumed by the template or its children.</li>
+    <li>Use <code>TOP</code> or <code>FETCH NEXT</code> on child queries when only a preview set is needed.</li>
+  </ul>
+
+  <!-- ═══════════════════════════════════════════════════════ NULL SAFETY -->
+  <h2>Null Safety</h2>
+  <p>
+    If a parent row contains a <code>NULL</code> value in the column referenced by an
+    <code>@parent.X</code> token, the engine treats the child query as unevaluable for
+    that row and returns an empty collection (<code>[]</code>) rather than executing a query
+    with a NULL parameter. This prevents inadvertent cross-tenant data leaks and avoids
+    full-table scans caused by <code>WHERE col = NULL</code> predicates.
+  </p>
+  <p>
+    The parent row itself is still included in the output — only its child collection is
+    empty. You can detect this condition in consuming code by checking whether the child
+    array is empty and whether the parent's key column is null.
+  </p>
+
+  <!-- ═══════════════════════════════════════════════════════ RESERVED NAMES -->
+  <h2>Reserved Token Names</h2>
+  <p>The following tokens are reserved by the engine and cannot be used as user-defined parameter names:</p>
+
+  <table>
+    <thead>
+      <tr><th>Reserved Token</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>@TenantID</code></td>
+        <td>Always injected from the caller's JWT. Present in every SQL node at every depth. The caller cannot supply or override this value.</td>
+      </tr>
+      <tr>
+        <td><code>@parent</code> (prefix)</td>
+        <td>Entire <code>@parent.*</code> namespace is reserved for ancestor context resolution. Do not define template parameters with names starting with <code>parent</code>.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong><i class="fa-solid fa-circle-xmark"></i> Composite Key Warning</strong>
+    <p>
+      Do not use <code>@parent.id</code> when the parent table has a composite primary key
+      (i.e. a key made up of two or more columns). The <code>.id</code> shortcut resolves
+      only to the <em>first</em> identity column in the result set, which will produce
+      incorrect results when multiple columns are required for a unique match. Always
+      reference the actual column names explicitly for composite keys:
+    </p>
+    <pre><code>-- Correct for composite PK (CompanyID + EmployeeID)
+WHERE t.CompanyID  = @parent.CompanyID
+  AND t.EmployeeID = @parent.EmployeeID
+  AND t.TenantID   = @TenantID</code></pre>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ PAGE NAV -->
+  <div class="page-nav">
+    <a href="09-template-authoring.html"><i class="fa-solid fa-arrow-left"></i> Writing Templates</a>
+    <a href="11-op-execute-json.html">Execute &rarr; JSON <i class="fa-solid fa-arrow-right"></i></a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

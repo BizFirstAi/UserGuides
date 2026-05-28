@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Evolution &amp; Versioning — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html" class="active">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Administration &middot; Architecture</span>
+    <h1>Evolution &amp; Versioning</h1>
+    <p class="lead">How to version templates safely, add new engine providers, and extend the Multi-Query system without breaking existing callers.</p>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2>Template Versioning Strategy</h2>
+  <p>Because template catalogue codes are embedded in workflow definitions, expression directives, and external API calls, changing or removing a template code is a breaking change. Use the following strategy to evolve templates safely while maintaining backward compatibility:</p>
+
+  <ul style="line-height:2.4;">
+    <li>Assign version suffixes to catalogue codes for non-trivial changes: <code>PAYROLL_REPORT</code> becomes <code>PAYROLL_REPORT_v2</code>. The original code remains active and served to existing callers.</li>
+    <li>Use the <code>name</code> field in the template JSON for a human-readable label (e.g., <code>"name": "Payroll Department Summary v2"</code>). This label appears in administrative listings without affecting the code-based lookup.</li>
+    <li>Track a <code>version</code> integer inside the JSON object to support audit history and rollback identification. Increment it on every update.</li>
+    <li>Communicate a migration window to all callers before retiring an old version code. Set <code>IsActive = 0</code> on the old code only after all callers have migrated to the new code.</li>
+    <li>Keep old template codes active in staging and production simultaneously during the migration window. The database overhead of an additional row is negligible.</li>
+  </ul>
+
+  <pre><code>// Template JSON with version tracking
+{
+  "name": "Payroll Department Summary v2",
+  "version": 2,
+  "isTemplate": true,
+  "sql": "SELECT d.ID, d.DeptName, d.CostCentre FROM dbo.Departments d WHERE d.TenantID = @TenantID",
+  "collectionName": "departments",
+  "children": [ ... ]
+}</code></pre>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Adding New SQL Engines</h2>
+  <p>The Multi-Query system is engine-agnostic. The <code>sqlserver</code> engine is the built-in implementation, but additional engines can be registered by implementing <code>ISqlDeriveEngine</code> and registering the implementation in the DI container.</p>
+
+  <div class="steps">
+    <div class="step">
+      <strong>Implement ISqlDeriveEngine</strong>
+      <p>Create a class that implements <code>ISqlDeriveEngine</code>. The interface requires query execution logic appropriate for the target database platform (PostgreSQL, MySQL, SQLite, etc.) and a stable engine name string.</p>
+      <pre><code>public class PostgreSqlDeriveEngine : ISqlDeriveEngine
+{
+    public string EngineName =&gt; "postgresql";
+
+    public Task&lt;MultiQueryResult&gt; ExecuteAsync(
+        MultiQueryTemplate template,
+        MultiQueryExecutionContext context)
+    {
+        // Implement PostgreSQL-specific query tree execution
+    }
+}</code></pre>
+    </div>
+    <div class="step">
+      <strong>Return a unique EngineName</strong>
+      <p>The <code>EngineName</code> property must return a stable, lowercase string that is unique across all registered engines. This string becomes the engine segment in the directive token (<code>{{multi-query:postgresql.CODE}}</code>) and in the REST path. Once published, changing this string is a breaking change.</p>
+    </div>
+    <div class="step">
+      <strong>Register in the DI container</strong>
+      <p>Register the new engine as part of the <code>IEnumerable&lt;ISqlDeriveEngine&gt;</code> collection in the service registration. The platform resolves engines via enumeration — no central registry or switch statement needs to be modified.</p>
+      <pre><code>// In your module registration or Startup.cs
+services.AddSingleton&lt;ISqlDeriveEngine, SqlServerDeriveEngine&gt;();
+services.AddSingleton&lt;ISqlDeriveEngine, PostgreSqlDeriveEngine&gt;();</code></pre>
+    </div>
+    <div class="step">
+      <strong>Author templates and use the new engine name</strong>
+      <p>Store template JSON in <code>dbo.Shared_Configurations</code> as usual. Reference the new engine in directives and REST calls using the <code>EngineName</code> you defined:</p>
+      <pre><code>{{multi-query:postgresql.ORG_CHART_SUMMARY}}
+
+GET /api/v1/expressions/multiquery/ORG_CHART_SUMMARY
+    (engine resolved from template metadata or directive)</code></pre>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Engine Resolution</h2>
+  <p>When a directive or endpoint is evaluated, <code>MultiQueryExpressionDirectiveService</code> resolves the target engine using a simple linear enumeration:</p>
+
+  <pre><code>// Engine resolution — simplified illustration
+var engine = _engines.FirstOrDefault(e =>
+    string.Equals(e.EngineName, engineName, StringComparison.OrdinalIgnoreCase));
+
+if (engine is null)
+{
+    _logger.LogWarning(
+        "Multi-Query directive: no engine registered for '{EngineName}'. Returning empty string.",
+        engineName);
+    return string.Empty;
+}</code></pre>
+
+  <p>If no registered engine matches the name parsed from the directive, the service returns an empty string and writes a warning to the platform log. No exception propagates to the caller. This makes it safe to deploy a new engine incrementally — templates referencing the new engine name will silently return empty until the engine implementation is registered.</p>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Schema Evolution</h2>
+
+  <div class="callout warning">
+    <strong>Breaking schema changes are detected at execution time, not at template store time</strong><br>
+    When an underlying SQL table is altered — a column is renamed, dropped, or has its data type changed — the template JSON stored in <code>dbo.Shared_Configurations</code> is not validated against the live schema. The template continues to store successfully. The failure occurs at execution time when SQL Server rejects the query. This produces an HTTP <code>500 Internal Server Error</code> on the API and an empty string from the expression directive. Review all active templates that reference affected tables before applying schema changes, and update the SQL in the template JSON as part of the schema migration transaction.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Backward Compatibility Rules</h2>
+  <p>The following rules define the Multi-Query compatibility contract. Violating them constitutes a breaking change and requires a new template code (version suffix) to avoid disrupting existing callers.</p>
+
+  <ul style="line-height:2.4;">
+    <li><strong>Never change the meaning of a catalogue code.</strong> A code is a stable identifier. Once callers depend on a code's output structure, changing the root query or child structure under the same code is a breaking change.</li>
+    <li><strong>Add new codes for breaking changes.</strong> Use a version suffix (<code>_v2</code>, <code>_v3</code>) and deprecate the old code with a documented migration window.</li>
+    <li><strong>Keep <code>isTemplate: true</code> only on root records.</strong> This flag marks the root of the query tree. Child nodes must not carry this flag — it causes incorrect template resolution.</li>
+    <li><strong>Do not rename <code>collectionName</code> without versioning the code.</strong> The <code>collectionName</code> value is the JSON key that callers use to access the collection in the output. Renaming it silently breaks all downstream code that references the old key.</li>
+    <li><strong>Adding new columns to a query is non-breaking</strong> — callers that do not reference the new column are unaffected.</li>
+    <li><strong>Removing or renaming a column from a query is breaking</strong> — version the code before making this change.</li>
+  </ul>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Future Directions</h2>
+  <p>The following extensions are under consideration for future releases of the Multi-Query engine:</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <i class="fa-brands fa-github" style="font-size:1.5rem;color:var(--accent,#4f6ef7);margin-bottom:.5rem;"></i>
+      <h3>PostgreSQL Engine</h3>
+      <p>A first-class <code>ISqlDeriveEngine</code> implementation for PostgreSQL, enabling multi-level query trees over PostgreSQL databases alongside the existing SQL Server engine. Would use Npgsql and support the same <code>@parent</code> token syntax.</p>
+    </div>
+    <div class="card">
+      <i class="fa-solid fa-layer-group" style="font-size:1.5rem;color:var(--accent,#4f6ef7);margin-bottom:.5rem;"></i>
+      <h3>Template Composition</h3>
+      <p>Allow a template to inherit or embed another template using a <code>"$ref": "PARENT_TEMPLATE_CODE"</code> directive in the JSON. Composed templates would be resolved and merged at load time, reducing duplication across similar reporting structures.</p>
+    </div>
+    <div class="card">
+      <i class="fa-solid fa-robot" style="font-size:1.5rem;color:var(--accent,#4f6ef7);margin-bottom:.5rem;"></i>
+      <h3>AI-Generated Templates</h3>
+      <p>A natural-language-to-template authoring assistant that accepts a description of the desired data hierarchy and generates a valid Multi-Query JSON template. Draft templates would be presented for human review before being stored in <code>dbo.Shared_Configurations</code>.</p>
+    </div>
+    <div class="card">
+      <i class="fa-solid fa-flask" style="font-size:1.5rem;color:var(--accent,#4f6ef7);margin-bottom:.5rem;"></i>
+      <h3>Template Test Runner</h3>
+      <p>An administrative tool for executing a template against a known fixture dataset and asserting the output matches an expected JSON snapshot. Enables regression testing of templates before promotion to production, preventing silent schema drift failures.</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <h2 style="margin-top:2rem;">Changelog</h2>
+
+  <table style="width:100%;border-collapse:collapse;margin-top:1rem;">
+    <thead>
+      <tr style="background:var(--surface-2,#f4f6fb);">
+        <th style="padding:.6rem 1rem;text-align:left;border:1px solid var(--border,#dde3ee);">Version</th>
+        <th style="padding:.6rem 1rem;text-align:left;border:1px solid var(--border,#dde3ee);">Date</th>
+        <th style="padding:.6rem 1rem;text-align:left;border:1px solid var(--border,#dde3ee);">Changes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="padding:.6rem 1rem;border:1px solid var(--border,#dde3ee);"><strong>v1.0</strong></td>
+        <td style="padding:.6rem 1rem;border:1px solid var(--border,#dde3ee);">2026-05-28</td>
+        <td style="padding:.6rem 1rem;border:1px solid var(--border,#dde3ee);">
+          Initial release. SQL Server engine (<code>SqlServerDeriveEngine</code>), JSON and HTML output formats, <code>{{multi-query:}}</code> expression directive, Execute / RunStoredScript / RunDirectScript endpoints, <code>@parent</code> token support, <code>[AuthorizeTenantAdminAttribute]</code> enforcement, rate limiting via <code>ApiLimit</code>, BizFirst Observe metrics integration.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout success" style="margin-top:1.5rem;">
+    <strong>Engine name is part of the directive syntax</strong><br>
+    Because the engine name is encoded directly in the <code>{{multi-query:engineName.CODE}}</code> token, you can introduce an entirely new engine without modifying or invalidating any existing <code>sqlserver</code> templates. Existing templates continue to resolve through <code>SqlServerDeriveEngine</code> unchanged. New templates that target the new engine simply use its <code>EngineName</code> in the directive.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div class="page-nav">
+    <a href="17-maintenance.html"><i class="fa-solid fa-arrow-left"></i> Maintenance</a>
+    <a href="index.html">Back to Introduction <i class="fa-solid fa-arrow-right"></i></a>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

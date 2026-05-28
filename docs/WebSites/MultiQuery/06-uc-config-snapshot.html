@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Use Case: Config Snapshots — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html" class="active">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+<div class="page-header">
+  <div>
+    <span class="tag">Use Case</span>
+    <span class="tag">Tenant Config</span>
+  </div>
+  <h1>Use Case: Config Snapshots</h1>
+  <p class="lead">Capture a complete tenant configuration as a nested record tree — base settings and all tenant-specific overrides — in one call.</p>
+</div>
+
+<h2>Scenario</h2>
+<p>
+  BizFirst platform tenants operate with a two-layer configuration model. A <strong>master configuration</strong> layer defines system-wide defaults for every feature — pay frequencies, rounding rules, tax codes, workflow thresholds, and more. A <strong>tenant override</strong> layer stores per-tenant deviations from those defaults. When a tenant setting is absent from the override layer, the platform falls back to the master value.
+</p>
+<p>
+  Administrators regularly need to export, diff, and restore configuration states — especially before a major tenant migration, a platform upgrade, or a regulatory audit. Constructing this export manually requires joining <code>SharedConfigurations</code> (master) against <code>TenantConfigOverrides</code> (child) for every <code>AppDomainID</code> in scope, then grouping by configuration key. That is tedious, inconsistent across environments, and difficult to version.
+</p>
+<p>
+  A Multi-Query template collapses this into a single stored, auditable, reusable call. The result is a self-describing nested JSON tree that can be stored as a versioned snapshot file.
+</p>
+
+<h2>Template</h2>
+<p>
+  The root query retrieves all master configuration rows for the specified application domain and tenant. The child query retrieves every tenant-level override keyed to each master config row via <code>@parent.ConfigID</code>.
+</p>
+<pre><code>{
+  "name": "Tenant Configuration Snapshot",
+  "sql": "SELECT ConfigID, Code, [Value], Category, AppDomainID,
+                 DataDomainID, IsActive, CreatedOn, LastModifiedOn
+          FROM   SharedConfigurations
+          WHERE  AppDomainID = @AppDomainID
+            AND  TenantID    = @TenantID
+            AND  Deleted     = 0
+            AND  Archived    = 0
+          ORDER BY Category, Code",
+  "recordType": "MasterConfig",
+  "isTemplate": true,
+  "parameters": [
+    { "name": "AppDomainID", "type": "int", "defaultValue": null }
+  ],
+  "options": {
+    "outputFormat": "json",
+    "outputFormatTemplate": "fragment",
+    "maxDepth": 3,
+    "cacheSeconds": 300
+  },
+  "children": [
+    {
+      "collectionName": "overrides",
+      "sql": "SELECT OverrideID, ConfigID, OverrideValue, EffectiveFrom,
+                     EffectiveTo, OverrideReason, CreatedOn, CreatedBy
+              FROM   TenantConfigOverrides
+              WHERE  ConfigID  = @parent.ConfigID
+                AND  TenantID  = @TenantID
+                AND  Deleted   = 0
+              ORDER BY EffectiveFrom DESC",
+      "recordType": "TenantConfigOverride",
+      "isTemplate": false,
+      "children": []
+    }
+  ]
+}</code></pre>
+
+<p>Store this template in <code>dbo.Shared_Configurations</code> with catalogue code <code>MQ_TENANT_CONFIG_SNAPSHOT</code>.</p>
+
+<h2>Exporting as JSON</h2>
+<p>
+  Use the <code>.json</code> endpoint to retrieve the full snapshot in machine-readable form. This output can be piped directly to a file for archival or checked into a configuration version control repository.
+</p>
+<pre><code># PowerShell — export snapshot for tenant 42, app domain 7
+$token  = "Bearer eyJhbGciOiJSUzI1NiIsInR5..."
+$url    = "https://api.bizfirstai.com/api/v1/expressions/multiquery" +
+          "/MQ_TENANT_CONFIG_SNAPSHOT.json?AppDomainID=7"
+$output = "snapshots\tenant42-appdomain7-$(Get-Date -Format 'yyyyMMdd').json"
+
+Invoke-RestMethod -Uri $url `
+  -Headers @{ Authorization = $token } `
+  -Method GET |
+  ConvertTo-Json -Depth 20 |
+  Out-File -FilePath $output -Encoding utf8
+
+Write-Host "Snapshot written to $output"</code></pre>
+
+<p>
+  The resulting file contains the complete master-plus-override tree at the moment of export. Store snapshots in a dated folder hierarchy (<code>snapshots\YYYY\MM\</code>) so that any historical state can be retrieved by date.
+</p>
+
+<h2>Diff / Restore Pattern</h2>
+<p>
+  Once two snapshots exist (e.g., pre-migration and post-migration), they can be diffed at the JSON level to identify configuration drift. A companion stored script — addressable via the <strong>run-stored</strong> endpoint — can accept a snapshot payload and apply it back to <code>TenantConfigOverrides</code>, effectively restoring a prior configuration state without manual data surgery.
+</p>
+<p>
+  The recommended pattern is:
+</p>
+<ol>
+  <li>Export snapshot <strong>before</strong> any configuration change using the <code>.json</code> endpoint.</li>
+  <li>Apply the change through the normal admin UI or configuration API.</li>
+  <li>Export snapshot <strong>after</strong> the change.</li>
+  <li>Use a JSON diff tool (or a BizFirst ProcessEngine comparison node) to verify that only the intended keys changed.</li>
+  <li>If a rollback is needed, invoke the restore script via <code>POST /api/v1/expressions/multiquery/scripts/run-stored</code> with the before-snapshot as input.</li>
+</ol>
+
+<div class="callout info">
+  <strong><i class="fa-solid fa-circle-info"></i> Caching Recommendation</strong>
+  <p>Use <code>"cacheSeconds": 300</code> on config snapshots that change infrequently. A five-minute cache dramatically reduces database load when multiple services or workflow nodes read tenant configuration at runtime. For export/archival calls where freshness is critical, override caching by adding <code>?cache=false</code> or set <code>cacheSeconds: 0</code> in a dedicated export variant of the template.</p>
+</div>
+
+<h2>Security Notes</h2>
+<p>
+  The <code>TenantID</code> is always injected from the caller's JWT — it is never accepted as a query parameter. This means a tenant administrator cannot snapshot another tenant's configuration even if they know the target <code>AppDomainID</code>. Restrict the <code>TenantAdmin</code> role to authorized personnel only, as snapshot exports include all active configuration values including sensitive overrides.
+</p>
+
+<div class="page-nav">
+  <a href="05-uc-audit-trail.html"><i class="fa-solid fa-arrow-left"></i> Audit Trails</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding <i class="fa-solid fa-arrow-right"></i></a>
+</div>
+
+</main>
+</div>
+</body>
+</html>

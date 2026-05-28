@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Writing Templates — Multi-Query Engine | BizFirstAI</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="../../images/icons/BizFirstAiFull.png" alt="BizFirstAI"></a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo"><h2>BizFirst AI</h2><h1>Multi-Query Engine</h1></div>
+  <div class="section-label">Overview</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-introduction.html">What is Multi-Query?</a>
+  <div class="section-label">Use Cases</div>
+  <a href="02-use-cases.html">Use Cases Overview</a>
+  <a href="03-uc-payroll-reporting.html">Payroll Reporting</a>
+  <a href="04-uc-org-chart.html">Org Chart</a>
+  <a href="05-uc-audit-trail.html">Audit Trails</a>
+  <a href="06-uc-config-snapshot.html">Config Snapshots</a>
+  <a href="07-uc-expression-embedding.html">Expression Embedding</a>
+  <div class="section-label">Setup</div>
+  <a href="08-getting-started.html">Getting Started</a>
+  <a href="09-template-authoring.html" class="active">Writing Templates</a>
+  <a href="10-parent-tokens.html">@parent Tokens</a>
+  <div class="section-label">Operations</div>
+  <a href="11-op-execute-json.html">Execute → JSON</a>
+  <a href="12-op-execute-html.html">Execute → HTML</a>
+  <a href="13-op-run-stored-script.html">Run Stored Script</a>
+  <a href="14-op-run-direct-script.html">Run Direct Script</a>
+  <a href="15-op-expression-directive.html">Expression Directive</a>
+  <div class="section-label">Administration</div>
+  <a href="16-security.html">Security &amp; Permissions</a>
+  <a href="17-maintenance.html">Maintenance</a>
+  <a href="18-evolution.html">Evolution &amp; Versioning</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+<main class="content">
+
+<div class="page-header">
+  <div>
+    <span class="tag">Reference</span>
+  </div>
+  <h1>Writing Templates</h1>
+  <p class="lead">Complete reference for the QueryTemplate JSON schema — every field, its type, default, and behaviour.</p>
+</div>
+
+<h2>Root Template Fields</h2>
+<p>
+  The root object is the entry point of every template. It is identified by <code>"isTemplate": true</code> and is the only record directly addressable by the API via its catalogue code.
+</p>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Type</th>
+      <th>Required</th>
+      <th>Default</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>name</code></td>
+      <td>string</td>
+      <td>Yes</td>
+      <td>—</td>
+      <td>Human-readable name for the template. Used in admin UIs and diagnostic logs. Does not affect execution.</td>
+    </tr>
+    <tr>
+      <td><code>sql</code></td>
+      <td>string</td>
+      <td>Yes</td>
+      <td>—</td>
+      <td>The SQL SELECT statement executed for the root level. Must filter by <code>TenantID = @TenantID</code>. Supports <code>@ParameterName</code> tokens declared in the <code>parameters</code> array.</td>
+    </tr>
+    <tr>
+      <td><code>recordType</code></td>
+      <td>string</td>
+      <td>Yes</td>
+      <td>—</td>
+      <td>A label identifying the type of record returned (e.g., <code>"Department"</code>, <code>"PayrollRecord"</code>). Appears in HTML output headers and diagnostic traces.</td>
+    </tr>
+    <tr>
+      <td><code>isTemplate</code></td>
+      <td>boolean</td>
+      <td>Yes</td>
+      <td>—</td>
+      <td>Must be <code>true</code> on the root object. Marks this record as the API-addressable entry point. All child and grandchild records must set this to <code>false</code>.</td>
+    </tr>
+    <tr>
+      <td><code>parameters</code></td>
+      <td>array</td>
+      <td>No</td>
+      <td><code>[]</code></td>
+      <td>Caller-supplied parameters (excluding <code>TenantID</code>, which is injected automatically). Each entry is a Parameter Object — see below.</td>
+    </tr>
+    <tr>
+      <td><code>options</code></td>
+      <td>object</td>
+      <td>No</td>
+      <td>See Options</td>
+      <td>Controls output format, caching, and recursion depth. See the Options Object table below.</td>
+    </tr>
+    <tr>
+      <td><code>children</code></td>
+      <td>array</td>
+      <td>No</td>
+      <td><code>[]</code></td>
+      <td>Zero or more ChildCollection objects defining the next level of the hierarchy. Each child is executed once per root row, with <code>@parent</code> tokens resolved to the current root row's values.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Parameter Object</h2>
+<p>
+  Each entry in the <code>parameters</code> array declares one caller-supplied SQL parameter. Parameters are resolved from the API query string, the POST body, or the EvaluationContext (for expression directives).
+</p>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Type</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>name</code></td>
+      <td>string</td>
+      <td>Parameter name without the <code>@</code> prefix (e.g., <code>"DepartmentID"</code>). Must match the token used in the SQL string.</td>
+    </tr>
+    <tr>
+      <td><code>type</code></td>
+      <td>string</td>
+      <td>SQL type for the parameter. Accepted values: <code>int</code>, <code>nvarchar</code>, <code>bit</code>, <code>datetime</code>. The engine uses this to cast the incoming string value before binding it to the SQL command.</td>
+    </tr>
+    <tr>
+      <td><code>defaultValue</code></td>
+      <td>any / null</td>
+      <td>Value used when the parameter is not supplied by the caller. Set to <code>null</code> for required parameters — the engine will return an error if a null-default parameter is missing at runtime.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Options Object</h2>
+<p>
+  The <code>options</code> object controls how the engine formats and caches results. All fields are optional; the defaults shown below are applied when the field is absent.
+</p>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Type</th>
+      <th>Default</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>outputFormat</code></td>
+      <td><code>json</code> | <code>html</code></td>
+      <td><code>json</code></td>
+      <td>Controls the response format. <code>json</code> returns a compact JsonArray tree. <code>html</code> returns an expandable cascaded HTML table. Can be overridden at call time via the endpoint suffix (<code>.json</code> / <code>.html</code>) or via pipe options in the expression directive.</td>
+    </tr>
+    <tr>
+      <td><code>outputFormatTemplate</code></td>
+      <td><code>fragment</code> | <code>standalone</code></td>
+      <td><code>fragment</code></td>
+      <td>Applies when <code>outputFormat</code> is <code>html</code>. <code>fragment</code> returns a bare table suitable for embedding in an existing page. <code>standalone</code> wraps the table in a complete <code>&lt;html&gt;</code> document with inline styles — suitable for email bodies or saved files.</td>
+    </tr>
+    <tr>
+      <td><code>maxDepth</code></td>
+      <td>int</td>
+      <td><code>5</code></td>
+      <td>Maximum recursion depth the engine will traverse. Prevents runaway queries on self-referencing hierarchies. Set lower (e.g., <code>3</code>) for shallow trees to improve clarity.</td>
+    </tr>
+    <tr>
+      <td><code>cacheSeconds</code></td>
+      <td>int</td>
+      <td><code>0</code></td>
+      <td>Duration in seconds to cache the result for identical parameter combinations. <code>0</code> disables caching (always fresh). Use <code>60</code>–<code>300</code> for read-heavy, infrequently-changing data. Always use <code>0</code> for audit and compliance queries.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>ChildCollection Object</h2>
+<p>
+  Each entry in the <code>children</code> array defines one nested collection. The engine executes the child SQL once for every row returned by the parent query, substituting <code>@parent.*</code> tokens with the current parent row's column values.
+</p>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Type</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>collectionName</code></td>
+      <td>string</td>
+      <td>The key used in the JSON output (or the section label in HTML output) for this child array. Use camelCase (e.g., <code>"employees"</code>, <code>"auditEvents"</code>).</td>
+    </tr>
+    <tr>
+      <td><code>sql</code></td>
+      <td>string</td>
+      <td>The SQL SELECT statement for this child level. Must reference <code>@parent.ColumnName</code> to join to the parent row and must filter by <code>TenantID = @TenantID</code>.</td>
+    </tr>
+    <tr>
+      <td><code>recordType</code></td>
+      <td>string</td>
+      <td>Label for records at this level. Used in HTML headers and diagnostic output.</td>
+    </tr>
+    <tr>
+      <td><code>isTemplate</code></td>
+      <td>boolean</td>
+      <td>Always <code>false</code> for children. Child records are not addressable directly via the API — they are always fetched as part of a root template execution.</td>
+    </tr>
+    <tr>
+      <td><code>children</code></td>
+      <td>array</td>
+      <td>Recursive. Zero or more ChildCollection objects defining the next level beneath this one. Nesting is limited by <code>maxDepth</code> in the root options.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>SQL Writing Guidelines</h2>
+<ul>
+  <li><strong>Always filter by TenantID.</strong> Every SELECT at every level must include <code>AND TenantID = @TenantID</code>. The engine injects the tenant from the caller's JWT, but SQL must enforce it to prevent cross-tenant data leakage if the engine layer is ever bypassed.</li>
+  <li><strong>Reference the parent via <code>@parent.ColumnName</code>.</strong> Child SQL joins to the parent row using the <code>@parent.</code> prefix. The column name must exactly match the column returned in the parent SELECT (case-insensitive). For grandchildren, use <code>@parent.parent.ColumnName</code>.</li>
+  <li><strong>Use parameterized queries only.</strong> All dynamic values must come from declared parameters or <code>@parent</code> tokens. Never concatenate user-supplied strings into the SQL. The engine uses <code>SqlCommand.Parameters</code> for all bindings.</li>
+  <li><strong>Avoid ORDER BY on parent-level queries.</strong> Because the engine issues one child query per parent row, the order of parent rows affects execution order but not result structure. Apply ORDER BY at child levels where sort order is meaningful for display.</li>
+  <li><strong>Filter soft-deleted records.</strong> Always include <code>AND Deleted = 0 AND Archived = 0</code> unless the use case explicitly requires deleted records (e.g., an audit trail). Omitting these filters returns logically deleted rows to callers.</li>
+  <li><strong>Qualify all column names.</strong> In queries that join multiple tables, prefix every column with its table alias to prevent ambiguity errors when schema changes add identically-named columns to joined tables.</li>
+</ul>
+
+<div class="callout danger">
+  <strong><i class="fa-solid fa-circle-exclamation"></i> Never Use SELECT * in Production</strong>
+  <p>Always list columns explicitly in production templates. <code>SELECT *</code> breaks in two ways: (1) schema changes — a new column added to the underlying table is silently returned to all callers, potentially exposing sensitive data; (2) performance — unnecessary columns are transmitted, serialized, and cached, increasing latency and storage cost. List only the columns your consumers actually need.</p>
+</div>
+
+<h2>Full Example — 3-Level Template</h2>
+<p>
+  A realistic three-level template: <strong>Clients</strong> (root) &rarr; <strong>Projects</strong> (child) &rarr; <strong>Timesheets</strong> (grandchild). Each level uses explicit column lists, TenantID filtering, and <code>@parent</code> token joins.
+</p>
+<pre><code>{
+  "name": "Client Project Timesheets",
+  "sql": "SELECT c.ClientID,
+                 c.ClientName,
+                 c.IndustryCode,
+                 c.AccountManagerID,
+                 c.ContractStartDate,
+                 c.ContractEndDate
+          FROM   Clients c
+          WHERE  c.TenantID  = @TenantID
+            AND  c.IsActive  = 1
+            AND  c.Deleted   = 0
+            AND  c.Archived  = 0
+          ORDER BY c.ClientName",
+  "recordType": "Client",
+  "isTemplate": true,
+  "parameters": [
+    { "name": "PeriodStart", "type": "datetime", "defaultValue": null },
+    { "name": "PeriodEnd",   "type": "datetime", "defaultValue": null }
+  ],
+  "options": {
+    "outputFormat": "json",
+    "outputFormatTemplate": "fragment",
+    "maxDepth": 5,
+    "cacheSeconds": 120
+  },
+  "children": [
+    {
+      "collectionName": "projects",
+      "sql": "SELECT p.ProjectID,
+                     p.ClientID,
+                     p.ProjectName,
+                     p.ProjectCode,
+                     p.Status,
+                     p.BudgetHours,
+                     p.BillableRate
+              FROM   Projects p
+              WHERE  p.ClientID  = @parent.ClientID
+                AND  p.TenantID  = @TenantID
+                AND  p.Deleted   = 0
+              ORDER BY p.ProjectName",
+      "recordType": "Project",
+      "isTemplate": false,
+      "children": [
+        {
+          "collectionName": "timesheets",
+          "sql": "SELECT ts.TimesheetID,
+                         ts.ProjectID,
+                         ts.EmployeeID,
+                         ts.WorkDate,
+                         ts.HoursLogged,
+                         ts.IsBillable,
+                         ts.NarrativeNote,
+                         ts.ApprovedBy,
+                         ts.ApprovedOn
+                  FROM   Timesheets ts
+                  WHERE  ts.ProjectID  = @parent.ProjectID
+                    AND  ts.TenantID   = @TenantID
+                    AND  ts.WorkDate  >= @PeriodStart
+                    AND  ts.WorkDate  <= @PeriodEnd
+                    AND  ts.Deleted   = 0
+                  ORDER BY ts.WorkDate DESC",
+          "recordType": "Timesheet",
+          "isTemplate": false,
+          "children": []
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+<p>
+  Store this with catalogue code <code>MQ_CLIENT_PROJECT_TIMESHEETS</code> and call it as:
+</p>
+<pre><code>GET /api/v1/expressions/multiquery/MQ_CLIENT_PROJECT_TIMESHEETS.json
+    ?PeriodStart=2025-11-01&amp;PeriodEnd=2025-11-30
+Authorization: Bearer &lt;token&gt;</code></pre>
+
+<div class="page-nav">
+  <a href="08-getting-started.html"><i class="fa-solid fa-arrow-left"></i> Getting Started</a>
+  <a href="10-parent-tokens.html">@parent Tokens <i class="fa-solid fa-arrow-right"></i></a>
+</div>
+
+</main>
+</div>
+</body>
+</html>

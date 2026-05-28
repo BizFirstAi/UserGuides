@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Advanced Patterns | BizFirst Email System</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>.bfai-topbar-logo img{height:26px;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;}.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}body{padding-top:40px;}nav.sidebar{top:40px;height:calc(100vh - 40px);}</style>
+</head>
+<body>
+<div class="bfai-topbar"><a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo"><img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI"></a><div class="bfai-topbar-right"><a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a><a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a></div></div>
+<nav class="sidebar"><div class="sidebar-brand">Email System<span>Multi-tenant, Multi-provider</span></div><div class="sidebar-section">Advanced Topics</div><a href="09-production-deployment.html">Production Deployment</a><a href="10-switching-providers.html">Switching Providers Mid-Production</a><a href="11-advanced-patterns.html" class="active">Advanced Dispatcher Patterns</a><a href="12-sample-json.html">Sample JSON Configurations</a><div class="sidebar-section">Navigation</div><a href="../">&#8592; All Guides</a><a href="../../">&#8592; Portal</a></nav>
+<main><div class="page-header"><div class="breadcrumb"><a href="index.html">Email System</a> / Advanced Patterns</div><h1>Advanced Dispatcher Patterns</h1><p class="subtitle">Offline storage, logging, multi-provider routing, IP pooling, blockchain ideas for custom providers.</p></div><h2><i class="fa-solid fa-database"></i> Pattern 1: Offline Queue Dispatcher</h2><p><strong>Idea:</strong> Buffer failed emails to database, retry asynchronously.</p><pre><code>public class OfflineQueueDispatcher : IEmailDispatcher
+{
+    public async Task<EmailDispatchResult> SendAsync(...)
+    {
+        try
+        {
+            // Try main dispatcher
+            return await _mainDispatcher.SendAsync(...);
+        }
+        catch
+        {
+            // Store in offline queue
+            await _offlineQueueService.EnqueueAsync(message, ct);
+            return EmailDispatchResult.Ok("queued");
+        }
+    }
+}</code></pre><h2><i class="fa-solid fa-pen"></i> Pattern 2: Logging Dispatcher</h2><p><strong>Idea:</strong> Log all emails to database/file before sending. Audit trail.</p><pre><code>public class LoggingDispatcher : IEmailDispatcher
+{
+    public async Task<EmailDispatchResult> SendAsync(...)
+    {
+        // Log email
+        await _auditLog.LogAsync(new EmailAuditLog { 
+            TenantID=metadata.TenantID, To=message.To, Subject=message.Subject 
+        }, ct);
+        
+        // Send via main dispatcher
+        return await _mainDispatcher.SendAsync(...);
+    }
+}</code></pre><h2><i class="fa-solid fa-diagram-project"></i> Pattern 3: Multi-Provider Router</h2><p><strong>Idea:</strong> Route to different providers based on email type or cost.</p><pre><code>public class MultiProviderRouter : IEmailDispatcher
+{
+    public async Task<EmailDispatchResult> SendAsync(...)
+    {
+        // Route based on subject/type
+        var provider = message.Subject.Contains("urgent") ? "ses" : "smtp";
+        var dispatcher = _factory.Get(provider);
+        return await dispatcher.SendAsync(...);
+    }
+}</code></pre><h2><i class="fa-solid fa-shuffle"></i> Pattern 4: IP Pooling Dispatcher</h2><p><strong>Idea:</strong> Distribute emails across multiple SES sending pools for reputation management.</p><pre><code>public class IPPoolingDispatcher : IEmailDispatcher
+{
+    public async Task<EmailDispatchResult> SendAsync(...)
+    {
+        // Select IP pool based on tenant/domain
+        var pool = _ipPoolSelector.Select(message.To);
+        var metadata = metadata with { IPPool = pool };
+        return await _sesDispatcher.SendAsync(credential, metadata, message, ct);
+    }
+}</code></pre><h2><i class="fa-solid fa-cube"></i> Pattern 5: Blockchain-Enabled Dispatcher</h2><p><strong>Idea:</strong> Log email hashes to blockchain for compliance/audit.</p><pre><code>public class BlockchainDispatcher : IEmailDispatcher
+{
+    public async Task<EmailDispatchResult> SendAsync(...)
+    {
+        // Send email
+        var result = await _mainDispatcher.SendAsync(...);
+        
+        // Hash and log to blockchain
+        if (result.Success)
+        {
+            var hash = Hash(message.Html + result.MessageID);
+            await _blockchain.LogAsync(hash, ct);
+        }
+        
+        return result;
+    }
+}</code></pre><h2><i class="fa-solid fa-shield"></i> Pattern 6: Rate-Limited Dispatcher</h2><p><strong>Idea:</strong> Enforce per-tenant or per-recipient rate limits.</p><pre><code>public class RateLimitedDispatcher : IEmailDispatcher
+{
+    public async Task<EmailDispatchResult> SendAsync(...)
+    {
+        // Check rate limit: 100 emails/minute per tenant
+        if (!await _rateLimiter.AllowAsync(metadata.TenantID, 100, 60, ct))
+            return EmailDispatchResult.Fail("RATE_LIMIT", "Quota exceeded");
+        
+        return await _mainDispatcher.SendAsync(...);
+    }
+}</code></pre><h2><i class="fa-solid fa-arrow-right"></i> Next Steps</h2><ul><li><a href="02-bring-your-own.html"><strong>Bring Your Own Provider</strong></a> — Implement custom dispatchers</li><li><a href="12-sample-json.html"><strong>Sample JSON</strong></a></li></ul></main></body>
+</html>
