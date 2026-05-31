@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataStateMachine Engine — Guide49 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>DataStateMachine Engine</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html" class="active"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-plugin-architecture.html"><i class="fa-solid fa-plug"></i> Plugin Architecture</a>
+  <a href="02-lifecycle.html"><i class="fa-solid fa-rotate"></i> Life Cycle</a>
+  <a href="03-key-concepts.html"><i class="fa-solid fa-key"></i> Key Concepts</a>
+  <a href="04-node-configuration.html"><i class="fa-solid fa-sliders"></i> Node Configuration</a>
+  <a href="05-builtin-handler.html"><i class="fa-solid fa-database"></i> Built-In Handler</a>
+  <a href="06-salesleads-demo.html"><i class="fa-solid fa-users"></i> SalesLeads Demo</a>
+  <a href="07-node-as-entity-owner.html"><i class="fa-solid fa-table"></i> Node as Entity Owner</a>
+  <a href="08-node-capabilities.html"><i class="fa-solid fa-cubes"></i> NodeCapabilities</a>
+  <a href="09-node-policies.html"><i class="fa-solid fa-shield-halved"></i> NodePolicies</a>
+  <a href="10-guardrails-integration.html"><i class="fa-solid fa-traffic-light"></i> GuardRails</a>
+  <a href="11-use-cases.html"><i class="fa-solid fa-briefcase"></i> Business Use Cases</a>
+  <a href="12-data-engineering.html"><i class="fa-solid fa-diagram-project"></i> Data Engineering</a>
+  <a href="13-data-science.html"><i class="fa-solid fa-flask"></i> Data Science &amp; Enrichment</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide48_WorkflowVsServerNodes/index.html">&#8592; Prev: Workflow vs Server Nodes</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Flow Studio</span>
+    <h1>DataStateMachine Engine</h1>
+    <p class="lead">A pluggable, per-node state and idempotency engine. Every workflow node can own its state, lock against duplicate runs, and persist records to any backing store — built-in SQL, custom databases, REST APIs, or blockchain ledgers.</p>
+  </div>
+
+  <h2>The Problem It Solves</h2>
+  <p>Workflow engines orchestrate steps efficiently but treat state as a byproduct — logs belong to the engine, not your business. When you need "did this entity already get processed in the last 72 hours?", you write custom code. Every time. For every node. DataStateMachine makes per-node, per-entity state tracking a first-class platform feature.</p>
+
+  <h2>Architecture Overview</h2>
+  <pre><code>Node PreProcess
+    │
+    ▼
+DataStateMachineFactory (Scoped DI)
+    │  resolves handler by HandlerKey from node config
+    ▼
+IDataStateMachineHandler  ←── plugin assembly (built-in, sales-leads, or custom)
+    │
+    ▼
+ContextualDataStateMachine
+    │  wraps base context + per-call item keys via C# `with`
+    ▼
+IDataStateMachine  ←── what the node developer calls
+    │
+    ├── TryAcquireLockAsync(itemKey, ...)   → locks entity for processing
+    ├── SetAsync(itemKey, Processed, data)  → marks complete
+    ├── UpsertAsync(itemKey, data)          → append-only record with SupersededByID
+    └── ExistsAsync / GetAsync / QueryAsync → read state</code></pre>
+
+  <h2>Three Modes of Operation</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Mode</th>
+        <th>Config</th>
+        <th>Behaviour</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Built-In Handler</td>
+        <td><code>handler: "built-in"</code></td>
+        <td>Writes to <code>Process_StateLogs</code> SQL table. Full idempotency, locks, history.</td>
+      </tr>
+      <tr>
+        <td>Custom Handler</td>
+        <td><code>handler: "your-key"</code></td>
+        <td>Your plugin assembly. Any backing store — DB, API, blockchain, Redis.</td>
+      </tr>
+      <tr>
+        <td>No-Op (Null)</td>
+        <td>(config block absent)</td>
+        <td><code>NullDataStateMachine.Instance</code> — safe default, no DB writes, safe for parallel fork lanes.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>What a Node Developer Sees</h2>
+  <pre><code>// In your node executor — IDataStateMachine is pre-bound to scope/entity/tenant
+var exists = await DataStateMachine.ExistsAsync(invoice.Id, entityKey: "invoice");
+if (exists) return NodeExecutionResult.Skip("Already processed");
+
+bool locked = await DataStateMachine.TryAcquireLockAsync(invoice.Id, entityKey: "invoice");
+if (!locked) return NodeExecutionResult.Skip("Being processed by another thread");
+
+try {
+    await ProcessInvoiceAsync(invoice);
+    await DataStateMachine.SetAsync(invoice.Id, entityKey: "invoice",
+        status: IdempotencyStatus.Processed, data: result);
+}
+catch (Exception ex) {
+    await DataStateMachine.ReleaseLockAsFailedAsync(invoice.Id, entityKey: "invoice", error: ex.Message);
+    throw;
+}</code></pre>
+
+  <h2>Guide Pages</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Page</th>
+        <th>What You'll Learn</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td><a href="01-plugin-architecture.html">Plugin Architecture</a></td>
+        <td>How to bring your own handler; BYOD concept; plugin discovery</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><a href="02-lifecycle.html">Life Cycle</a></td>
+        <td>Complete state machine lifecycle; annotated invoice walkthrough</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><a href="03-key-concepts.html">Key Concepts</a></td>
+        <td>Scope hierarchy, StateHandlerContext, IdempotencyStatus enum</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td><a href="04-node-configuration.html">Node Configuration</a></td>
+        <td>JSON config block; handler/scope/options; NullDataStateMachine default</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td><a href="05-builtin-handler.html">Built-In Handler</a></td>
+        <td>Process_StateLogs schema; handler code; lock/unlock pattern</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td><a href="06-salesleads-demo.html">SalesLeads Demo</a></td>
+        <td>Custom handler walkthrough; CRMSimple_SalesLeads table</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td><a href="07-node-as-entity-owner.html">Node as Entity Owner</a></td>
+        <td>Binding nodes to DB tables, REST APIs, blockchain</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td><a href="08-node-capabilities.html">NodeCapabilities</a></td>
+        <td>Node as DataStateMachine + DataService provider</td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td><a href="09-node-policies.html">NodePolicies</a></td>
+        <td>Security enforcement; handler/scope access control</td>
+      </tr>
+      <tr>
+        <td>10</td>
+        <td><a href="10-guardrails-integration.html">GuardRails Integration</a></td>
+        <td>State-driven validation; custom guard engines</td>
+      </tr>
+      <tr>
+        <td>11</td>
+        <td><a href="11-use-cases.html">Business Use Cases</a></td>
+        <td>12 real-world scenarios across industries</td>
+      </tr>
+      <tr>
+        <td>12</td>
+        <td><a href="12-data-engineering.html">Data Engineering</a></td>
+        <td>Lineage, dedup, quality gates, event sourcing</td>
+      </tr>
+      <tr>
+        <td>13</td>
+        <td><a href="13-data-science.html">Data Science &amp; Enrichment</a></td>
+        <td>ML labels, enrichment pipelines, feature stores</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-tip">
+    <strong>Tip:</strong> If the <code>dataStateMachine</code> config block is absent from a node, <code>NullDataStateMachine.Instance</code> is injected automatically — a no-op singleton that never writes to the database. No configuration is required to use the safe default.
+  </div>
+
+  <div class="page-nav">
+    <span></span>
+    <a href="01-plugin-architecture.html">Next: Plugin Architecture &#8594;</a>
+  </div>
+
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>
