@@ -1,0 +1,237 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plugin Architecture — Guide49 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>DataStateMachine</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-plugin-architecture.html" class="active"><i class="fa-solid fa-plug"></i> Plugin Architecture</a>
+  <a href="02-lifecycle.html"><i class="fa-solid fa-rotate"></i> Life Cycle</a>
+  <a href="03-key-concepts.html"><i class="fa-solid fa-key"></i> Key Concepts</a>
+  <a href="04-node-configuration.html"><i class="fa-solid fa-sliders"></i> Node Configuration</a>
+  <a href="05-builtin-handler.html"><i class="fa-solid fa-database"></i> Built-In Handler</a>
+  <a href="06-salesleads-demo.html"><i class="fa-solid fa-users"></i> SalesLeads Demo</a>
+  <a href="07-node-as-entity-owner.html"><i class="fa-solid fa-table"></i> Node as Entity Owner</a>
+  <a href="08-node-capabilities.html"><i class="fa-solid fa-cubes"></i> NodeCapabilities</a>
+  <a href="09-node-policies.html"><i class="fa-solid fa-shield-halved"></i> NodePolicies</a>
+  <a href="10-guardrails-integration.html"><i class="fa-solid fa-traffic-light"></i> GuardRails</a>
+  <a href="11-use-cases.html"><i class="fa-solid fa-briefcase"></i> Business Use Cases</a>
+  <a href="12-data-engineering.html"><i class="fa-solid fa-diagram-project"></i> Data Engineering</a>
+  <a href="13-data-science.html"><i class="fa-solid fa-flask"></i> Data Science &amp; Enrichment</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide48_WorkflowVsServerNodes/index.html">&#8592; Prev: Workflow vs Server Nodes</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Flow Studio</span>
+    <h1>Plugin Architecture — Bring Your Own Handler</h1>
+    <p class="lead">The DataStateMachine engine is fully plugin-based. Any team can ship a handler assembly that is discovered automatically at startup. You control the backing store, the key strategy, the update model — everything.</p>
+  </div>
+
+  <h2>The Bring Your Own Design</h2>
+  <p>The platform ships two handler implementations — built-in (SQL) and sales-leads (CRM demo). But the engine itself has zero compile-time dependency on either. The handler is resolved at runtime by a string key declared in the node's configuration block.</p>
+  <p>This means a node that was built and deployed six months ago can be pointed at a brand-new handler — one that writes to Redis, a blockchain ledger, or a third-party compliance API — without changing a single line of the node's code. The node never knows which handler it's talking to.</p>
+
+  <h2>The Plugin Interface</h2>
+  <pre><code>// Ship this in your plugin assembly
+public interface IDataStateMachinePlugin
+{
+    void Register(IServiceCollection services, IConfiguration config);
+}
+
+// Example implementation
+public class MyCustomDataStateMachinePlugin : IDataStateMachinePlugin
+{
+    public void Register(IServiceCollection services, IConfiguration config)
+    {
+        // Register your handler as Singleton (handlers are shared across requests)
+        services.AddSingleton&lt;IDataStateMachineHandler, MyCustomHandler&gt;();
+
+        // Register any scoped dependencies your handler needs
+        services.AddScoped&lt;IMyCustomRepository, MyCustomRepository&gt;();
+    }
+}</code></pre>
+
+  <h2>Handler Discovery — AppDomain Scan</h2>
+  <p>At application startup, <code>DataStateMachinePluginLoader</code> scans every assembly in the AppDomain for types that implement <code>IDataStateMachinePlugin</code>. It instantiates each one and calls <code>Register(services, config)</code>. No manual wiring in <code>Program.cs</code> required — drop the DLL in the output folder and it is picked up.</p>
+  <pre><code>Application Startup
+    │
+    ▼
+DataStateMachinePluginLoader.LoadPlugins(services, config)
+    │
+    ├── AppDomain.CurrentDomain.GetAssemblies()
+    │       filter: types implementing IDataStateMachinePlugin
+    │
+    ├── BuiltInDataStateMachinePlugin.Register(...)
+    │       → registers BuiltInDataStateMachineHandler (Singleton)
+    │       → registers IProcessStateLogRepository (Scoped)
+    │
+    ├── SalesLeadsDataStateMachinePlugin.Register(...)
+    │       → registers SalesLeadsDataStateMachineHandler (Singleton)
+    │       → registers ISalesLeadRepository (Scoped)
+    │
+    └── YourCustomPlugin.Register(...)
+            → registers whatever your handler needs</code></pre>
+
+  <h2>Implementing a Handler</h2>
+  <pre><code>public class MyCustomHandler : IDataStateMachineHandler
+{
+    public string HandlerKey =&gt; "my-custom";  // matches "handler": "my-custom" in node config
+
+    public Task&lt;bool&gt; ExistsAsync(StateHandlerContext ctx, CancellationToken ct)
+    {
+        // ctx.ItemKey, ctx.ItemEntityKey, ctx.SubItemKey, ctx.SubItemEntityKey
+        // ctx.TenantID, ctx.EntityID, ctx.StateLogScopeID
+        // Query YOUR store using these keys
+    }
+
+    public Task&lt;bool&gt; TryAcquireLockAsync(StateHandlerContext ctx, CancellationToken ct) { ... }
+    public Task SetAsync(StateHandlerContext ctx, IdempotencyStatus status, string? data, CancellationToken ct) { ... }
+    public Task UpsertAsync(StateHandlerContext ctx, string? data, CancellationToken ct) { ... }
+    public Task ReleaseLockAsFailedAsync(StateHandlerContext ctx, string? errorDetail, CancellationToken ct) { ... }
+    public Task&lt;StateRecord?&gt; GetAsync(StateHandlerContext ctx, CancellationToken ct) { ... }
+    public Task&lt;IReadOnlyList&lt;StateRecord&gt;&gt; QueryAsync(StateHandlerContext ctx, StateQuery query, CancellationToken ct) { ... }
+}</code></pre>
+
+  <h2>Handler vs Plugin vs Factory — Responsibilities</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Lifetime</th>
+        <th>Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>IDataStateMachinePlugin</code></td>
+        <td>Called once at startup</td>
+        <td>Registers handler and its dependencies into DI</td>
+      </tr>
+      <tr>
+        <td><code>IDataStateMachineHandler</code></td>
+        <td>Singleton</td>
+        <td>Executes all state operations against your backing store</td>
+      </tr>
+      <tr>
+        <td><code>DataStateMachineFactory</code></td>
+        <td>Scoped (per request)</td>
+        <td>Resolves handler by key; builds <code>StateHandlerContext</code> from node config + execution context</td>
+      </tr>
+      <tr>
+        <td><code>ContextualDataStateMachine</code></td>
+        <td>Per node execution</td>
+        <td>Wraps handler + base context; builds per-call ctx using C# <code>with</code></td>
+      </tr>
+      <tr>
+        <td><code>IDataStateMachine</code></td>
+        <td>Per node execution</td>
+        <td>The interface the node developer calls — never sees the handler directly</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Flexibility Matrix</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Backing Store</th>
+        <th>Example Use Case</th>
+        <th>Custom Handler?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>SQL Server (built-in)</td>
+        <td>Standard workflow idempotency</td>
+        <td>No — built-in handler</td>
+      </tr>
+      <tr>
+        <td>CRM Table</td>
+        <td>Lead/contact state tracking</td>
+        <td>Yes — SalesLeads demo as template</td>
+      </tr>
+      <tr>
+        <td>Redis</td>
+        <td>High-throughput ephemeral locks</td>
+        <td>Yes — implement <code>IDataStateMachineHandler</code></td>
+      </tr>
+      <tr>
+        <td>REST API</td>
+        <td>Third-party compliance record</td>
+        <td>Yes</td>
+      </tr>
+      <tr>
+        <td>Blockchain / DID Ledger</td>
+        <td>Immutable state anchoring</td>
+        <td>Yes</td>
+      </tr>
+      <tr>
+        <td>Custom SQL table</td>
+        <td>Domain-specific entity state</td>
+        <td>Yes</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3-Project Structure Per Handler</h2>
+  <p>Every handler follows a 3-project pattern — Domain, Infrastructure, Service — matching the rest of the BizFirstAI architecture. This ensures clean separation and testability.</p>
+  <pre><code>BizFirst.Ai.DataStateMachine.{Name}.Domain
+    Entities\          ← EF Core entity mapping to your table
+    Repositories\      ← IYourRepository interface
+    Services\          ← IYourService interface
+
+BizFirst.Ai.DataStateMachine.{Name}.Infrastructure
+    Data\              ← DbContext — your EF Core tables
+    Repositories\      ← EF implementation
+    DependencyInjection.cs
+
+BizFirst.Ai.DataStateMachine.{Name}.Service
+    Services\          ← Business logic, Guard validations
+    Handlers\          ← IDataStateMachineHandler implementation  ← KEY FILE
+    {Name}DataStateMachinePlugin.cs  ← IDataStateMachinePlugin
+    DependencyInjection.cs</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Tip:</strong> The SalesLeads handler (Guide 06) is the canonical template for building a custom handler. It demonstrates the entity key mapping strategy, the in-place vs append-only update decision, and the plugin registration pattern.
+  </div>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-lifecycle.html">Next: Life Cycle &#8594;</a>
+  </div>
+
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

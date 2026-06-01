@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Engineering — Guide49 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>DataStateMachine</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-plugin-architecture.html"><i class="fa-solid fa-plug"></i> Plugin Architecture</a>
+  <a href="02-lifecycle.html"><i class="fa-solid fa-rotate"></i> Life Cycle</a>
+  <a href="03-key-concepts.html"><i class="fa-solid fa-key"></i> Key Concepts</a>
+  <a href="04-node-configuration.html"><i class="fa-solid fa-sliders"></i> Node Configuration</a>
+  <a href="05-builtin-handler.html"><i class="fa-solid fa-database"></i> Built-In Handler</a>
+  <a href="06-salesleads-demo.html"><i class="fa-solid fa-users"></i> SalesLeads Demo</a>
+  <a href="07-node-as-entity-owner.html"><i class="fa-solid fa-table"></i> Node as Entity Owner</a>
+  <a href="08-node-capabilities.html"><i class="fa-solid fa-cubes"></i> NodeCapabilities</a>
+  <a href="09-node-policies.html"><i class="fa-solid fa-shield-halved"></i> NodePolicies</a>
+  <a href="10-guardrails-integration.html"><i class="fa-solid fa-traffic-light"></i> GuardRails</a>
+  <a href="11-use-cases.html"><i class="fa-solid fa-briefcase"></i> Business Use Cases</a>
+  <a href="12-data-engineering.html" class="active"><i class="fa-solid fa-diagram-project"></i> Data Engineering</a>
+  <a href="13-data-science.html"><i class="fa-solid fa-flask"></i> Data Science &amp; Enrichment</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide48_WorkflowVsServerNodes/index.html">&#8592; Prev: Workflow vs Server Nodes</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Flow Studio</span>
+    <h1>Data Engineering with DataStateMachine</h1>
+    <p class="lead">When every workflow node writes structured state, the workflow becomes a data pipeline. Lineage, deduplication, quality gates, event sourcing, and recovery patterns emerge from the state records — without a separate ETL or lineage tracking system.</p>
+  </div>
+
+  <h2>The Workflow as a Data Pipeline</h2>
+
+  <p>Traditional data pipelines need separate deduplication logic, lineage tracking, quality gates, and audit tools. DataStateMachine makes each workflow node a data-aware component: it knows what it processed, when, and with what result.</p>
+
+  <p>The state records that drive idempotency also serve as:</p>
+  <ul>
+    <li>A <strong>deduplication registry</strong> — has this record been processed by this node?</li>
+    <li>A <strong>lineage log</strong> — which node processed which entity, in which execution?</li>
+    <li>A <strong>quality gate</strong> — what was the processing result and data?</li>
+    <li>An <strong>event log</strong> — status transitions as events in chronological order</li>
+  </ul>
+
+  <h2>Pipeline Deduplication at Node Level</h2>
+
+  <p>Standard pipeline deduplication happens at the pipeline boundary (e.g. "already imported this file?"). DataStateMachine pushes dedup down to the individual node level, where duplicates actually originate.</p>
+
+  <pre><code>Without DataStateMachine:
+    Source System → [Extract Node] → [Transform Node] → [Load Node]
+                    ^ one dedup check here only
+                    (race conditions, retries still cause duplicates)
+
+With DataStateMachine:
+    Source System → [Extract Node] → [Transform Node] → [Load Node]
+                    ^ ExistsAsync    ^ ExistsAsync       ^ ExistsAsync
+                    each node independently deduplicates its own work</code></pre>
+
+  <pre><code>// In each pipeline node — consistent deduplication pattern
+var recordId = ctx.Input.GetString("sourceRecordId");
+
+if (await DataStateMachine.ExistsAsync(recordId, entityKey: "etl-record", ct: ct))
+    return NodeExecutionResult.Skip($"Record {recordId} already processed by this node");
+
+bool locked = await DataStateMachine.TryAcquireLockAsync(recordId, entityKey: "etl-record", ct: ct);
+if (!locked)
+    return NodeExecutionResult.Skip("Processing in another thread");
+
+// ... transform or load the record ...
+await DataStateMachine.SetAsync(recordId, "etl-record", IdempotencyStatus.Processed, data: result, ct: ct);</code></pre>
+
+  <h2>Data Lineage via State Records</h2>
+
+  <p>Every <code>Process_StateLogs</code> row is a lineage record. It captures: which entity (<code>EntityID</code>), which execution (<code>EntityExecutionID</code>), which scope (<code>StateLogScopeID</code>), which item (<code>ItemKey</code> + <code>ItemEntityKey</code>), when (<code>Created</code>/<code>Modified</code>), and what result (<code>Status</code> + <code>Data</code>).</p>
+
+  <p>A lineage query for a single entity shows every node that touched it, in every execution, with full data:</p>
+
+  <pre><code>SELECT
+    s.ScopeCode,
+    sl.ItemEntityKey,
+    sl.ItemKey,
+    sl.Status,
+    sl.Created       AS ProcessedAt,
+    sl.Data,
+    sl.SupersededByID
+FROM Process_StateLogs sl
+JOIN Process_StateLogScopes s ON sl.StateLogScopeID = s.ID
+WHERE sl.ItemEntityKey = 'INV-2024-00892'   -- the entity
+  AND sl.TenantID      = 42
+  AND sl.Deleted       = 0
+ORDER BY sl.Created ASC;
+-- Returns: full lineage chain for this invoice across all nodes and executions</code></pre>
+
+  <h2>Data Quality Gates</h2>
+
+  <p>A node can check the prior state of an upstream entity before processing it. If the upstream node failed, the downstream node can refuse to proceed — preventing bad data from flowing through the pipeline.</p>
+
+  <pre><code>// Downstream node — checks upstream state before accepting input
+var upstreamState = await DataStateMachine.GetAsync(
+    itemKey:       customerId,
+    itemEntityKey: "customer-enrichment",
+    ct:            ct);
+
+if (upstreamState?.Status == IdempotencyStatus.Failed)
+    return NodeExecutionResult.Block("Customer enrichment failed — cannot proceed with scoring");
+
+if (upstreamState is null || upstreamState.Status != IdempotencyStatus.Processed)
+    return NodeExecutionResult.Skip("Waiting for upstream enrichment to complete");
+
+// Safe to proceed
+var enrichedData = JsonSerializer.Deserialize&lt;CustomerData&gt;(upstreamState.Data!);</code></pre>
+
+  <h2>Append-Only Records as Event Log</h2>
+
+  <p><code>UpsertAsync</code> creates a new row and marks the old row <code>Superseded</code> via <code>SupersededByID</code>. The table is therefore an ordered chain of events for each entity — a native event log.</p>
+
+  <p>This event log can be replayed. To reconstruct the state of an entity at any point in time, query all rows for that entity ordered by <code>Created</code> and walk the chain.</p>
+
+  <pre><code>-- All events for a customer, in order (event sourcing query)
+WITH RECURSIVE EventChain AS (
+    SELECT * FROM Process_StateLogs
+    WHERE ItemEntityKey = 'CUST-1001'
+      AND SupersededByID IS NULL     -- start at the latest
+      AND Deleted = 0
+
+    UNION ALL
+
+    SELECT sl.* FROM Process_StateLogs sl
+    JOIN EventChain ec ON sl.ID = ec.SupersededByID
+)
+SELECT * FROM EventChain ORDER BY Created ASC;</code></pre>
+
+  <h2>Recovery Patterns</h2>
+
+  <p>Because state is durable, pipeline recovery is straightforward:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Failure Scenario</th>
+        <th>Recovery Approach</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Node crashes mid-processing</td>
+        <td>CatchupWorker resets Processing &rarr; Failed; retry re-acquires lock</td>
+      </tr>
+      <tr>
+        <td>Bad data causes transform failure</td>
+        <td>ReleaseLockAsFailedAsync; fix source data; retry same itemKey</td>
+      </tr>
+      <tr>
+        <td>Partial pipeline run</td>
+        <td>Query Processed records; skip; process only unprocessed (Failed or None)</td>
+      </tr>
+      <tr>
+        <td>Corrupt output detected</td>
+        <td>SetAsync(itemKey, Failed); upstream corrects; downstream re-runs naturally</td>
+      </tr>
+      <tr>
+        <td>Pipeline restart after outage</td>
+        <td>ExistsAsync returns true for already-Processed items; pipeline resumes from gap</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Sub-Item Tracking for Enrichment Pipelines</h2>
+
+  <p>The <code>SubItemKey</code> field was designed for enrichment pipelines where one entity gets multiple independent enrichments.</p>
+
+  <pre><code>// One entity — three enrichment sub-operations tracked independently
+// Address validation
+await DataStateMachine.SetAsync(
+    itemKey: customerId, itemEntityKey: "customer",
+    subItemKey: "address-validation",
+    status: IdempotencyStatus.Processed, data: addressResult, ct: ct);
+
+// Credit score pull
+await DataStateMachine.SetAsync(
+    itemKey: customerId, itemEntityKey: "customer",
+    subItemKey: "credit-score",
+    status: IdempotencyStatus.Processed, data: creditResult, ct: ct);
+
+// Social graph
+await DataStateMachine.SetAsync(
+    itemKey: customerId, itemEntityKey: "customer",
+    subItemKey: "social-graph",
+    status: IdempotencyStatus.Processed, data: socialResult, ct: ct);
+
+// Query: which enrichments are complete for this customer?
+var enrichments = await DataStateMachine.QueryAsync(
+    itemKey: customerId, itemEntityKey: "customer",
+    query: new StateQuery { StatusFilter = IdempotencyStatus.Processed }, ct: ct);</code></pre>
+
+  <div class="callout callout-tip">
+    <strong>Sub-item tracking</strong> means you don't need a separate enrichment tracking table. The state records are the enrichment registry. Query them to see which enrichments are complete, pending, or failed for any entity.
+  </div>
+
+  <div class="page-nav">
+    <a href="11-use-cases.html">&#8592; Business Use Cases</a>
+    <a href="13-data-science.html">Next: Data Science &amp; Enrichment &#8594;</a>
+  </div>
+
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

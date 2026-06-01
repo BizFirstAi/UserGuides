@@ -1,0 +1,220 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security via NodePolicies — Guide49 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>DataStateMachine</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-plugin-architecture.html"><i class="fa-solid fa-plug"></i> Plugin Architecture</a>
+  <a href="02-lifecycle.html"><i class="fa-solid fa-rotate"></i> Life Cycle</a>
+  <a href="03-key-concepts.html"><i class="fa-solid fa-key"></i> Key Concepts</a>
+  <a href="04-node-configuration.html"><i class="fa-solid fa-sliders"></i> Node Configuration</a>
+  <a href="05-builtin-handler.html"><i class="fa-solid fa-database"></i> Built-In Handler</a>
+  <a href="06-salesleads-demo.html"><i class="fa-solid fa-users"></i> SalesLeads Demo</a>
+  <a href="07-node-as-entity-owner.html"><i class="fa-solid fa-table"></i> Node as Entity Owner</a>
+  <a href="08-node-capabilities.html"><i class="fa-solid fa-cubes"></i> NodeCapabilities</a>
+  <a href="09-node-policies.html" class="active"><i class="fa-solid fa-shield-halved"></i> NodePolicies</a>
+  <a href="10-guardrails-integration.html"><i class="fa-solid fa-traffic-light"></i> GuardRails</a>
+  <a href="11-use-cases.html"><i class="fa-solid fa-briefcase"></i> Business Use Cases</a>
+  <a href="12-data-engineering.html"><i class="fa-solid fa-diagram-project"></i> Data Engineering</a>
+  <a href="13-data-science.html"><i class="fa-solid fa-flask"></i> Data Science &amp; Enrichment</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide48_WorkflowVsServerNodes/index.html">&#8592; Prev: Workflow vs Server Nodes</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Flow Studio</span>
+    <h1>Security via NodePolicies</h1>
+    <p class="lead">NodePolicies enforce which DataStateMachine handler a node can access, which scope levels it can write to, and which tenant contexts it operates in — all evaluated in the execution pipeline before the handler is ever resolved.</p>
+  </div>
+
+  <h2>Where Policies Sit in the Pipeline</h2>
+
+  <pre><code>Node Execution Request
+    │
+    ▼
+NodePolicyEvaluator  ◄─── BEFORE DataStateMachineFactory is called
+    │
+    ├── Is this node allowed to use handler "blockchain-state"?
+    ├── Is this node allowed to write at "App" scope?
+    ├── Does the requesting tenant have access to this handler?
+    │
+    ├── [All checks pass] → continue to DataStateMachineFactory
+    │
+    └── [Any check fails] → execution blocked, audit log entry created</code></pre>
+
+  <h2>What NodePolicies Control</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Policy Dimension</th>
+        <th>What It Controls</th>
+        <th>Example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Handler Access</td>
+        <td>Which HandlerKey values the node may use</td>
+        <td>"built-in" only; or "blockchain-state" allowed</td>
+      </tr>
+      <tr>
+        <td>Scope Ceiling</td>
+        <td>Maximum scope level the node may declare</td>
+        <td>Cannot exceed "Element" scope</td>
+      </tr>
+      <tr>
+        <td>Tenant Isolation</td>
+        <td>Which tenant IDs the node can act on behalf of</td>
+        <td>Node can only write for its own tenant</td>
+      </tr>
+      <tr>
+        <td>Capability Permissions</td>
+        <td>Which NodeCapabilities the node can expose</td>
+        <td>Can expose "entity" but not "datasource"</td>
+      </tr>
+      <tr>
+        <td>Audit Requirements</td>
+        <td>Whether all state writes must be audit-logged</td>
+        <td>Mandatory for financial nodes</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Policy Configuration</h2>
+
+  <p>Policies are declared in the NodeCapabilityPolicy entity (managed by the ProcessSecurity module) and evaluated by the NodePolicyEvaluator before the DataStateMachineFactory creates the handler instance.</p>
+
+  <pre><code>{
+  "nodeType": "InvoiceDispatchExecutor",
+  "dataStateMachine": {
+    "allowedHandlers": ["built-in"],
+    "maxScope":        "Element",
+    "requireAuditLog": true,
+    "tenantIsolation": "strict"
+  },
+  "capabilities": {
+    "allowed": ["entity", "businessService"],
+    "denied":  ["datasource", "rules"]
+  }
+}</code></pre>
+
+  <h2>Privilege Keys</h2>
+
+  <p>Individual operations can require privilege keys. A node must be granted the key before it can perform the operation. This allows fine-grained control within a single handler.</p>
+
+  <pre><code>// NodePolicyEvaluator — privilege key enforcement
+if (!await _policyService.HasPrivilegeAsync(
+    nodeType:     "InvoiceDispatchExecutor",
+    privilegeKey: "state:write:blockchain",
+    tenantId:     ctx.TenantID,
+    ct))
+{
+    _auditLog.Write(AuditLevel.Warning,
+        $"Node {nodeType} attempted blocked privilege: state:write:blockchain");
+    throw new NodePolicyViolationException("Privilege 'state:write:blockchain' not granted");
+}</code></pre>
+
+  <h2>Audit Trail</h2>
+
+  <p>Every state write by a node that has requireAuditLog: true generates a SecurityAuditLog entry. The entry records the node type, tenant, handler used, scope, item keys, status transition, and the calling user/service identity.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>NodeType</td>
+        <td>The executor class name</td>
+      </tr>
+      <tr>
+        <td>HandlerKey</td>
+        <td>Which handler was invoked</td>
+      </tr>
+      <tr>
+        <td>Scope</td>
+        <td>The scope level used</td>
+      </tr>
+      <tr>
+        <td>ItemKey / ItemEntityKey</td>
+        <td>What was processed</td>
+      </tr>
+      <tr>
+        <td>StatusFrom / StatusTo</td>
+        <td>The state transition</td>
+      </tr>
+      <tr>
+        <td>TenantID</td>
+        <td>Tenant context</td>
+      </tr>
+      <tr>
+        <td>ActorID</td>
+        <td>User or service identity</td>
+      </tr>
+      <tr>
+        <td>Timestamp</td>
+        <td>When the transition occurred</td>
+      </tr>
+      <tr>
+        <td>PolicyDecision</td>
+        <td>Allowed / Denied</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Tenant Isolation</h2>
+
+  <p>Strict tenant isolation means a node can only read and write state records for the tenant it is executing under. The DataStateMachineFactory always binds TenantID from the workflow thread context. NodePolicies add a second enforcement layer: if the node config specifies a different tenantId, strict isolation blocks it before the factory is called.</p>
+
+  <div class="callout callout-warning">
+    <p>Never configure a node with tenantIsolation: 'relaxed' in production without explicit approval from the security team. Relaxed mode allows cross-tenant state reads, which can expose data across organisational boundaries.</p>
+  </div>
+
+  <div class="callout callout-tip">
+    <p>Use requireAuditLog: true for all nodes that process financial transactions, compliance records, healthcare data, or personal information. The audit trail is your evidence in regulatory inquiries.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="08-node-capabilities.html">&#8592; NodeCapabilities</a>
+    <a href="10-guardrails-integration.html">Next: GuardRails Integration &#8594;</a>
+  </div>
+
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

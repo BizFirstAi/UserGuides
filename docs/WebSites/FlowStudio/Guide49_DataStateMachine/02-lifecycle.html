@@ -1,0 +1,293 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Life Cycle — Guide49 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>DataStateMachine</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-plugin-architecture.html"><i class="fa-solid fa-plug"></i> Plugin Architecture</a>
+  <a href="02-lifecycle.html" class="active"><i class="fa-solid fa-rotate"></i> Life Cycle</a>
+  <a href="03-key-concepts.html"><i class="fa-solid fa-key"></i> Key Concepts</a>
+  <a href="04-node-configuration.html"><i class="fa-solid fa-sliders"></i> Node Configuration</a>
+  <a href="05-builtin-handler.html"><i class="fa-solid fa-database"></i> Built-In Handler</a>
+  <a href="06-salesleads-demo.html"><i class="fa-solid fa-users"></i> SalesLeads Demo</a>
+  <a href="07-node-as-entity-owner.html"><i class="fa-solid fa-table"></i> Node as Entity Owner</a>
+  <a href="08-node-capabilities.html"><i class="fa-solid fa-cubes"></i> NodeCapabilities</a>
+  <a href="09-node-policies.html"><i class="fa-solid fa-shield-halved"></i> NodePolicies</a>
+  <a href="10-guardrails-integration.html"><i class="fa-solid fa-traffic-light"></i> GuardRails</a>
+  <a href="11-use-cases.html"><i class="fa-solid fa-briefcase"></i> Business Use Cases</a>
+  <a href="12-data-engineering.html"><i class="fa-solid fa-diagram-project"></i> Data Engineering</a>
+  <a href="13-data-science.html"><i class="fa-solid fa-flask"></i> Data Science &amp; Enrichment</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide48_WorkflowVsServerNodes/index.html">&#8592; Prev: Workflow vs Server Nodes</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Flow Studio</span>
+    <h1>The DataStateMachine Life Cycle</h1>
+    <p class="lead">From the moment a workflow node is triggered to the point its state reaches a terminal status — every phase, every transition, every recovery path.</p>
+  </div>
+
+  <h2>Phase Overview</h2>
+  <p>The DataStateMachine lifecycle spans five phases. Each phase has a clear owner and defined responsibilities.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>Owner</th>
+        <th>What Happens</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1. Initialisation</td>
+        <td><code>BaseNodeExecutor.OnPreProcess</code></td>
+        <td>Factory resolves handler; builds base <code>StateHandlerContext</code>; wraps in <code>ContextualDataStateMachine</code></td>
+      </tr>
+      <tr>
+        <td>2. Node Logic</td>
+        <td>Node executor (developer code)</td>
+        <td>Developer calls <code>TryAcquireLockAsync</code> / <code>ExistsAsync</code> / <code>SetAsync</code> / <code>UpsertAsync</code> on <code>IDataStateMachine</code></td>
+      </tr>
+      <tr>
+        <td>3. State Transition</td>
+        <td>Handler (BuiltIn or Custom)</td>
+        <td>Records written to backing store; Processing lock set; status transitions managed</td>
+      </tr>
+      <tr>
+        <td>4. Completion or Failure</td>
+        <td>Node executor (try/catch)</td>
+        <td><code>SetAsync(Processed)</code> or <code>ReleaseLockAsFailedAsync</code> on success/exception</td>
+      </tr>
+      <tr>
+        <td>5. Lock Recovery</td>
+        <td>CatchupWorkerService</td>
+        <td>Background job resets expired Processing records (<code>LockedUntil &lt; now</code> → Failed)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Full Lifecycle Diagram</h2>
+  <pre><code>Workflow Engine
+    │  node execution triggered
+    ▼
+BaseNodeExecutor.OnPreProcess
+    │
+    ├── InitialiseDataStateMachineAsync()
+    │       │
+    │       ├── read node config → DataStateMachineConfig (handler key, scope, options)
+    │       │
+    │       ├── DataStateMachineFactory.CreateAsync(elem, thread, config)
+    │       │       │
+    │       │       ├── resolve IDataStateMachineHandler by HandlerKey
+    │       │       │     └── if key not found → throw (misconfiguration)
+    │       │       │
+    │       │       ├── resolve ScopeID from scope name (e.g. "Element" → 4)
+    │       │       │
+    │       │       └── build StateHandlerContext {
+    │       │               StateLogScopeID, ScopeCode,
+    │       │               EntityID, EntityExecutionID,
+    │       │               TenantID, SourceAppID,
+    │       │               HandlerConfig
+    │       │               // ItemKey fields left at "" — set per-call
+    │       │             }
+    │       │
+    │       └── assign to _dataStateMachine = new ContextualDataStateMachine(handler, baseCtx)
+    │             OR NullDataStateMachine.Instance (if no config block)
+    │
+    └── node proceeds to Execute phase
+
+Node.ExecuteAsync(ctx, settings, ct)
+    │
+    ├── await DataStateMachine.ExistsAsync(itemKey, entityKey)
+    │     └── ContextualDataStateMachine: builds callCtx = baseCtx with { ItemKey=itemKey, ItemEntityKey=entityKey }
+    │         → handler.ExistsAsync(callCtx, ct)
+    │
+    ├── [if not exists] await DataStateMachine.TryAcquireLockAsync(itemKey, entityKey)
+    │     └── handler writes Processing record with LockedUntil = UtcNow + 30 min
+    │         → returns true (lock acquired) or false (already locked by another thread)
+    │
+    ├── [if locked] perform business operation
+    │
+    ├── await DataStateMachine.SetAsync(itemKey, entityKey, Processed, data)
+    │     └── handler updates record to Processed; clears lock
+    │
+    └── [on exception] await DataStateMachine.ReleaseLockAsFailedAsync(itemKey, entityKey, error)
+          └── handler updates record to Failed; clears lock
+
+
+RECOVERY PATH (background)
+CatchupWorkerService (scheduled)
+    │
+    └── ProcessStateLogRepository.ResetExpiredLocksAsync()
+          │  WHERE Status = Processing AND LockedUntil &lt; UtcNow
+          └── UPDATE Status = Failed, LockedUntil = NULL
+
+
+STATUS TRANSITION DIAGRAM
+None ──→ Processing ──→ Processed  (happy path)
+                   ├──→ Failed     (exception / releaseLockAsFailed)
+                   └──→ [timeout]  → Failed (via CatchupWorker)
+
+Processed ──→ Superseded  (when UpsertAsync adds a newer record for same key)
+Any ──→ Skipped           (node explicitly calls SetAsync(Skipped))
+Any ──→ Expired           (record exceeds retention policy)</code></pre>
+
+  <h2>Annotated Sample — Invoice Processing Node</h2>
+  <p>Walk through a concrete example: an <code>InvoiceDispatchExecutor</code> that uses the built-in handler at Element scope.</p>
+
+  <p><strong>Step 1 — Node Configuration</strong></p>
+  <pre><code>// Node settings in Flow Studio
+{
+  "invoiceApiEndpoint": "https://api.billing.internal/dispatch",
+  "dataStateMachine": {
+    "handler": "built-in",
+    "scope":   "Element",
+    "options": {}
+  }
+}</code></pre>
+
+  <p><strong>Step 2 — Initialisation (automatic, BaseNodeExecutor)</strong></p>
+  <pre><code>// Called automatically in OnPreProcess — developer writes none of this
+var config = Settings.DataStateMachineConfig;  // parsed from JSON above
+_dataStateMachine = await _factory.CreateAsync(element, thread, config);
+// → ContextualDataStateMachine wrapping BuiltInDataStateMachineHandler
+// → base context: ScopeID=4(Element), EntityID=invoiceElementId, TenantID=tenant</code></pre>
+
+  <p><strong>Step 3 — Node Execute (developer writes this)</strong></p>
+  <pre><code>protected override async Task&lt;NodeExecutionResult&gt; ExecuteAsync(
+    NodeExecutionContext ctx, InvoiceSettings settings, CancellationToken ct)
+{
+    var invoiceId = ctx.Input.GetString("invoiceId");   // e.g. "INV-2024-00892"
+
+    // Guard: has this invoice already been dispatched?
+    if (await DataStateMachine.ExistsAsync(invoiceId, entityKey: "invoice", ct: ct))
+        return NodeExecutionResult.Skip($"Invoice {invoiceId} already dispatched");
+
+    // Acquire processing lock — prevents concurrent duplicate runs
+    bool locked = await DataStateMachine.TryAcquireLockAsync(invoiceId, entityKey: "invoice", ct: ct);
+    if (!locked)
+        return NodeExecutionResult.Skip($"Invoice {invoiceId} is being processed by another thread");
+
+    try
+    {
+        // Perform the actual work
+        var response = await _billingApi.DispatchAsync(invoiceId, settings.ApiEndpoint, ct);
+
+        // Mark complete — store response envelope
+        await DataStateMachine.SetAsync(
+            itemKey:       invoiceId,
+            itemEntityKey: "invoice",
+            status:        IdempotencyStatus.Processed,
+            data:          JsonSerializer.Serialize(new { dispatchedAt = DateTime.UtcNow, response }),
+            ct:            ct);
+
+        return NodeExecutionResult.Success(new { invoiceId, dispatched = true });
+    }
+    catch (Exception ex)
+    {
+        // Release lock so CatchupWorker (or manual retry) can re-process
+        await DataStateMachine.ReleaseLockAsFailedAsync(invoiceId, entityKey: "invoice",
+            errorDetail: ex.Message, ct: ct);
+        throw;
+    }
+}</code></pre>
+
+  <p><strong>Step 4 — What Gets Written to Process_StateLogs</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Value</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>StateLogScopeID</code></td>
+        <td>4</td>
+        <td>Element scope</td>
+      </tr>
+      <tr>
+        <td><code>EntityID</code></td>
+        <td>7381</td>
+        <td>The invoice element's DB ID</td>
+      </tr>
+      <tr>
+        <td><code>ItemKey</code></td>
+        <td>"INV-2024-00892"</td>
+        <td>The specific invoice</td>
+      </tr>
+      <tr>
+        <td><code>ItemEntityKey</code></td>
+        <td>"invoice"</td>
+        <td>Entity type discriminator</td>
+      </tr>
+      <tr>
+        <td><code>Status</code></td>
+        <td>1 (Processed)</td>
+        <td>Terminal — will not be re-processed</td>
+      </tr>
+      <tr>
+        <td><code>LockedUntil</code></td>
+        <td>NULL</td>
+        <td>Cleared on success</td>
+      </tr>
+      <tr>
+        <td><code>Data</code></td>
+        <td>{"dispatchedAt":"...", ...}</td>
+        <td>Standard data envelope</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Duplicate Run — What Happens</h2>
+  <p>If the same workflow runs again with the same <code>invoiceId</code> (e.g. from a retry trigger or duplicate message), <code>ExistsAsync</code> returns true immediately. The node returns <code>Skip</code> without ever calling the billing API. No duplicate charge. No race condition. One line of guard code.</p>
+
+  <div class="callout callout-warning">
+    <strong>Warning:</strong> If <code>TryAcquireLockAsync</code> returns false, it means another thread currently holds the Processing lock. The node should <code>Skip</code>, not throw. The other thread will either complete (Processed) or time out (Failed via CatchupWorker after 30 minutes). Design your retry logic accordingly.
+  </div>
+
+  <div class="callout callout-tip">
+    <strong>Tip:</strong> The 30-minute processing lock is intentionally generous. Most operations complete in seconds. The long window exists for long-running operations (file uploads, third-party API calls with retries). The CatchupWorkerService checks every few minutes and resets expired locks automatically.
+  </div>
+
+  <div class="page-nav">
+    <a href="01-plugin-architecture.html">&#8592; Plugin Architecture</a>
+    <a href="03-key-concepts.html">Next: Key Concepts &#8594;</a>
+  </div>
+
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

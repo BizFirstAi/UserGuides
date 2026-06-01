@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Science &amp; Enrichment — Guide49 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>DataStateMachine</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-plugin-architecture.html"><i class="fa-solid fa-plug"></i> Plugin Architecture</a>
+  <a href="02-lifecycle.html"><i class="fa-solid fa-rotate"></i> Life Cycle</a>
+  <a href="03-key-concepts.html"><i class="fa-solid fa-key"></i> Key Concepts</a>
+  <a href="04-node-configuration.html"><i class="fa-solid fa-sliders"></i> Node Configuration</a>
+  <a href="05-builtin-handler.html"><i class="fa-solid fa-database"></i> Built-In Handler</a>
+  <a href="06-salesleads-demo.html"><i class="fa-solid fa-users"></i> SalesLeads Demo</a>
+  <a href="07-node-as-entity-owner.html"><i class="fa-solid fa-table"></i> Node as Entity Owner</a>
+  <a href="08-node-capabilities.html"><i class="fa-solid fa-cubes"></i> NodeCapabilities</a>
+  <a href="09-node-policies.html"><i class="fa-solid fa-shield-halved"></i> NodePolicies</a>
+  <a href="10-guardrails-integration.html"><i class="fa-solid fa-traffic-light"></i> GuardRails</a>
+  <a href="11-use-cases.html"><i class="fa-solid fa-briefcase"></i> Business Use Cases</a>
+  <a href="12-data-engineering.html"><i class="fa-solid fa-diagram-project"></i> Data Engineering</a>
+  <a href="13-data-science.html" class="active"><i class="fa-solid fa-flask"></i> Data Science &amp; Enrichment</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide48_WorkflowVsServerNodes/index.html">&#8592; Prev: Workflow vs Server Nodes</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Flow Studio</span>
+    <h1>Data Science, Enrichment &amp; Tracking</h1>
+    <p class="lead">State records are not just idempotency logs — they are behavioral datasets. Status transitions become ML training labels. Processing histories become feature sets. Enrichment pipelines gain native state management. Data tracking becomes structural.</p>
+  </div>
+
+  <h2>State Transitions as Machine Learning Labels</h2>
+
+  <p>Every entity that flows through a workflow produces a sequence of status transitions. That sequence is a behavioral label — a description of how the entity was processed.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Transition Sequence</th>
+        <th>Interpretation</th>
+        <th>ML Label</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>None &rarr; Processing &rarr; Processed</td>
+        <td>Clean single-pass processing</td>
+        <td><code>label: "clean"</code></td>
+      </tr>
+      <tr>
+        <td>None &rarr; Processing &rarr; Failed &rarr; Processing &rarr; Processed</td>
+        <td>One retry before success</td>
+        <td><code>label: "retry_1"</code></td>
+      </tr>
+      <tr>
+        <td>None &rarr; Processing &rarr; Failed &rarr; Failed &rarr; Failed</td>
+        <td>Three failures, no recovery</td>
+        <td><code>label: "persistent_failure"</code></td>
+      </tr>
+      <tr>
+        <td>None &rarr; Processing &rarr; [timeout] &rarr; Failed &rarr; Processing &rarr; Processed</td>
+        <td>Lock timeout then recovery</td>
+        <td><code>label: "timeout_recovery"</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>These labels emerge naturally from the state record history. No separate labeling pipeline required. Query the <code>Process_StateLogs</code> table for an entity type, walk the status chains, and you have a labeled dataset ready for model training.</p>
+
+  <pre><code>-- Generate labeled training data for failure prediction
+SELECT
+    sl.ItemEntityKey    AS entity_type,
+    sl.ItemKey          AS entity_id,
+    COUNT(*)            AS total_attempts,
+    SUM(CASE WHEN sl.Status = 3 THEN 1 ELSE 0 END) AS failure_count,
+    SUM(CASE WHEN sl.Status = 1 THEN 1 ELSE 0 END) AS success_count,
+    MAX(sl.Created)     AS last_attempt_at,
+    DATEDIFF(second,
+        MIN(sl.Created),
+        MAX(CASE WHEN sl.Status = 1 THEN sl.Created END)) AS time_to_success_seconds,
+    CASE
+        WHEN MAX(sl.Status) = 1 AND COUNT(*) = 1 THEN 'clean'
+        WHEN MAX(sl.Status) = 1 AND COUNT(*) &gt; 1 THEN 'retry_success'
+        WHEN MAX(sl.Status) IN (2,3) THEN 'unresolved_failure'
+    END AS processing_label
+FROM Process_StateLogs sl
+WHERE sl.ItemEntityKey = 'invoice'
+  AND sl.Deleted = 0
+GROUP BY sl.ItemEntityKey, sl.ItemKey
+ORDER BY last_attempt_at DESC;</code></pre>
+
+  <h2>Failure Prediction</h2>
+
+  <p>With labeled training data from state records, you can train a model to predict which entities are likely to fail before processing begins. The model watches incoming entity characteristics (size, type, source, time of day) and predicts the failure probability.</p>
+
+  <p>If the predicted failure probability exceeds a threshold, the node can:</p>
+  <ul>
+    <li>Route the entity to a slower, more careful processing path</li>
+    <li>Trigger a pre-processing validation step</li>
+    <li>Alert an operator before the entity enters the pipeline</li>
+    <li>Apply a different handler with more conservative lock settings</li>
+  </ul>
+
+  <pre><code>// Model score injected via upstream AI node
+var failureProbability = ctx.Input.GetDouble("inferenceScore");
+
+if (failureProbability &gt; 0.85)
+{
+    // High risk — acquire lock with extra caution, log to monitoring
+    _logger.Warning("High failure probability {Score:P0} for {Entity}", failureProbability, entityId);
+    // Use extended lock window for high-risk entities (passed via options)
+}
+
+bool locked = await DataStateMachine.TryAcquireLockAsync(entityId, entityKey, ct: ct);</code></pre>
+
+  <h2>Data Enrichment Pipeline</h2>
+
+  <p>DataStateMachine provides native state management for enrichment workflows. Each enrichment operation is an independent tracked step. The <code>SubItemKey</code> distinguishes enrichment types. The <code>Data</code> field stores the enrichment result. The pipeline can be partially replayed — only failed enrichments need to re-run.</p>
+
+  <pre><code>Customer Entity (customerId = ItemEntityKey)
+    │
+    ├── SubItemKey: "address"     → AddressValidationNode → Processed (normalized address in Data)
+    ├── SubItemKey: "credit"      → CreditScoreNode       → Processed (score + bureau in Data)
+    ├── SubItemKey: "social"      → SocialGraphNode       → Failed    (API timeout — retry pending)
+    ├── SubItemKey: "compliance"  → SanctionScreenNode    → Processed (clear — no matches)
+    └── SubItemKey: "industry"    → IndustryClassifier    → Processed (SIC code + confidence)
+
+Query: which enrichments succeeded?
+→ SELECT SubItemKey FROM Process_StateLogs
+  WHERE ItemEntityKey = 'CUST-1001' AND Status = 1  -- Processed</code></pre>
+
+  <h2>Data Enhancement Workflows</h2>
+
+  <p>Data enhancement differs from enrichment — enrichment <em>adds</em> new data (credit score, address validation), enhancement <em>improves</em> existing data (normalise a messy address, standardise a phone number, fix encoding). DataStateMachine handles both identically.</p>
+
+  <p>Enhancement nodes use <code>UpsertAsync</code>: each enhancement run creates a new record for the same entity. The <code>SupersededByID</code> chain shows the enhancement history — original value &rarr; first pass &rarr; second pass &rarr; current. You can reconstruct the pre-enhancement data at any point.</p>
+
+  <pre><code>// Before: raw customer name "SMITH, JOHN J."
+// Enhancement: normalize to "John J. Smith"
+await DataStateMachine.UpsertAsync(
+    itemKey:       customerId,
+    itemEntityKey: "customer-name",
+    subItemKey:    "name-normalisation",
+    data: JsonSerializer.Serialize(new {
+        original:   rawName,
+        normalized: normalizedName,
+        algorithm:  "Name.NET v2.1",
+        confidence: 0.97
+    }),
+    ct: ct);
+// → Creates new row, marks previous row Superseded
+// → Full enhancement history preserved in append-only chain</code></pre>
+
+  <h2>Data Tracking Across Runs</h2>
+
+  <p>Tracking asks: "What happened to entity X across ALL processing runs, ever?" The append-only state records answer this question directly.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tracking Question</th>
+        <th>Query Approach</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Has this entity been processed before?</td>
+        <td>ExistsAsync — O(1) check</td>
+      </tr>
+      <tr>
+        <td>How many times was it processed?</td>
+        <td>COUNT(*) WHERE ItemKey = ? AND Status = 1</td>
+      </tr>
+      <tr>
+        <td>When was it first and last processed?</td>
+        <td>MIN/MAX(Created) WHERE Status = 1</td>
+      </tr>
+      <tr>
+        <td>What data was produced each time?</td>
+        <td>SELECT Data ORDER BY Created where SupersededByID IS NULL per run</td>
+      </tr>
+      <tr>
+        <td>Which processing runs failed?</td>
+        <td>WHERE Status = 3 — full failure history</td>
+      </tr>
+      <tr>
+        <td>What is the complete processing timeline?</td>
+        <td>Walk SupersededByID chain from latest row</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Feature Store Integration</h2>
+
+  <p>State records can feed a feature store for ML model serving. The processing history of an entity (how many times processed, average processing time, failure rate, last enrichment date) becomes a feature vector that is continuously updated as new records are written.</p>
+
+  <pre><code>// Feature extraction service — runs asynchronously on state record writes
+public class ProcessingHistoryFeatureExtractor
+{
+    public async Task&lt;ProcessingFeatureVector&gt; ExtractAsync(
+        string entityId, string entityType, CancellationToken ct)
+    {
+        var records = await _stateLogRepo.QueryAsync(
+            itemKey: entityId, itemEntityKey: entityType, ct: ct);
+
+        return new ProcessingFeatureVector
+        {
+            TotalAttempts    = records.Count,
+            SuccessCount     = records.Count(r =&gt; r.Status == IdempotencyStatus.Processed),
+            FailureCount     = records.Count(r =&gt; r.Status == IdempotencyStatus.Failed),
+            FailureRate      = records.Count &gt; 0
+                ? (double)records.Count(r =&gt; r.Status == IdempotencyStatus.Failed) / records.Count
+                : 0,
+            DaysSinceFirst   = (DateTime.UtcNow - records.Min(r =&gt; r.Created)).TotalDays,
+            DaysSinceLast    = (DateTime.UtcNow - records.Max(r =&gt; r.Created)).TotalDays,
+            EnrichmentCount  = records.Count(r =&gt; !string.IsNullOrEmpty(r.SubItemKey))
+        };
+    }
+}</code></pre>
+
+  <h2>Summary — DataStateMachine as a Data Platform</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Capability</th>
+        <th>How DataStateMachine Enables It</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Idempotency</td>
+        <td>TryAcquireLock + ExistsAsync — exactly-once processing</td>
+      </tr>
+      <tr>
+        <td>Deduplication</td>
+        <td>ExistsAsync at node level — skip before any work is done</td>
+      </tr>
+      <tr>
+        <td>Data Lineage</td>
+        <td>Every state row = lineage record with entity, scope, execution, timestamp</td>
+      </tr>
+      <tr>
+        <td>ML Training Labels</td>
+        <td>Status transition chains = behavioral labels per entity</td>
+      </tr>
+      <tr>
+        <td>Failure Prediction</td>
+        <td>Historical failure patterns &rarr; predictive features</td>
+      </tr>
+      <tr>
+        <td>Data Enrichment</td>
+        <td>SubItemKey per enrichment type; partial replay for failed enrichments</td>
+      </tr>
+      <tr>
+        <td>Data Enhancement</td>
+        <td>UpsertAsync = versioned enhancement history with full rollback</td>
+      </tr>
+      <tr>
+        <td>Data Tracking</td>
+        <td>Append-only records answer any "what happened to X?" question</td>
+      </tr>
+      <tr>
+        <td>Feature Engineering</td>
+        <td>State record aggregates = live feature vectors per entity</td>
+      </tr>
+      <tr>
+        <td>Event Sourcing</td>
+        <td>SupersededByID chain = ordered event log per entity</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-tip">
+    The DataStateMachine was designed as an idempotency engine. The data science and enrichment capabilities emerged from the structural properties of the state records — append-only, keyed, scoped, timestamped, and queryable. No additional infrastructure is required to unlock these patterns.
+  </div>
+
+  <div class="page-nav">
+    <a href="12-data-engineering.html">&#8592; Data Engineering</a>
+    <span></span>
+  </div>
+
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

@@ -1,0 +1,392 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Built-In Handler — Guide49 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>DataStateMachine</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-plugin-architecture.html"><i class="fa-solid fa-plug"></i> Plugin Architecture</a>
+  <a href="02-lifecycle.html"><i class="fa-solid fa-rotate"></i> Life Cycle</a>
+  <a href="03-key-concepts.html"><i class="fa-solid fa-key"></i> Key Concepts</a>
+  <a href="04-node-configuration.html"><i class="fa-solid fa-sliders"></i> Node Configuration</a>
+  <a href="05-builtin-handler.html" class="active"><i class="fa-solid fa-database"></i> Built-In Handler</a>
+  <a href="06-salesleads-demo.html"><i class="fa-solid fa-users"></i> SalesLeads Demo</a>
+  <a href="07-node-as-entity-owner.html"><i class="fa-solid fa-table"></i> Node as Entity Owner</a>
+  <a href="08-node-capabilities.html"><i class="fa-solid fa-cubes"></i> NodeCapabilities</a>
+  <a href="09-node-policies.html"><i class="fa-solid fa-shield-halved"></i> NodePolicies</a>
+  <a href="10-guardrails-integration.html"><i class="fa-solid fa-traffic-light"></i> GuardRails</a>
+  <a href="11-use-cases.html"><i class="fa-solid fa-briefcase"></i> Business Use Cases</a>
+  <a href="12-data-engineering.html"><i class="fa-solid fa-diagram-project"></i> Data Engineering</a>
+  <a href="13-data-science.html"><i class="fa-solid fa-flask"></i> Data Science &amp; Enrichment</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide48_WorkflowVsServerNodes/index.html">&#8592; Prev: Workflow vs Server Nodes</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Flow Studio</span>
+    <h1>Built-In Handler</h1>
+    <p class="lead">The platform's default handler. Writes idempotency records to the <code>Process_StateLogs</code> SQL table — append-only, scope-aware, multi-tenant, with processing locks and automatic expiry recovery.</p>
+  </div>
+
+  <h2>HandlerKey and Configuration</h2>
+
+  <p>The built-in handler is registered with <code>HandlerKey = "built-in"</code>. It is active whenever the node config specifies <code>handler: "built-in"</code> (or when <code>handler</code> is omitted, since <code>"built-in"</code> is the default).</p>
+
+  <h2>3-Project Structure</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Base Path</th>
+        <th>Contents</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>BizFirst.Ai.DataStateMachine.BuiltIn.Domain</td>
+        <td>.../Ai/DataStateMachine/BizFirst.Ai.DataStateMachine.BuiltIn.Domain/</td>
+        <td>ProcessStateLog entity, IProcessStateLogRepository, IProcessStateLogService</td>
+      </tr>
+      <tr>
+        <td>BizFirst.Ai.DataStateMachine.BuiltIn.Infrastructure</td>
+        <td>.../BizFirst.Ai.DataStateMachine.BuiltIn.Infrastructure/</td>
+        <td>BuiltInDbContext, ProcessStateLogRepository, DependencyInjection</td>
+      </tr>
+      <tr>
+        <td>BizFirst.Ai.DataStateMachine.BuiltIn.Service</td>
+        <td>.../BizFirst.Ai.DataStateMachine.BuiltIn.Service/</td>
+        <td>ProcessStateLogService, BuiltInDataStateMachineHandler, BuiltInDataStateMachinePlugin</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Database Schema — Process_StateLogs</h2>
+
+  <p>The core table. Every state record is a row. Old rows are never deleted — they are marked Superseded by newer rows, giving a complete append-only history.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Column</th>
+        <th>Type</th>
+        <th>Nullable</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ID</td>
+        <td>int</td>
+        <td>No</td>
+        <td>Identity PK</td>
+      </tr>
+      <tr>
+        <td>StateLogScopeID</td>
+        <td>int</td>
+        <td>No</td>
+        <td>FK &rarr; Process_StateLogScopes</td>
+      </tr>
+      <tr>
+        <td>EntityID</td>
+        <td>int</td>
+        <td>No</td>
+        <td>The node's entity DB ID</td>
+      </tr>
+      <tr>
+        <td>EntityExecutionID</td>
+        <td>int</td>
+        <td>Yes</td>
+        <td>Set for execution-scoped records</td>
+      </tr>
+      <tr>
+        <td>ItemKey</td>
+        <td>nvarchar(500)</td>
+        <td>No</td>
+        <td>Primary business key (e.g. invoice ID)</td>
+      </tr>
+      <tr>
+        <td>SubItemKey</td>
+        <td>nvarchar(500)</td>
+        <td>Yes</td>
+        <td>Secondary discriminator</td>
+      </tr>
+      <tr>
+        <td>ItemEntityKey</td>
+        <td>nvarchar(200)</td>
+        <td>No</td>
+        <td>Entity type (e.g. "invoice")</td>
+      </tr>
+      <tr>
+        <td>SubItemEntityKey</td>
+        <td>nvarchar(200)</td>
+        <td>Yes</td>
+        <td>Sub-entity type</td>
+      </tr>
+      <tr>
+        <td>TenantID</td>
+        <td>int</td>
+        <td>No</td>
+        <td>Multi-tenant isolation</td>
+      </tr>
+      <tr>
+        <td>SourceAppID</td>
+        <td>int</td>
+        <td>Yes</td>
+        <td>Originating app</td>
+      </tr>
+      <tr>
+        <td>Status</td>
+        <td>int</td>
+        <td>No</td>
+        <td>FK &rarr; Process_StateLogIdempotencyStatuses</td>
+      </tr>
+      <tr>
+        <td>Data</td>
+        <td>nvarchar(max)</td>
+        <td>Yes</td>
+        <td>JSON data envelope</td>
+      </tr>
+      <tr>
+        <td>LockedUntil</td>
+        <td>datetime2</td>
+        <td>Yes</td>
+        <td>Processing lock expiry (null when not locked)</td>
+      </tr>
+      <tr>
+        <td>SupersededByID</td>
+        <td>int</td>
+        <td>Yes</td>
+        <td>FK self-ref &rarr; newer row for same key</td>
+      </tr>
+      <tr>
+        <td>Created</td>
+        <td>datetime2</td>
+        <td>No</td>
+        <td>Row creation timestamp</td>
+      </tr>
+      <tr>
+        <td>Modified</td>
+        <td>datetime2</td>
+        <td>No</td>
+        <td>Last update timestamp</td>
+      </tr>
+      <tr>
+        <td>Deleted</td>
+        <td>bit</td>
+        <td>No</td>
+        <td>Soft-delete flag (0 = active)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Lookup Tables</h2>
+
+  <p>Two seed tables provide human-readable lookups:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>ScopeCode</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>App</td><td>Application-wide</td></tr>
+      <tr><td>2</td><td>Process</td><td>Workflow definition</td></tr>
+      <tr><td>3</td><td>Thread</td><td>Workflow thread</td></tr>
+      <tr><td>4</td><td>Element</td><td>Node definition (default)</td></tr>
+      <tr><td>5</td><td>ProcessExecution</td><td>Single workflow run</td></tr>
+      <tr><td>6</td><td>ThreadExecution</td><td>Single thread run</td></tr>
+      <tr><td>7</td><td>ElementExecution</td><td>Single node run</td></tr>
+    </tbody>
+  </table>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>StatusCode</th>
+        <th>Terminal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>0</td><td>None</td><td>—</td></tr>
+      <tr><td>1</td><td>Processed</td><td>Yes</td></tr>
+      <tr><td>2</td><td>Processing</td><td>No</td></tr>
+      <tr><td>3</td><td>Failed</td><td>No</td></tr>
+      <tr><td>4</td><td>Skipped</td><td>Yes</td></tr>
+      <tr><td>5</td><td>Superseded</td><td>Yes</td></tr>
+      <tr><td>6</td><td>Expired</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Handler Operations</h2>
+
+  <p>The handler implements all 7 <code>IDataStateMachineHandler</code> methods. The most important are <code>TryAcquireLockAsync</code>, <code>SetAsync</code>, and <code>UpsertAsync</code>.</p>
+
+<pre><code>public async Task&lt;bool&gt; TryAcquireLockAsync(StateHandlerContext ctx, CancellationToken ct)
+{
+    var current = await _repo.GetCurrentStatusAsync(ctx, ct);
+
+    // Already terminal — do not acquire
+    if (current is IdempotencyStatus.Processed or IdempotencyStatus.Skipped)
+        return false;
+
+    // Already locked by another — do not acquire
+    if (current is IdempotencyStatus.Processing)
+        return false;
+
+    // Insert Processing record with 30-minute lock
+    await _repo.InsertAsync(
+        BuildEntity(ctx, IdempotencyStatus.Processing,
+            status: "Processing",
+            data: null,
+            lockedUntil: DateTime.UtcNow.AddMinutes(30)),
+        ct);
+
+    return true;
+}</code></pre>
+
+<pre><code>public async Task UpsertAsync(StateHandlerContext ctx, string? data, CancellationToken ct)
+{
+    // Insert new row with current data
+    var newRow = BuildEntity(ctx, IdempotencyStatus.Processed,
+        status: "Processed", data: data, lockedUntil: null);
+    int newId = await _repo.InsertAsync(newRow, ct);
+
+    // Mark all prior rows for this key as Superseded
+    await _repo.MarkSupersededAsync(ctx, newRowId: newId, ct);
+}</code></pre>
+
+<pre><code>private static ProcessStateLog BuildEntity(
+    StateHandlerContext ctx, IdempotencyStatus idempotencyStatus,
+    string status, string? data, DateTime? lockedUntil, string? substatus = null)
+    =&gt; new()
+    {
+        StateLogScopeID   = ctx.StateLogScopeID,
+        EntityID          = ctx.EntityID,
+        EntityExecutionID = ctx.EntityExecutionID,
+        ItemKey           = ctx.ItemKey,
+        SubItemKey        = ctx.SubItemKey,
+        ItemEntityKey     = ctx.ItemEntityKey,
+        SubItemEntityKey  = ctx.SubItemEntityKey,
+        TenantID          = ctx.TenantID,
+        SourceAppID       = ctx.SourceAppID ?? 0,
+        Status            = (int)idempotencyStatus,
+        Data              = data,
+        LockedUntil       = lockedUntil
+    };</code></pre>
+
+  <h2>Processing Lock — Concurrency and Recovery</h2>
+
+  <p>The 30-minute lock window protects against concurrent duplicate processing. When <code>TryAcquireLockAsync</code> inserts a Processing record, any other call for the same key finds it and returns false (lock not acquired).</p>
+
+  <p>If the node crashes, times out, or the process restarts mid-execution, the Processing record stays in the database. <code>CatchupWorkerService</code> runs on a schedule and resets all records where <code>Status = Processing AND LockedUntil &lt; UtcNow</code> to Failed. The record is then available for retry.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        <th>Result</th>
+        <th>Recovery</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Node completes successfully</td>
+        <td>Status = Processed, LockedUntil = null</td>
+        <td>No recovery needed — terminal</td>
+      </tr>
+      <tr>
+        <td>Node throws exception</td>
+        <td>ReleaseLockAsFailedAsync &rarr; Status = Failed</td>
+        <td>Manual retry or workflow retry policy</td>
+      </tr>
+      <tr>
+        <td>Process restarts mid-lock</td>
+        <td>Status = Processing (stale)</td>
+        <td>CatchupWorker resets to Failed after 30 min</td>
+      </tr>
+      <tr>
+        <td>Two threads race</td>
+        <td>Second TryAcquireLock returns false</td>
+        <td>Second thread skips — first completes normally</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Standard Data Envelope</h2>
+
+  <p>By convention, data stored in the <code>Data</code> column (JSON) follows this envelope structure:</p>
+
+<pre><code>{
+  "metadata": {
+    "nodeType":    "InvoiceDispatchExecutor",
+    "elementKey":  "dispatch-invoice",
+    "executionId": 98231,
+    "runAt":       "2026-05-31T14:32:11Z",
+    "version":     "1.0",
+    "handlerKey":  "built-in"
+  },
+  "idempotencyInfo": {
+    "itemKey":        "INV-2024-00892",
+    "itemEntityKey":  "invoice",
+    "scope":          "Element",
+    "status":         "Processed"
+  },
+  "data": {
+    "dispatchedAt": "2026-05-31T14:32:11Z",
+    "apiResponse":  { }
+  }
+}</code></pre>
+
+  <div class="callout callout-tip">
+    The envelope structure is a convention, not enforced by the engine. Custom handlers can use any JSON structure in their data field. The built-in handler stores whatever string you pass to <code>SetAsync</code>/<code>UpsertAsync</code>.
+  </div>
+
+  <div class="callout callout-warning">
+    Never store sensitive data (PII, credentials, secret tokens) in the Data column. The column is queryable by admin tooling and is part of the audit trail. Store a reference ID instead and fetch the sensitive data from a secure vault when needed.
+  </div>
+
+  <div class="page-nav">
+    <a href="04-node-configuration.html">&larr; Node Configuration</a>
+    <a href="06-salesleads-demo.html">Next: SalesLeads Demo &rarr;</a>
+  </div>
+
+</main>
+</div>
+<script src="/search.js"></script>
+</body>
+</html>

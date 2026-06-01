@@ -1,0 +1,207 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nodes as DataService Providers — Guide49 | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>DataStateMachine</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html"><i class="fa-solid fa-circle-dot"></i> Overview</a>
+  <a href="01-plugin-architecture.html"><i class="fa-solid fa-plug"></i> Plugin Architecture</a>
+  <a href="02-lifecycle.html"><i class="fa-solid fa-rotate"></i> Life Cycle</a>
+  <a href="03-key-concepts.html"><i class="fa-solid fa-key"></i> Key Concepts</a>
+  <a href="04-node-configuration.html"><i class="fa-solid fa-sliders"></i> Node Configuration</a>
+  <a href="05-builtin-handler.html"><i class="fa-solid fa-database"></i> Built-In Handler</a>
+  <a href="06-salesleads-demo.html"><i class="fa-solid fa-users"></i> SalesLeads Demo</a>
+  <a href="07-node-as-entity-owner.html"><i class="fa-solid fa-table"></i> Node as Entity Owner</a>
+  <a href="08-node-capabilities.html" class="active"><i class="fa-solid fa-cubes"></i> NodeCapabilities</a>
+  <a href="09-node-policies.html"><i class="fa-solid fa-shield-halved"></i> NodePolicies</a>
+  <a href="10-guardrails-integration.html"><i class="fa-solid fa-traffic-light"></i> GuardRails</a>
+  <a href="11-use-cases.html"><i class="fa-solid fa-briefcase"></i> Business Use Cases</a>
+  <a href="12-data-engineering.html"><i class="fa-solid fa-diagram-project"></i> Data Engineering</a>
+  <a href="13-data-science.html"><i class="fa-solid fa-flask"></i> Data Science &amp; Enrichment</a>
+  <div class="section-label">Navigation</div>
+  <a href="../Guide48_WorkflowVsServerNodes/index.html">&#8592; Prev: Workflow vs Server Nodes</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+
+  <div class="page-header">
+    <span class="tag">Flow Studio</span>
+    <h1>Nodes as DataService Providers</h1>
+    <p class="lead">A node that owns its primary entity via a custom DataStateMachine handler can also expose that data to other nodes through NodeCapabilities. The same node becomes both a state machine and a data service — without any additional infrastructure.</p>
+  </div>
+
+  <h2>The Dual-Role Architecture</h2>
+
+  <p>In the standard model, a node reads data from upstream nodes and writes results to its output. DataStateMachine extends this: the node can be a system of record for its own entity, and NodeCapabilities lets it expose that entity to other nodes as a queryable service.</p>
+
+  <pre><code>Single Node — Dual Role
+─────────────────────────────────────────────────────────
+                    ┌──────────────────────────────────┐
+                    │  EnrichmentNode (CustomerData)   │
+                    │                                  │
+  Workflow Input ──►│  DataStateMachine (state + lock) │◄── TryAcquireLock / Set
+                    │  CustomerDataHandler             │    (owns CRM_Customers table)
+                    │                                  │
+                    │  NodeCapability: "entity"        │◄── Other nodes query this
+                    │  → GetCustomerAsync(customerId)  │    via capability protocol
+                    └──────────────────────────────────┘</code></pre>
+
+  <h2>NodeCapabilities Overview</h2>
+
+  <p>NodeCapabilities is a declaration system. A node declares what services it can provide (Webhook, Form, Entity, BusinessService, Datasource, Rules, Messaging, etc.). Other nodes in the same or different workflows can discover and call these capabilities without direct node-to-node coupling.</p>
+
+  <p>When combined with a DataStateMachine handler, the capability serves data that the node has already validated, deduped, and stored. The capability consumer always reads a current, consistent record.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Capability Type</th>
+        <th>Description</th>
+        <th>DataStateMachine Synergy</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Entity</td>
+        <td>Expose a business entity (customer, order, lead)</td>
+        <td>Node owns entity via handler; capability serves it</td>
+      </tr>
+      <tr>
+        <td>Datasource</td>
+        <td>Expose a queryable data source</td>
+        <td>Node aggregates via handler; capability exposes query API</td>
+      </tr>
+      <tr>
+        <td>BusinessService</td>
+        <td>Expose a domain service</td>
+        <td>Node executes domain logic with idempotency; capability exposes result</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Declaring an Entity Capability</h2>
+
+  <pre><code>// NodeCapabilityDeclaration — added to the node's capability manifest
+public class CustomerEnrichmentNodeCapabilities : INodeCapabilityProvider
+{
+    public IEnumerable&lt;NodeCapabilityDeclaration&gt; GetCapabilities()
+    {
+        yield return new NodeCapabilityDeclaration
+        {
+            CapabilityType = NodeCapabilityType.Entity,
+            Key            = "customer-data",
+            DisplayName    = "Customer Data",
+            Description    = "Provides enriched customer records owned by this node",
+            Methods        = new[] { "GetCustomerAsync", "QueryCustomersAsync" }
+        };
+    }
+}</code></pre>
+
+  <h2>Consuming the Capability from Another Node</h2>
+
+  <pre><code>// In another node's executor — consuming the capability
+var customerCapability = await _capabilityResolver
+    .ResolveAsync&lt;IEntityCapability&gt;("customer-data", tenantId, ct);
+
+// Get customer data — served from the node's handler backing store
+var customer = await customerCapability.GetAsync(customerId: ctx.Input.GetString("customerId"), ct);
+
+// The capability returns whatever the CustomerEnrichmentNode last stored
+// via DataStateMachine.SetAsync or UpsertAsync</code></pre>
+
+  <h2>How DataStateMachine and NodeCapabilities Interlock</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Step</th>
+        <th>Who Acts</th>
+        <th>What Happens</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>CustomerEnrichmentNode runs in workflow</td>
+        <td>DataStateMachine.TryAcquireLock → enrich → SetAsync(Processed, enrichedData)</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>Enriched record stored in CRM_Customers</td>
+        <td>Handler writes/updates the customer row</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>Another workflow's node needs this customer</td>
+        <td>Resolves "customer-data" NodeCapability</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>Capability calls CustomerEnrichmentNode's service</td>
+        <td>Reads from CRM_Customers via handler repository</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>Returns consistent, validated, deduped record</td>
+        <td>Consumer never touches the raw table — only the capability</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Data Freshness and State Awareness</h2>
+
+  <p>A capability consumer can check the DataStateMachine state before trusting the data. If the entity's status is Processing (being enriched now) or Failed (last enrichment failed), the consumer can decide whether to wait, use stale data, or skip.</p>
+
+  <pre><code>// Capability consumer — state-aware read
+var state = await customerCapability.GetStateAsync(customerId, ct);
+
+if (state.Status == IdempotencyStatus.Processing)
+    return NodeExecutionResult.Skip("Customer enrichment in progress — retry later");
+
+if (state.Status == IdempotencyStatus.Failed)
+    return NodeExecutionResult.Warn("Customer data may be stale — enrichment last failed");
+
+var customer = await customerCapability.GetAsync(customerId, ct);
+// proceed with customer data</code></pre>
+
+  <div class="callout callout-tip">
+    <p>This pattern eliminates the need for a separate data service layer for many use cases. The node IS the service. The DataStateMachine IS the consistency guarantee. NodeCapabilities IS the API contract.</p>
+  </div>
+
+  <div class="page-nav">
+    <a href="07-node-as-entity-owner.html">&#8592; Node as Entity Owner</a>
+    <a href="09-node-policies.html">Next: NodePolicies &#8594;</a>
+  </div>
+
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>
