@@ -66,6 +66,64 @@ jobs:
                   json.dump([], f)
           PYEOF
 
+      - name: Generate sitemap
+        run: |
+          python3 - <<'PYEOF'
+          import os, datetime
+
+          BASE_URL = "https://docs.bizfirstai.com"
+          DOCS_DIR = "docs"
+          TODAY     = datetime.date.today().isoformat()
+
+          SKIP_DIRS = {"pagefind", "AtlasForms", "_next", ".git"}
+
+          def priority(parts, is_index):
+              depth = len(parts)
+              if depth == 1 and is_index: return "1.0"
+              if depth == 2 and is_index: return "0.9"
+              if depth == 3 and is_index: return "0.8"
+              if depth == 4 and is_index: return "0.7"
+              if depth <= 3: return "0.6"
+              return "0.5"
+
+          entries = []
+          for root, dirs, files in os.walk(DOCS_DIR):
+              dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+              for fname in sorted(files):
+                  if not fname.endswith(".html"):
+                      continue
+                  rel = os.path.relpath(os.path.join(root, fname), DOCS_DIR).replace("\\", "/")
+                  parts = rel.split("/")
+                  is_index = fname == "index.html"
+                  if is_index:
+                      parent = parts[:-1]
+                      url = BASE_URL + ("/" if not parent else "/" + "/".join(parent) + "/")
+                  else:
+                      url = BASE_URL + "/" + rel
+                  entries.append((url, priority(parts, is_index)))
+
+          entries.sort(key=lambda x: x[0])
+
+          lines = [
+              '<?xml version="1.0" encoding="UTF-8"?>',
+              '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+          ]
+          for url, pri in entries:
+              lines += [
+                  "  <url>",
+                  f"    <loc>{url}</loc>",
+                  f"    <lastmod>{TODAY}</lastmod>",
+                  f"    <priority>{pri}</priority>",
+                  "  </url>"
+              ]
+          lines.append("</urlset>")
+
+          out = os.path.join(DOCS_DIR, "sitemap.xml")
+          with open(out, "w", encoding="utf-8") as f:
+              f.write("\n".join(lines) + "\n")
+          print(f"sitemap.xml — {len(entries)} URLs written to {out}")
+          PYEOF
+
       - name: Build Pagefind search index
         run: npx pagefind@latest --site docs
 
