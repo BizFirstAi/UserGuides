@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tenant Configuration — Platform Settings — BizFirstAI</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst AI</h2>
+    <h1>Platform Settings</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-local-setup.html">Local Setup</a>
+  <a href="03-environments.html">Environments</a>
+  <a href="04-tenants.html" class="active">Tenant Configuration</a>
+  <a href="05-scenarios.html">Common Scenarios</a>
+  <a href="06-team-practices.html">Team Practices</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Tenant Configuration</div>
+    <h1>Configuring a Tenant</h1>
+    <p class="lead">
+      Tenant files isolate each customer's database, Redis cluster, Kafka brokers, and feature flags
+      without touching the base configuration. A full worked example with Apex Retail Group.
+    </p>
+  </div>
+
+  <h2>How It Works</h2>
+  <p>
+    When <code>TENANT_CODE</code> is set, two additional files are loaded after all base and local files:
+  </p>
+  <pre><code>appsettings.Tenant.{code}.json            ← tenant defaults (all environments)
+appsettings.Tenant.{code}.{env}.json      ← tenant + environment specific (last wins)</code></pre>
+  <p>
+    If <code>TENANT_CODE</code> is empty, both files are skipped and the app runs on base defaults.
+  </p>
+
+  <h2>The Split Rule</h2>
+  <table>
+    <thead><tr><th>What belongs in <code>Tenant.{code}.json</code></th><th>What belongs in <code>Tenant.{code}.{env}.json</code></th></tr></thead>
+    <tbody>
+      <tr><td>CORS allowed origins</td><td>Database connection strings</td></tr>
+      <tr><td>Kafka topic names and partition counts</td><td>Kafka broker addresses and credentials</td></tr>
+      <tr><td>Cache type (Redis vs Memory)</td><td>Redis connection string and password</td></tr>
+      <tr><td>LLM model selection</td><td>LLM API key</td></tr>
+      <tr><td>Feature flags</td><td>JWT signing key</td></tr>
+      <tr><td>Log level overrides</td><td>Observability endpoints and API keys</td></tr>
+      <tr><td>SSO provider choice</td><td>SSO client secret</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Design principle</strong>
+    The base tenant file (<code>Tenant.{code}.json</code>) should contain nothing that would change between a dev
+    and production deployment. Anything infrastructure-specific goes in the env-specific file.
+  </div>
+
+  <h2>Worked Example — Apex Retail Group</h2>
+  <p>
+    <strong>Apex Retail Group</strong> is a multi-location retail chain using BizFirstAI for their operations platform.
+    They have dedicated infrastructure: a SQL Server cluster, a Redis cache for cart and session data,
+    and a three-node Kafka cluster for real-time inventory and order events across stores.
+  </p>
+  <p>Tenant code: <code>apexretail</code></p>
+
+  <h3>Set TENANT_CODE</h3>
+  <p>In <code>launchSettings.json</code> for development:</p>
+  <pre><code>"TENANT_CODE": "apexretail"</code></pre>
+  <p>On production servers: system environment variable or container env var.</p>
+
+  <h3>appsettings.Tenant.apexretail.json <span class="badge badge-green">committed</span></h3>
+  <p>No secrets. No addresses. Only stable tenant identity and preferences.</p>
+  <pre><code>{
+  "CorsSettings": {
+    "AllowedOrigins": [
+      "https://portal.apexretail.com",
+      "https://admin.apexretail.com",
+      "https://pos.apexretail.com"
+    ]
+  },
+  "SharpCache": {
+    "CacheType": "Redis"
+  },
+  "EdgeStream": {
+    "Kafka": {
+      "Enabled": true,
+      "EventTopicName": "apexretail.events",
+      "DeadLetterTopicName": "apexretail.events.dlq",
+      "ConsumerGroupId": "apexretail-signalr",
+      "ChatTopicName": "apexretail.chat",
+      "SeparateChatTopic": true,
+      "TopicPartitionCount": 12,
+      "TopicReplicationFactor": 3,
+      "Acks": "all",
+      "EnableIdempotence": true,
+      "CompressionType": "snappy"
+    }
+  },
+  "Agent": {
+    "LlmConfig": {
+      "Provider": "openai",
+      "Model": "gpt-4o"
+    }
+  },
+  "Account": {
+    "NewUserVerification": true
+  },
+  "FlowSecurity": {
+    "Security": {
+      "ScopeBoundaryEnabled": true,
+      "AllowPublicWorkflows": false
+    }
+  }
+}</code></pre>
+
+  <h3>appsettings.Tenant.apexretail.production.json <span class="badge badge-yellow">deployed — not committed</span></h3>
+  <p>Real infrastructure addresses and secrets. Deployed by CI/CD from a vault. Never in the repository.</p>
+  <pre><code>{
+  "ConnectionStrings": {
+    "DefaultConnection": "Data Source=sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST;Integrated Security=False;User ID=bizfirst_svc;Password=&lt;vault&gt;;Encrypt=True;TrustServerCertificate=False;Connect Timeout=29"
+  },
+  "BizFirstAIDatabase": {
+    "Default": "Data Source=sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST;...",
+    "DefaultConnection": {
+      "Master": "Data Source=sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST;..."
+    },
+    "BizFirstAI": {
+      "Master": "Data Source=sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST;..."
+    },
+    "Redis": "redis.apexretail.local:6379,password=&lt;vault&gt;,ssl=false,abortConnect=false"
+  },
+  "Database": {
+    "BizFirstAI": {
+      "Master": "Data Source=sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST;..."
+    },
+    "Redis": "redis.apexretail.local:6379,password=&lt;vault&gt;,ssl=false,abortConnect=false"
+  },
+  "SqlServerAtlasStorage": {
+    "ConnectionString": "Data Source=sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST;...",
+    "EnableDetailedLogging": false,
+    "EnableMetrics": true
+  },
+  "EdgeStream": {
+    "Kafka": {
+      "BootstrapServers": "kafka1.apexretail.local:9092,kafka2.apexretail.local:9092,kafka3.apexretail.local:9092",
+      "SecurityProtocol": "sasl_ssl",
+      "SaslMechanism": "PLAIN",
+      "SaslUsername": "bizfirst-svc",
+      "SaslPassword": "&lt;vault&gt;",
+      "SslCaLocation": "/etc/ssl/certs/apexretail-ca.crt"
+    }
+  },
+  "BizFirst": {
+    "Observability": {
+      "ServiceName": "BizFirst.Ai.ApexRetail",
+      "Environment": "production",
+      "Tracing": {
+        "Enabled": true,
+        "OtlpEndpoint": "http://otel.apexretail.local:4317",
+        "SamplingRate": 0.1
+      },
+      "Logging": {
+        "Loki": {
+          "Enabled": true,
+          "Url": "http://loki.apexretail.local:3100",
+          "MinimumLevel": "Warning"
+        }
+      },
+      "Grafana": {
+        "Enabled": true,
+        "Url": "https://grafana.apexretail.local",
+        "ApiKey": "&lt;vault&gt;"
+      }
+    }
+  },
+  "JWT": {
+    "Key": "&lt;32-byte-base64-from-vault&gt;",
+    "Issuer": "BizFirst.ApexRetail",
+    "Audience": "ApexRetail.Clients",
+    "ExpiryMinutes": 480
+  },
+  "LlmProviders": [
+    {
+      "Provider": "openai",
+      "Models": [
+        {
+          "Id": "gpt-4",
+          "Name": "gpt-4o",
+          "ApiKey": "&lt;vault&gt;",
+          "Type": "chat",
+          "MultiModal": true
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+  <h3>appsettings.Tenant.apexretail.development.json <span class="badge badge-green">committed</span></h3>
+  <p>Points developers at a shared dev database and local infrastructure. No secrets.</p>
+  <pre><code>{
+  "ConnectionStrings": {
+    "DefaultConnection": "Data Source=dev-sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST_DEV;Integrated Security=True;Encrypt=Optional;TrustServerCertificate=True"
+  },
+  "BizFirstAIDatabase": {
+    "Default": "Data Source=dev-sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST_DEV;Integrated Security=True;Encrypt=True;TrustServerCertificate=True;Command Timeout=0",
+    "DefaultConnection": {
+      "Master": "Data Source=dev-sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST_DEV;Integrated Security=True;Encrypt=True;TrustServerCertificate=True;Command Timeout=0"
+    },
+    "BizFirstAI": {
+      "Master": "Data Source=dev-sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST_DEV;Integrated Security=True;Encrypt=True;TrustServerCertificate=True;Command Timeout=0"
+    },
+    "Redis": "localhost:6379,abortConnect=false"
+  },
+  "Database": {
+    "BizFirstAI": {
+      "Master": "Data Source=dev-sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST_DEV;Integrated Security=True;Encrypt=True;TrustServerCertificate=True;Command Timeout=0"
+    },
+    "Redis": "localhost:6379,abortConnect=false"
+  },
+  "SqlServerAtlasStorage": {
+    "ConnectionString": "Data Source=dev-sql.apexretail.local;Initial Catalog=APEXRETAIL_BIZFIRST_DEV;Integrated Security=True;Encrypt=True;TrustServerCertificate=True;Command Timeout=0",
+    "EnableDetailedLogging": true
+  },
+  "EdgeStream": {
+    "Kafka": {
+      "BootstrapServers": "localhost:9092",
+      "SecurityProtocol": "plaintext"
+    }
+  },
+  "BizFirst": {
+    "Observability": {
+      "ServiceName": "BizFirst.Ai.ApexRetail.Dev",
+      "Environment": "development",
+      "Tracing": { "SamplingRate": 1.0 },
+      "Logging": {
+        "Loki": { "Enabled": false }
+      }
+    }
+  }
+}</code></pre>
+
+  <h2>Apex Retail File Summary</h2>
+  <table>
+    <thead><tr><th>File</th><th>Committed</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>appsettings.Tenant.apexretail.json</code></td><td>Yes</td><td>CORS, Kafka topics, cache type, LLM model, feature flags</td></tr>
+      <tr><td><code>appsettings.Tenant.apexretail.production.json</code></td><td><strong>No</strong> — deployed</td><td>Real DB, Redis cluster, Kafka brokers, JWT key, API keys</td></tr>
+      <tr><td><code>appsettings.Tenant.apexretail.development.json</code></td><td>Yes</td><td>Dev DB, local Redis/Kafka, verbose logging</td></tr>
+      <tr><td><code>appsettings.Tenant.apexretail.staging.json</code></td><td><strong>No</strong> — deployed</td><td>Staging infrastructure</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Adding a New Tenant — Checklist</h2>
+  <div class="steps">
+    <div class="step"><div class="step-num">1</div><div class="step-body"><h4>Choose a tenant code</h4><p>Short, lowercase, no spaces: <code>acmecorp</code>, <code>sunrisehr</code>, <code>apexretail</code>.</p></div></div>
+    <div class="step"><div class="step-num">2</div><div class="step-body"><h4>Set TENANT_CODE</h4><p>In <code>launchSettings.json</code> for local dev; system env var or container env for servers.</p></div></div>
+    <div class="step"><div class="step-num">3</div><div class="step-body"><h4>Create the base tenant file</h4><p><code>appsettings.Tenant.{code}.json</code> — CORS, topics, flags. No secrets.</p></div></div>
+    <div class="step"><div class="step-num">4</div><div class="step-body"><h4>Create the dev env file</h4><p><code>appsettings.Tenant.{code}.development.json</code> — shared dev DB. Committed.</p></div></div>
+    <div class="step"><div class="step-num">5</div><div class="step-body"><h4>Create and deploy the prod env file</h4><p><code>appsettings.Tenant.{code}.production.json</code> — real infra + secrets. From vault. Never committed.</p></div></div>
+  </div>
+
+  <div class="page-nav">
+    <a href="03-environments.html">← Environments</a>
+    <a href="05-scenarios.html">Next: Common Scenarios →</a>
+  </div>
+</main>
+</div>
+</body>
+</html>

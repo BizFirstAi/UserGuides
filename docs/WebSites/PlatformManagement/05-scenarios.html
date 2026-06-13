@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Common Scenarios — Platform Settings — BizFirstAI</title>
+<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>BizFirst AI</h2>
+    <h1>Platform Settings</h1>
+  </div>
+  <div class="section-label">Guide</div>
+  <a href="index.html">Introduction</a>
+  <a href="01-how-it-works.html">How It Works</a>
+  <a href="02-local-setup.html">Local Setup</a>
+  <a href="03-environments.html">Environments</a>
+  <a href="04-tenants.html">Tenant Configuration</a>
+  <a href="05-scenarios.html" class="active">Common Scenarios</a>
+  <a href="06-team-practices.html">Team Practices</a>
+  <div class="section-label">Links</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+  <a href="https://bizfirstai.com" target="_blank">BizFirstAI Home</a>
+</nav>
+
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Common Scenarios</div>
+    <h1>Configuration Recipes</h1>
+    <p class="lead">
+      Copy-ready patterns for the most common configuration tasks — Redis, Kafka, Observability,
+      LLM models, JWT, and CORS.
+    </p>
+  </div>
+
+  <h2>Enabling Redis for a Tenant</h2>
+  <p>Default cache is in-memory. To switch a tenant to Redis:</p>
+  <p><strong>appsettings.Tenant.apexretail.json</strong> — switch the cache type (committed):</p>
+  <pre><code>{
+  "SharpCache": {
+    "CacheType": "Redis"
+  }
+}</code></pre>
+  <p><strong>appsettings.Tenant.apexretail.production.json</strong> — production Redis address (not committed):</p>
+  <pre><code>{
+  "BizFirstAIDatabase": {
+    "Redis": "redis.apexretail.local:6379,password=&lt;vault&gt;,ssl=false,abortConnect=false,connectTimeout=5000"
+  },
+  "Database": {
+    "Redis": "redis.apexretail.local:6379,password=&lt;vault&gt;,ssl=false,abortConnect=false,connectTimeout=5000"
+  }
+}</code></pre>
+  <p><strong>appsettings.Tenant.apexretail.development.json</strong> — local Docker Redis (committed):</p>
+  <pre><code>{
+  "BizFirstAIDatabase": {
+    "Redis": "localhost:6379,abortConnect=false"
+  },
+  "Database": {
+    "Redis": "localhost:6379,abortConnect=false"
+  }
+}</code></pre>
+
+  <h2>Enabling Kafka for a Tenant</h2>
+  <p>Kafka is disabled by default. Topic names are stable across envs; broker addresses differ.</p>
+  <p><strong>appsettings.Tenant.apexretail.json</strong> — enable and name topics (committed):</p>
+  <pre><code>{
+  "EdgeStream": {
+    "Kafka": {
+      "Enabled": true,
+      "EventTopicName": "apexretail.events",
+      "DeadLetterTopicName": "apexretail.events.dlq",
+      "ConsumerGroupId": "apexretail-signalr",
+      "SeparateChatTopic": true,
+      "ChatTopicName": "apexretail.chat",
+      "TopicPartitionCount": 12,
+      "TopicReplicationFactor": 3,
+      "Acks": "all",
+      "EnableIdempotence": true,
+      "CompressionType": "snappy"
+    }
+  }
+}</code></pre>
+  <p><strong>appsettings.Tenant.apexretail.production.json</strong> — broker addresses with SASL/SSL (not committed):</p>
+  <pre><code>{
+  "EdgeStream": {
+    "Kafka": {
+      "BootstrapServers": "kafka1.apexretail.local:9092,kafka2.apexretail.local:9092,kafka3.apexretail.local:9092",
+      "SecurityProtocol": "sasl_ssl",
+      "SaslMechanism": "PLAIN",
+      "SaslUsername": "bizfirst-svc",
+      "SaslPassword": "&lt;vault&gt;",
+      "SslCaLocation": "/etc/ssl/certs/apexretail-ca.crt"
+    }
+  }
+}</code></pre>
+  <p><strong>appsettings.Tenant.apexretail.development.json</strong> — local Kafka (committed):</p>
+  <pre><code>{
+  "EdgeStream": {
+    "Kafka": {
+      "BootstrapServers": "localhost:9092",
+      "SecurityProtocol": "plaintext"
+    }
+  }
+}</code></pre>
+
+  <h2>Tenant-Specific Observability</h2>
+  <p>Each tenant can send traces and logs to their own Grafana/Loki/OTEL stack.</p>
+  <p><strong>appsettings.Tenant.apexretail.production.json</strong>:</p>
+  <pre><code>{
+  "BizFirst": {
+    "Observability": {
+      "ServiceName": "BizFirst.Ai.ApexRetail",
+      "Environment": "production",
+      "Tracing": {
+        "Enabled": true,
+        "OtlpEndpoint": "http://otel.apexretail.local:4317",
+        "SamplingRate": 0.1
+      },
+      "Logging": {
+        "Loki": {
+          "Enabled": true,
+          "Url": "http://loki.apexretail.local:3100",
+          "MinimumLevel": "Warning"
+        }
+      },
+      "Grafana": {
+        "Enabled": true,
+        "Url": "https://grafana.apexretail.local",
+        "ApiKey": "&lt;vault&gt;"
+      },
+      "DeepHealthChecks": {
+        "SqlServerConnectionString": "Data Source=sql.apexretail.local;...",
+        "RedisConnectionString": "redis.apexretail.local:6379,password=&lt;vault&gt;"
+      }
+    }
+  }
+}</code></pre>
+  <p><strong>appsettings.Tenant.apexretail.development.json</strong> — verbose tracing, Loki off:</p>
+  <pre><code>{
+  "BizFirst": {
+    "Observability": {
+      "ServiceName": "BizFirst.Ai.ApexRetail.Dev",
+      "Environment": "development",
+      "Tracing": {
+        "SamplingRate": 1.0
+      },
+      "Logging": {
+        "Loki": { "Enabled": false }
+      }
+    }
+  }
+}</code></pre>
+
+  <h2>Tenant LLM Model Selection</h2>
+  <p>
+    Base defaults use <code>gpt-4o-mini</code>. A tenant on a premium plan gets <code>gpt-4o</code>
+    with their own API key.
+  </p>
+  <p><strong>appsettings.Tenant.apexretail.json</strong> — model preference (committed):</p>
+  <pre><code>{
+  "Agent": {
+    "LlmConfig": {
+      "Provider": "openai",
+      "Model": "gpt-4o"
+    }
+  }
+}</code></pre>
+  <p><strong>appsettings.Tenant.apexretail.production.json</strong> — API key (not committed):</p>
+  <pre><code>{
+  "LlmProviders": [
+    {
+      "Provider": "openai",
+      "Models": [
+        {
+          "Id": "gpt-4",
+          "Name": "gpt-4o",
+          "Version": "2024-11-20",
+          "ApiKey": "&lt;vault&gt;",
+          "Type": "chat",
+          "MultiModal": true
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+  <h2>Tenant JWT Configuration</h2>
+  <p>Each tenant can have its own issuer, audience, and token lifetime.</p>
+  <p><strong>appsettings.Tenant.apexretail.production.json</strong>:</p>
+  <pre><code>{
+  "JWT": {
+    "Key": "&lt;32-byte-base64-from-vault&gt;",
+    "Issuer": "BizFirst.ApexRetail",
+    "Audience": "ApexRetail.Clients",
+    "ExpiryMinutes": 480
+  }
+}</code></pre>
+
+  <h2>Tenant CORS Origins</h2>
+  <p>
+    The base <code>appsettings.json</code> lists localhost ports for development.
+    A tenant overrides this with their real portal URLs.
+  </p>
+  <p><strong>appsettings.Tenant.apexretail.json</strong>:</p>
+  <pre><code>{
+  "CorsSettings": {
+    "AllowedOrigins": [
+      "https://portal.apexretail.com",
+      "https://admin.apexretail.com",
+      "https://pos.apexretail.com"
+    ]
+  }
+}</code></pre>
+
+  <h2>Decision Table — What Goes Where</h2>
+  <table>
+    <thead><tr><th>Setting type</th><th>File</th><th>Committed?</th></tr></thead>
+    <tbody>
+      <tr><td>Feature flags, topic names, model choice</td><td><code>Tenant.{code}.json</code></td><td>Yes</td></tr>
+      <tr><td>Shared dev DB address</td><td><code>Tenant.{code}.development.json</code></td><td>Yes</td></tr>
+      <tr><td>Production DB, Redis, Kafka addresses</td><td><code>Tenant.{code}.production.json</code></td><td><strong>No</strong></td></tr>
+      <tr><td>Passwords, API keys, JWT signing keys</td><td><code>Tenant.{code}.production.json</code> (from vault)</td><td><strong>No</strong></td></tr>
+      <tr><td>Your local SQL Server name</td><td><code>appsettings.Development.Local.json</code></td><td><strong>No</strong></td></tr>
+      <tr><td>Local Kafka / Redis (Docker)</td><td><code>appsettings.Development.Local.json</code></td><td><strong>No</strong></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-nav">
+    <a href="04-tenants.html">← Tenant Configuration</a>
+    <a href="06-team-practices.html">Next: Team Practices →</a>
+  </div>
+</main>
+</div>
+</body>
+</html>
