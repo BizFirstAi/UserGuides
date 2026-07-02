@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Environment Configuration in Flow — BizFirst Deployment Models</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle navigation">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <a href="index.html" class="brand">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="5" rx="1"/><rect x="3" y="11" width="18" height="5" rx="1"/><rect x="3" y="18" width="10" height="3" rx="1"/></svg></span>
+        <span>BizFirst Deployment Models</span>
+        <span class="brand-sub">V2</span>
+      </a>
+    </header>
+    <div class="layout" id="layout">
+      <aside class="sidebar" id="sidebar-nav"></aside>
+      <main class="content">
+        <div class="container">
+
+          <div class="eyebrow"><span class="badge chapter-2">Chapter 2</span> How It Works in BizFirst</div>
+          <div class="page-header">
+            <h1>Environment Configuration in Flow</h1>
+            <p class="subtitle">How the Flow ASP.NET Core API is configured across environments, described at the
+              level of the standard ASP.NET Core pattern it follows.</p>
+          </div>
+
+          <div class="callout info">
+            <span class="callout-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 8h.01M11 12h1v4h1"/><circle cx="12" cy="12" r="9"/></svg></span>
+            <div class="callout-body">
+              <strong>Scope of this page</strong>
+              <p>This page describes the general ASP.NET Core configuration pattern that Flow follows as a
+                standard ASP.NET Core Web API project. Where specific file names or settings weren't independently
+                verified against Flow's own repository, they're presented as "the standard ASP.NET Core convention,"
+                not as a confirmed inventory of Flow's exact files — avoid treating this page as a full audit of
+                Flow's <code>appsettings*.json</code> contents.</p>
+            </div>
+          </div>
+
+          <section>
+            <h2>
+              <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+              The Layered Configuration Pattern
+            </h2>
+            <p>ASP.NET Core Web API projects build their configuration from an ordered set of sources, each layer
+              able to override values from the layer before it:</p>
+            <ol>
+              <li><code>appsettings.json</code> — base settings shared by every environment.</li>
+              <li><code>appsettings.{ASPNETCORE_ENVIRONMENT}.json</code> — an overlay file loaded only for the
+                current environment (e.g. <code>appsettings.Development.json</code>,
+                <code>appsettings.Production.json</code>), merged on top of the base file.</li>
+              <li>Actual OS/container environment variables — typically override anything from the JSON files.</li>
+              <li>Command-line arguments passed at process startup — highest precedence.</li>
+            </ol>
+
+            <pre><code class="file-label">Conceptual layering — Program.cs</code>var builder = WebApplication.CreateBuilder(args);
+// builder.Configuration is now the merge of:
+//   appsettings.json
+//   appsettings.{ASPNETCORE_ENVIRONMENT}.json
+//   environment variables
+//   command-line args
+var app = builder.Build();</code></pre>
+          </section>
+
+          <section>
+            <h2>
+              <svg class="icon" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>
+              Deciding Which Overlay File Loads: <code>ASPNETCORE_ENVIRONMENT</code>
+            </h2>
+            <p>The environment variable <code>ASPNETCORE_ENVIRONMENT</code> is read once, at process startup, and
+              determines which <code>appsettings.{Environment}.json</code> overlay gets merged in. It's typically
+              set through the hosting environment — a launch profile locally, a container's environment variables in
+              a deployed setting, an App Service configuration setting on a PaaS host, and so on. Common values are
+              <code>Development</code>, <code>Staging</code>, and <code>Production</code>, though any string can be
+              used as long as a matching overlay file (or none, which simply means "use the base file only") exists.</p>
+
+            <div class="diagram-container">
+              <div class="mermaid">
+graph TD
+    Start["Process starts"] --> Read["Read ASPNETCORE_ENVIRONMENT"]
+    Read --> Base["Load appsettings.json"]
+    Base --> Overlay["Merge appsettings.{Environment}.json"]
+    Overlay --> EnvVars["Merge OS / container env vars"]
+    EnvVars --> Args["Merge command-line args"]
+    Args --> Ready["IConfiguration ready — app starts serving requests"]
+              </div>
+            </div>
+            <p class="diagram-caption">Each layer can override the ones before it. Environment variables and command-line args typically take precedence over JSON files.</p>
+          </section>
+
+          <section>
+            <h2>
+              <svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+              Runtime Reload Capability
+            </h2>
+            <p>Unlike a React bundle, a running .NET process can pick up certain configuration changes without a
+              restart. ASP.NET Core's JSON configuration provider supports a <code>reloadOnChange</code> option that
+              watches the underlying file and re-merges values into <code>IConfiguration</code> when it changes —
+              useful for adjusting things like log levels or feature flags on a live process. Not every setting is
+              safe to hot-swap this way (e.g. a database connection pool typically isn't rebuilt just because the
+              connection string setting changed), but the <em>mechanism</em> for detecting the change without
+              restarting exists at the configuration layer, which has no equivalent at all on the React/Vite side —
+              see <a href="c1-reading-env-vars.html" style="color: var(--primary-light);">Chapter 1.3</a> for that
+              contrast.</p>
+          </section>
+
+          <section>
+            <h2>
+              <svg class="icon" viewBox="0 0 24 24"><path d="M8 3v18M16 3v18M3 8h18M3 16h18"/></svg>
+              Summary
+            </h2>
+            <div class="table-wrap">
+              <table class="comparison-table">
+                <thead>
+                  <tr><th>Concept</th><th>How Flow (as a standard ASP.NET Core API) handles it</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Environment signal</td><td><code>ASPNETCORE_ENVIRONMENT</code>, read once at startup</td></tr>
+                  <tr><td>Base config</td><td><code>appsettings.json</code></td></tr>
+                  <tr><td>Per-environment overlay</td><td><code>appsettings.{Environment}.json</code></td></tr>
+                  <tr><td>Highest-precedence source</td><td>Command-line arguments, then OS/container env vars</td></tr>
+                  <tr><td>Change without rebuild?</td><td>Yes — restart the process (or hot-reload for supported providers)</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="page-pager" id="page-pager"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <p>BizFirst Deployment Models Documentation — V2 — verified against source, not assumed.</p>
+  </footer>
+
+  <script src="nav.js"></script>
+  <script src="pager.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: { fontSize: '17px' },
+      flowchart: { nodeSpacing: 50, rankSpacing: 65, curve: 'basis' }
+    });
+  </script>
+</body>
+</html>
