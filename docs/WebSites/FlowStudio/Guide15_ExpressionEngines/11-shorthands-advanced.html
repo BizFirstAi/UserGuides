@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Advanced Topics — Expression Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.advanced-section { background: var(--surface2); padding: 16px; border-radius: 6px; margin: 16px 0; border-left: 4px solid var(--accent3); }
+.caution-box { background: rgba(248, 113, 113, 0.1); padding: 16px; border-radius: 6px; margin: 12px 0; border-left: 4px solid var(--danger); }
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Expression Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-default-jint.html">Default Engine — Jint</a>
+  <a href="02-expression-context.html">ExpressionContext</a>
+  <a href="03-context-variables.html">Context Variable Reference</a>
+  <a href="04-interface.html">IExpressionEvaluator Interface</a>
+  <a href="05-custom-engine.html">Building a Custom Engine</a>
+  <a href="06-form-fields.html">Expression Fields in Forms</a>
+  <a href="07-resolution-pipeline.html">Resolution Pipeline</a>
+  <div class="section-label">Shorthands</div>
+  <a href="08-shorthands-overview.html">Shorthands Overview</a>
+  <a href="09-shorthands-custom.html">Custom Shorthands</a>
+  <a href="10-shorthands-enterprise.html">Enterprise Shorthands</a>
+  <a href="11-shorthands-advanced.html" class="active">Advanced Topics</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Advanced Topics</h1>
+    <p class="lead">This guide covers advanced shorthand patterns, debugging strategies, performance considerations, and integration with the broader expression system. Recommended for architects and framework developers.</p>
+  </div>
+
+  <h2>Prefix Strategies and Naming Conventions</h2>
+
+  <h3>Single-Prefix Strategy</h3>
+  <p>All shorthands use a consistent primary prefix style:</p>
+  <pre><code>// Strategy: Use only "$" prefix family
+$output      // Node outputs
+$input       // Node inputs
+$var         // Variables
+$memory      // Execution memory
+$config      // Custom config
+$user        // Custom user data
+
+// Pros:
+// - Consistent, predictable
+// - Easy to remember
+// - Simple pattern matching
+
+// Cons:
+// - Limited to one prefix style
+// - May conflict with framework conventions
+// - Hard to distinguish categories visually</code></pre>
+
+  <h3>Mixed-Prefix Strategy</h3>
+  <p>Different prefixes for different categories:</p>
+  <pre><code>// Strategy: Multiple semantic prefixes
+$output      // Node outputs ($ = built-in)
+$$parsed     // Parsed data (double $)
+@selector    // DOM selectors (@)
+@api         // API references (@)
+#feature     // Feature flags (#)
+
+// Pros:
+// - Visual distinction between categories
+// - Can encode type information in prefix
+// - Semantic clarity
+
+// Cons:
+// - More complex to manage
+// - Harder to document
+// - Users need to learn multiple conventions</code></pre>
+
+  <h3>Hierarchical Strategy</h3>
+  <p>Nested prefixes for complex data hierarchies:</p>
+  <pre><code>// Strategy: Namespace-like prefixes
+$output.rest        // REST API outputs
+$output.database    // Database outputs
+$output.webhook     // Webhook outputs
+$memory.cache       // Cache memory
+$memory.persistent  // Persistent memory
+
+// Pros:
+// - Scales to large numbers of shorthands
+// - Groups related shorthands
+// - Reflects data source hierarchy
+
+// Cons:
+// - More verbose syntax
+// - Implementation complexity
+// - Steeper learning curve</code></pre>
+
+  <h2>Shorthand Resolution Process</h2>
+
+  <p>Understanding how shorthands are resolved helps with debugging and optimization:</p>
+  <div class="advanced-section">
+    <h3>Step 1: Parse Expression</h3>
+    <pre><code>// Input from workflow designer
+@{$output:form-1.email}
+
+// Parser extracts:
+// - Sigil: @{...}
+// - Prefix: $output
+// - Path: form-1.email</code></pre>
+
+    <h3>Step 2: Prefix Matching</h3>
+    <pre><code>// Registry lookup
+ShorthandRegistry.GetDefinition("$output") → ShorthandDefinition found
+
+// If not found:
+ShorthandRegistry.GetDefinition("$output") → null (treated as directive)</code></pre>
+
+    <h3>Step 3: Expansion</h3>
+    <pre><code>// Shorthand expands the path
+$output.Expand("form-1.email")
+→ "@{output:form-1.email}"</code></pre>
+
+    <h3>Step 4: Evaluation</h3>
+    <pre><code>// Expanded directive is evaluated normally
+@{output:form-1.email} → alice@example.com</code></pre>
+  </div>
+
+  <h2>Performance Considerations</h2>
+
+  <h3>Shorthand Resolution Overhead</h3>
+  <p>Shorthands add minimal overhead but should be considered at scale:</p>
+  <table>
+    <thead><tr><th>Operation</th><th>Cost</th><th>Optimization</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Prefix matching</td>
+        <td>O(n) where n = registered shorthands</td>
+        <td>Use HashMap for O(1) lookup</td>
+      </tr>
+      <tr>
+        <td>Expansion</td>
+        <td>O(1) string concatenation</td>
+        <td>Cache expansion results if repeated</td>
+      </tr>
+      <tr>
+        <td>Directive evaluation</td>
+        <td>O(m) where m = resolution steps</td>
+        <td>Depends on directive type, not shorthand</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Optimization Patterns</h3>
+  <pre><code>// Pattern 1: Cache frequently expanded shorthands
+public class CachingShorthandDefinition : IShorthandDefinition
+{
+    private readonly Dictionary&lt;string, string&gt; _cache = new();
+    private readonly IShorthandDefinition _inner;
+
+    public string Prefix =&gt; _inner.Prefix;
+
+    public string Expand(string shorthandPath)
+    {
+        if (_cache.TryGetValue(shorthandPath, out var cached))
+            return cached;
+
+        var result = _inner.Expand(shorthandPath);
+        _cache[shorthandPath] = result;
+        return result;
+    }
+}
+
+// Pattern 2: Lazy-load shorthands on demand
+public class LazyShorthandRegistry
+{
+    private readonly Lazy&lt;Dictionary&lt;string, IShorthandDefinition&gt;&gt; _definitions;
+
+    public IShorthandDefinition GetDefinition(string prefix)
+    {
+        var definitions = _definitions.Value; // Only loaded on first access
+        return definitions.TryGetValue(prefix, out var def) ? def : null;
+    }
+}</code></pre>
+
+  <h2>Debugging Shorthands</h2>
+
+  <h3>Enable Expression Logging</h3>
+  <pre><code>// Log shorthand expansions during evaluation
+public class DebuggingExpressionResolver : IExpressionResolver
+{
+    private readonly ILogger&lt;DebuggingExpressionResolver&gt; _logger;
+
+    public async Task&lt;object&gt; ResolveAsync(string expression, EvaluationContext context)
+    {
+        _logger.LogInformation("Original expression: {Expression}", expression);
+
+        var expanded = ExpandShorthands(expression);
+        if (expanded != expression)
+            _logger.LogInformation("Expanded expression: {Expanded}", expanded);
+
+        var result = await _evaluator.EvaluateAsync(expanded, context);
+        _logger.LogInformation("Evaluation result: {Result}", result);
+
+        return result;
+    }
+
+    private string ExpandShorthands(string expression)
+    {
+        // Expansion logic with logging
+        return expanded;
+    }
+}
+
+// Configuration
+builder.Services.AddScoped&lt;IExpressionResolver&gt;, DebuggingExpressionResolver&gt;();</code></pre>
+
+  <h3>Test Shorthand Expansions</h3>
+  <pre><code>[TestClass]
+public class ShorthandExpansionTests
+{
+    private IShorthandDefinition _shorthand;
+
+    [TestInitialize]
+    public void Setup()
+    {
+        _shorthand = new ConfigShorthandDefinition();
+    }
+
+    [TestMethod]
+    public void Expand_SimpleKey_ReturnsValidDirective()
+    {
+        // Arrange
+        string path = "maxRetries";
+
+        // Act
+        string expanded = _shorthand.Expand(path);
+
+        // Assert
+        Assert.IsTrue(expanded.StartsWith("@{"));
+        Assert.IsTrue(expanded.EndsWith("}"));
+        Assert.AreEqual("@{memory:config.maxRetries}", expanded);
+    }
+
+    [TestMethod]
+    public void Expand_NestedPath_HandlesCorrectly()
+    {
+        // Arrange
+        string path = "database.connectionTimeout";
+
+        // Act
+        string expanded = _shorthand.Expand(path);
+
+        // Assert
+        Assert.AreEqual("@{memory:config.database.connectionTimeout}", expanded);
+    }
+
+    [TestMethod]
+    [ExpectedException(typeof(ArgumentException))]
+    public void Expand_InvalidPath_ThrowsException()
+    {
+        // Arrange
+        string path = "../../etc/passwd"; // Path traversal attempt
+
+        // Act
+        _shorthand.Expand(path);
+
+        // Assert: Exception expected
+    }
+}</code></pre>
+
+  <h3>Visual Debugging in Designer</h3>
+  <p>If your designer supports expression preview, show expanded forms:</p>
+  <pre><code>// In workflow designer UI
+Expression Input:   @{$config:maxRetries}
+Expands to:         @{memory:config.maxRetries}
+Evaluates to:       3
+Type:               Integer</code></pre>
+
+  <h2>Integration with Directives</h2>
+
+  <h3>Shorthands with Modifiers</h3>
+  <p>Some frameworks support modifiers on directives. Combine with shorthands carefully:</p>
+  <pre><code>// Standard modifier usage
+@{output:api-1.responseBody | parseJson}
+
+// Using shorthand with modifier
+// This requires the modifier to apply to the expanded form
+@{$output:api-1.responseBody | parseJson}
+
+// Implementation: Modifiers are applied AFTER expansion
+1. Expand: @{$output:api-1.responseBody | parseJson}
+   → @{output:api-1.responseBody | parseJson}
+2. Evaluate: Apply parseJson modifier to result</code></pre>
+
+  <h3>Chaining Multiple Shorthands</h3>
+  <p>Avoid nested shorthands — they don't compose:</p>
+  <pre><code>// Bad: Nested shorthands (don't work)
+@{$config:@{$memory:configKey}}
+
+// Good: Single shorthand with complete path
+@{$config:settingName}
+
+// Good: Use JavaScript to combine
+@{js: $config.setting1 + $config.setting2}</code></pre>
+
+  <h2>Common Patterns and Anti-Patterns</h2>
+
+  <h3>Good: Domain-Specific Shorthand</h3>
+  <pre><code>// Clear, focused purpose
+$user       // User data
+$config     // Configuration
+$api        // API responses
+
+// Pros: Simple to understand and use</code></pre>
+
+  <h3>Bad: Too-Generic Shorthand</h3>
+  <pre><code>// Unclear what it references
+$data
+$info
+$temp
+
+// Cons: Leads to confusion and misuse</code></pre>
+
+  <h3>Good: Consistent Nesting</h3>
+  <pre><code>// All follow same pattern
+$output.rest
+$output.database
+$output.webhook
+$memory.cache
+$memory.persistent
+
+// Pros: Easy to predict and discover</code></pre>
+
+  <h3>Bad: Inconsistent Nesting</h3>
+  <pre><code>// Mixed patterns
+$output
+$$output.parsed
+@api
+#cache
+
+// Cons: Users must remember each rule</code></pre>
+
+  <h3>Good: Expansion Transparency</h3>
+  <pre><code>// Expansion is predictable
+$config.maxRetries → @{memory:config.maxRetries}
+$user.email → @{memory:user.email}
+
+// Pros: Users can understand what's happening</code></pre>
+
+  <h3>Bad: Hidden Complexity</h3>
+  <pre><code>// Expansion is magic
+$data → @{memory:contextData.user.profile.email.value}
+
+// Cons: Users can't predict or debug easily</code></pre>
+
+  <h2>Security Implications</h2>
+
+  <h3>Input Validation</h3>
+  <p>Always validate shorthand paths to prevent injection:</p>
+  <pre><code>public class SecureShorthandDefinition : IShorthandDefinition
+{
+    public string Prefix =&gt; "$config";
+
+    public string Expand(string shorthandPath)
+    {
+        // Validate against whitelist
+        var validPaths = new[] { "maxRetries", "timeout", "retryPolicy" };
+        if (!validPaths.Contains(shorthandPath))
+            throw new ArgumentException($"Invalid path: {shorthandPath}");
+
+        return $"@{{memory:config.{shorthandPath}}}";
+    }
+}
+
+// Or use regex validation
+private static readonly Regex ValidPathPattern = new(@"^[a-zA-Z0-9_.]+$");
+
+public string Expand(string shorthandPath)
+{
+    if (!ValidPathPattern.IsMatch(shorthandPath))
+        throw new ArgumentException($"Invalid path characters: {shorthandPath}");
+
+    return $"@{{memory:config.{shorthandPath}}}";
+}</code></pre>
+
+  <h3>Access Control</h3>
+  <p>Control who can use which shorthands:</p>
+  <pre><code>public class AccessControlledShorthandDefinition : IShorthandDefinition
+{
+    private readonly IAccessControl _access;
+
+    public string Prefix =&gt; "$sensitive";
+
+    public string Expand(string shorthandPath)
+    {
+        // Check caller permissions
+        if (!_access.HasRole("admin"))
+            throw new UnauthorizedAccessException(
+                "Only administrators can access $sensitive shorthand"
+            );
+
+        return $"@{{memory:sensitive.{shorthandPath}}}";
+    }
+}</code></pre>
+
+  <h2>Future Extensibility</h2>
+
+  <h3>Plugin Architecture</h3>
+  <pre><code>// Design for extensibility via plugin system
+public interface IShorthandPlugin
+{
+    IEnumerable&lt;IShorthandDefinition&gt; GetShorthands();
+    string Name { get; }
+    string Version { get; }
+}
+
+public class WalmartPlugin : IShorthandPlugin
+{
+    public string Name =&gt; "Walmart Enterprise Shorthands";
+    public string Version =&gt; "1.0.0";
+
+    public IEnumerable&lt;IShorthandDefinition&gt; GetShorthands()
+    {
+        yield return new WalmartStoreShorthand();
+        yield return new WalmartCustomerShorthand();
+        yield return new WalmartInventoryShorthand();
+    }
+}
+
+// Load plugins at startup
+foreach (var plugin in LoadPlugins())
+{
+    foreach (var shorthand in plugin.GetShorthands())
+    {
+        services.AddSingleton&lt;IShorthandDefinition&gt;(shorthand);
+    }
+}</code></pre>
+
+  <h3>Configuration-Driven Shorthands</h3>
+  <pre><code>// Define shorthands in configuration
+{
+  "expressions": {
+    "shorthands": [
+      {
+        "prefix": "$config",
+        "expansion": "@{memory:appConfig.{path}}",
+        "description": "Application configuration"
+      },
+      {
+        "prefix": "$user",
+        "expansion": "@{memory:currentUser.{path}}",
+        "description": "Current user data"
+      }
+    ]
+  }
+}
+
+// Load at startup
+public void LoadShorthandsFromConfig(IConfiguration config)
+{
+    var shorthandConfigs = config.GetSection("expressions:shorthands")
+        .GetChildren();
+
+    foreach (var shConfig in shorthandConfigs)
+    {
+        var shorthand = new ConfigurableShorthand(
+            shConfig["prefix"],
+            shConfig["expansion"],
+            shConfig["description"]
+        );
+        services.AddSingleton&lt;IShorthandDefinition&gt;(shorthand);
+    }
+}</code></pre>
+
+  <h2>Monitoring and Observability</h2>
+
+  <h3>Shorthand Usage Metrics</h3>
+  <pre><code>public class MetricsShorthandDefinition : IShorthandDefinition
+{
+    private readonly IMetricsCollector _metrics;
+
+    public string Prefix =&gt; "$config";
+
+    public string Expand(string shorthandPath)
+    {
+        _metrics.IncrementCounter("shorthand.expansion", new[]
+        {
+            ("prefix", Prefix),
+            ("path", shorthandPath)
+        });
+
+        return $"@{{memory:config.{shorthandPath}}}";
+    }
+}
+
+// Query metrics
+// Most used shorthands?
+// Failing expansions?
+// Performance trends?</code></pre>
+
+  <div class="caution-box">
+    <strong>Warning: Shorthand Overload</strong>
+    Adding too many shorthands defeats their purpose. Shorthands should reduce cognitive load, not increase it. Keep the total number below 20 for any single application.
+  </div>
+
+  <h2>Migration and Refactoring</h2>
+
+  <h3>Renaming a Shorthand</h3>
+  <pre><code>// Phase 1: Support both old and new names
+services.AddSingleton&lt;IShorthandDefinition&gt;(new ConfigShorthandDefinition("$config"));
+services.AddSingleton&lt;IShorthandDefinition&gt;(new ConfigShorthandDefinition("$cfg")); // Legacy
+
+// Phase 2: Log deprecation warnings
+public string Expand(string shorthandPath)
+{
+    if (Prefix == "$cfg")
+        _logger.LogWarning("Deprecated shorthand $cfg used. Use $config instead.");
+
+    return $"@{{memory:config.{shorthandPath}}}";
+}
+
+// Phase 3: After migration period, remove old shorthand</code></pre>
+
+  <h3>Changing Expansion Target</h3>
+  <pre><code>// Before: $config points to memory
+// After: $config points to persistent store
+
+// Safe migration:
+1. Add new prefix $config-v2 pointing to persistent store
+2. In designer, allow both $config and $config-v2
+3. Log warning when $config is used
+4. Migrate workflows from $config to $config-v2
+5. Remove $config after all migrations complete</code></pre>
+
+  <div class="callout info">
+    <strong>Shorthand Versioning</strong>
+    When you need to change a shorthand's expansion, create a new versioned shorthand rather than breaking existing ones. This prevents workflow failures during migration.
+  </div>
+
+  <div class="page-nav">
+    <a href="10-shorthands-enterprise.html">&#8592; Enterprise Shorthands</a>
+    <a href="08-shorthands-overview.html">Back to Overview &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

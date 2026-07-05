@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Shorthands — Expression Engines | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+.step-box { background: var(--surface2); padding: 16px; border-radius: 6px; margin: 12px 0; border-left: 4px solid var(--accent); }
+.code-section { margin: 20px 0; }
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Expression Engines</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Engines Overview</a>
+  <a href="01-default-jint.html">Default Engine — Jint</a>
+  <a href="02-expression-context.html">ExpressionContext</a>
+  <a href="03-context-variables.html">Context Variable Reference</a>
+  <a href="04-interface.html">IExpressionEvaluator Interface</a>
+  <a href="05-custom-engine.html">Building a Custom Engine</a>
+  <a href="06-form-fields.html">Expression Fields in Forms</a>
+  <a href="07-resolution-pipeline.html">Resolution Pipeline</a>
+  <div class="section-label">Shorthands</div>
+  <a href="08-shorthands-overview.html">Shorthands Overview</a>
+  <a href="09-shorthands-custom.html" class="active">Custom Shorthands</a>
+  <a href="10-shorthands-enterprise.html">Enterprise Shorthands</a>
+  <a href="11-shorthands-advanced.html">Advanced Topics</a>
+  <div class="section-label">Navigation</div>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Back to Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Flow Studio</div>
+    <h1>Custom Shorthands</h1>
+    <p class="lead">The built-in shorthands cover the most common patterns, but you can define your own. Create custom shorthands by implementing <code>IShorthandDefinition</code> and registering them in the dependency injection container. This guide walks through the process with real examples.</p>
+  </div>
+
+  <h2>Overview</h2>
+  <p>A custom shorthand maps a prefix to an expansion pattern. When the expression resolver encounters your prefix, it expands the full expression before evaluation. This allows you to:</p>
+  <ul>
+    <li>Create domain-specific aliases (e.g., <code>$user</code> for user data)</li>
+    <li>Combine commonly-used modifiers (e.g., <code>$config</code> with automatic JSON parsing)</li>
+    <li>Enforce team standards for data access patterns</li>
+    <li>Abstract implementation details from workflow designers</li>
+  </ul>
+
+  <h2>The ShorthandDefinition Interface</h2>
+  <p>Custom shorthands implement <code>IShorthandDefinition</code>:</p>
+  <div class="code-section">
+    <pre><code>public interface IShorthandDefinition
+{
+    /// &lt;summary&gt;
+    /// The prefix that triggers this shorthand.
+    /// Example: "$config" or "@@api"
+    /// &lt;/summary&gt;
+    string Prefix { get; }
+
+    /// &lt;summary&gt;
+    /// Expand the shorthand into a full directive.
+    /// Input: "myKey" (the part after the prefix)
+    /// Output: The full @{...} directive to execute
+    /// &lt;/summary&gt;
+    string Expand(string shorthandPath);
+}</code></pre>
+  </div>
+
+  <h2>Step-by-Step Implementation Guide</h2>
+
+  <h3>Step 1: Create a Custom Shorthand Class</h3>
+  <p>Implement <code>IShorthandDefinition</code> to define your custom prefix and expansion logic:</p>
+  <div class="code-section">
+    <pre><code>using BizFirst.Ai.ProcessEngine.JS.Directives;
+
+/// &lt;summary&gt;
+/// Custom shorthand: $config
+/// Expands: @{$config:settingName}
+/// Into:    @{memory:config.settingName}
+/// Purpose: Access configuration from execution memory with standard prefix
+/// &lt;/summary&gt;
+public class ConfigShorthandDefinition : IShorthandDefinition
+{
+    public string Prefix =&gt; "$config";
+
+    public string Expand(string shorthandPath)
+    {
+        // shorthandPath = "settingName"
+        // Return full directive that references memory
+        return $"@{{memory:config.{shorthandPath}}}";
+    }
+}</code></pre>
+  </div>
+
+  <h3>Step 2: Register in the DI Container</h3>
+  <p>Add your shorthand to the service collection during application startup:</p>
+  <div class="code-section">
+    <pre><code>// In Startup.cs or Program.cs
+services.AddSingleton&lt;IShorthandDefinition&gt;(new ConfigShorthandDefinition());
+services.AddSingleton&lt;IShorthandDefinition&gt;(new UserShorthandDefinition());
+services.AddSingleton&lt;IShorthandDefinition&gt;(new ApiShorthandDefinition());</code></pre>
+  </div>
+
+  <div class="callout info">
+    <strong>Multiple Registrations</strong>
+    You can register multiple <code>IShorthandDefinition</code> implementations. The resolver collects all registered shorthands and uses them during expression evaluation.
+  </div>
+
+  <h2>Real Example 1: $config Shorthand</h2>
+  <p>A shorthand for accessing application configuration stored in execution memory:</p>
+  <div class="step-box">
+    <strong>Use Case:</strong> Access configuration values set at workflow start without typing the full path.
+  </div>
+
+  <div class="code-section">
+    <pre><code>public class ConfigShorthandDefinition : IShorthandDefinition
+{
+    public string Prefix =&gt; "$config";
+
+    public string Expand(string shorthandPath)
+    {
+        // Input:  maxRetries
+        // Output: @{memory:config.maxRetries}
+        return $"@{{memory:config.{shorthandPath}}}";
+    }
+}
+
+// Usage:
+// Workflow designer writes: @{$config:maxRetries}
+// System expands to:        @{memory:config.maxRetries}
+// Resolves to:             3 (the actual value stored)</code></pre>
+  </div>
+
+  <p><strong>In Action:</strong></p>
+  <pre><code>// Designer writes:
+Max Retry Count: @{$config:maxRetries}
+
+// System resolves:
+Max Retry Count: 3
+
+// vs. without shorthand (would require):
+Max Retry Count: @{memory:config.maxRetries}</code></pre>
+
+  <h2>Real Example 2: $user Shorthand</h2>
+  <p>A shorthand for accessing user data passed through execution context:</p>
+  <div class="step-box">
+    <strong>Use Case:</strong> Quick access to current user properties without referencing specific input nodes.
+  </div>
+
+  <div class="code-section">
+    <pre><code>public class UserShorthandDefinition : IShorthandDefinition
+{
+    public string Prefix =&gt; "$user";
+
+    public string Expand(string shorthandPath)
+    {
+        // Input:  firstName
+        // Output: @{context:currentUser.firstName}
+        // OR:     @{memory:user.firstName}
+        // depending on your architecture
+        return $"@{{memory:currentUser.{shorthandPath}}}";
+    }
+}
+
+// Usage:
+// Workflow designer writes: @{$user:firstName}
+// System expands to:        @{memory:currentUser.firstName}
+// Resolves to:             "Alice"</code></pre>
+  </div>
+
+  <p><strong>In Action:</strong></p>
+  <pre><code>// Designer writes:
+Display Name: @{js: @{$user:firstName} + ' ' + @{$user:lastName}}
+
+// System expands to:
+Display Name: @{js: @{memory:currentUser.firstName} + ' ' + @{memory:currentUser.lastName}}
+
+// Resolves to:
+Display Name: Alice Johnson</code></pre>
+
+  <h2>Real Example 3: @api Shorthand</h2>
+  <p>A shorthand for API endpoints that includes JSON parsing:</p>
+  <div class="step-box">
+    <strong>Use Case:</strong> Standardized access to API responses with automatic JSON parsing.
+  </div>
+
+  <div class="code-section">
+    <pre><code>public class ApiShorthandDefinition : IShorthandDefinition
+{
+    public string Prefix =&gt; "@api";
+
+    public string Expand(string shorthandPath)
+    {
+        // Input:  webhook-1.body
+        // Output: @{output:webhook-1.body | parseJson}
+        // Automatically parses JSON in one shorthand
+        return $"@{{output:{shorthandPath} | parseJson}}";
+    }
+}
+
+// Usage:
+// Workflow designer writes: @{@api:webhook-1.body}
+// System expands to:        @{output:webhook-1.body | parseJson}
+// Resolves to:             { "id": 123, "name": "Alice" }</code></pre>
+  </div>
+
+  <p><strong>In Action:</strong></p>
+  <pre><code>// Designer writes:
+API Result: @{@api:rest-endpoint-1.response}
+
+// System expands to:
+API Result: @{output:rest-endpoint-1.response | parseJson}
+
+// Resolves to (parsed object):
+API Result: { "status": "success", "data": [...] }
+
+// vs. without shorthand (would require):
+API Result: @{output:rest-endpoint-1.response | parseJson}</code></pre>
+
+  <h2>Advanced: Multiple Prefixes</h2>
+  <p>You can create shorthand classes that support multiple related prefixes:</p>
+  <div class="code-section">
+    <pre><code>public class DataSourceShorthandDefinition : IShorthandDefinition
+{
+    private readonly string _prefix;
+
+    // Constructor allows reuse with different prefixes
+    public DataSourceShorthandDefinition(string prefix)
+    {
+        _prefix = prefix;
+    }
+
+    public string Prefix =&gt; _prefix;
+
+    public string Expand(string shorthandPath)
+    {
+        return _prefix switch
+        {
+            "$db" =&gt; $"@{{memory:database.{shorthandPath}}}",
+            "$cache" =&gt; $"@{{memory:cache.{shorthandPath}}}",
+            "$local" =&gt; $"@{{memory:localStorage.{shorthandPath}}}",
+            _ =&gt; throw new InvalidOperationException($"Unknown prefix: {_prefix}")
+        };
+    }
+}
+
+// Register multiple variants
+services.AddSingleton&lt;IShorthandDefinition&gt;(new DataSourceShorthandDefinition("$db"));
+services.AddSingleton&lt;IShorthandDefinition&gt;(new DataSourceShorthandDefinition("$cache"));
+services.AddSingleton&lt;IShorthandDefinition&gt;(new DataSourceShorthandDefinition("$local"));</code></pre>
+  </div>
+
+  <h2>Testing Custom Shorthands</h2>
+  <p>Test your shorthand by verifying the expansion and resolution:</p>
+  <div class="code-section">
+    <pre><code>// Unit test example
+[Test]
+public void ConfigShorthand_ExpandsCorrectly()
+{
+    // Arrange
+    var shorthand = new ConfigShorthandDefinition();
+
+    // Act
+    string expanded = shorthand.Expand("maxRetries");
+
+    // Assert
+    Assert.AreEqual("@{memory:config.maxRetries}", expanded);
+}
+
+[Test]
+public void UserShorthand_ResolvesInExpression()
+{
+    // Arrange
+    var shorthand = new UserShorthandDefinition();
+    var context = new EvaluationContext { /* ... */ };
+
+    // Act
+    string expanded = shorthand.Expand("firstName");
+    var result = evaluator.Evaluate(expanded, context);
+
+    // Assert
+    Assert.AreEqual("Alice", result);
+}</code></pre>
+  </div>
+
+  <h2>Best Practices</h2>
+
+  <h3>1. Use Consistent Prefix Patterns</h3>
+  <pre><code>// Good: Clear prefixes
+$config    // Single $ for direct references
+$user
+$api
+
+$$parsed   // Double $ for parsed/transformed
+@@custom   // @ for special types
+
+// Avoid: Ambiguous prefixes
+$var_1     // Looks like it might collide with @{var:...}
+@temp      // Too generic</code></pre>
+
+  <h3>2. Document the Expansion Pattern</h3>
+  <pre><code>public class MyShorthand : IShorthandDefinition
+{
+    /// &lt;summary&gt;
+    /// Maps $myprefix:path to @{memory:mydata.path}
+    /// Example: @{$myprefix:value} → @{memory:mydata.value}
+    /// &lt;/summary&gt;
+    public string Prefix =&gt; "$myprefix";
+
+    public string Expand(string shorthandPath) { ... }
+}</code></pre>
+
+  <h3>3. Keep Expansions Simple</h3>
+  <pre><code>// Good: Single clear directive
+return $"@{{memory:{shorthandPath}}}";
+
+// Avoid: Complex nested directives
+return $"@{{js: parseJson(@{{memory:{shorthandPath}}}) }}";</code></pre>
+
+  <h3>4. Validate Paths</h3>
+  <pre><code>public string Expand(string shorthandPath)
+{
+    if (string.IsNullOrWhiteSpace(shorthandPath))
+        throw new ArgumentException("Shorthand path cannot be empty");
+
+    // Sanitize path to prevent injection
+    var safePath = SanitizePath(shorthandPath);
+    return $"@{{memory:{safePath}}}";
+}</code></pre>
+
+  <h3>5. Plan for Conflicts</h3>
+  <pre><code>// If you must support overlapping prefixes, use longer prefixes
+$config     // Good
+$cfg        // Okay but shorter
+$c          // Bad - too likely to conflict
+
+// Use secondary registration if prefix might conflict
+if (!registeredPrefixes.Contains("$data"))
+    services.AddSingleton&lt;IShorthandDefinition&gt;(new DataShorthand());
+</code></pre>
+
+  <h2>Common Patterns</h2>
+
+  <table>
+    <thead><tr><th>Use Case</th><th>Prefix</th><th>Expansion</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Application Config</td>
+        <td><code>$config</code></td>
+        <td><code>@{memory:config.KEY}</code></td>
+        <td><code>@{$config:apiKey}</code></td>
+      </tr>
+      <tr>
+        <td>User Data</td>
+        <td><code>$user</code></td>
+        <td><code>@{memory:user.KEY}</code></td>
+        <td><code>@{$user:email}</code></td>
+      </tr>
+      <tr>
+        <td>API Responses</td>
+        <td><code>@api</code></td>
+        <td><code>@{output:NODE | parseJson}</code></td>
+        <td><code>@{@api:rest-1.response}</code></td>
+      </tr>
+      <tr>
+        <td>Database Results</td>
+        <td><code>$db</code></td>
+        <td><code>@{memory:database.KEY}</code></td>
+        <td><code>@{$db:userId}</code></td>
+      </tr>
+      <tr>
+        <td>Cache Data</td>
+        <td><code>$cache</code></td>
+        <td><code>@{memory:cache.KEY}</code></td>
+        <td><code>@{$cache:sessionId}</code></td>
+      </tr>
+      <tr>
+        <td>Feature Flags</td>
+        <td><code>$feature</code></td>
+        <td><code>@{memory:features.KEY}</code></td>
+        <td><code>@{$feature:betaMode}</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Registration Timing</strong>
+    Shorthands must be registered before the first expression is evaluated. Add them in <code>Startup.cs</code> or <code>Program.cs</code> during service configuration, not dynamically at runtime.
+  </div>
+
+  <div class="callout warning">
+    <strong>Avoid Circular Expansions</strong>
+    Do not create shorthands that expand to other shorthands. The resolver may not handle this correctly:
+    <pre><code>// Bad: $quick expands to another shorthand
+public string Expand(string path) =&gt; $"@{{$config:{path}}}";
+
+// Good: Expand directly to a directive
+public string Expand(string path) =&gt; $"@{{memory:config.{path}}}";</code></pre>
+  </div>
+
+  <div class="page-nav">
+    <a href="08-shorthands-overview.html">&#8592; Shorthands Overview</a>
+    <a href="10-shorthands-enterprise.html">Next: Enterprise Shorthands &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>
