@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Environment Names Work — BizFirst Deployment Models</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle navigation">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <a href="index.html" class="brand">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="5" rx="1"/><rect x="3" y="11" width="18" height="5" rx="1"/><rect x="3" y="18" width="10" height="3" rx="1"/></svg></span>
+        <span>BizFirst Deployment Models</span>
+        <span class="brand-sub">V2</span>
+      </a>
+    </header>
+    <div class="layout" id="layout">
+      <aside class="sidebar" id="sidebar-nav"></aside>
+      <main class="content">
+        <div class="container">
+
+          <div class="eyebrow"><span class="badge chapter-1">Chapter 1</span> Concepts</div>
+          <div class="page-header">
+            <h1>How Environment Names Work — Servers vs React Apps</h1>
+            <p class="subtitle">A concrete comparison: <strong>Flow</strong> (the ASP.NET Core backend) versus
+              <strong>FlowStudio</strong> (the React/Vite frontend) — and why one can pick its environment at
+              runtime while the other must commit to one at build time.</p>
+          </div>
+
+          <section>
+            <h2>
+              <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+              Flow: a Named Process, Decided at Startup
+            </h2>
+            <p><code>Flow</code> is an ASP.NET Core Web API project. Like any .NET process, when it starts it reads
+              the <code>ASPNETCORE_ENVIRONMENT</code> environment variable (the .NET analogue of Node's
+              <code>NODE_ENV</code>) from the operating system / container / hosting environment it was launched in.
+              That single string — typically <code>Development</code>, <code>Staging</code>, or
+              <code>Production</code> — is available to the process for its entire lifetime, and .NET's configuration
+              system uses it to decide which layered configuration sources to load.</p>
+            <p>Because this decision happens when the <em>process</em> starts (not when code is compiled), the exact
+              same compiled binary can be started as <code>Development</code> on a developer's laptop and as
+              <code>Production</code> on a server — no rebuild required. Restart the process with a different
+              <code>ASPNETCORE_ENVIRONMENT</code> value, or change a setting in its configuration store, and the
+              running behavior changes.</p>
+
+            <div class="callout success">
+              <span class="callout-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <div class="callout-body">
+                <strong>Key property: runtime resolution</strong>
+                <p>Flow's environment name — and the configuration values that follow from it — are resolved while
+                  the process is <em>running</em>, every time it starts. There is no "baking" step.</p>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2>
+              <svg class="icon" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>
+              FlowStudio: a Static Bundle, Decided at Build Time
+            </h2>
+            <p><code>FlowStudio</code> (<code>BizFirstAiStudio/src/flow-studio/apps/flow-studio</code>) is a React
+              application built with Vite. It does not run as a long-lived process the way Flow does — it is
+              compiled ahead of time into a folder of static HTML/CSS/JS files (<code>dist/</code>), which are then
+              served to a browser. By the time a user's browser loads it, there is no build tool, no Node process,
+              and no file system running anymore — just static files being interpreted by the browser's JS engine.</p>
+            <p>That means the "which environment am I" decision cannot happen when the app is <em>used</em> — it has
+              to happen when the app is <em>built</em>. Vite decides which <code>.env</code> file to read based on
+              the <code>--mode</code> flag passed to <code>vite build</code> (or <code>vite dev</code>):</p>
+
+            <pre><code># reads .env, .env.local, .env.development, .env.development.local
+vite build --mode development
+
+# reads .env, .env.local, .env.production, .env.production.local
+vite build --mode production</code></pre>
+
+            <p>Whatever values Vite finds in those files at build time get substituted directly into the JavaScript
+              source as literal strings and bundled into the output files. Once that bundle exists, it is just text
+              and code sitting in <code>dist/</code> — there's no mechanism inside it that reads an "environment
+              name" and picks new values, because the concept of "environment name" doesn't exist in the browser at
+              all.</p>
+
+            <div class="callout danger">
+              <span class="callout-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg></span>
+              <div class="callout-body">
+                <strong>Key property: the browser has no concept of "environment name"</strong>
+                <p>A browser tab running the compiled FlowStudio bundle has no idea whether it was built with
+                  <code>--mode development</code> or <code>--mode production</code>. It only ever sees whatever
+                  literal values got baked into the JavaScript at build time. There is no runtime flag it can inspect
+                  to ask "which environment am I."</p>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2>
+              <svg class="icon" viewBox="0 0 24 24"><path d="M8 3v18M16 3v18M3 8h18M3 16h18"/></svg>
+              Side by Side
+            </h2>
+            <div class="table-wrap">
+              <table class="comparison-table">
+                <thead>
+                  <tr>
+                    <th>Aspect</th>
+                    <th>Flow (ASP.NET Core API)</th>
+                    <th>FlowStudio (React / Vite)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Environment signal</strong></td>
+                    <td><code>ASPNETCORE_ENVIRONMENT</code></td>
+                    <td><code>--mode &lt;name&gt;</code> passed to the Vite CLI at build time</td>
+                  </tr>
+                  <tr>
+                    <td><strong>When it's decided</strong></td>
+                    <td>Process startup (runtime)</td>
+                    <td>Build time, before any browser ever loads the app</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Can it change without a rebuild?</strong></td>
+                    <td><span class="feature-yes">Yes</span> — restart the process with a new value</td>
+                    <td><span class="feature-no">No</span> — requires <code>vite build</code> again</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Where config values live at runtime</strong></td>
+                    <td>Read live via <code>IConfiguration</code></td>
+                    <td>Already substituted into static JS text in <code>dist/</code></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Does the running instance "know" its environment name?</strong></td>
+                    <td><span class="feature-yes">Yes</span> — available for the process lifetime</td>
+                    <td><span class="feature-no">No</span> — only the values that resulted from it survive</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section>
+            <h2>
+              <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              The Diagram
+            </h2>
+            <div class="diagram-container diagram-animated">
+              <div class="mermaid">
+graph TD
+    subgraph Flow["Flow — ASP.NET Core API"]
+        A1["Process starts"] --> A2["Reads ASPNETCORE_ENVIRONMENT"]
+        A2 --> A3["IConfiguration loads layered settings"]
+        A3 --> A4["Request handled with<br/>environment-specific config"]
+    end
+    subgraph FlowStudio["FlowStudio — React / Vite"]
+        B1["Developer runs<br/>vite build --mode production"] --> B2["Vite reads .env.production"]
+        B2 --> B3["Values substituted into JS text"]
+        B3 --> B4["Static bundle written to dist/"]
+        B4 --> B5["Browser loads bundle later —<br/>values are already fixed"]
+    end
+              </div>
+            </div>
+            <p class="diagram-caption">Flow resolves its environment every time it starts. FlowStudio resolves it once, at build time — long before any browser is involved.</p>
+          </section>
+
+          <div class="page-pager" id="page-pager"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <p>BizFirst Deployment Models Documentation — V2 — verified against source, not assumed.</p>
+  </footer>
+
+  <script src="nav.js"></script>
+  <script src="pager.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: { fontSize: '17px' },
+      flowchart: { nodeSpacing: 50, rankSpacing: 70, curve: 'basis' }
+    });
+  </script>
+</body>
+</html>
