@@ -1,0 +1,472 @@
+<title>Storage Browser + Server Explorer — Design Doc</title>
+<style>
+  :root {
+    --bg: #0C1021;
+    --surface: #141928;
+    --surface2: #1C2438;
+    --border: #252f47;
+    --accent: #4F7FFF;
+    --accent-dim: rgba(79,127,255,0.12);
+    --accent-border: rgba(79,127,255,0.35);
+    --text: #E8EDF8;
+    --text2: #8B96B4;
+    --text3: #5A6785;
+    --green: #34D399;
+    --yellow: #FBBF24;
+    --red: #F87171;
+    --mono: 'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
+    --sans: system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #F2F5FC; --surface: #FFFFFF; --surface2: #EEF2FB;
+      --border: #D8DEF0; --text: #0C1021; --text2: #4A5578; --text3: #8B96B4;
+      --accent-dim: rgba(79,127,255,0.08); --accent-border: rgba(79,127,255,0.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0C1021; --surface: #141928; --surface2: #1C2438;
+    --border: #252f47; --text: #E8EDF8; --text2: #8B96B4; --text3: #5A6785;
+    --accent-dim: rgba(79,127,255,0.12); --accent-border: rgba(79,127,255,0.35);
+  }
+  :root[data-theme="light"] {
+    --bg: #F2F5FC; --surface: #FFFFFF; --surface2: #EEF2FB;
+    --border: #D8DEF0; --text: #0C1021; --text2: #4A5578; --text3: #8B96B4;
+    --accent-dim: rgba(79,127,255,0.08); --accent-border: rgba(79,127,255,0.3);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 16px; scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.7; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 24px;
+    gap: 0 40px;
+  }
+  .doc-header {
+    grid-column: 1 / -1;
+    padding: 56px 0 40px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+  }
+  .doc-eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+    color: var(--accent); text-transform: uppercase; margin-bottom: 16px;
+  }
+  .doc-title {
+    font-family: var(--mono); font-size: clamp(24px,3.5vw,38px);
+    font-weight: 700; color: var(--text); line-height: 1.15;
+    letter-spacing: -.02em; text-wrap: balance; margin-bottom: 16px;
+  }
+  .doc-title span { color: var(--accent); }
+  .doc-meta { display: flex; gap: 24px; flex-wrap: wrap; }
+  .doc-meta-item { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--text2); }
+  .doc-meta-item .label { color: var(--text3); text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
+
+  .sidebar { position: sticky; top: 32px; height: fit-content; padding-bottom: 40px; }
+  .nav-label { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text3); margin-bottom: 12px; }
+  .nav-section { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 16px 0 6px 0; }
+  .nav-list { list-style: none; }
+  .nav-list a {
+    display: block; padding: 5px 12px; font-size: 13px; color: var(--text2);
+    text-decoration: none; border-left: 2px solid transparent;
+    transition: color .15s, border-color .15s; border-radius: 0 4px 4px 0;
+  }
+  .nav-list a:hover { color: var(--text); border-left-color: var(--accent); background: var(--accent-dim); }
+
+  .content { padding-bottom: 80px; }
+  .section { margin-bottom: 52px; scroll-margin-top: 32px; }
+  .section-header {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 22px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  }
+  .section-num { font-family: var(--mono); font-size: 11px; color: var(--accent); min-width: 24px; }
+  .section-title { font-family: var(--mono); font-size: 17px; font-weight: 600; letter-spacing: -.01em; color: var(--text); }
+
+  /* Project divider */
+  .project-divider {
+    display: flex; align-items: center; gap: 16px;
+    margin: 48px 0 36px;
+  }
+  .project-divider-line { flex: 1; height: 1px; background: var(--border); }
+  .project-badge {
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase;
+    padding: 6px 16px; border-radius: 20px; white-space: nowrap;
+  }
+  .project-badge.p1 { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent-border); }
+  .project-badge.p2 { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.3); }
+
+  p { color: var(--text2); margin-bottom: 12px; }
+  p:last-child { margin-bottom: 0; }
+  strong { color: var(--text); font-weight: 600; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; margin-bottom: 12px; }
+  .card-title { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .card p { font-size: 14px; margin: 0; }
+
+  .callout { background: var(--accent-dim); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; padding: 16px 20px; margin-bottom: 20px; }
+  .callout p { font-size: 14px; color: var(--text2); }
+  .callout strong { color: var(--accent); }
+
+  .callout-green { background: rgba(52,211,153,.1); border-left: 3px solid var(--green); border-radius: 0 6px 6px 0; padding: 16px 20px; margin-bottom: 20px; }
+  .callout-green p { font-size: 14px; color: var(--text2); }
+  .callout-green strong { color: var(--green); }
+
+  .table-wrap { overflow-x: auto; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  thead th {
+    font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--text3); padding: 10px 16px;
+    text-align: left; border-bottom: 1px solid var(--border); background: var(--surface2);
+  }
+  tbody td { padding: 12px 16px; color: var(--text2); border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--accent-dim); }
+  td strong, td code { color: var(--text); }
+
+  code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 2px 6px; border-radius: 4px; color: var(--accent);
+  }
+  pre {
+    font-family: var(--mono); font-size: 13px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 20px; overflow-x: auto;
+    color: var(--text2); margin-bottom: 16px; line-height: 1.6;
+  }
+  pre .kw { color: var(--accent); }
+  pre .cm { color: var(--text3); }
+  pre .str { color: var(--green); }
+
+  .badge { display: inline-block; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; padding: 3px 8px; border-radius: 4px; font-weight: 600; }
+  .badge-green { background: rgba(52,211,153,.15); color: var(--green); }
+  .badge-yellow { background: rgba(251,191,36,.15); color: var(--yellow); }
+  .badge-blue { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent-border); }
+
+  .phases { display: flex; flex-direction: column; gap: 16px; }
+  .phase-row { display: grid; grid-template-columns: 90px 1fr; gap: 0 20px; align-items: start; }
+  .phase-label { font-family: var(--mono); font-size: 12px; color: var(--accent); padding-top: 3px; white-space: nowrap; }
+  .phase-body { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; }
+  .phase-title { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+  .phase-items { list-style: none; }
+  .phase-items li { font-size: 14px; color: var(--text2); padding: 3px 0; display: flex; align-items: baseline; gap: 8px; }
+  .phase-items li::before { content: '—'; color: var(--text3); font-family: var(--mono); font-size: 12px; flex-shrink: 0; }
+
+  .stack-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(190px,1fr)); gap: 12px; margin-bottom: 16px; }
+  .stack-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .stack-role { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--text3); margin-bottom: 6px; }
+  .stack-name { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+  .stack-desc { font-size: 13px; color: var(--text2); }
+
+  .question-list { list-style: none; counter-reset: q; }
+  .question-list li { counter-increment: q; display: grid; grid-template-columns: 28px 1fr; gap: 0 12px; padding: 14px 0; border-bottom: 1px solid var(--border); font-size: 14px; color: var(--text2); }
+  .question-list li:last-child { border-bottom: none; }
+  .question-list li::before { content: counter(q); font-family: var(--mono); font-size: 12px; color: var(--accent); padding-top: 2px; }
+
+  @media (max-width: 720px) {
+    .layout { grid-template-columns: 1fr; padding: 0 16px; }
+    .sidebar { display: none; }
+    .doc-header { padding: 32px 0 28px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="layout">
+
+  <header class="doc-header">
+    <div class="doc-eyebrow">BizFirst AI · Design Specification</div>
+    <h1 class="doc-title"><span>//</span> Storage Browser &amp; Server Explorer</h1>
+    <div class="doc-meta">
+      <div class="doc-meta-item"><span class="label">Author</span> Nikhil Kadiyala</div>
+      <div class="doc-meta-item"><span class="label">Date</span> 2026-07-17</div>
+      <div class="doc-meta-item"><span class="label">Status</span> <span class="badge badge-yellow">Draft — Pending Binoy Review</span></div>
+      <div class="doc-meta-item"><span class="label">Repo</span> BizFirstAi/BizFirstAiStudio</div>
+    </div>
+  </header>
+
+  <nav class="sidebar">
+    <p class="nav-label">Contents</p>
+    <p class="nav-section">Project 1</p>
+    <ul class="nav-list">
+      <li><a href="#p1-overview">Overview</a></li>
+      <li><a href="#p1-stack">Tech Stack</a></li>
+      <li><a href="#p1-structure">Module Structure</a></li>
+      <li><a href="#p1-features">Features</a></li>
+      <li><a href="#p1-phases">Phases</a></li>
+    </ul>
+    <p class="nav-section">Project 2</p>
+    <ul class="nav-list">
+      <li><a href="#p2-overview">Overview</a></li>
+      <li><a href="#p2-features">Features</a></li>
+      <li><a href="#p2-phases">Phases</a></li>
+    </ul>
+    <p class="nav-section">General</p>
+    <ul class="nav-list">
+      <li><a href="#integration">Flow Studio Integration</a></li>
+      <li><a href="#questions">Open Questions</a></li>
+    </ul>
+  </nav>
+
+  <main class="content">
+
+    <!-- PROJECT 1 -->
+    <div class="project-divider">
+      <div class="project-divider-line"></div>
+      <div class="project-badge p1">Project 1 · Storage Browser</div>
+      <div class="project-divider-line"></div>
+    </div>
+
+    <section class="section" id="p1-overview">
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <h2 class="section-title">Overview</h2>
+      </div>
+      <div class="callout">
+        <p><strong>What it is:</strong> A standalone web app for browsing BizFirst MinIO storage servers. Any authenticated user can log in, register MinIO servers, and browse their buckets and objects — with a cleaner, more usable experience than the MinIO Console.</p>
+      </div>
+      <p>This is <strong>Project 1</strong> — intentionally scoped small. The MinIO Console open-source UI is the design reference. The goal is to copy that project, strip out the complexity, and rebuild it using BizFirst in-house packages. Estimated build time: <strong>2–4 hours</strong> once the project is scaffolded.</p>
+      <p>Once Project 1 is done, it becomes the foundation for Project 2 (Server Explorer), which extends it to cover all BizFirst infrastructure servers — not just MinIO.</p>
+    </section>
+
+    <section class="section" id="p1-stack">
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <h2 class="section-title">Tech Stack</h2>
+      </div>
+      <div class="stack-grid">
+        <div class="stack-card">
+          <div class="stack-role">Framework</div>
+          <div class="stack-name">Vite + React 18</div>
+          <div class="stack-desc">Consistent with all other BizFirstAiStudio modules</div>
+        </div>
+        <div class="stack-card">
+          <div class="stack-role">UI Components</div>
+          <div class="stack-name">@atlas-forms/ui-components-react</div>
+          <div class="stack-desc">In-house BizFirst component library — no external UI</div>
+        </div>
+        <div class="stack-card">
+          <div class="stack-role">State</div>
+          <div class="stack-name">Zustand</div>
+          <div class="stack-desc">Used across flow-studio and atlas-forms</div>
+        </div>
+        <div class="stack-card">
+          <div class="stack-role">MinIO Client</div>
+          <div class="stack-name">minio-js</div>
+          <div class="stack-desc">Official MinIO JS SDK for server communication</div>
+        </div>
+        <div class="stack-card">
+          <div class="stack-role">Auth</div>
+          <div class="stack-name">passport module</div>
+          <div class="stack-desc">Existing <code>src/passport/</code> — reused, not rebuilt</div>
+        </div>
+        <div class="stack-card">
+          <div class="stack-role">Package Manager</div>
+          <div class="stack-name">pnpm workspace</div>
+          <div class="stack-desc">New workspace under BizFirstAiStudio root</div>
+        </div>
+      </div>
+      <p><strong>UI reference:</strong> <a href="https://github.com/minio/console" style="color:var(--accent)">github.com/minio/console</a> — MinIO's open-source console. Similar layout, better usability, built entirely with BizFirst packages.</p>
+    </section>
+
+    <section class="section" id="p1-structure">
+      <div class="section-header">
+        <span class="section-num">03</span>
+        <h2 class="section-title">Module Structure</h2>
+      </div>
+      <pre><span class="cm"># New workspace in BizFirstAiStudio/src/</span>
+src/
+  <span class="kw">storage-browser/</span>
+    storage-browser-app/         <span class="cm"># Vite entry — the runnable app</span>
+      src/
+        pages/
+          LoginPage.tsx
+          ServersPage.tsx        <span class="cm"># list, add, remove MinIO servers</span>
+          BrowserPage.tsx        <span class="cm"># bucket + object navigation</span>
+        components/
+          ServerCard.tsx
+          BucketList.tsx
+          ObjectTable.tsx
+        store/                   <span class="cm"># Zustand: server list, selected bucket</span>
+        api/                     <span class="cm"># proxy to minio-js backend</span>
+      vite.config.ts
+      package.json
+
+    storage-browser-core/        <span class="cm"># shared types + utils</span>
+      src/
+        types/
+          Server.ts
+          Bucket.ts
+          ObjectEntry.ts
+      package.json</pre>
+    </section>
+
+    <section class="section" id="p1-features">
+      <div class="section-header">
+        <span class="section-num">04</span>
+        <h2 class="section-title">Features</h2>
+      </div>
+      <div class="card">
+        <div class="card-title">Auth — Login &amp; Account Creation</div>
+        <p>Any user can create an account or log in. Uses <code>src/passport/</code>. No role restrictions in Phase 1.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Server Registration</div>
+        <p>Users add MinIO servers by entering: display name, endpoint URL, access key, secret key. Servers persist per account. Remove a server at any time.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Object Browser</div>
+        <p>Two-panel layout: left shows bucket list for the selected server, right shows objects within the selected bucket with folder-style navigation and breadcrumbs. Read-only in Phase 1.</p>
+      </div>
+    </section>
+
+    <section class="section" id="p1-phases">
+      <div class="section-header">
+        <span class="section-num">05</span>
+        <h2 class="section-title">Phases</h2>
+      </div>
+      <div class="phases">
+        <div class="phase-row">
+          <div class="phase-label">Phase 1<br><span class="badge badge-blue">Now</span></div>
+          <div class="phase-body">
+            <div class="phase-title">Core Storage Browser</div>
+            <ul class="phase-items">
+              <li>Scaffold pnpm workspace, Vite app, routing</li>
+              <li>Login / register via passport module</li>
+              <li>Add, remove, list MinIO servers</li>
+              <li>Object browser — buckets to objects, read-only</li>
+              <li>Pull MinIO Console source as UI reference, rebuild with BizFirst packages</li>
+            </ul>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">Phase 2</div>
+          <div class="phase-body">
+            <div class="phase-title">Write Operations</div>
+            <ul class="phase-items">
+              <li>Upload and delete objects</li>
+              <li>Bucket creation / deletion</li>
+              <li>Convert to React Native mobile app</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROJECT 2 -->
+    <div class="project-divider">
+      <div class="project-divider-line"></div>
+      <div class="project-badge p2">Project 2 · Server Explorer</div>
+      <div class="project-divider-line"></div>
+    </div>
+
+    <section class="section" id="p2-overview">
+      <div class="section-header">
+        <span class="section-num">06</span>
+        <h2 class="section-title">Overview</h2>
+      </div>
+      <div class="callout-green">
+        <p><strong>What it is:</strong> An extension of the Storage Browser into a full infrastructure management UI. Not just MinIO — every BizFirst server type (primary, backup, retention, chat engine, etc.) is visible, queryable, and eventually controllable from one place.</p>
+      </div>
+      <p>Project 2 starts <strong>after Project 1 is complete and approved</strong>. The Storage Browser codebase is moved into a new module called <code>server-explorer</code> and extended. This is a multi-tenant product — every company manages their own servers here.</p>
+      <p>Phase 1 of Project 2 focuses on read-only visibility: pull each server's <code>docker.xml</code> config and show it to the user, along with live status. Phase 2 adds automation commands (take a backup, restart a service, etc.).</p>
+    </section>
+
+    <section class="section" id="p2-features">
+      <div class="section-header">
+        <span class="section-num">07</span>
+        <h2 class="section-title">Features</h2>
+      </div>
+      <div class="card">
+        <div class="card-title">Multi-Server Dashboard</div>
+        <p>All BizFirst infrastructure servers in one view: primary MinIO, hot standby, archival, compliance/PITR, backup server, SQL Server, chat engine — each with connection status and key metrics.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Right-Click Context Menu</div>
+        <p>Right-clicking any server card opens a context menu: <strong>View Docker Config</strong> (reads the server's <code>docker.xml</code> / docker-compose and displays it in a read-only panel) and <strong>Query Live Data</strong> (fetches live stats: uptime, storage used, replication health, active connections).</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Automation (Phase 2)</div>
+        <p>Action commands per server: trigger a backup, run a health check, restart a container. This is where the "beautiful UI to manage servers" becomes actionable. Individual actions are the building blocks — automation chains these actions later.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Tenant Management</div>
+        <p>Each company (tenant) manages their own set of registered servers. Isolated per account with proper auth boundaries.</p>
+      </div>
+    </section>
+
+    <section class="section" id="p2-phases">
+      <div class="section-header">
+        <span class="section-num">08</span>
+        <h2 class="section-title">Phases</h2>
+      </div>
+      <div class="phases">
+        <div class="phase-row">
+          <div class="phase-label">Phase 1</div>
+          <div class="phase-body">
+            <div class="phase-title">Read + Visibility</div>
+            <ul class="phase-items">
+              <li>Extend Storage Browser into <code>server-explorer</code> module</li>
+              <li>Add all server types to the dashboard (not just MinIO)</li>
+              <li>Right-click: read and display docker.xml config</li>
+              <li>Right-click: query and display live server data</li>
+            </ul>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">Phase 2</div>
+          <div class="phase-body">
+            <div class="phase-title">Automation</div>
+            <ul class="phase-items">
+              <li>Action commands per server (backup, restart, health check)</li>
+              <li>Tenant management — per-company server isolation</li>
+              <li>Audit log of all actions taken</li>
+            </ul>
+          </div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">Phase 3</div>
+          <div class="phase-body">
+            <div class="phase-title">Flow Studio Integration</div>
+            <ul class="phase-items">
+              <li>Server Explorer embeds as a panel inside Flow Studio</li>
+              <li>Workflow nodes can trigger server actions directly</li>
+              <li>Observability data surfaces in Flow Studio dashboards</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GENERAL -->
+    <section class="section" id="integration">
+      <div class="section-header">
+        <span class="section-num">09</span>
+        <h2 class="section-title">Flow Studio Integration</h2>
+      </div>
+      <p>Both projects ultimately integrate into Flow Studio. Storage Browser adds storage objects as first-class references in workflow steps. Server Explorer adds infrastructure actions as workflow nodes — so an AI workflow can say "take a backup of SQL Server" and Server Explorer executes it.</p>
+      <div class="callout">
+        <p><strong>Note:</strong> Integration is Phase 3 of Project 2 and does not block either project's Phase 1 build.</p>
+      </div>
+    </section>
+
+    <section class="section" id="questions">
+      <div class="section-header">
+        <span class="section-num">10</span>
+        <h2 class="section-title">Open Questions for Binoy</h2>
+      </div>
+      <ol class="question-list">
+        <li>Should MinIO server credentials (access key / secret) be stored per-user or shared org-wide? Per-user is more secure but adds setup friction for teams.</li>
+        <li>Is there an existing BizFirst backend service to proxy minio-js calls through, or should Storage Browser include its own lightweight API layer?</li>
+        <li>How is each server's docker.xml located — is there a registry or file path convention, or does the user paste it in when registering the server?</li>
+        <li>For the mobile app conversion (Phase 2 of Project 1) — is this React Native wrapping the same API, or a separate native codebase?</li>
+        <li>Which server types should be pre-registered in Server Explorer (Phase 1) vs. user-added — should the MinIO stack servers come pre-loaded from the docker-compose?</li>
+      </ol>
+    </section>
+
+  </main>
+</div>
