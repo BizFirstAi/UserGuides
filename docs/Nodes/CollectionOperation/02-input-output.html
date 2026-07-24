@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -19,6 +19,8 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
 .port-badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:600;}
 .port-success{background:#edf7f0;color:#1a7a45;}
 .port-error{background:#fdecea;color:#b91c1c;}
+.callout-info{background:#e6f2fc;border-left:4px solid #0f6cbd;padding:14px 18px;border-radius:6px;margin:16px 0;color:#0a3d6b;}
+.callout-warning{background:#fff8e1;border-left:4px solid #f0b429;padding:14px 18px;border-radius:6px;margin:16px 0;color:#6b4400;}
 </style>
 </head>
 <body>
@@ -49,62 +51,125 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
   <div class="page-header">
     <div class="breadcrumb">Portal / Nodes / Collection Operation / Input &amp; Output</div>
     <h1>Input &amp; Output</h1>
-    <p class="subtitle">Output ports and per-operation result schema for Collection Operation.</p>
+    <p class="subtitle">The real node data envelope, how the collection is resolved, output ports, and the exact per-operation output shape.</p>
+  </div>
+
+  <h2>The Node Data Envelope</h2>
+  <p>Every node's input and output — CollectionOperation's included — is shaped like this. Run metadata sits at the top level; the actual payload records live under <code>items</code>, each entry holding its record under <code>"json"</code>:</p>
+  <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
+  "timestamp": "2026-07-24T01:02:27.8652562Z",
+  "triggerTime": "2026-07-24T01:02:27.8652562Z",
+  "resource": "trigger",
+  "operation": "manual-trigger",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    {
+      "json": {
+        "timestamp": "2026-07-24T01:02:27.8652562Z",
+        "triggerTime": "2026-07-24T01:02:27.8652562Z",
+        "resource": "trigger",
+        "operation": "manual-trigger",
+        "status": "success",
+        "portName": "main"
+      }
+    }
+  ],
+  "success": true
+}</code></pre>
+  <p>CollectionOperation's real collection is <code>InputData["items"]</code> — it unwraps each entry's <code>"json"</code> value into one array element. It never reads the outer envelope fields as data; those describe the upstream node's run.</p>
+
+  <div class="callout-info">
+    <strong><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>inlineDataSource is a plain array, not the envelope</strong>
+    <p style="margin:8px 0 0;">When you type test data into <code>inlineDataSource</code>, or reference data freshly fetched by an external API call, write a plain JSON array of elements — <code>[{...}, {...}]</code> — not the <code>items</code>/<code>json</code> wire shape. The node (via the shared <code>ResolveSourceRecords</code> helper) parses it and normalizes it into the standard shape itself before producing output.</p>
   </div>
 
   <h2>Output Ports</h2>
   <table>
     <thead><tr><th>Port</th><th>Condition</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><span class="port-badge port-success">success</span></td><td>Operation completed without error</td><td>Result is available at <code>output.NodeName.result</code>. For count operations, <code>output.NodeName.count</code> is also populated.</td></tr>
-      <tr><td><span class="port-badge port-error">error</span></td><td>Expression evaluation error or invalid collection</td><td>Error details in <code>output.NodeName.error</code>. Syntax errors in the expression string cause this port to fire.</td></tr>
+      <tr><td><span class="port-badge port-success">success</span></td><td>Operation completed — including when some items failed under <code>onError: "continue"</code></td><td>Result available at <code>output.NodeName.items</code>. Always check <code>errorCount</code> even on this port to detect partial per-item failures.</td></tr>
+      <tr><td><span class="port-badge port-error">error</span></td><td>Collection unresolvable, missing/invalid operation or expression, or error thresholds exceeded</td><td>Error details in <code>output.NodeName.error</code>. See the three failure conditions below.</td></tr>
     </tbody>
   </table>
+
+  <div class="callout-warning">
+    <strong><i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>Three distinct ways the error port can fire</strong>
+    <p style="margin:8px 0 0;">1) <strong>Structural</strong>: collection can't be resolved at all, <code>operation</code> is missing/unrecognized, or the operation's required <code>expression</code> is missing. 2) <strong><code>onError: "error"</code> threshold</strong>: <code>errorCount</code> exceeded <code>maxErrorCount</code>. 3) <strong>Circuit breaker</strong>: <code>maxErrorsToCollect</code> was reached mid-operation — this fails the node <em>regardless of <code>onError</code></em>, since the operation didn't finish processing every item.</p>
+  </div>
 
   <h2>Output Data Fields</h2>
   <table>
     <thead><tr><th>Field</th><th>Type</th><th>Present For</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>result</code></td><td>any</td><td>All operations</td><td>The primary result of the operation. Array for filter/map/sort/distinct/reverse; scalar for reduce; object or null for first/last; integer for count.</td></tr>
-      <tr><td><code>operation</code></td><td>string</td><td>All operations</td><td>The operation name that was executed (e.g., <code>"filter"</code>). Useful for logging and conditional branching.</td></tr>
-      <tr><td><code>count</code></td><td>integer</td><td>count, filter</td><td>The number of elements in the result set. For filter, this is the number of matching elements. For count, this equals result.</td></tr>
+      <tr><td><code>status</code></td><td>string</td><td>All operations</td><td>Literal <code>"success"</code> on the success path.</td></tr>
+      <tr><td><code>successCount</code></td><td>integer</td><td>All operations</td><td>Number of items that processed without error.</td></tr>
+      <tr><td><code>errorCount</code></td><td>integer</td><td>All operations</td><td>Total items that failed, including any beyond the <code>maxErrorsToCollect</code> cap.</td></tr>
+      <tr><td><code>errorRecords</code></td><td>array</td><td>All operations</td><td>Up to <code>maxErrorsToCollect</code> failed items, each as <code>{"item": &lt;original&gt;, "error": "&lt;message&gt;"}</code>.</td></tr>
+      <tr><td><code>count</code></td><td>integer</td><td>filter, map, sort, distinct, reverse</td><td>Number of successful result records (equals <code>successCount</code>). Not present for reduce/count/first/last.</td></tr>
+      <tr><td><code>items</code></td><td>array</td><td>All operations</td><td>List operations: one <code>{"json": record}</code> entry per successful result record. Scalar operations (<code>reduce</code>/<code>count</code>/<code>first</code>/<code>last</code>): a single item wrapping the scalar or element value.</td></tr>
     </tbody>
   </table>
 
   <h2>Per-Operation Output Examples</h2>
-  <pre style="background:var(--code-bg);color:var(--code-text);padding:20px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>// filter operation output:
+  <pre style="background:var(--code-bg);color:var(--code-text);padding:20px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>// filter operation output (no errors):
 {
-  "result": [
-    { "orderId": "ORD-001", "status": "active", "total": 100 },
-    { "orderId": "ORD-003", "status": "active", "total": 250 }
-  ],
-  "operation": "filter",
-  "count": 2
+  "status": "success",
+  "successCount": 2,
+  "errorCount": 0,
+  "errorRecords": [],
+  "count": 2,
+  "items": [
+    { "json": { "orderId": "ORD-001", "status": "active", "total": 100 } },
+    { "json": { "orderId": "ORD-003", "status": "active", "total": 250 } }
+  ]
 }
 
 // map operation output (extracting IDs):
 {
-  "result": ["ORD-001", "ORD-003", "ORD-005"],
-  "operation": "map"
+  "status": "success",
+  "successCount": 3,
+  "errorCount": 0,
+  "errorRecords": [],
+  "count": 3,
+  "items": [
+    { "json": "ORD-001" },
+    { "json": "ORD-003" },
+    { "json": "ORD-005" }
+  ]
 }
 
-// reduce operation output (sum):
+// reduce operation output (sum) — single item, no "count" field:
 {
-  "result": 580.50,
-  "operation": "reduce"
+  "status": "success",
+  "successCount": 3,
+  "errorCount": 0,
+  "errorRecords": [],
+  "items": [
+    { "json": 580.50 }
+  ]
 }
 
-// first operation output:
+// first operation output — single item, no "count" field:
 {
-  "result": { "orderId": "ORD-001", "status": "pending", "total": 99.99 },
-  "operation": "first"
+  "status": "success",
+  "successCount": 1,
+  "errorCount": 0,
+  "errorRecords": [],
+  "items": [
+    { "json": { "orderId": "ORD-001", "status": "pending", "total": 99.99 } }
+  ]
 }
 
-// count operation output:
+// count operation output — single item holding the integer, no "count" field:
 {
-  "result": 7,
-  "operation": "count",
-  "count": 7
+  "status": "success",
+  "successCount": 1,
+  "errorCount": 0,
+  "errorRecords": [],
+  "items": [
+    { "json": 7 }
+  ]
 }
 </code></pre>
 
@@ -112,10 +177,11 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
   <table>
     <thead><tr><th>Expression</th><th>What It Returns</th></tr></thead>
     <tbody>
-      <tr><td><code>{@ output.FilterActiveOrders.result }</code></td><td>The filtered array of active order objects</td></tr>
-      <tr><td><code>{@ output.SumOrderTotals.result }</code></td><td>The numeric sum produced by reduce</td></tr>
-      <tr><td><code>{@ output.FilterActiveOrders.count }</code></td><td>Number of active orders (integer)</td></tr>
-      <tr><td><code>{@ output.FindFirstPending.result.orderId }</code></td><td>The orderId of the first pending order</td></tr>
+      <tr><td><code>{@ output.FilterActiveOrders.items }</code></td><td>The filtered array of <code>{"json": ...}</code> entries — active order objects</td></tr>
+      <tr><td><code>{@ output.SumOrderTotals.items[0].json }</code></td><td>The numeric sum produced by reduce</td></tr>
+      <tr><td><code>{@ output.FilterActiveOrders.successCount }</code></td><td>Number of active orders that matched (integer)</td></tr>
+      <tr><td><code>{@ output.FilterActiveOrders.errorCount }</code></td><td>Number of items that failed evaluation — check this even on success</td></tr>
+      <tr><td><code>{@ output.FindFirstPending.items[0].json.orderId }</code></td><td>The orderId of the first pending order</td></tr>
     </tbody>
   </table>
 </main>

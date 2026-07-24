@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -48,7 +48,7 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
   <div class="page-header">
     <div class="breadcrumb">Portal / Nodes / Collection Operation / Configuration</div>
     <h1>Configuration Reference</h1>
-    <p class="subtitle">All properties and per-operation parameter details for Collection Operation.</p>
+    <p class="subtitle">All properties, per-operation parameter requirements, and error-handling settings.</p>
   </div>
 
   <h2>Properties</h2>
@@ -56,63 +56,63 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
     <thead><tr><th>Property</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>operation</code></td><td>string enum</td><td>Yes</td><td>—</td><td>The operation to perform. One of: <code>filter</code>, <code>map</code>, <code>reduce</code>, <code>sort</code>, <code>distinct</code>, <code>count</code>, <code>first</code>, <code>last</code>, <code>reverse</code>.</td></tr>
-      <tr><td><code>collection</code></td><td>string (expression) | array</td><td>Yes</td><td>—</td><td>The source array. Can be a BizFirst expression referencing a variable (<code>{@ var.orders }</code>), a literal inline array, or the name of a node output (<code>{@ output.GetOrders.data }</code>).</td></tr>
-      <tr><td><code>expression</code></td><td>string (JS expression)</td><td>Depends</td><td>—</td><td>A JavaScript expression evaluated per element. The current element is available as <code>item</code>. Required for <code>filter</code>, <code>map</code>, <code>reduce</code>. Optional for <code>count</code>, <code>first</code>, <code>last</code>.</td></tr>
-      <tr><td><code>field</code></td><td>string</td><td>Depends</td><td>—</td><td>Field name used by <code>sort</code> and <code>distinct</code> operations to specify which property to sort or deduplicate on.</td></tr>
+      <tr><td><code>inlineDataSource</code></td><td>string (JSON array)</td><td>No*</td><td><code>""</code></td><td>Inline JSON array literal. Shared base-class setting (<code>InlineDataSource</code> on <code>BaseNodeExecutorSettings</code>, config key <code>inlineDataSource</code>) — the same setting DataMapping uses. If non-empty, it wins outright over reading <code>InputData["items"]</code>. *Either this or a resolvable upstream <code>items</code> input must be present.</td></tr>
+      <tr><td><code>expression</code></td><td>string (JS expression)</td><td>Depends</td><td>—</td><td>A JavaScript expression evaluated per element. The current element is available as <code>item</code>. Required for <code>filter</code>, <code>map</code>, <code>reduce</code> — the node throws <code>"collectionExpression is required for {operation}"</code> if missing.</td></tr>
+      <tr><td><code>field</code></td><td>string</td><td>Depends</td><td>—</td><td>Field name used by <code>sort</code> and <code>distinct</code> operations to specify which property to sort or deduplicate on. Omit for arrays of primitive values.</td></tr>
       <tr><td><code>direction</code></td><td>string enum</td><td>No</td><td><code>asc</code></td><td>Sort direction for the <code>sort</code> operation. One of: <code>asc</code> (ascending) or <code>desc</code> (descending).</td></tr>
-      <tr><td><code>initial_value</code></td><td>any</td><td>Depends</td><td>—</td><td>The starting accumulator value for the <code>reduce</code> operation. Required for <code>reduce</code>. Examples: <code>0</code> for sum, <code>""</code> for string concatenation, <code>[]</code> for array building.</td></tr>
+      <tr><td><code>initialValue</code></td><td>string</td><td>No</td><td>—</td><td>The starting accumulator value for <code>reduce</code>, given as a plain string. Parsed as <code>long</code>, then <code>double</code>, then <code>bool</code>, falling back to the raw string if none match — so <code>"0"</code> becomes the number <code>0</code>, and <code>""</code> stays an empty string for concatenation. Left as <code>null</code> if omitted.</td></tr>
+      <tr><td><code>onError</code></td><td>string enum</td><td>No</td><td><code>continue</code></td><td>Shared base-class setting. <code>"continue"</code>: skip failing items, keep processing, never fail the node on error count alone. <code>"error"</code>: fail the node once <code>errorCount</code> exceeds <code>maxErrorCount</code>.</td></tr>
+      <tr><td><code>maxErrorCount</code></td><td>integer</td><td>No</td><td><code>0</code></td><td>Used only when <code>onError</code> is <code>"error"</code>. The node fails once item errors exceed this count. <code>0</code> = fail on any error.</td></tr>
+      <tr><td><code>maxErrorsToCollect</code></td><td>integer</td><td>No</td><td><code>0</code></td><td>Safety cap, independent of <code>onError</code>: stop processing and fail once this many item errors are seen. <code>0</code> = unlimited (no circuit-breaker).</td></tr>
     </tbody>
   </table>
 
   <h2>Expression Context</h2>
   <div class="callout-info">
-    <strong><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>The <code>item</code> Variable</strong>
-    <p style="margin:8px 0 0;">In <code>filter</code>, <code>map</code>, <code>count</code>, <code>first</code>, and <code>last</code> operations, the expression is evaluated once per element. The current element is bound to the <code>item</code> variable. For <code>reduce</code>, the expression receives both <code>item</code> (current element) and <code>acc</code> (current accumulator).</p>
+    <strong><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>The <code>item</code> and <code>acc</code> Variables</strong>
+    <p style="margin:8px 0 0;">In <code>filter</code> and <code>map</code>, the expression is evaluated once per element with the current element bound to <code>item</code>. For <code>reduce</code>, the expression receives both <code>item</code> (current element) and <code>acc</code> (current accumulator) — each evaluation's result becomes the next step's <code>acc</code>.</p>
   </div>
 
   <h2>Per-Operation Parameter Requirements</h2>
   <table>
-    <thead><tr><th>Operation</th><th>expression</th><th>field</th><th>direction</th><th>initial_value</th></tr></thead>
+    <thead><tr><th>Operation</th><th>expression</th><th>field</th><th>direction</th><th>initialValue</th></tr></thead>
     <tbody>
       <tr><td><code>filter</code></td><td>Required (boolean expression)</td><td>—</td><td>—</td><td>—</td></tr>
       <tr><td><code>map</code></td><td>Required (transform expression)</td><td>—</td><td>—</td><td>—</td></tr>
-      <tr><td><code>reduce</code></td><td>Required (acc + item expr)</td><td>—</td><td>—</td><td>Required</td></tr>
-      <tr><td><code>sort</code></td><td>—</td><td>Required</td><td>Optional</td><td>—</td></tr>
+      <tr><td><code>reduce</code></td><td>Required (acc + item expr)</td><td>—</td><td>—</td><td>Recommended (defaults to <code>null</code>)</td></tr>
+      <tr><td><code>sort</code></td><td>—</td><td>Optional (omit for primitive arrays)</td><td>Optional</td><td>—</td></tr>
       <tr><td><code>distinct</code></td><td>—</td><td>Optional (for objects)</td><td>—</td><td>—</td></tr>
-      <tr><td><code>count</code></td><td>Optional (filter first)</td><td>—</td><td>—</td><td>—</td></tr>
-      <tr><td><code>first</code></td><td>Optional (find condition)</td><td>—</td><td>—</td><td>—</td></tr>
-      <tr><td><code>last</code></td><td>Optional (find condition)</td><td>—</td><td>—</td><td>—</td></tr>
+      <tr><td><code>count</code></td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+      <tr><td><code>first</code></td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+      <tr><td><code>last</code></td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
       <tr><td><code>reverse</code></td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
     </tbody>
   </table>
+  <p><em>Note:</em> unlike <code>filter</code>/<code>map</code>/<code>reduce</code>, <code>count</code>/<code>first</code>/<code>last</code> do not take a filter expression — they operate on the whole resolved collection as-is. Filter first with a separate <code>filter</code> operation if you need a conditional count/first/last.</p>
 
   <h2>Example Configurations</h2>
   <pre style="background:var(--code-bg);color:var(--code-text);padding:20px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>// Filter: keep only active orders
 {
   "operation": "filter",
-  "collection": "{@ var.orders }",
   "expression": "item.status === 'active'"
 }
 
 // Map: extract just the IDs
 {
   "operation": "map",
-  "collection": "{@ var.orders }",
   "expression": "item.orderId"
 }
 
 // Reduce: sum all totals
 {
   "operation": "reduce",
-  "collection": "{@ var.orders }",
   "expression": "acc + item.total",
-  "initial_value": 0
+  "initialValue": "0"
 }
 
 // Sort: by price descending
 {
   "operation": "sort",
-  "collection": "{@ var.products }",
   "field": "price",
   "direction": "desc"
 }
@@ -120,14 +120,26 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
 // Distinct: unique by email field
 {
   "operation": "distinct",
-  "collection": "{@ var.contacts }",
   "field": "email"
+}
+
+// Filter with strict error handling: fail if more than 5 items error out
+{
+  "operation": "filter",
+  "expression": "item.status === 'active'",
+  "onError": "error",
+  "maxErrorCount": 5
 }
 </code></pre>
 
   <div class="callout-warning">
+    <strong><i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>NaN results count as item errors, not silent output</strong>
+    <p style="margin:8px 0 0;">For <code>map</code> and <code>reduce</code>, if the expression evaluates to <code>NaN</code> (e.g. arithmetic on a missing or non-numeric field), that item is recorded as a failure in <code>errorRecords</code>/<code>errorCount</code> rather than writing <code>NaN</code> into the result. This is different from a resolved-but-empty collection: an empty or <code>null</code> source (see below) is not an error at all.</p>
+  </div>
+
+  <div class="callout-warning">
     <strong><i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>Empty Collection Behaviour</strong>
-    <p style="margin:8px 0 0;">If the resolved <code>collection</code> is null or an empty array, the node follows the success port with an empty result (<code>[]</code> for array operations, <code>null</code> for <code>first</code>/<code>last</code>, <code>0</code> for <code>count</code>/<code>reduce</code> with initial_value 0). The error port is only triggered if the expression itself throws.</p>
+    <p style="margin:8px 0 0;">If the resolved collection is an empty array, the node still succeeds: an empty <code>items</code> array for list operations, <code>null</code> for <code>first</code>/<code>last</code>, <code>0</code> for <code>count</code>, or the untouched <code>initialValue</code> for <code>reduce</code>. The <code>error</code> port fires only when the collection cannot be resolved <em>at all</em> (no <code>inlineDataSource</code> and no upstream <code>items</code>), not when it resolves to a valid empty array.</p>
   </div>
 </main>
 <script src="/search.js"></script></body>

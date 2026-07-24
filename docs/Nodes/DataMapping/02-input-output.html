@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -19,6 +19,8 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
 .port-badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:600;}
 .port-success{background:#edf7f0;color:#1a7a45;}
 .port-error{background:#fdecea;color:#b91c1c;}
+.callout-warning{background:#fff8e1;border-left:4px solid #f0b429;padding:14px 18px;border-radius:6px;margin:16px 0;color:#6b4400;}
+.callout-info{background:#e6f2fc;border-left:4px solid #0f6cbd;padding:14px 18px;border-radius:6px;margin:16px 0;color:#0a3d6b;}
 </style>
 </head>
 <body>
@@ -49,67 +51,197 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
   <div class="page-header">
     <div class="breadcrumb">Portal / Nodes / Data Mapping / Input &amp; Output</div>
     <h1>Input &amp; Output</h1>
-    <p class="subtitle">Output ports, the mapped_data object, and downstream access patterns.</p>
+    <p class="subtitle">The real node data envelope, how DataMapping reads its input, output ports, and the exact output shape.</p>
+  </div>
+
+  <h2>The Node Data Envelope</h2>
+  <p>Every node's input and output — not just DataMapping's — is a JSON object shaped like this. The top-level fields are run metadata; the real payload lives under <code>items</code>, one entry per record, each holding the record under <code>"json"</code>:</p>
+  <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
+  "timestamp": "2026-07-24T01:02:27.8652562Z",
+  "triggerTime": "2026-07-24T01:02:27.8652562Z",
+  "resource": "trigger",
+  "operation": "manual-trigger",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    {
+      "json": {
+        "timestamp": "2026-07-24T01:02:27.8652562Z",
+        "triggerTime": "2026-07-24T01:02:27.8652562Z",
+        "resource": "trigger",
+        "operation": "manual-trigger",
+        "status": "success",
+        "portName": "main"
+      }
+    }
+  ],
+  "success": true
+}</code></pre>
+  <p>DataMapping's real input is <code>InputData["items"]</code> — it unwraps each entry's <code>"json"</code> value and treats that as one source record. It never reads the outer envelope fields (<code>timestamp</code>, <code>resource</code>, <code>operation</code>, <code>status</code>, <code>portName</code>, <code>success</code>) as mapping input; those describe the upstream node's run, not your data.</p>
+
+  <div class="callout-info">
+    <strong><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>inlineDataSource is plain data, not the envelope</strong>
+    <p style="margin:8px 0 0;">When you manually type test data into <code>inlineDataSource</code>, or when some other node freshly fetches data from an external API and you want to test a mapping against a sample of it, that raw JSON does <strong>not</strong> need to already look like the envelope above. A single object like <code>{ "orderId": "ORD-1", "total": 129.5 }</code>, or a plain array of such objects, is exactly right. DataMapping (via the shared <code>ResolveSourceRecords</code> helper) parses whatever you typed and normalizes it into the standard <code>items</code>/<code>json</code> shape itself before producing output — you never hand-author the envelope.</p>
   </div>
 
   <h2>Output Ports</h2>
   <table>
     <thead><tr><th>Port</th><th>Condition</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><span class="port-badge port-success">success</span></td><td>All mapping rules applied without error</td><td>The <code>mapped_data</code> object is populated and available downstream via <code>output.NodeName.mapped_data</code>.</td></tr>
-      <tr><td><span class="port-badge port-error">error</span></td><td>Source resolution failed or a transform threw an exception</td><td>Error details in <code>output.NodeName.error</code>. Individual missing source fields do NOT trigger the error port — they use <code>default_value</code> or produce null.</td></tr>
+      <tr><td><span class="port-badge port-success">success</span></td><td>Mapping (or passthrough) completed</td><td>Every mapped record is available downstream via <code>output.NodeName.items[].json</code>.</td></tr>
+      <tr><td><span class="port-badge port-error">error</span></td><td><code>dataMappings</code> is empty (outside passthrough mode), the source could not be resolved at all, or an unhandled exception occurs</td><td>Error details in <code>output.NodeName.error</code>, plus a <code>"data mapping failed"</code> activity log entry.</td></tr>
     </tbody>
   </table>
+
+  <div class="callout-warning">
+    <strong><i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>Type-conversion and expression failures do NOT trigger the error port</strong>
+    <p style="margin:8px 0 0;">The numeric/date transforms (<code>toint</code>, <code>todecimal</code>, <code>toboolean</code>, <code>tofloat</code>/<code>todouble</code>, <code>todate</code>/<code>todatetime</code>) and the <code>expression</code> transform never throw — a failed conversion or expression error silently returns the original, untransformed value in place. A missing source field similarly just resolves to <code>null</code>. None of these route to <code>error</code>; only an empty <code>dataMappings</code> array (outside passthrough mode), a fully unresolvable source, or a genuinely unhandled exception does.</p>
+  </div>
 
   <h2>Output Data Schema</h2>
   <table>
     <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>mapped_data</code></td><td>object</td><td>The constructed target object containing all target fields defined in the mapping rules. Only explicitly mapped fields appear — no source fields are passed through automatically.</td></tr>
+      <tr><td><code>status</code></td><td>string</td><td>Literal <code>"success"</code> on the success path.</td></tr>
+      <tr><td><code>mappingFieldCount</code></td><td>integer</td><td>The count of mapping rules that were applied to each record. In passthrough mode this is still the <em>rule</em> count (typically <code>0</code> if none were configured).</td></tr>
+      <tr><td><code>recordCount</code></td><td>integer</td><td>How many records were resolved and mapped. Matches the number of entries in <code>items</code>.</td></tr>
+      <tr><td><code>items</code></td><td>array</td><td>The framework's standard <code>[{ "json": &lt;record&gt; }, ...]</code> item shape — one entry per record. <code>json</code> holds the mapped record (a flat <code>{ targetField: value, ... }</code> dictionary), or in passthrough mode, the resolved source record unchanged. Merged against any pre-existing <code>items</code> per <code>OutputItemMergeType</code> (default: full replace).</td></tr>
     </tbody>
   </table>
 
-  <h2>Example Source and Output</h2>
-  <p><strong>Source object</strong> (from upstream CRM node):</p>
+  <h2>Example: Upstream Input Through to Mapped Output</h2>
+  <p><strong>Upstream input</strong> — an HTTP Request node's output, feeding DataMapping's default <code>InputData["items"]</code> read:</p>
   <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "contact": {
-    "fullName": "  Jane Doe  ",
-    "emailAddress": "JANE.DOE@EXAMPLE.COM",
-    "phone": "(512) 555-1234",
-    "createdAt": "2023-11-15T00:00:00Z",
-    "accountBalance": 1234.5
-  }
+  "timestamp": "2026-07-24T08:15:02.1200000Z",
+  "triggerTime": "2026-07-24T08:15:00.0000000Z",
+  "resource": "http-request",
+  "operation": "GET",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    {
+      "json": {
+        "contact": {
+          "fullName": "  Jane Doe  ",
+          "emailAddress": "JANE.DOE@EXAMPLE.COM",
+          "phone": "(512) 555-1234",
+          "createdAt": "2023-11-15T00:00:00Z",
+          "accountBalance": 1234.5,
+          "firstName": "Jane",
+          "lastName": "Doe"
+        }
+      }
+    }
+  ],
+  "success": true
 }</code></pre>
-  <p><strong>Output</strong> after Data Mapping with the configuration from the Configuration page:</p>
+  <p><strong>DataMapping configuration</strong>:</p>
   <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "mapped_data": {
-    "displayName": "Jane Doe",
-    "email": "jane.doe@example.com",
-    "phoneE164": "5125551234",
-    "memberSince": "15 Nov 2023",
-    "balanceFormatted": "1,234.50"
-  }
+  "dataMappings": [
+    { "sourceField": "contact.fullName",     "targetField": "displayName", "transform": "trim" },
+    { "sourceField": "contact.emailAddress", "targetField": "email",       "transform": "lowercase" },
+    { "sourceField": "contact.phone",        "targetField": "phoneE164",   "transform": "regexreplace:[^0-9]:" },
+    { "sourceField": "contact.createdAt",    "targetField": "memberSince", "transform": "todate" },
+    { "sourceField": "contact.accountBalance","targetField": "balance",    "transform": "todecimal" },
+    { "sourceField": "contact.firstName",    "targetField": "fullName",    "transform": "expression", "transformExpression": "item.contact.firstName + ' ' + item.contact.lastName" }
+  ]
+}</code></pre>
+  <p><strong>Output</strong> after Data Mapping runs with the configuration above (note: this node's own output is <em>always</em> wrapped in the same envelope shape shown at the top of this page — <code>status</code>/<code>recordCount</code>/<code>mappingFieldCount</code> alongside <code>items</code>):</p>
+  <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
+  "status": "success",
+  "mappingFieldCount": 6,
+  "recordCount": 1,
+  "items": [
+    {
+      "json": {
+        "displayName": "Jane Doe",
+        "email": "jane.doe@example.com",
+        "phoneE164": "5125551234",
+        "memberSince": "2023-11-15T00:00:00Z",
+        "balance": 1234.5,
+        "fullName": "Jane Doe"
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>Multiple Upstream Records In → Multiple Output Items</h2>
+  <p>When the upstream <code>items</code> array holds many records (e.g. a database-query node's result set), DataMapping maps each independently and produces one output item per input record — never one item wrapping the whole array:</p>
+  <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>// Upstream input.items (2 records, e.g. from a SQL query node):
+[
+  { "json": { "contact": { "fullName": "Alice Wong",  "emailAddress": "ALICE@EXAMPLE.COM" } } },
+  { "json": { "contact": { "fullName": "Marcus Reed", "emailAddress": "MARCUS@EXAMPLE.COM" } } }
+]
+
+// DataMapping output.items (2 mapped records, recordCount: 2):
+[
+  { "json": { "displayName": "Alice Wong",  "email": "alice@example.com" } },
+  { "json": { "displayName": "Marcus Reed", "email": "marcus@example.com" } }
+]</code></pre>
+
+  <h2>Passthrough Mode Output</h2>
+  <p>With <code>dataMappingMode: "passthrough"</code> and the same upstream input, each item's <code>json</code> is the resolved source record unchanged:</p>
+  <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
+  "status": "success",
+  "mappingFieldCount": 0,
+  "recordCount": 1,
+  "items": [
+    {
+      "json": {
+        "contact": {
+          "fullName": "  Jane Doe  ",
+          "emailAddress": "JANE.DOE@EXAMPLE.COM",
+          "phone": "(512) 555-1234",
+          "createdAt": "2023-11-15T00:00:00Z",
+          "accountBalance": 1234.5,
+          "firstName": "Jane",
+          "lastName": "Doe"
+        }
+      }
+    }
+  ]
+}</code></pre>
+
+  <h2>Using inlineDataSource Instead of Upstream Input</h2>
+  <p>Type plain JSON — no envelope needed — directly into <code>inlineDataSource</code>:</p>
+  <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>// inlineDataSource (exactly what you type in the designer):
+{ "orderId": "ORD-7741", "total": 129.50, "customerEmail": "SAM@EXAMPLE.COM" }
+
+// DataMapping configuration:
+{
+  "inlineDataSource": "{ \"orderId\": \"ORD-7741\", \"total\": 129.50, \"customerEmail\": \"SAM@EXAMPLE.COM\" }",
+  "dataMappings": [
+    { "sourceField": "orderId",       "targetField": "id" },
+    { "sourceField": "total",         "targetField": "amount", "transform": "todecimal" },
+    { "sourceField": "customerEmail", "targetField": "email",  "transform": "lowercase" }
+  ]
+}
+
+// Output — normalized into the standard envelope automatically:
+{
+  "status": "success",
+  "mappingFieldCount": 3,
+  "recordCount": 1,
+  "items": [
+    { "json": { "id": "ORD-7741", "amount": 129.5, "email": "sam@example.com" } }
+  ]
 }</code></pre>
 
   <h2>Accessing Output Downstream</h2>
   <table>
     <thead><tr><th>Expression</th><th>Result</th></tr></thead>
     <tbody>
-      <tr><td><code>{@ output.NormaliseContact.mapped_data }</code></td><td>The entire mapped object</td></tr>
-      <tr><td><code>{@ output.NormaliseContact.mapped_data.email }</code></td><td><code>"jane.doe@example.com"</code></td></tr>
-      <tr><td><code>{@ output.NormaliseContact.mapped_data.balanceFormatted }</code></td><td><code>"1,234.50"</code></td></tr>
+      <tr><td><code>{@ output.NormaliseContact.items[0].json }</code></td><td>The entire first mapped record object</td></tr>
+      <tr><td><code>{@ output.NormaliseContact.items[0].json.email }</code></td><td><code>"jane.doe@example.com"</code></td></tr>
+      <tr><td><code>{@ output.NormaliseContact.items[0].json.balance }</code></td><td><code>1234.5</code></td></tr>
+      <tr><td><code>{@ output.NormaliseContact.mappingFieldCount }</code></td><td><code>6</code></td></tr>
+      <tr><td><code>{@ output.NormaliseContact.recordCount }</code></td><td><code>1</code> (or however many records were mapped — pair with a Loop node when greater than one)</td></tr>
+      <tr><td><code>{@ output.NormaliseContact.status }</code></td><td><code>"success"</code></td></tr>
     </tbody>
   </table>
 
-  <h2>Error Output Schema</h2>
-  <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "error": {
-    "code": "SOURCE_RESOLUTION_ERROR",
-    "message": "Could not resolve source_output node 'GetContactFromCRM': node not found in execution context.",
-    "node": "NormaliseContact",
-    "timestamp": "2026-05-23T10:34:12Z"
-  }
-}</code></pre>
+  <h2>Error Output</h2>
+  <p>When no mapping rules are configured (outside passthrough mode), the source cannot be resolved at all, or an unhandled exception occurs, the node logs a <code>"data mapping failed"</code> activity entry and routes to the configured error port instead of populating <code>items</code>.</p>
 </main>
 <script src="/search.js"></script></body>
 </html>

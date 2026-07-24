@@ -37,6 +37,9 @@ h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:#1a2332;}
   <div class="sidebar-brand">DataMapping<span>Data Transform Node</span></div>
   <div class="sidebar-section">This Page</div>
   <a href="index.html" class="active">Overview &amp; Reference</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html">Examples</a>
   <div class="sidebar-section">Data Transform Nodes</div>
   <a href="../VariableAssignment/">VariableAssignment</a>
   <a href="../CollectionOperation/">CollectionOperation</a>
@@ -51,122 +54,196 @@ h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:#1a2332;}
   <div class="page-header">
     <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / DataMapping</div>
     <h1>DataMapping <span style="display:inline-block;font-size:11px;font-weight:600;background:#f0f4f8;color:#555;border-radius:4px;padding:2px 8px;margin-left:8px;font-family:monospace;">NodeTypeCode: data-mapping</span></h1>
-    <p class="subtitle">Map and transform fields from a source object to a new target object. Supports dot-notation field access, array indexing, and 16+ built-in transforms — all without writing code.</p>
+    <p class="subtitle">Map and transform fields from one or more source records into new target records. Supports dot-notation field access, array indexing, 21 named transforms plus a JS-expression transform, and a dedicated passthrough mode — all without writing code.</p>
+  </div>
+
+  <h2>The Standard Node Data Envelope</h2>
+  <p>Every node's input and output data — DataMapping included — travels around the workflow inside the same standard envelope. The envelope carries run metadata (<code>timestamp</code>, <code>resource</code>, <code>operation</code>, <code>status</code>, <code>portName</code>, <code>success</code>) plus the actual payload records under <code>items</code>, where each entry wraps its record in a <code>"json"</code> property:</p>
+  <pre><code>{
+  "timestamp": "2026-07-24T01:02:27.8652562Z",
+  "triggerTime": "2026-07-24T01:02:27.8652562Z",
+  "resource": "trigger",
+  "operation": "manual-trigger",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    {
+      "json": {
+        "timestamp": "2026-07-24T01:02:27.8652562Z",
+        "triggerTime": "2026-07-24T01:02:27.8652562Z",
+        "resource": "trigger",
+        "operation": "manual-trigger",
+        "status": "success",
+        "portName": "main"
+      }
+    }
+  ],
+  "success": true
+}</code></pre>
+  <p>DataMapping reads its real records from <code>InputData["items"]</code>, unwrapping each entry's <code>"json"</code> value — this is exactly what the shared <code>ResolveSourceRecords</code>/<code>ExtractRecordsFromItems</code> base-class helpers do. It never looks at the outer envelope fields (<code>timestamp</code>/<code>resource</code>/<code>operation</code>/etc.) as data — those are metadata about the upstream run, not part of the record being mapped.</p>
+  <div class="callout info">
+    <strong><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>Inline test data does NOT need the envelope shape</strong>
+    <p style="margin:8px 0 0;">When you type JSON directly into <code>inlineDataSource</code> to test a mapping without wiring up an upstream node, you write plain data — a single object or a plain array of objects, whichever your mapping rules expect. You do <strong>not</strong> pre-wrap it as <code>{"items":[{"json":{...}}]}</code>. The node parses whatever you typed and normalizes it into the standard <code>items</code>/<code>json</code> shape itself before producing output. The envelope is the wire format between nodes, not the format you author by hand.</p>
   </div>
 
   <h2>When to Use</h2>
   <ul>
-    <li><strong>Transform API response to internal schema:</strong> A third-party CRM API returns fields like <code>contact.full_name</code> and <code>contact.email_address</code>. Map them to your internal schema fields <code>customerName</code> and <code>email</code> with a single DataMapping node, applying trim and lowercase transforms.</li>
-    <li><strong>Map CSV column names to DB field names:</strong> An imported CSV uses human-readable headers like "First Name", "Date of Birth". Map these to database column names like <code>first_name</code>, <code>dob</code> with appropriate type transforms.</li>
-    <li><strong>Normalize data from multiple sources into one schema:</strong> Orders arrive from Shopify, Magento, and a bespoke ERP — each with different field names. A DataMapping node per source normalizes each to a single internal <code>OrderDTO</code> structure for consistent downstream processing.</li>
-    <li><strong>Extract specific fields from a deeply nested object:</strong> An API response contains <code>response.data.attributes.billing.address.city</code>. Map it to a flat <code>billingCity</code> field without writing any code — just use dot-notation in <code>SourceField</code>.</li>
-    <li><strong>Convert date strings to a standard format:</strong> An integration partner sends dates as <code>MM/DD/YYYY</code>. Use the <code>toDate</code> or <code>toDateTime</code> transform to normalize to ISO 8601 before storing in the database.</li>
+    <li><strong>Rename and retype an API response to your internal schema:</strong> A third-party CRM API returns fields like <code>contact.full_name</code> and <code>contact.email_address</code>. Map them to your internal schema fields <code>customerName</code> and <code>email</code> with a single DataMapping node, applying <code>trim</code> and <code>lowercase</code> transforms.</li>
+    <li><strong>Map CSV/legacy column names to DB field names:</strong> An imported CSV uses human-readable headers like "First Name". Map these to database column names like <code>first_name</code> with appropriate type transforms (<code>toint</code>, <code>todate</code>, ...).</li>
+    <li><strong>Normalize data from multiple sources into one schema:</strong> Orders arrive from Shopify, Magento, and a bespoke ERP — each with different field names. A DataMapping node per source normalizes each to a single internal record shape for consistent downstream processing.</li>
+    <li><strong>Extract specific fields from a deeply nested object:</strong> An API response contains <code>response.data.attributes.billing.address.city</code>. Map it to a flat <code>billingCity</code> field with dot-notation in <code>sourceField</code> — no code required.</li>
+    <li><strong>Combine multiple source fields into one:</strong> Build a <code>fullName</code> field from separate <code>firstName</code>/<code>lastName</code> fields with an <code>"expression"</code> transform — no single <code>sourceField</code> can do this alone, since a mapping rule can only read one path per rule.</li>
+    <li><strong>Convert loosely-typed strings to real types:</strong> An integration partner sends every value as a string. Use <code>toint</code>, <code>todecimal</code>, <code>toboolean</code>, or <code>todate</code>/<code>todatetime</code> to convert before storing. These conversions fail gracefully (see the callout under Supported Transforms) rather than raising an error.</li>
+    <li><strong>Map every record in a multi-row upstream result:</strong> An upstream query or API call returns an array of many records under <code>items</code>. DataMapping applies the same rules to every record independently and emits one mapped record per input record — you don't need a Loop node just to reshape each row.</li>
+    <li><strong>Pass data through untouched:</strong> Set <code>dataMappingMode</code> to <code>passthrough</code> (or drop in the pre-built <strong>Data Assigner</strong> node) when you only need the standard <code>items</code> output envelope around the resolved source record(s), with no field-level mapping at all.</li>
   </ul>
 
   <h2>Configuration</h2>
   <table>
-    <tr><th style="width:180px;">Setting</th><th style="width:90px;">Required</th><th>Description</th></tr>
+    <tr><th style="width:200px;">Setting</th><th style="width:90px;">Required</th><th>Description</th></tr>
     <tr>
-      <td><code>Source</code></td>
+      <td><code>inlineDataSource</code></td>
       <td><span class="badge optional">Optional</span></td>
-      <td>An inline JSON string representing the source object. Use this for mapping static or test data. If provided, takes precedence over <code>SourceOutput</code>. Supports BizFirst expressions.</td>
+      <td>An inline JSON string — a single object or an array of objects. This is a shared base-class setting (not unique to DataMapping). If non-empty, it wins outright over <code>InputData["items"]</code>: parsed and standardized into the <code>items</code>/<code>json</code> shape via the same helper every node uses. Configured via Form <code>100804</code> (formatted <code>enhanced-json-editor</code>). Form <code>100803</code>, an older plain-textarea variant of the same field, is disabled — it rendered as a visible duplicate of <code>100804</code> in the designer and has been retired.</td>
     </tr>
     <tr>
-      <td><code>SourceOutput</code></td>
-      <td><span class="badge optional">Optional</span></td>
-      <td>The node key of a previous node whose output should be used as the source. Example: <code>"httpRequestNode"</code>. The full output data of that node becomes the source object for mapping.</td>
+      <td><code>dataMappings</code></td>
+      <td><span class="badge required">Required*</span></td>
+      <td>A JSON array of mapping-rule objects (<code>{ sourceField, targetField, transform?, transformExpression? }</code>). *Not required when <code>dataMappingMode</code> is <code>"passthrough"</code> — it may be empty in that mode. Configured via Form <code>11010</code>.</td>
     </tr>
     <tr>
-      <td><code>Mappings</code></td>
-      <td><span class="badge required">Required</span></td>
-      <td>A JSON array of <code>DataMappingRule</code> objects. Each rule defines one field mapping. Must contain at least one rule. Order matters — rules execute top to bottom.</td>
+      <td><code>dataMappingMode</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Default <code>""</code>. <code>""</code> applies the <code>dataMappings</code> rules normally, to every resolved record. <code>"passthrough"</code> skips all mapping rules and copies each resolved record straight to output unchanged. Configured via Form <code>11010</code> (select: Default / Pass Through).</td>
+    </tr>
+    <tr>
+      <td><code>sourceDirectivePath</code> / <code>sourceDataRootPath</code> / <code>sourceDataLeafPath</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>SmartPath fallback consulted only when <code>inlineDataSource</code> is empty and the plain <code>InputData["items"]</code> lookup is bypassed by a custom root path. In the common case you can ignore these entirely — the node already reads <code>InputData["items"]</code> by default.</td>
+    </tr>
+    <tr>
+      <td><code>targetDirectivePath</code> / <code>targetDataRootPath</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Optional SmartPath write-back location for the mapped record(s). Rarely needed — the output already carries every mapped record under <code>items[].json</code>.</td>
     </tr>
   </table>
 
-  <h3>DataMappingRule fields</h3>
+  <h3>MappingRule fields (each entry in <code>dataMappings</code>)</h3>
   <table>
     <tr><th style="width:180px;">Field</th><th style="width:90px;">Required</th><th>Description</th></tr>
     <tr>
-      <td><code>SourceField</code></td>
+      <td><code>sourceField</code></td>
       <td><span class="badge required">Required</span></td>
-      <td>Path to the field in the source object. Supports dot notation (<code>user.address.city</code>) and array indexing (<code>items[0].price</code>). Use the root path <code>.</code> to select the entire source object.</td>
+      <td>Path to the field in the source record. Supports dot notation (<code>user.address.city</code>) and array indexing (<code>items[0].price</code>, <code>data.users[2].email</code>). No negative indices for field paths.</td>
     </tr>
     <tr>
-      <td><code>TargetField</code></td>
+      <td><code>targetField</code></td>
       <td><span class="badge required">Required</span></td>
-      <td>The field name in the output <code>mapped_data</code> object where the mapped (and optionally transformed) value is written. Simple identifier, no nesting supported in target.</td>
+      <td>A flat key name in the output record. Plain dictionary key assignment only — no nested/dot-notation writing on the target side.</td>
     </tr>
     <tr>
-      <td><code>Transform</code></td>
+      <td><code>transform</code></td>
       <td><span class="badge optional">Optional</span></td>
-      <td>Optional transform to apply to the source value before writing to the target. See the transforms table below.</td>
+      <td>One of the 22 transform strings below. If omitted, the value is copied as-is with no conversion.</td>
+    </tr>
+    <tr>
+      <td><code>transformExpression</code></td>
+      <td><span class="badge optional">Optional*</span></td>
+      <td>*Required when <code>transform</code> is <code>"expression"</code>, otherwise ignored entirely. A JS expression evaluated via the same expression engine CollectionOperation uses. <code>item</code> (the full current record) and <code>value</code> (this rule's extracted <code>sourceField</code> value) are bound as variables — lets one rule combine multiple source fields, e.g. <code>item.firstName + ' ' + item.lastName</code>.</td>
     </tr>
   </table>
 
-  <h2>Supported Transforms</h2>
+  <h2>Supported Transforms (22)</h2>
   <table>
-    <tr><th style="width:160px;">Transform</th><th>Input Type</th><th>Output</th></tr>
-    <tr><td><code>uppercase</code></td><td>string</td><td>Converts all characters to uppercase. <code>"london"</code> → <code>"LONDON"</code></td></tr>
-    <tr><td><code>lowercase</code></td><td>string</td><td>Converts all characters to lowercase. <code>"SMITH"</code> → <code>"smith"</code></td></tr>
-    <tr><td><code>trim</code></td><td>string</td><td>Removes leading and trailing whitespace.</td></tr>
-    <tr><td><code>toString</code></td><td>any</td><td>Converts any value to its string representation.</td></tr>
-    <tr><td><code>toInt</code></td><td>string / number</td><td>Parses to integer. <code>"42.9"</code> → <code>42</code></td></tr>
-    <tr><td><code>toDecimal</code></td><td>string / number</td><td>Parses to decimal (double). <code>"19.99"</code> → <code>19.99</code></td></tr>
-    <tr><td><code>toBoolean</code></td><td>string / number</td><td>Parses truthy values. <code>"true"</code>, <code>"1"</code>, <code>"yes"</code> → <code>true</code>; others → <code>false</code></td></tr>
-    <tr><td><code>toFloat</code></td><td>string / number</td><td>Parses to floating-point number.</td></tr>
-    <tr><td><code>toDate</code></td><td>string</td><td>Parses a date string and returns ISO date (<code>YYYY-MM-DD</code>).</td></tr>
-    <tr><td><code>toDateTime</code></td><td>string</td><td>Parses a datetime string and returns full ISO 8601 datetime.</td></tr>
-    <tr><td><code>base64Encode</code></td><td>string</td><td>Encodes the string as Base64.</td></tr>
-    <tr><td><code>base64Decode</code></td><td>string</td><td>Decodes a Base64 string to plain text.</td></tr>
-    <tr><td><code>jsonStringify</code></td><td>object / array</td><td>Serializes an object or array to a JSON string.</td></tr>
-    <tr><td><code>jsonParse</code></td><td>string</td><td>Deserializes a JSON string to an object or array.</td></tr>
-    <tr><td><code>nullToEmpty</code></td><td>null / undefined</td><td>Converts null or undefined to an empty string <code>""</code>.</td></tr>
-    <tr><td><code>emptyToNull</code></td><td>string</td><td>Converts an empty string <code>""</code> to <code>null</code>.</td></tr>
+    <tr><th style="width:190px;">Transform</th><th>Behavior</th></tr>
+    <tr><td><code>"uppercase"</code></td><td><code>"london"</code> → <code>"LONDON"</code></td></tr>
+    <tr><td><code>"lowercase"</code></td><td><code>"SMITH"</code> → <code>"smith"</code></td></tr>
+    <tr><td><code>"trim"</code></td><td><code>"  hi  "</code> → <code>"hi"</code></td></tr>
+    <tr><td><code>"tostring"</code></td><td>Identity string conversion of the value.</td></tr>
+    <tr><td><code>"toint"</code></td><td><code>"42"</code> → <code>42</code>. On parse failure, returns the <strong>original value unchanged</strong> (not null, not an error).</td></tr>
+    <tr><td><code>"todecimal"</code></td><td><code>"19.99"</code> → <code>19.99</code> (invariant culture). Same graceful fallback-to-original on failure.</td></tr>
+    <tr><td><code>"toboolean"</code></td><td>Only literal <code>"true"</code>/<code>"false"</code> (case-insensitive) — <strong>not</strong> <code>"1"</code>/<code>"yes"</code>. Falls back to original on failure.</td></tr>
+    <tr><td><code>"tofloat"</code></td><td><code>"3.14"</code> → <code>3.14</code> (double). Fallback to original on failure.</td></tr>
+    <tr><td><code>"todouble"</code></td><td>Exact alias of <code>tofloat</code> — identical behavior.</td></tr>
+    <tr><td><code>"todate"</code></td><td>Parses with RoundtripKind. Fallback to original on failure.</td></tr>
+    <tr><td><code>"todatetime"</code></td><td>Exact alias of <code>todate</code> — identical behavior.</td></tr>
+    <tr><td><code>"base64encode"</code></td><td>UTF-8 → Base64 string.</td></tr>
+    <tr><td><code>"base64decode"</code></td><td>Base64 → UTF-8 string. Returns the original string unchanged if not valid Base64.</td></tr>
+    <tr><td><code>"jsonstringify"</code></td><td>Serializes the <strong>original value</strong> (not its string form) to a JSON string.</td></tr>
+    <tr><td><code>"jsonparse"</code></td><td>Parses the string as JSON. Returns the original string unchanged if invalid.</td></tr>
+    <tr><td><code>"nulltoempty"</code></td><td><code>null</code> → <code>""</code>. Special-cased to run even when the value is null.</td></tr>
+    <tr><td><code>"emptytonull"</code></td><td><code>""</code> → <code>null</code>; otherwise unchanged.</td></tr>
+    <tr><td><code>"defaultvalue:N/A"</code></td><td>Returns the text after the first colon if the value is <code>null</code> or an empty string; otherwise passes the value through unchanged. Also runs on null input.</td></tr>
+    <tr><td><code>"concat:_suffix"</code></td><td>Appends the literal text after the colon: <code>"abc"</code> → <code>"abc_suffix"</code>.</td></tr>
+    <tr><td><code>"substring:0:5"</code> / <code>"substring:-3"</code></td><td><code>start[:length]</code>. Negative <code>start</code> counts from the end (Python-style). Omitted <code>length</code> takes to the end of the string.</td></tr>
+    <tr><td><code>"regexreplace:[^0-9]:"</code></td><td><code>pattern:replacement</code> (replacement may be empty). 200ms timeout; returns the original string unchanged on timeout or invalid pattern.</td></tr>
+    <tr><td><code>"expression"</code></td><td>Evaluates <code>transformExpression</code> as JS, with <code>item</code> (full record) and <code>value</code> (this rule's <code>sourceField</code> value) bound as variables. Runs even when <code>value</code> is <code>null</code>, since an expression typically reads from <code>item</code> rather than <code>value</code> — e.g. combining two other fields. Falls back to the original value on any evaluation error.</td></tr>
   </table>
 
-  <h2>Source Resolution Order</h2>
-  <p>The node resolves the source data in this order (first available wins):</p>
-  <ol>
-    <li><code>InputData["source"]</code> — if the preceding node outputs a field named <code>source</code>, it is used as the source object.</li>
-    <li><code>Settings.Source</code> — the inline JSON string configured in settings.</li>
-    <li><code>SourceOutput</code> node lookup — the full output of the named upstream node.</li>
-  </ol>
+  <div class="callout warning">
+    <strong><i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>Numeric/date/expression transforms never fail loudly</strong>
+    <p style="margin:8px 0 0;"><code>toint</code>, <code>todecimal</code>, <code>toboolean</code>, <code>tofloat</code>/<code>todouble</code>, <code>todate</code>/<code>todatetime</code>, and <code>expression</code> never throw on bad input — a failed conversion or expression error silently returns the original, untransformed value instead. A malformed source value does <strong>not</strong> route to the <code>error</code> port; it just passes through unchanged, so downstream logic that assumes a numeric/date type should validate it explicitly. An unknown/misspelled transform name behaves the same way: value passed through unchanged, no error raised.</p>
+  </div>
+
+  <p>Every transform except <code>nulltoempty</code>, <code>defaultvalue:</code>, and <code>expression</code> returns <code>null</code> immediately when the input value is <code>null</code> — they don't run their conversion logic on null.</p>
+
+  <h2>Multiple Records — One Node Handles the Whole Batch</h2>
+  <p>DataMapping does not process a single object only. When the resolved source (<code>inlineDataSource</code> or upstream <code>items</code>) is an array of many records, DataMapping applies the same <code>dataMappings</code> rules to <strong>every record independently</strong> and emits one mapped record per input record — each becomes its own entry in the output <code>items</code> array, not one giant array wrapped in a single item. A single object source still produces exactly one output record. The output field <code>recordCount</code> tells you how many records were processed.</p>
+
+  <h2>Passthrough Mode</h2>
+  <p>Set <code>dataMappingMode</code> to <code>"passthrough"</code> to skip <code>dataMappings</code> entirely and copy each resolved record straight to output — <code>dataMappings</code> may be left empty in this mode. Use passthrough when you need the node purely to move data through the standard output envelope without renaming or converting any field.</p>
+  <p>The <strong>Data Assigner</strong> node (Template ID <code>10000108</code>) is this same node type pre-configured for exactly this: <code>dataMappingMode: "passthrough"</code>, <code>dataMappings: []</code>. It appears in the node palette under a separate "Data Assigner" label/icon for discoverability, but at runtime it is the identical <code>data-mapping</code> executor.</p>
+
+  <h2>Nested Field Access</h2>
+  <p><code>sourceField</code> supports dot notation and array indexing, evaluated left to right. Examples of increasing depth:</p>
+  <table>
+    <tr><th style="width:280px;"><code>sourceField</code></th><th>Meaning</th></tr>
+    <tr><td><code>name</code></td><td>Top-level property.</td></tr>
+    <tr><td><code>user.address.city</code></td><td>Nested object property.</td></tr>
+    <tr><td><code>items[0].price</code></td><td>First element of an array property, then its <code>price</code> field.</td></tr>
+    <tr><td><code>data.users[2].email</code></td><td>Object → array → indexed element → field.</td></tr>
+    <tr><td><code>response.data.attributes.billing.address.city</code></td><td>Deep nested extraction, flattened to a single <code>targetField</code> like <code>billingCity</code>.</td></tr>
+  </table>
+  <p>Missing intermediate keys or out-of-bounds indices resolve to <code>null</code> rather than raising an error.</p>
 
   <h2>Output Ports</h2>
   <table>
     <tr><th style="width:120px;">Port</th><th>When It Fires</th></tr>
-    <tr><td><code>success</code></td><td>All mapping rules executed without error. The <code>mapped_data</code> object is available downstream.</td></tr>
-    <tr><td><code>error</code></td><td>A mapping rule fails (e.g., type conversion error, invalid source path) or the <code>Mappings</code> array is empty. Error details include the failing rule index and the error reason.</td></tr>
+    <tr><td><code>success</code></td><td>Mapping (or passthrough) completed. <code>status</code>, <code>mappingFieldCount</code>, <code>recordCount</code>, and <code>items</code> are populated.</td></tr>
+    <tr><td><code>error</code></td><td><code>dataMappings</code> is empty and <code>dataMappingMode</code> is not <code>"passthrough"</code>, the source could not be resolved at all (neither <code>inlineDataSource</code> nor <code>InputData["items"]</code> present), or an unhandled exception occurs. Note the transform fallback behavior above — most conversion problems do <strong>not</strong> reach this port.</td></tr>
   </table>
 
   <h2>Output Fields</h2>
   <table>
     <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
-    <tr><td><code>mapped_data</code></td><td>object</td><td>The constructed target object containing all successfully mapped fields. Only explicitly mapped fields are present — no unmapped source fields are copied. Access individual mapped fields via <code>{{ $output.dataMappingNode.mapped_data.fieldName }}</code>.</td></tr>
+    <tr><td><code>status</code></td><td>string</td><td>Literal <code>"success"</code> on the success path.</td></tr>
+    <tr><td><code>mappingFieldCount</code></td><td>integer</td><td>Count of mapping rules applied to each record. In passthrough mode this is still the <em>rule</em> count (typically <code>0</code>) — it does not reflect any record's field count.</td></tr>
+    <tr><td><code>recordCount</code></td><td>integer</td><td>Number of records that were resolved and mapped. <code>0</code> is a valid, non-error result — it just means no output items are produced.</td></tr>
+    <tr><td><code>items</code></td><td>array</td><td>Standard <code>[{ "json": &lt;record&gt; }, ...]</code> shape — one entry per mapped record (or, in passthrough mode, per resolved source record, unchanged). Merged against any pre-existing <code>items</code> per the node's <code>OutputItemMergeType</code> setting (default: full replace).</td></tr>
   </table>
 
   <h2>Validation</h2>
-  <p>The node validates on execution (not on save):</p>
+  <p>The node validates on execution:</p>
   <ul>
-    <li><code>Mappings</code> is required and must be a non-empty array.</li>
-    <li>Each rule must have both <code>SourceField</code> and <code>TargetField</code> non-empty strings.</li>
-    <li>If a <code>Transform</code> is specified, it must be one of the 16 supported values listed above.</li>
-    <li>Type conversion failures (e.g., <code>toInt</code> applied to a non-numeric string) route to the <code>error</code> port with a descriptive message.</li>
+    <li>Either <code>inlineDataSource</code> must be non-empty, or a usable source path must resolve — otherwise: <em>"sourceDataRootPath is required — specify the variable or key holding the source object"</em>.</li>
+    <li><code>dataMappings</code> must be non-empty <strong>unless</strong> <code>dataMappingMode</code> is <code>"passthrough"</code> — otherwise: <em>"mappings is required and must not be empty"</em>.</li>
+    <li>Every mapping rule must have both <code>sourceField</code> and <code>targetField</code> non-empty, or validation fails with <em>"Each mapping rule must have a sourceField"</em> / <em>"...targetField"</em>.</li>
+    <li>At execution time, if the source cannot be resolved at all (no <code>inlineDataSource</code> and no <code>items</code> in the upstream input), the node routes to the <code>error</code> port with <em>"Source data could not be resolved — configure inlineDataSource or a valid sourceDataRootPath"</em>.</li>
   </ul>
 
   <h2>Sample Configuration</h2>
   <pre><code>{
   "nodeType": "data-mapping",
   "settings": {
-    "SourceOutput": "crmApiNode",
-    "Mappings": [
-      { "SourceField": "contact.full_name",          "TargetField": "customerName",    "Transform": "trim" },
-      { "SourceField": "contact.email_address",      "TargetField": "email",           "Transform": "lowercase" },
-      { "SourceField": "contact.address.city",       "TargetField": "city",            "Transform": "uppercase" },
-      { "SourceField": "contact.created_at",         "TargetField": "createdDate",     "Transform": "toDate" },
-      { "SourceField": "contact.annual_spend",       "TargetField": "annualSpend",     "Transform": "toDecimal" },
-      { "SourceField": "contact.is_active",          "TargetField": "isActive",        "Transform": "toBoolean" },
-      { "SourceField": "contact.external_id",        "TargetField": "externalId",      "Transform": "toString" }
+    "dataMappingMode": "",
+    "dataMappings": [
+      { "sourceField": "contact.full_name",     "targetField": "customerName",  "transform": "trim" },
+      { "sourceField": "contact.email_address", "targetField": "email",         "transform": "lowercase" },
+      { "sourceField": "contact.address.city",  "targetField": "city",          "transform": "uppercase" },
+      { "sourceField": "contact.created_at",    "targetField": "createdDate",   "transform": "todate" },
+      { "sourceField": "contact.annual_spend",  "targetField": "annualSpend",   "transform": "todecimal" },
+      { "sourceField": "contact.is_active",     "targetField": "isActive",      "transform": "toboolean" },
+      { "sourceField": "contact.first_name",    "targetField": "greeting",      "transform": "expression", "transformExpression": "'Hi ' + item.contact.first_name + '!'" }
     ]
   }
 }</code></pre>
@@ -174,80 +251,65 @@ h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:#1a2332;}
   <h2>Sample Output</h2>
   <h3>Success Port</h3>
   <pre><code>{
-  "mappedRecord": {
-    "contact_id": "SF-00123456",
-    "first_name": "Michael",
-    "last_name": "Torres",
-    "email_address": "m.torres@company.com",
-    "phone_number": "+1-415-555-0182",
-    "company_name": "Meridian Logistics",
-    "job_title": "Supply Chain Manager",
-    "lead_source": "Website",
-    "created_date": "2025-03-15"
-  },
-  "_fieldsProcessed": 9,
-  "_nullFieldsSkipped": 2,
-  "_transformsApplied": ["concatenate", "format_date", "normalize_phone"]
+  "status": "success",
+  "mappingFieldCount": 7,
+  "recordCount": 1,
+  "items": [
+    {
+      "json": {
+        "customerName": "Michael Torres",
+        "email": "m.torres@company.com",
+        "city": "SEATTLE",
+        "createdDate": "2025-03-15T00:00:00Z",
+        "annualSpend": 48250.75,
+        "isActive": true,
+        "greeting": "Hi Michael!"
+      }
+    }
+  ]
 }</code></pre>
 
   <h2>Expression Reference</h2>
   <table>
-    <tr><th style="width:360px;">Expression</th><th>Value</th></tr>
-    <tr><td><code>{{ $output.dataMappingNode.mapped_data.customerName }}</code></td><td>The trimmed customer name from the mapped output.</td></tr>
-    <tr><td><code>{{ $output.dataMappingNode.mapped_data.city }}</code></td><td>The uppercased city value.</td></tr>
-    <tr><td><code>{{ $output.dataMappingNode.mapped_data.annualSpend }}</code></td><td>The annual spend as a decimal number.</td></tr>
+    <tr><th style="width:400px;">Expression</th><th>Value</th></tr>
+    <tr><td><code>{{ $output.dataMappingNode.items[0].json.customerName }}</code></td><td>The trimmed customer name from the first mapped record.</td></tr>
+    <tr><td><code>{{ $output.dataMappingNode.items[0].json.city }}</code></td><td>The uppercased city value.</td></tr>
+    <tr><td><code>{{ $output.dataMappingNode.mappingFieldCount }}</code></td><td>Number of mapping rules applied per record (<code>7</code> here).</td></tr>
+    <tr><td><code>{{ $output.dataMappingNode.recordCount }}</code></td><td>Number of records mapped (<code>1</code> here — use a Loop node downstream when this is greater than one).</td></tr>
   </table>
 
   <h2>Node Policies &amp; GuardRails</h2>
   <table>
     <tr><th style="width:280px;">Policy</th><th>Rationale</th></tr>
-    <tr><td>Prefer DataMapping over CodeExecute for field renaming and type conversion</td><td>DataMapping is declarative, auditable, and readable by non-developers. CodeExecute is appropriate for logic that cannot be expressed as per-field transforms — not for renaming fields.</td></tr>
-    <tr><td>Always handle the <code>error</code> port</td><td>Type conversion failures (e.g., applying <code>toInt</code> to a non-numeric API value) route to the error port silently if it is unconnected. Connect it to a notification or dead-letter queue node.</td></tr>
-    <tr><td>Use <code>SourceOutput</code> rather than <code>Source</code> (inline JSON) in production</td><td>Inline JSON in the <code>Source</code> field is static — it does not change with incoming data. For live workflow data, always reference the output of an upstream node via <code>SourceOutput</code>.</td></tr>
-    <tr><td>Only explicitly mapped fields appear in <code>mapped_data</code></td><td>DataMapping is non-passthrough. Fields not listed in <code>Mappings</code> are absent from the output. If you need to pass additional unmapped fields, add explicit mapping rules for each one or combine with a JsonTransform merge operation.</td></tr>
+    <tr><td>Prefer DataMapping over CodeExecute for field renaming and type conversion</td><td>DataMapping is declarative, auditable, and readable by non-developers. CodeExecute is appropriate for logic that cannot be expressed as per-field transforms.</td></tr>
+    <tr><td>Always handle the <code>error</code> port</td><td>It fires when no mapping rules are configured (outside passthrough mode), the source can't be resolved at all, or an unhandled exception occurs — but not for type-conversion or expression failures, which fall back silently (see the callout above). Connect it to a notification or dead-letter path.</td></tr>
+    <tr><td>Use passthrough mode (or the Data Assigner node) instead of one-to-one identity mappings</td><td>Writing a <code>dataMappings</code> rule per field just to copy it through is unnecessary busywork — set <code>dataMappingMode: "passthrough"</code> and leave <code>dataMappings</code> empty.</td></tr>
+    <tr><td>Only explicitly mapped fields appear in the output record (non-passthrough mode)</td><td>Fields not listed in <code>dataMappings</code> are absent from each mapped record. If you need additional unmapped fields, add explicit mapping rules for each or switch to passthrough.</td></tr>
+    <tr><td>Use <code>"expression"</code> only when a rule genuinely needs more than one source field</td><td>For a plain single-field rename or type conversion, a named transform is clearer and cheaper to evaluate than a JS expression. Reach for <code>expression</code> specifically to combine fields (e.g. <code>fullName</code>) or apply conditional logic a named transform can't express.</td></tr>
+    <tr><td>Validate numeric/date/expression transform results explicitly if input quality is uncertain</td><td>Because failed conversions and expression errors pass through the original value unchanged rather than erroring, a malformed upstream value can silently reach downstream nodes in its original (wrong) type.</td></tr>
   </table>
 
   <h2>Pattern Examples</h2>
+  <p>See <a href="03-examples.html">Examples</a> for elaborate, realistic worked examples — basic renaming, combining fields via <code>expression</code>, passthrough/Data Assigner usage, and using <code>inlineDataSource</code> directly.</p>
 
-  <h3>Pattern 1 — Normalize CRM API Response to Internal Order Schema</h3>
+  <h3>Pattern 1 — Normalize CRM API Response</h3>
   <pre><code>{
-  "SourceOutput": "crmApiNode",
-  "Mappings": [
-    { "SourceField": "data.contact.id",            "TargetField": "customerId" },
-    { "SourceField": "data.contact.name",          "TargetField": "customerName",  "Transform": "trim" },
-    { "SourceField": "data.contact.email",         "TargetField": "email",         "Transform": "lowercase" },
-    { "SourceField": "data.billing.address.city",  "TargetField": "billingCity",   "Transform": "uppercase" },
-    { "SourceField": "data.billing.total",         "TargetField": "totalAmount",   "Transform": "toDecimal" },
-    { "SourceField": "data.order.created_at",      "TargetField": "orderDate",     "Transform": "toDateTime" }
+  "dataMappings": [
+    { "sourceField": "data.contact.id",           "targetField": "customerId" },
+    { "sourceField": "data.contact.name",         "targetField": "customerName", "transform": "trim" },
+    { "sourceField": "data.contact.email",        "targetField": "email",        "transform": "lowercase" },
+    { "sourceField": "data.billing.address.city", "targetField": "billingCity",  "transform": "uppercase" },
+    { "sourceField": "data.billing.total",        "targetField": "totalAmount",  "transform": "todecimal" },
+    { "sourceField": "data.order.created_at",      "targetField": "orderDate",    "transform": "todatetime" }
   ]
 }</code></pre>
 
-  <h3>Pattern 2 — Flatten Nested API Response for Database Insert</h3>
-  <p>An API returns a nested structure. The DataMapping node flattens it to individual columns ready for a DB insert node.</p>
+  <h3>Pattern 2 — Passthrough via Data Assigner</h3>
   <pre><code>{
-  "SourceOutput": "apiResponseNode",
-  "Mappings": [
-    { "SourceField": "payload.user.id",              "TargetField": "userId" },
-    { "SourceField": "payload.user.profile.age",     "TargetField": "age",           "Transform": "toInt" },
-    { "SourceField": "payload.user.profile.country", "TargetField": "country",       "Transform": "uppercase" },
-    { "SourceField": "payload.subscription.plan",    "TargetField": "plan",          "Transform": "lowercase" },
-    { "SourceField": "payload.subscription.expires", "TargetField": "expiryDate",    "Transform": "toDate" },
-    { "SourceField": "payload.metadata",             "TargetField": "metaJson",      "Transform": "jsonStringify" }
-  ]
-}</code></pre>
-
-  <h3>Pattern 3 — Webhook Payload Validation and Normalization</h3>
-  <p>Immediately after a WebhookTrigger, validate and normalize the inbound payload to ensure all downstream nodes receive clean, typed data.</p>
-  <pre><code>{
-  "SourceOutput": "webhookTriggerNode",
-  "Mappings": [
-    { "SourceField": "event",        "TargetField": "eventType",   "Transform": "lowercase" },
-    { "SourceField": "data.orderId", "TargetField": "orderId",     "Transform": "toString" },
-    { "SourceField": "data.amount",  "TargetField": "amountCents", "Transform": "toInt" },
-    { "SourceField": "data.currency","TargetField": "currency",    "Transform": "uppercase" },
-    { "SourceField": "timestamp",    "TargetField": "eventTime",   "Transform": "toDateTime" }
-  ]
-}</code></pre>
+  "dataMappingMode": "passthrough",
+  "dataMappings": []
+}
+// items[].json = each resolved source record, unchanged</code></pre>
 </main>
 <script src="/search.js"></script>
 </body>
