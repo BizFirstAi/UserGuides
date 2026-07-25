@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Execution Memory &amp; Scopes — Node Data Model | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Data Model</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-input-data.html">Input Data</a>
+  <a href="02-output-data.html">Output Data</a>
+  <a href="03-node-execution-result.html">Node Execution Result</a>
+  <a href="04-output-branches.html">Output Branches</a>
+  <a href="05-execution-memory-scopes.html" class="active">Execution Memory &amp; Scopes</a>
+  <a href="06-node-lifecycle-stages.html">Node Lifecycle Stages</a>
+  <a href="07-metadata-and-events.html">Metadata &amp; Events</a>
+  <a href="08-pinned-data.html">Pinned Data</a>
+  <div class="section-label">Navigation</div>
+  <a href="../index.html">&#8592; Flow Studio Guides</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Piece 5 of 5</div>
+    <h1>Execution Memory &amp; Scopes</h1>
+    <p class="lead">The mechanism that turns one node's Output Data into the next node's Input Data — a stack of scopes, not a single flat bag.</p>
+  </div>
+
+  <h2>The Scope Stack</h2>
+  <p><code>ExecutionMemory</code> holds a <code>Stack&lt;ExecutionScope&gt;</code>. The bottom of the stack is always the <strong>global scope</strong> (created once per workflow execution, optionally pre-loaded with thread input data). Every node execution pushes its own scope on entry and pops it on exit:</p>
+
+  <pre><code>// ExecutionMemory.cs:275-297 (EnterNodeScope)
+var nodeScope = new ExecutionScope(
+    scopeId: $"node-{nodeKey}",
+    type: VariableScopeType.Node,
+    parentScope: CurrentScope,     // chains to whatever scope was active
+    description: $"Node execution scope: {nodeName}",
+    nodeKey: nodeKey
+);
+_scopeStack.Push(nodeScope);</code></pre>
+
+  <table>
+    <thead><tr><th>Member</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>CurrentScope</code></td><td>The top of the stack — throws if the stack is ever empty (should never happen in normal execution).</td></tr>
+      <tr><td><code>ScopeDepth</code></td><td><code>0</code> at global scope only, <code>1+</code> once nodes/loops have pushed scopes.</td></tr>
+      <tr><td><code>GetVariable(key)</code> / <code>SetVariable(key, value)</code></td><td>Read/write on <code>CurrentScope</code> — a <code>null</code> value passed to <code>SetVariable</code> <em>removes</em> the variable rather than storing null.</td></tr>
+      <tr><td><code>SetLocalVariable(key, value)</code></td><td>Same as SetVariable but throws on a null value, and is explicitly for shadowing a parent-scope variable within just this scope.</td></tr>
+      <tr><td><code>GetAllVisibleVariables()</code></td><td>Walks the scope chain from <code>CurrentScope</code> up through every parent, merging into one dictionary — this is exactly what becomes the next node's <a href="01-input-data.html">InputData</a>.</td></tr>
+      <tr><td><code>LoopStack</code></td><td>A separate stack tracking <code>(LoopNodeKey, IterationCount)</code> — consulted for loop-iteration metadata in execution history, independent of the variable scope stack.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Why a Stack, Not a Flat Dictionary?</h2>
+  <p>Scoping lets nested execution (loops, sub-workflows) shadow variables locally without corrupting the parent's view. A variable set inside a loop iteration's scope is visible to nodes inside that iteration, but disappears once the iteration's scope is popped — the parent scope's own copy of that variable name (if any) is unaffected.</p>
+
+  <h2>Two Separate Storage Mechanisms — Don't Confuse Them</h2>
+  <div class="callout warning">
+    <strong>Flat variables vs. branch storage are two different systems</strong>
+    <ul style="margin-top:8px;padding-left:20px;">
+      <li><strong>Flat scope variables</strong> (<code>SetVariable</code>/<code>GetVariable</code>/<code>GetAllVisibleVariables</code>) — one entry per <em>field name</em>, written by <code>ProcessElementExecutionSequencer.cs:299-302</code> from each node's OutputData. This is what <a href="01-input-data.html">InputData</a> is built from.</li>
+      <li><strong>Node branch storage</strong> (<code>StoreNodeResultBranches</code>/<code>GetNodeResultBranches</code>) — one entry per <em>node key</em>, holding a full <code>NodeResultBranches</code> object. This exists purely so <code>{{node-X.output.field}}</code> expressions can look up a specific earlier node's result by name — it does <strong>not</strong> feed into InputData at all.</li>
+    </ul>
+  </div>
+
+  <h2>Node Scope Lifecycle, in Order</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4><code>EnterNodeScope(nodeKey, nodeName, inputData)</code></h4>
+        <p>Pushes a new scope chained to whatever was current, optionally pre-loaded with input parameters.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Node executes</h4>
+        <p>Reads via <code>InputData</code> (already resolved before entry), writes its own <code>OutputData</code>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4><code>ExitNodeScope()</code></h4>
+        <p>Pops the node's scope and returns the variables it exported — you cannot exit past the global scope (throws if only 1 scope remains).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Sequencer writes fields to the (now-restored) parent scope</h4>
+        <p>After <code>ExitNodeScope()</code>, <code>CurrentScope</code> is the parent again — each OutputData field gets written there via <code>SetVariable</code>, becoming visible to sibling/downstream nodes.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-nav">
+    <a href="04-output-branches.html">&#8592; Output Branches</a>
+    <a href="06-node-lifecycle-stages.html">Next: Node Lifecycle Stages &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

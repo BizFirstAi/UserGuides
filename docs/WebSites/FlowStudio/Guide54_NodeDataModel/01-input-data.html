@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Input Data — Node Data Model | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Data Model</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-input-data.html" class="active">Input Data</a>
+  <a href="02-output-data.html">Output Data</a>
+  <a href="03-node-execution-result.html">Node Execution Result</a>
+  <a href="04-output-branches.html">Output Branches</a>
+  <a href="05-execution-memory-scopes.html">Execution Memory &amp; Scopes</a>
+  <a href="06-node-lifecycle-stages.html">Node Lifecycle Stages</a>
+  <a href="07-metadata-and-events.html">Metadata &amp; Events</a>
+  <a href="08-pinned-data.html">Pinned Data</a>
+  <div class="section-label">Navigation</div>
+  <a href="../index.html">&#8592; Flow Studio Guides</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Piece 1 of 5</div>
+    <h1>Input Data</h1>
+    <p class="lead">The data a node sees when it starts — and the biggest misconception to unlearn: it is <em>not</em> simply "the previous node's output."</p>
+  </div>
+
+  <h2>What It Actually Is</h2>
+  <p><code>ProcessElementExecutionContext.InputData</code> (<code>Dictionary&lt;string, object?&gt;</code>) is a <strong>flat bag of every variable currently visible to this node</strong> — built fresh for every node execution, from the workflow's scope chain, not copied from one specific upstream node.</p>
+
+  <div class="callout info">
+    <strong>Where it's built</strong>
+    <code>ProcessElementExecutionSequencer.cs:102</code>:
+    <pre><code>InputData = memory?.GetAllVisibleVariables() ?? new Dictionary&lt;string, object?&gt;()</code></pre>
+    <code>GetAllVisibleVariables()</code> walks the current <a href="05-execution-memory-scopes.html">scope chain</a> and merges every visible variable into one dictionary — parent scopes first, closer scopes overriding same-named variables.
+  </div>
+
+  <h2>How Fields Get Into That Bag</h2>
+  <p>After each node finishes, its <code>OutputData</code> fields are written individually into the parent scope — <strong>not</strong> as one blob under the node's name:</p>
+  <pre><code>// ProcessElementExecutionSequencer.cs:299-302
+foreach (var kvp in nodeResult.OutputData)
+{
+    parentScope.SetVariable(kvp.Key, kvp.Value);
+}</code></pre>
+  <p>So if the HTTP Request node's OutputData has keys <code>status</code>, <code>items</code>, and <code>count</code>, those three become three separate scope variables. The <em>next</em> node's InputData is the union of all such variables still in scope — which can include fields from several nodes back, not just the immediately preceding one.</p>
+
+  <div class="callout warning">
+    <strong>A prior, now-removed approach</strong>
+    Earlier code also stored <code>lastNodeResult</code>, <code>lastNodeOutput</code>, and <code>nodeOutput-{key}</code> as whole-object variables. A comment at <code>ProcessElementExecutionSequencer.cs:304-309</code> confirms these were deliberately removed as duplicate storage — <code>OutputIndex</code> (via <code>RecordNodeExecution</code>) handles historic tracking instead, and flat field storage is considered sufficient. If you're chasing an old reference to <code>nodeOutput-XYZ</code>, it no longer exists.
+  </div>
+
+  <h2>What This Means in Practice</h2>
+  <table>
+    <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+    <tbody>
+      <tr><td>Can two upstream nodes' fields collide?</td><td>Yes — if two nodes both produce a field called <code>status</code>, whichever ran more recently (closer scope) wins for anything reading InputData directly.</td></tr>
+      <tr><td>Does InputData include the node's own config?</td><td>No — config is resolved separately via the node's settings object, not through InputData.</td></tr>
+      <tr><td>Does InputData include a node's own prior OutputBranches?</td><td>No, not directly — but see <a href="08-pinned-data.html">Pinned Data</a> for a case where a similar-shaped blob leaked in through a different path.</td></tr>
+      <tr><td>Is InputData the same object across the whole workflow?</td><td>No — a fresh dictionary is built via <code>GetAllVisibleVariables()</code> for every single node.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The Standard <code>items</code> Convention</h2>
+  <p>Most nodes read their real record-shaped input from one specific InputData key: <code>items</code>, in the standard <code>[{ "json": {...} }, ...]</code> envelope shape. A node unwraps this via the shared <code>ExtractRecordsFromItems</code> helper on <code>BaseNodeExecutor</code>, which pulls each entry's <code>json</code> value out — see <a href="02-output-data.html">Output Data</a> for how that shape gets produced in the first place.</p>
+
+  <div class="page-nav">
+    <a href="index.html">&#8592; Overview</a>
+    <a href="02-output-data.html">Next: Output Data &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

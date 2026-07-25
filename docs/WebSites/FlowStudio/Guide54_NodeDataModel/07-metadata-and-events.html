@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Metadata &amp; Events — Node Data Model | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Data Model</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-input-data.html">Input Data</a>
+  <a href="02-output-data.html">Output Data</a>
+  <a href="03-node-execution-result.html">Node Execution Result</a>
+  <a href="04-output-branches.html">Output Branches</a>
+  <a href="05-execution-memory-scopes.html">Execution Memory &amp; Scopes</a>
+  <a href="06-node-lifecycle-stages.html">Node Lifecycle Stages</a>
+  <a href="07-metadata-and-events.html" class="active">Metadata &amp; Events</a>
+  <a href="08-pinned-data.html">Pinned Data</a>
+  <div class="section-label">Navigation</div>
+  <a href="../index.html">&#8592; Flow Studio Guides</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Observability</div>
+    <h1>Metadata &amp; Events</h1>
+    <p class="lead">What actually gets published to the UI/logs at each lifecycle stage today — verified against the code, not assumed.</p>
+  </div>
+
+  <h2>The Publishing Path</h2>
+  <pre><code>report (ExecutionProgressReport)
+  → ReportExecutionProgressLifeCycleAsync(ctx, report)
+    → ReportExecutionProgressAsync(ctx, report)          // BaseNodeExecutor.ProgressReport.cs
+      ├── mirror: ActivityPublisher.ReportExecutionProgressAsync(...)   // best-effort, logged on failure
+      │     → converts to ExecutionActivityMilestone, routes to enabled targets
+      │     → milestone has NO Metadata property — report.Metadata is not carried into it
+      └── if report.RequiresEventLog:
+            sync report.Metadata → report.EventDescription.Metadata
+            → Processor.RaiseNodeProgressEvent4Async(ctx, report.EventDescription, message)
+              ← THIS is what reaches the frontend/SignalR</code></pre>
+
+  <div class="callout warning">
+    <strong>The file that does this is marked "Legacy" but is still the active code path</strong>
+    <code>BaseNodeExecutor.Reporting.Legacy\BaseNodeExecutor.ProgressReport.cs</code> carries a large comment block saying it's "DEPRECATED &amp; CONVERTED TO ExecutionActivityPublisher" — but its <code>ReportExecutionProgressAsync(NodeExecutionContext, ExecutionProgressReport)</code> method is the one every stage report actually flows through, including the mirror call into the newer <code>ExecutionActivityPublisher</code>. The newer publisher does not yet replace it end-to-end; it supplements it.
+  </div>
+
+  <h2>What Each Stage Actually Carries Today</h2>
+  <table>
+    <thead><tr><th>Stage</th><th>Where built</th><th>Metadata attached</th></tr></thead>
+    <tbody>
+      <tr><td><code>Initiated</code></td><td><code>OnExecute</code> (BaseNodeExecutor.Orchestrate.cs:95-98)</td><td><strong><code>inputData</code></strong> — scrubbed InputData. The <em>only</em> stage carrying input today.</td></tr>
+      <tr><td><code>Entry</code></td><td>line 100-101</td><td>none</td></tr>
+      <tr><td><code>EntryValidate</code></td><td>line 103-104</td><td>none</td></tr>
+      <tr><td><code>PreValidationGuardRails</code></td><td>line 106-107</td><td>none</td></tr>
+      <tr><td><code>PreProcess</code></td><td>line 112-113</td><td>none</td></tr>
+      <tr><td><code>Process</code></td><td>line 116-117</td><td>none</td></tr>
+      <tr><td><code>PostProcess</code></td><td>line 119-120</td><td>none</td></tr>
+      <tr><td><code>PostValidationGuardRails</code></td><td>line 122-123</td><td>none</td></tr>
+      <tr><td><code>Exit</code></td><td>line 128-129</td><td>none</td></tr>
+      <tr><td><code>Completed</code> / <code>Error</code></td><td><code>Execute()</code> line 78/84, via <code>CreateStageReportByResult</code></td><td><strong>safe scalar summary only</strong>: <code>OutputPortKey</code>, <code>IsSuccess</code>, <code>IsSkipped</code>, <code>IsRetry</code>, <code>DurationMs</code>, <code>ErrorMessage</code>, <code>ExceptionMessage</code> — explicitly <em>not</em> raw <code>OutputData</code>/<code>OutputBranches</code>/<code>Exception</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>Why Completed/Error is scalar-only — a real crash, not caution for its own sake</strong>
+    <code>ExecutionProgressReportFactoryResultExtensions.cs:58-61</code> has this comment on the code that builds the Completed/Error metadata:
+    <pre><code>// Project a safe scalar summary instead of the raw NodeExecutionResult — the raw object
+// graph (Exception, OutputPort, OutputBranches) is not guaranteed JSON-serializable and
+// previously crashed SignalR's write pump (System.NotSupportedException on IntPtr/WaitHandle
+// reachable through Exception), silently corrupting the client connection.</code></pre>
+    Any change that adds output data back into this stage's metadata must keep this constraint in mind — project a safe, scrubbed summary, never the raw <code>NodeExecutionResult</code>/<code>Exception</code>/<code>OutputBranches</code> graph.
+  </div>
+
+  <h2>Correcting a Common Assumption</h2>
+  <p>It's easy to assume every stage broadcasts both input and output, given how many stages exist. In the current code, <strong>8 of the 10 stages carry no data payload at all</strong>, and none currently carry full <code>OutputData</code> — only <code>Initiated</code> (input) and <code>Completed</code>/<code>Error</code> (a scalar result summary) carry anything.</p>
+  <p>If a UI or log is showing more than that, the most likely sources are <strong>outside this lifecycle pipeline</strong>:</p>
+  <ul style="margin-left:20px;">
+    <li>Individual node executors' own <code>LogActivity(...)</code> calls — each executor decides its own payload, independent of the stage reports above.</li>
+    <li>UI panels (e.g. a Nodes tab's Input/Config/Output columns) that read directly from <code>NodeExecutionResult</code> or pinned branches via a separate API, not through these events.</li>
+  </ul>
+
+  <h2>Recommended Shape (Not Yet Implemented)</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Input at Entry, not Initiated</h4>
+        <p>Move the <code>inputData</code> metadata attachment to fire on the <code>Entry</code> report instead of (or in addition to, during a transition) <code>Initiated</code>, so "input" and "the stage named Entry" mean the same thing to anyone reading the event stream.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Output at Completed</h4>
+        <p>Add a scrubbed, safe projection of <code>OutputData</code> to the <code>Completed</code> stage's metadata — following the same JSON-serializability discipline already established for the scalar summary, not the raw dictionary.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Never publish OutputBranches' duplicated Data</h4>
+        <p>If any future change is tempted to attach <code>OutputBranches</code> to an event for convenience, replace it with a <strong>path reference</strong> instead (e.g. <code>nodeKey</code> + field name) — the branch data is already retrievable on demand via <code>memory.GetNodeResultBranches(nodeKey)</code>, so publishing the duplicated payload adds size and cycle risk (see <a href="08-pinned-data.html">Pinned Data</a>) for no new information.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-nav">
+    <a href="06-node-lifecycle-stages.html">&#8592; Node Lifecycle Stages</a>
+    <a href="08-pinned-data.html">Next: Pinned Data &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

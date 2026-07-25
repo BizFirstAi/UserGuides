@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pinned Data — Node Data Model | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Data Model</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-input-data.html">Input Data</a>
+  <a href="02-output-data.html">Output Data</a>
+  <a href="03-node-execution-result.html">Node Execution Result</a>
+  <a href="04-output-branches.html">Output Branches</a>
+  <a href="05-execution-memory-scopes.html">Execution Memory &amp; Scopes</a>
+  <a href="06-node-lifecycle-stages.html">Node Lifecycle Stages</a>
+  <a href="07-metadata-and-events.html">Metadata &amp; Events</a>
+  <a href="08-pinned-data.html" class="active">Pinned Data</a>
+  <div class="section-label">Navigation</div>
+  <a href="../index.html">&#8592; Flow Studio Guides</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Case Study</div>
+    <h1>Pinned Data</h1>
+    <p class="lead">A real bug, found and fixed this session, that only makes sense once you understand every piece covered on the previous seven pages. If you've read this far, this is the payoff.</p>
+  </div>
+
+  <h2>What Pinning Is</h2>
+  <p>Studio lets you "pin" a node's output — freeze a specific result so re-running the workflow during testing doesn't re-execute that node, it just replays the frozen data. The frozen JSON is stored on <code>ElementDefinition.PinnedData</code> and read back by <code>PinnedDataReader.Read(...)</code>, which short-circuits the node executor entirely:</p>
+  <pre><code>// ProcessElementExecutor.cs:106-134
+var pinnedBranches = PinnedDataReader.Read(elementContext.ElementDefinition?.PinnedData, _logger);
+if (pinnedBranches is not null)
+{
+    var pinnedOutputData = ExtractOutputData(pinnedBranches);
+    elementContext.OutputData = pinnedOutputData;
+    elementContext.ParentThreadContext?.Memory?.StoreNodeResultBranches(
+        elementContext.ProcessElementKey, pinnedBranches);
+    // ... executor is skipped entirely
+    return new NodeExecutionResult
+    {
+        IsSuccess = true,
+        OutputData = pinnedOutputData,
+        OutputBranches = pinnedBranches,
+        OutputPortKey = ExecutionConstants.OutputPorts.Main
+    };
+}</code></pre>
+
+  <h2>The Reader's Two Formats</h2>
+  <p><code>PinnedDataReader.Read</code> tries two JSON shapes, in order:</p>
+  <ol style="margin-left:20px;">
+    <li><strong>Typed format</strong> (<code>PinnedDataDto</code>) — the shape Studio is expected to write: a top-level <code>{ Success: [...], Error: [...], Conditional: {...} }</code>, matching <a href="04-output-branches.html">Output Branches</a>' own shape.</li>
+    <li><strong>Legacy fallback</strong> — if the typed shape doesn't parse or has no content, the whole JSON blob gets deserialized as one flat <code>Dictionary&lt;string, object?&gt;</code> and wrapped as a single record.</li>
+  </ol>
+
+  <h2>The Bug</h2>
+  <p>If a node gets pinned while its own data already carries something descended from an earlier pin or branch (very plausible during iterative "run → tweak config → run again" testing — exactly the workflow this whole guide traces), the pinned JSON is really a serialized <strong>whole</strong> <code>NodeExecutionResult</code>: sibling <code>OutputData</code> + <code>OutputBranches</code> properties, per <a href="03-node-execution-result.html">Node Execution Result</a>. That doesn't match the typed DTO's top-level shape, so it fell through to the legacy path — which then treated the <em>entire</em> blob, literal <code>"OutputBranches"</code> key included, as one flat record's field data.</p>
+
+  <div class="callout danger">
+    <strong>Why dictionary keys are the tell</strong>
+    <code>JsonNamingPolicy.CamelCase</code> (used elsewhere in this engine's serializers) only renames real C# <em>properties</em> during serialization — it never touches a <code>Dictionary&lt;string, object&gt;</code>'s literal string <em>keys</em>. So a key like <code>"OutputBranches"</code> (PascalCase, matching the C# property name it was serialized from) survives verbatim through any dictionary-shaped JSON round-trip. That's exactly the fingerprint that exposed this bug: an error path showing <code>PascalCase</code> segments (<code>OutputBranches.Success.Data...</code>) inside JSON otherwise serialized with a camelCase naming policy — proof the nested content wasn't being freshly serialized through the current call, but was an already-serialized blob from somewhere else, embedded as-is.
+  </div>
+
+  <p>Each re-pin captured the whole previous result — including its own nested <code>OutputBranches</code> from the pin before that — and nested it one level deeper. Left unguarded, this repeats every re-pin until <code>JsonSerializerOptions.MaxDepth = 32</code> is exceeded during state finalization, throwing:</p>
+  <pre><code>A possible object cycle was detected. This can either be due to a cycle or if the
+object depth is larger than the maximum allowed depth of 32.
+Path: $.outputData.OutputBranches.Success.Data.OutputBranches.Success.Data.
+OutputBranches.Success.Data.OutputBranches.Success.Data.OutputBranches.Success.Data.</code></pre>
+  <p>Because that finalization call runs inside a <code>finally</code> block in <code>ProcessElementExecutionSequencer.cs</code>, the exception propagated up and aborted the <em>entire</em> node/workflow — even though the actual business logic (e.g. a Data Mapping node) had already completed successfully.</p>
+
+  <h2>The Fix</h2>
+  <p><code>PinnedDataReader.cs</code> now detects this exact shape before accepting the legacy-fallback dictionary as record data — if it sees both <code>OutputData</code> and <code>OutputBranches</code> keys together, it unwraps to the innermost real <code>OutputData</code> instead (capped at 8 levels as a hard backstop), logging a warning that the node should be re-pinned for a clean snapshot:</p>
+  <pre><code>private static Dictionary&lt;string, object?&gt; UnwrapNestedResult(Dictionary&lt;string, object?&gt; dict, ILogger logger)
+{
+    var seen = 0;
+    while (dict.TryGetValue("OutputData", out var outputDataValue)
+           &amp;&amp; dict.ContainsKey("OutputBranches")
+           &amp;&amp; outputDataValue is JsonElement { ValueKind: JsonValueKind.Object } outputDataElement)
+    {
+        var inner = JsonSerializer.Deserialize&lt;Dictionary&lt;string, object?&gt;&gt;(outputDataElement.GetRawText(), _options);
+        if (inner is null) break;
+        dict = inner;
+        seen++;
+        if (seen &gt;= 8) { logger.LogWarning(/* stopped unwrapping early */); break; }
+    }
+    return dict;
+}</code></pre>
+
+  <p>Two independent defense-in-depth changes were also made in <code>ExecutionStateSerializer.cs</code>, in case a similar shape ever surfaces from a different source: <code>ReferenceHandler.IgnoreCycles</code> on the serializer options (handles a genuine live reference cycle, if one exists elsewhere), and <code>SerializeFinalDataState</code> now degrades gracefully instead of re-throwing from inside that <code>finally</code> block — a persistence/audit-trail failure should never abort a node that already succeeded.</p>
+
+  <div class="callout success">
+    <strong>The lesson this case study teaches</strong>
+    Every piece in this guide exists for a reason, and bugs in this area tend to come from crossing two of them without realizing it: seeding OutputData from InputData by reference (<a href="02-output-data.html">Output Data</a>), building OutputBranches as a shape that mirrors the whole result (<a href="04-output-branches.html">Output Branches</a>), and a persistence path that assumes "flat record" without checking. Understanding all five pieces together is what makes a bug like this traceable in the first place.
+  </div>
+
+  <div class="page-nav">
+    <a href="07-metadata-and-events.html">&#8592; Metadata &amp; Events</a>
+    <a href="index.html">Back to Overview</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Execution Result — Node Data Model | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Data Model</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-input-data.html">Input Data</a>
+  <a href="02-output-data.html">Output Data</a>
+  <a href="03-node-execution-result.html" class="active">Node Execution Result</a>
+  <a href="04-output-branches.html">Output Branches</a>
+  <a href="05-execution-memory-scopes.html">Execution Memory &amp; Scopes</a>
+  <a href="06-node-lifecycle-stages.html">Node Lifecycle Stages</a>
+  <a href="07-metadata-and-events.html">Metadata &amp; Events</a>
+  <a href="08-pinned-data.html">Pinned Data</a>
+  <div class="section-label">Navigation</div>
+  <a href="../index.html">&#8592; Flow Studio Guides</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Piece 3 of 5</div>
+    <h1>Node Execution Result</h1>
+    <p class="lead">The envelope every node execution returns — OutputData plus everything the engine needs to route, log, and report on that execution.</p>
+  </div>
+
+  <h2>The Full Shape</h2>
+  <pre><code>// NodeExecutionResult.cs:82-108
+public class NodeExecutionResult
+{
+    public string OutputPortKey { get; set; } = "main";
+    public OutputPortUsageInfo? OutputPort;
+    public bool IsSuccess { get; set; } = true;
+    public bool IsSkipped { get; set; } = false;
+    public bool IsRetry { get; set; } = false;
+    public int DurationMs { get; set; } = 0;
+
+    public string? ErrorMessage { get; set; }
+    public Exception? Exception { get; set; }
+
+    public INodeResultBranches? OutputBranches { get; set; }
+
+    public Dictionary&lt;string, object&gt; OutputData { get; set; } = new();
+    public byte[]? OutputBinary { get; set; }
+}</code></pre>
+
+  <table>
+    <thead><tr><th>Field</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>OutputPortKey</code></td><td>Which port the node exited from — <code>"main"</code>, <code>"error"</code>, a conditional branch name, or <code>"waiting"</code>/<code>"pending"</code> for HIL suspension.</td></tr>
+      <tr><td><code>IsSuccess</code></td><td>Drives whether <code>OnSuccess</code> or <code>OnError</code> fires, and whether the node's state finalizes as Completed or Failed.</td></tr>
+      <tr><td><code>IsSkipped</code> / <code>IsRetry</code></td><td>Flags for skip-logic and retry bookkeeping.</td></tr>
+      <tr><td><code>DurationMs</code></td><td>Populated from the node's own perf timer, used in the Completed/Error stage report.</td></tr>
+      <tr><td><code>ErrorMessage</code> / <code>Exception</code></td><td>Populated on failure — <strong>never</strong> forwarded raw into published events (see <a href="07-metadata-and-events.html">Metadata &amp; Events</a> for why).</td></tr>
+      <tr><td><code>OutputBranches</code></td><td>A sibling wrapper around OutputData — see <a href="04-output-branches.html">Output Branches</a>.</td></tr>
+      <tr><td><code>OutputData</code></td><td>The node's own output — see <a href="02-output-data.html">Output Data</a>.</td></tr>
+      <tr><td><code>OutputBinary</code></td><td>Raw binary pass-through (file bytes, images) alongside OutputData.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>OutputData and OutputBranches are siblings, not nested</strong>
+    This is the single most important structural fact in this whole guide. They are two independent properties on the same object. A JSON path that looks like <code>OutputData.OutputBranches...</code> is not this class's real shape — it's a sign some other code serialized the <em>whole</em> NodeExecutionResult and mistakenly treated it as flat record data. See <a href="08-pinned-data.html">Pinned Data</a> for exactly this happening.
+  </div>
+
+  <h2>Where It Gets Created and Reset</h2>
+  <p>A fresh <code>NodeExecutionResult</code> is created at the very start of every single node execution — including every loop iteration — so nothing carries over accidentally between runs of the same node:</p>
+  <pre><code>// BaseNodeExecutor.Orchestrate.cs:19-24 (Execute method)
+executionContext.NodeResult = new NodeExecutionResult
+{
+    OutputData = new Dictionary&lt;string, object?&gt;()
+};</code></pre>
+
+  <h2>How the Result Flows Back Out</h2>
+  <p>After <code>ExecuteInternalAsync</code> returns, the result propagates up through <code>OnExecute</code> → <code>Execute</code> → <code>ProcessElementExecutor.ExecuteAsync</code> → <code>ProcessElementExecutionSequencer.ExecuteElementAsync</code>, where its <code>OutputData</code> fields get written into scope (see <a href="05-execution-memory-scopes.html">Execution Memory &amp; Scopes</a>) and its state gets persisted (see <a href="07-metadata-and-events.html">Metadata &amp; Events</a>).</p>
+
+  <div class="page-nav">
+    <a href="02-output-data.html">&#8592; Output Data</a>
+    <a href="04-output-branches.html">Next: Output Branches &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

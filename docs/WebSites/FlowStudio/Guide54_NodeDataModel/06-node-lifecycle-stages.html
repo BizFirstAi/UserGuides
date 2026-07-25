@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Lifecycle Stages — Node Data Model | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Data Model</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-input-data.html">Input Data</a>
+  <a href="02-output-data.html">Output Data</a>
+  <a href="03-node-execution-result.html">Node Execution Result</a>
+  <a href="04-output-branches.html">Output Branches</a>
+  <a href="05-execution-memory-scopes.html">Execution Memory &amp; Scopes</a>
+  <a href="06-node-lifecycle-stages.html" class="active">Node Lifecycle Stages</a>
+  <a href="07-metadata-and-events.html">Metadata &amp; Events</a>
+  <a href="08-pinned-data.html">Pinned Data</a>
+  <div class="section-label">Navigation</div>
+  <a href="../index.html">&#8592; Flow Studio Guides</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Lifecycle</div>
+    <h1>Node Lifecycle Stages</h1>
+    <p class="lead">Every node passes through the same 10 stages, in the same order, driven by <code>BaseNodeExecutor.Orchestrate.cs</code>. This is the backbone that everything else in this guide hangs off of.</p>
+  </div>
+
+  <h2>The Stage Enum</h2>
+  <pre><code>// eNodeStage.cs
+Unknown = 0
+Initiated = 10
+Entry = 100
+EntryValidate = 200
+PreValidationGuardRails = 250
+PreProcess = 300
+Process = 400
+DoWork = 410        // internal sub-stage, only during Process (e.g. agent tool calls)
+PostProcess = 500
+PostValidationGuardRails = 550
+Exit = 600
+Error = 700
+HIL = 800           // suspension-related, not part of the linear sequence
+Suspended = 810
+Completed = 10000</code></pre>
+
+  <h2>The Call Chain</h2>
+  <pre><code>Execute()                          // BaseNodeExecutor.Orchestrate.cs:15
+├── resets NodeResult, OutputData = {}
+├── OnExecute()                    // line 39, returns the stage sequence below
+│   ├── report: Initiated          // "Starting" — carries scrubbed InputData today
+│   ├── OnEntry()                  // → InitializeOutputDataFromInput() runs HERE
+│   ├── report: Entry
+│   ├── OnEntryValidate()
+│   ├── report: EntryValidate
+│   ├── OnPreValidationGuardRails()
+│   ├── report: PreValidationGuardRails   (a "blocked" result short-circuits here)
+│   ├── OnPreProcess()
+│   ├── report: PreProcess                (a non-null result short-circuits here)
+│   ├── OnProcess() → OnProcessExecution() → **executor's ExecuteInternalAsync()**
+│   ├── report: Process
+│   ├── OnPostProcess()
+│   ├── report: PostProcess
+│   ├── OnPostValidationGuardRails()      (a violation REPLACES the result here)
+│   ├── report: PostValidationGuardRails
+│   ├── OnExit()
+│   └── report: Exit
+├── OnSuccess() or OnError()        // based on result.IsSuccess
+└── report: Completed or Error      // carries a safe scalar summary of the result</code></pre>
+
+  <table>
+    <thead><tr><th>Stage</th><th>What actually happens there</th></tr></thead>
+    <tbody>
+      <tr><td><code>Initiated</code></td><td>First report fired. Currently the only stage whose metadata includes <code>inputData</code> (scrubbed). See <a href="07-metadata-and-events.html">Metadata &amp; Events</a>.</td></tr>
+      <tr><td><code>Entry</code></td><td><code>OnEntry()</code> runs <strong>before</strong> this report fires — this is where <code>InitializeOutputDataFromInput</code> seeds OutputData (see <a href="02-output-data.html">Output Data</a>), and where <code>InputSnapshot</code> gets scrubbed and stored on the runtime info.</td></tr>
+      <tr><td><code>EntryValidate</code></td><td>Node-specific input validation hook.</td></tr>
+      <tr><td><code>PreValidationGuardRails</code></td><td>Guard rail checks before the node's main logic. A "blocked" verdict short-circuits the whole node here — <code>OnProcess</code> never runs.</td></tr>
+      <tr><td><code>PreProcess</code></td><td>Last hook before the executor's real logic. A non-null result here also short-circuits (used by some nodes for early-exit conditions).</td></tr>
+      <tr><td><code>Process</code></td><td>Where <code>ExecuteInternalAsync</code> — the node-specific logic every node type implements — actually runs, via <code>OnProcess → OnProcessExecution</code>.</td></tr>
+      <tr><td><code>PostProcess</code></td><td>Post-execution hook, runs regardless of success/failure.</td></tr>
+      <tr><td><code>PostValidationGuardRails</code></td><td>Guard rail checks on the <em>output</em>. A violation here <strong>replaces</strong> the node's result with a GuardrailsViolation result — this used to be computed and silently discarded; it's now actually applied.</td></tr>
+      <tr><td><code>Exit</code></td><td>Final hook before the result is returned upward.</td></tr>
+      <tr><td><code>Completed</code> / <code>Error</code></td><td>Fired from <code>Execute()</code> itself (not from <code>OnExecute</code>) — the very last thing that happens, after <code>OnSuccess</code>/<code>OnError</code> have run.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>DoWork and HIL are not part of this linear chain</strong>
+    <code>DoWork</code> is emitted from inside a node's own logic during <code>Process</code> (e.g. an AI agent reporting "calling tool X") via <code>ReportExecutionProgressDoWorkAsync</code>, gated by <code>obs.EnableNodeInternalEvents</code>. <code>HIL</code>/<code>Suspended</code> fire when a node's result routes to the <code>waiting</code>/<code>pending</code> port, registering suspension infrastructure rather than continuing the linear sequence.
+  </div>
+
+  <h2>What This Means for Debugging</h2>
+  <p>If you need to know exactly when OutputData first exists for a node, it's the moment <code>Execute()</code> resets it (before <code>OnExecute</code> even starts) — not at <code>Entry</code>. If you need to know when a node's <em>real</em> logic ran, that's <code>Process</code>, specifically inside <code>OnProcessExecution</code> calling the concrete executor's <code>ExecuteInternalAsync</code>.</p>
+
+  <div class="page-nav">
+    <a href="05-execution-memory-scopes.html">&#8592; Execution Memory &amp; Scopes</a>
+    <a href="07-metadata-and-events.html">Next: Metadata &amp; Events &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

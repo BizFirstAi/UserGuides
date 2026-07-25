@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Output Branches — Node Data Model | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Data Model</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-input-data.html">Input Data</a>
+  <a href="02-output-data.html">Output Data</a>
+  <a href="03-node-execution-result.html">Node Execution Result</a>
+  <a href="04-output-branches.html" class="active">Output Branches</a>
+  <a href="05-execution-memory-scopes.html">Execution Memory &amp; Scopes</a>
+  <a href="06-node-lifecycle-stages.html">Node Lifecycle Stages</a>
+  <a href="07-metadata-and-events.html">Metadata &amp; Events</a>
+  <a href="08-pinned-data.html">Pinned Data</a>
+  <div class="section-label">Navigation</div>
+  <a href="../index.html">&#8592; Flow Studio Guides</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Piece 4 of 5</div>
+    <h1>Output Branches</h1>
+    <p class="lead">A branch-aware copy of Output Data that exists for exactly one reason: so <code>{{node-X.output}}</code> expressions can resolve later in the workflow. It is built twice, independently, by two different pieces of code.</p>
+  </div>
+
+  <h2>The Shape</h2>
+  <pre><code>INodeResultBranches
+├── Success : IReadOnlyList&lt;INodeDataItem&gt;
+├── Error   : IReadOnlyList&lt;INodeDataItem&gt;?
+└── Conditional : IReadOnlyDictionary&lt;string, IReadOnlyList&lt;INodeDataItem&gt;&gt;?
+
+INodeDataItem
+├── Data : IReadOnlyDictionary&lt;string, object?&gt;   ← a COPY of OutputData's top-level fields
+├── SourceItemIndex : int
+└── SourceBranchIndex : int</code></pre>
+
+  <h2>Build Site #1 — the Auto-Fill</h2>
+  <p>Right after an executor's <code>ExecuteInternalAsync</code> returns, if it didn't set <code>OutputBranches</code> itself, the base class builds one automatically so expression resolution always has something to read:</p>
+  <pre><code>// BaseNodeExecutor.Process.cs:65-73
+if (ResultInfo.Result.OutputBranches is null
+    && ResultInfo.Result.OutputData is { Count: > 0 })
+{
+    var data = ResultInfo.Result.OutputData
+        .ToDictionary(k => k.Key, v => (object?)v.Value);
+    ResultInfo.Result.OutputBranches = new NodeResultBranchesBuilder()
+        .AddSuccess(data)
+        .Build();
+}</code></pre>
+  <p><code>.ToDictionary(...)</code> is a genuine shallow copy — a new outer <code>Dictionary</code> instance, though any nested reference-type values (lists, nested dictionaries) are still shared with the original OutputData.</p>
+
+  <h2>Build Site #2 — the Sequencer's Own Copy</h2>
+  <p>Separately, after the node fully returns, the orchestration sequencer builds a <em>second</em>, independent <code>NodeResultBranches</code> and stores it keyed by node key — this is the one actually consulted for <code>{{node-X.output.field}}</code> template resolution:</p>
+  <pre><code>// ProcessElementExecutionSequencer.cs:312-316
+// Also store for expression resolution ({{node-X.output.Y}} templates)
+var branches = new NodeResultBranchesBuilder()
+    .AddSuccess(nodeResult.OutputData.ToDictionary(k => k.Key, v => (object?)v.Value))
+    .Build();
+memory.StoreNodeResultBranches(currentElement.NodeKey, branches);</code></pre>
+
+  <div class="callout warning">
+    <strong>Why two builds of the same thing?</strong>
+    Build #1 lives on the <code>NodeExecutionResult</code> object itself (useful for anything holding that specific result, e.g. the pinned-data short-circuit path). Build #2 is stored in <code>ExecutionMemory</code> keyed by node key, so <em>any later node</em> in the workflow can resolve <code>{{someEarlierNode.output.field}}</code> — not just whatever code happens to be holding that one result object. They're redundant with each other but serve different lookup paths. Neither shares an object reference with the original <code>OutputData</code> dictionary itself (both do a real <code>.ToDictionary(...)</code>), so this redundancy is not, by itself, a correctness bug — just duplicated memory and duplicated JSON if either gets serialized wholesale.
+  </div>
+
+  <h2>How to Read <code>{{node-X.output}}</code> Cleanly</h2>
+  <p><code>NodeDataContextAdapter</code> (<code>Services/Expressions/Adapters/NodeDataContextAdapter.cs</code>) is the clean, typed way expressions reach this data — it wraps <code>memory.GetNodeResultBranches(nodeId)</code> behind <code>INodeResultData</code>, exposing <code>CurrentItem</code> / <code>Items</code> / <code>Branches</code>. Prefer resolving a specific field off <code>CurrentItem.Data</code> rather than the whole <code>Branches</code> object — reading the whole object and re-embedding it somewhere is exactly the pattern that caused the pinned-data bug (see <a href="08-pinned-data.html">Pinned Data</a>).</p>
+
+  <div class="page-nav">
+    <a href="03-node-execution-result.html">&#8592; Node Execution Result</a>
+    <a href="05-execution-memory-scopes.html">Next: Execution Memory &amp; Scopes &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>
