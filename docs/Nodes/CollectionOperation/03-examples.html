@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -17,6 +17,8 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
 .example-block h3{margin:0 0 8px;font-size:16px;color:var(--accent);}
 .example-block p{font-size:14px;color:var(--text-muted);margin-bottom:14px;}
 .outcome{background:#edf7f0;border-left:4px solid #2a9d5c;padding:12px 16px;border-radius:4px;margin-top:14px;font-size:13px;color:#1a3e2a;}
+.step-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);margin:16px 0 4px;}
+pre{background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;}
 </style>
 </head>
 <body>
@@ -47,100 +49,320 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
   <div class="page-header">
     <div class="breadcrumb">Portal / Nodes / Collection Operation / Examples</div>
     <h1>Examples</h1>
-    <p class="subtitle">Five practical examples covering each major collection operation type.</p>
+    <p class="subtitle">Eight complete, real-world examples — each showing the actual upstream envelope going in, the node configuration, and the actual output envelope coming out.</p>
   </div>
 
   <div class="example-block">
-    <h3>Example 1 — Filter: Active Customers Only</h3>
-    <p>A workflow receives a list of all customers from a CRM query. Use filter to retain only those with an active subscription status before sending renewal reminders.</p>
-    <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "node_type": "CollectionOperation",
-  "name": "FilterActiveCustomers",
-  "config": {
-    "operation": "filter",
-    "collection": "{@ output.GetAllCustomers.data }",
-    "expression": "item.subscriptionStatus === 'active' && item.emailOptIn === true"
-  }
+    <h3>Example 1 — Filter: Active Premium Subscriptions (from a CRM query node)</h3>
+    <p>A CRM query node returns every customer. Keep only those with an active subscription and premium tier before sending renewal reminders.</p>
+    <div class="step-label">Upstream input (CRM query node's output)</div>
+    <pre><code>{
+  "timestamp": "2026-07-24T10:00:02.1102003Z",
+  "triggerTime": "2026-07-24T10:00:00.0000000Z",
+  "resource": "crm-query",
+  "operation": "get-all-customers",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    { "json": { "customerId": "C-001", "subscriptionStatus": "active",   "tier": "premium", "customerEmail": "amy@example.com" } },
+    { "json": { "customerId": "C-002", "subscriptionStatus": "expired",  "tier": "premium", "customerEmail": "ben@example.com" } },
+    { "json": { "customerId": "C-003", "subscriptionStatus": "active",   "tier": "basic",   "customerEmail": "cara@example.com" } },
+    { "json": { "customerId": "C-004", "subscriptionStatus": "active",   "tier": "premium", "customerEmail": "drew@example.com" } }
+  ],
+  "success": true
 }</code></pre>
-    <div class="outcome"><strong>Outcome:</strong> <code>result</code> contains only customers who are both active and opted in to email. <code>count</code> tells the next Switch node how many emails to send. An empty result (count = 0) can be handled by a conditional branch to skip the email loop.</div>
-  </div>
-
-  <div class="example-block">
-    <h3>Example 2 — Map: Extract Invoice IDs from Order Objects</h3>
-    <p>A Loop node needs an array of IDs to iterate over, but the source data is an array of full order objects. Use map to project just the IDs.</p>
-    <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "node_type": "CollectionOperation",
-  "name": "ExtractOrderIds",
-  "config": {
-    "operation": "map",
-    "collection": "{@ var.orders }",
-    "expression": "item.orderId"
-  }
-}
-
-// Input: [{ orderId: "ORD-1", total: 100 }, { orderId: "ORD-2", total: 200 }]
-// Output result: ["ORD-1", "ORD-2"]</code></pre>
-    <div class="outcome"><strong>Outcome:</strong> <code>result</code> is a plain string array of order IDs. The Loop node can iterate directly over <code>output.ExtractOrderIds.result</code>.</div>
-  </div>
-
-  <div class="example-block">
-    <h3>Example 3 — Reduce: Sum All Invoice Line Item Totals</h3>
-    <p>After processing a multi-line invoice, calculate the grand total by reducing the line items array to a single numeric sum.</p>
-    <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "node_type": "CollectionOperation",
-  "name": "SumLineItems",
-  "config": {
-    "operation": "reduce",
-    "collection": "{@ var.lineItems }",
-    "expression": "acc + item.amount",
-    "initial_value": 0
-  }
-}
-
-// Input lineItems: [{ amount: 100 }, { amount: 250.50 }, { amount: 75 }]
-// Output result: 425.50</code></pre>
-    <div class="outcome"><strong>Outcome:</strong> <code>result</code> = <code>425.50</code>. Store this in a variable for use in the PDF invoice template and payment node.</div>
-  </div>
-
-  <div class="example-block">
-    <h3>Example 4 — Sort: Products by Price (Cheapest First)</h3>
-    <p>A product recommendation workflow needs to present the cheapest in-stock products first. Sort the product array by unit price ascending.</p>
-    <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "node_type": "CollectionOperation",
-  "name": "SortProductsByPrice",
-  "config": {
-    "operation": "sort",
-    "collection": "{@ output.GetProducts.data }",
-    "field": "unitPrice",
-    "direction": "asc"
-  }
+    <div class="step-label">CollectionOperation configuration</div>
+    <pre><code>{
+  "operation": "filter",
+  "expression": "item.subscriptionStatus === 'active' && item.tier === 'premium'"
 }</code></pre>
-    <div class="outcome"><strong>Outcome:</strong> <code>result</code> is the same array sorted from lowest to highest <code>unitPrice</code>. The Loop node that follows renders product cards in price order.</div>
+    <div class="step-label">Output</div>
+    <pre><code>{
+  "status": "success",
+  "successCount": 2,
+  "errorCount": 0,
+  "errorRecords": [],
+  "count": 2,
+  "items": [
+    { "json": { "customerId": "C-001", "subscriptionStatus": "active", "tier": "premium", "customerEmail": "amy@example.com" } },
+    { "json": { "customerId": "C-004", "subscriptionStatus": "active", "tier": "premium", "customerEmail": "drew@example.com" } }
+  ]
+}</code></pre>
+    <div class="outcome"><strong>Outcome:</strong> <code>items</code> holds only the two matching customers. <code>successCount</code> (2) tells a downstream node how many renewal emails to send; an empty result (<code>successCount: 0</code>) can be handled by a conditional branch to skip the email loop entirely.</div>
   </div>
 
   <div class="example-block">
-    <h3>Example 5 — Distinct: Deduplicate a Contact Email List</h3>
-    <p>A mailing list assembled from multiple sources may contain duplicate contacts. Use distinct on the email field to ensure each recipient receives only one message.</p>
-    <pre style="background:var(--code-bg);color:var(--code-text);padding:18px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "node_type": "CollectionOperation",
-  "name": "DeduplicateEmailList",
-  "config": {
-    "operation": "distinct",
-    "collection": "{@ var.allContacts }",
-    "field": "email"
-  }
-}
+    <h3>Example 2 — Map: Extract Order IDs (from a database query node)</h3>
+    <p>A Loop node needs a plain array of IDs to iterate over, but the source data is full order objects from a database query.</p>
+    <div class="step-label">Upstream input (SQL query node's output)</div>
+    <pre><code>{
+  "timestamp": "2026-07-24T10:05:31.0021044Z",
+  "triggerTime": "2026-07-24T10:05:30.0000000Z",
+  "resource": "sql-query",
+  "operation": "select",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    { "json": { "orderId": "ORD-1", "total": 100 } },
+    { "json": { "orderId": "ORD-2", "total": 200 } }
+  ],
+  "success": true
+}</code></pre>
+    <div class="step-label">CollectionOperation configuration</div>
+    <pre><code>{
+  "operation": "map",
+  "expression": "item.orderId"
+}</code></pre>
+    <div class="step-label">Output</div>
+    <pre><code>{
+  "status": "success",
+  "successCount": 2,
+  "errorCount": 0,
+  "errorRecords": [],
+  "count": 2,
+  "items": [
+    { "json": "ORD-1" },
+    { "json": "ORD-2" }
+  ]
+}</code></pre>
+    <div class="outcome"><strong>Outcome:</strong> A downstream Loop node iterates over <code>output.ExtractOrderIds.items</code>, reading each entry's <code>.json</code> as a plain order ID string.</div>
+  </div>
 
-// Input: [
-//   { name: "Alice", email: "alice@co.com" },
-//   { name: "Alice Smith", email: "alice@co.com" },  // duplicate email
-//   { name: "Bob", email: "bob@co.com" }
-// ]
-// Output result: [
-//   { name: "Alice", email: "alice@co.com" },  // first occurrence kept
-//   { name: "Bob", email: "bob@co.com" }
-// ]</code></pre>
-    <div class="outcome"><strong>Outcome:</strong> The first occurrence for each unique email value is kept. The downstream email dispatch loop receives a clean, deduplicated list.</div>
+  <div class="example-block">
+    <h3>Example 3 — Reduce: Sum Invoice Line Item Totals (from an upstream mapping step)</h3>
+    <p>After DataMapping normalizes a multi-line invoice, calculate the grand total by reducing the line items to a single numeric sum.</p>
+    <div class="step-label">Upstream input</div>
+    <pre><code>{
+  "timestamp": "2026-07-24T10:10:00.0000000Z",
+  "triggerTime": "2026-07-24T10:10:00.0000000Z",
+  "resource": "data-mapping",
+  "operation": "data-mapping",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    { "json": { "amount": 100 } },
+    { "json": { "amount": 250.50 } },
+    { "json": { "amount": 75 } }
+  ],
+  "success": true
+}</code></pre>
+    <div class="step-label">CollectionOperation configuration</div>
+    <pre><code>{
+  "operation": "reduce",
+  "expression": "acc + item.amount",
+  "initialValue": "0"
+}</code></pre>
+    <div class="step-label">Output — single item, no "count" field for scalar operations</div>
+    <pre><code>{
+  "status": "success",
+  "successCount": 3,
+  "errorCount": 0,
+  "errorRecords": [],
+  "items": [
+    { "json": 425.50 }
+  ]
+}</code></pre>
+    <div class="outcome"><strong>Outcome:</strong> <code>items[0].json</code> is <code>425.50</code>. Store it in a variable for the PDF invoice template and the payment node.</div>
+  </div>
+
+  <div class="example-block">
+    <h3>Example 4 — Sort: Products by Price, Ascending (from a product catalog API)</h3>
+    <p>A product recommendation workflow needs cheapest-first ordering for in-stock products.</p>
+    <div class="step-label">Upstream input (HTTP Request node's output)</div>
+    <pre><code>{
+  "timestamp": "2026-07-24T10:15:09.0031120Z",
+  "triggerTime": "2026-07-24T10:15:08.0000000Z",
+  "resource": "http-request",
+  "operation": "GET",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    { "json": { "sku": "P-30", "unitPrice": 45.00 } },
+    { "json": { "sku": "P-10", "unitPrice": 12.99 } },
+    { "json": { "sku": "P-20", "unitPrice": 27.50 } }
+  ],
+  "success": true
+}</code></pre>
+    <div class="step-label">CollectionOperation configuration</div>
+    <pre><code>{
+  "operation": "sort",
+  "field": "unitPrice",
+  "direction": "asc"
+}</code></pre>
+    <div class="step-label">Output</div>
+    <pre><code>{
+  "status": "success",
+  "successCount": 3,
+  "errorCount": 0,
+  "errorRecords": [],
+  "count": 3,
+  "items": [
+    { "json": { "sku": "P-10", "unitPrice": 12.99 } },
+    { "json": { "sku": "P-20", "unitPrice": 27.50 } },
+    { "json": { "sku": "P-30", "unitPrice": 45.00 } }
+  ]
+}</code></pre>
+    <div class="outcome"><strong>Outcome:</strong> The Loop node that follows renders product cards from lowest to highest <code>unitPrice</code>.</div>
+  </div>
+
+  <div class="example-block">
+    <h3>Example 5 — Distinct: Deduplicate a Contact List by Email (from a merged-source node)</h3>
+    <p>A mailing list assembled from multiple sources may contain duplicate contacts. Deduplicate on the email field so each recipient gets only one message.</p>
+    <div class="step-label">Upstream input</div>
+    <pre><code>{
+  "timestamp": "2026-07-24T10:20:44.0000000Z",
+  "triggerTime": "2026-07-24T10:20:44.0000000Z",
+  "resource": "collection-operation",
+  "operation": "map",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    { "json": { "name": "Alice",       "email": "alice@co.com" } },
+    { "json": { "name": "Alice Smith", "email": "alice@co.com" } },
+    { "json": { "name": "Bob",         "email": "bob@co.com" } }
+  ],
+  "success": true
+}</code></pre>
+    <div class="step-label">CollectionOperation configuration</div>
+    <pre><code>{
+  "operation": "distinct",
+  "field": "email"
+}</code></pre>
+    <div class="step-label">Output</div>
+    <pre><code>{
+  "status": "success",
+  "successCount": 2,
+  "errorCount": 0,
+  "errorRecords": [],
+  "count": 2,
+  "items": [
+    { "json": { "name": "Alice", "email": "alice@co.com" } },
+    { "json": { "name": "Bob",   "email": "bob@co.com" } }
+  ]
+}</code></pre>
+    <div class="outcome"><strong>Outcome:</strong> The first occurrence for each unique email is kept ("Alice", not "Alice Smith"). The downstream email dispatch loop receives a clean, deduplicated list.</div>
+  </div>
+
+  <div class="example-block">
+    <h3>Example 6 — Error Handling: Continue vs. Error, with a Deliberately Bad Field (from a partially-dirty import)</h3>
+    <p>A bulk import contains a handful of malformed records — here, one record has <code>status</code> as <code>null</code> instead of a string, which throws when the expression calls <code>.toLowerCase()</code> on it. This example shows the same input under both <code>onError</code> modes.</p>
+    <div class="step-label">Upstream input (file-import node's output, 5 records, 1 malformed)</div>
+    <pre><code>{
+  "timestamp": "2026-07-24T10:25:00.0000000Z",
+  "triggerTime": "2026-07-24T10:25:00.0000000Z",
+  "resource": "file-import",
+  "operation": "csv-import",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    { "json": { "id": "R-1", "status": "Active" } },
+    { "json": { "id": "R-2", "status": "Active" } },
+    { "json": { "id": "R-3", "status": null } },
+    { "json": { "id": "R-4", "status": "Inactive" } },
+    { "json": { "id": "R-5", "status": "Active" } }
+  ],
+  "success": true
+}</code></pre>
+    <div class="step-label">Configuration A — onError: "continue" (default): bad record skipped, node still succeeds</div>
+    <pre><code>{
+  "operation": "filter",
+  "expression": "item.status.toLowerCase() === 'active'",
+  "onError": "continue"
+}</code></pre>
+    <pre><code>{
+  "status": "success",
+  "successCount": 3,
+  "errorCount": 1,
+  "errorRecords": [
+    { "item": { "id": "R-3", "status": null }, "error": "Cannot read properties of null (reading 'toLowerCase')" }
+  ],
+  "count": 3,
+  "items": [
+    { "json": { "id": "R-1", "status": "Active" } },
+    { "json": { "id": "R-2", "status": "Active" } },
+    { "json": { "id": "R-5", "status": "Active" } }
+  ]
+}</code></pre>
+    <div class="step-label">Configuration B — onError: "error" with maxErrorCount: 0: the same single bad record now fails the whole node</div>
+    <pre><code>{
+  "operation": "filter",
+  "expression": "item.status.toLowerCase() === 'active'",
+  "onError": "error",
+  "maxErrorCount": 0
+}</code></pre>
+    <pre><code>// Routed to the error port:
+// "Operation 'filter' had 1 item error(s), exceeding maxErrorCount (0)."</code></pre>
+    <div class="outcome"><strong>Outcome:</strong> Same input, same expression, same single bad record — but the node's behavior is entirely controlled by <code>onError</code>. Under "continue" (the default), one broken record never blocks the other four from being processed; <code>errorCount</code>/<code>errorRecords</code> tell you exactly what and why. Under "error" with the default <code>maxErrorCount: 0</code>, any single failure fails the node — appropriate when partial results are unacceptable.</div>
+  </div>
+
+  <div class="example-block">
+    <h3>Example 7 — inlineDataSource: Manually-Entered Test Data (no upstream node at all)</h3>
+    <p>Test a <code>map</code> operation without wiring up a real upstream node. Type a plain JSON array directly into <code>inlineDataSource</code> — no envelope required; the node normalizes it automatically.</p>
+    <div class="step-label">inlineDataSource (exactly what you type — a plain array, no envelope)</div>
+    <pre><code>[
+  { "firstName": "Priya", "lastName": "Nair" },
+  { "firstName": "Marcus", "lastName": "Lee" }
+]</code></pre>
+    <div class="step-label">CollectionOperation configuration</div>
+    <pre><code>{
+  "inlineDataSource": "[{\"firstName\":\"Priya\",\"lastName\":\"Nair\"},{\"firstName\":\"Marcus\",\"lastName\":\"Lee\"}]",
+  "operation": "map",
+  "expression": "item.firstName + ' ' + item.lastName"
+}</code></pre>
+    <div class="step-label">Output (normalized into the standard envelope automatically)</div>
+    <pre><code>{
+  "status": "success",
+  "successCount": 2,
+  "errorCount": 0,
+  "errorRecords": [],
+  "count": 2,
+  "items": [
+    { "json": "Priya Nair" },
+    { "json": "Marcus Lee" }
+  ]
+}</code></pre>
+    <div class="outcome"><strong>Outcome:</strong> What you typed as inline test data was a plain array — the node built the <code>items</code>/<code>json</code> envelope around each mapped result, not you.</div>
+  </div>
+
+  <div class="example-block">
+    <h3>Example 8 — Circuit Breaker: maxErrorsToCollect Stops a Systemically Broken Expression Early</h3>
+    <p>A collection of 1,000 records references a field that was renamed upstream — every single item will fail the same way. Without a cap, the operation burns through all 1,000 failures before reporting anything. With <code>maxErrorsToCollect</code>, it stops as soon as the pattern is clear.</p>
+    <div class="step-label">Upstream input (abbreviated — imagine 1,000 records, all missing the renamed field)</div>
+    <pre><code>{
+  "timestamp": "2026-07-24T10:35:00.0000000Z",
+  "triggerTime": "2026-07-24T10:35:00.0000000Z",
+  "resource": "sql-query",
+  "operation": "select",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    { "json": { "orderId": "ORD-0001", "orderTotal": 120 } },
+    { "json": { "orderId": "ORD-0002", "orderTotal": 88 } }
+    /* ... 998 more records, all shaped the same way ... */
+  ],
+  "success": true
+}</code></pre>
+    <div class="step-label">CollectionOperation configuration — expression references the old field name "total", not "orderTotal"</div>
+    <pre><code>{
+  "operation": "map",
+  "expression": "item.total * 1.08",
+  "onError": "continue",
+  "maxErrorsToCollect": 5
+}</code></pre>
+    <div class="step-label">Output — stops after 5 failures instead of processing all 1,000</div>
+    <pre><code>// Routed to the error port:
+// "Operation 'map' stopped after 5 item error(s) reached maxErrorsToCollect (5)."
+{
+  "status": "error",
+  "successCount": 0,
+  "errorCount": 5,
+  "errorRecords": [
+    { "item": { "orderId": "ORD-0001", "orderTotal": 120 }, "error": "Map expression produced NaN (likely a non-numeric or missing field used in an arithmetic expression)." },
+    { "item": { "orderId": "ORD-0002", "orderTotal": 88 },  "error": "Map expression produced NaN (likely a non-numeric or missing field used in an arithmetic expression)." }
+    /* ... 3 more identical failures, then the circuit breaker stopped the loop ... */
+  ]
+}</code></pre>
+    <div class="outcome"><strong>Outcome:</strong> <code>item.total</code> is <code>undefined</code> on every record (the field is actually named <code>orderTotal</code>), so <code>undefined * 1.08</code> is <code>NaN</code> on every item — a systemic bug, not a few bad rows. <code>maxErrorsToCollect: 5</code> catches this after 5 failures instead of grinding through all 1,000, and — notably — this circuit-break fails the node even though <code>onError</code> was left at the default <code>"continue"</code>: the safety cap always overrides <code>onError</code> because the operation genuinely didn't finish.</div>
   </div>
 </main>
 <script src="/search.js"></script></body>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Output Data — Node Data Model | BizFirstAI</title>
+<link rel="stylesheet" href="../shared.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+</style>
+</head>
+<body>
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="../../../images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://docs.bizfirstai.com/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+<div class="layout">
+<nav class="sidebar">
+  <div class="logo">
+    <h2>Flow Studio</h2>
+    <h1>Node Data Model</h1>
+  </div>
+  <div class="section-label">Pages</div>
+  <a href="index.html">Overview</a>
+  <a href="01-input-data.html">Input Data</a>
+  <a href="02-output-data.html" class="active">Output Data</a>
+  <a href="03-node-execution-result.html">Node Execution Result</a>
+  <a href="04-output-branches.html">Output Branches</a>
+  <a href="05-execution-memory-scopes.html">Execution Memory &amp; Scopes</a>
+  <a href="06-node-lifecycle-stages.html">Node Lifecycle Stages</a>
+  <a href="07-metadata-and-events.html">Metadata &amp; Events</a>
+  <a href="08-pinned-data.html">Pinned Data</a>
+  <div class="section-label">Navigation</div>
+  <a href="../index.html">&#8592; Flow Studio Guides</a>
+  <a href="https://docs.bizfirstai.com/" target="_top">&#8592; Portal</a>
+</nav>
+<main class="content">
+  <div class="page-header">
+    <div class="tag">Piece 2 of 5</div>
+    <h1>Output Data</h1>
+    <p class="lead">What a node itself produces — and the surprising fact that it doesn't start empty. It starts pre-seeded from Input Data, before the node's own logic ever runs.</p>
+  </div>
+
+  <h2>What It Actually Is</h2>
+  <p><code>NodeExecutionResult.OutputData</code> (<code>Dictionary&lt;string, object&gt;</code>) is the only thing an executor's own code is responsible for writing. Every node executor's <code>ExecuteInternalAsync</code> builds this dictionary — field names and shapes are entirely up to the node (e.g. <code>status</code>, <code>count</code>, <code>items</code>).</p>
+
+  <h2>The Seeding Step You Might Not Expect</h2>
+  <p>Before any executor-specific code runs, a framework-level step called <strong>InitializeOutputDataFromInput</strong> copies some of InputData into the brand-new OutputData — so every node starts from a consistent baseline instead of each one reimplementing "carry my input forward" independently:</p>
+
+  <pre><code>// BaseNodeExecutor.EntryProcess.cs:48-75
+private void InitializeOutputDataFromInput(ProcessElementExecutionContext executionContext)
+{
+    var outputData = executionContext.NodeResult?.OutputData;
+    if (outputData == null) return;
+
+    var inputData = executionContext.InputData;
+    var mode = settings?.InitialOutputFrom ?? InitialOutputDataMode.ItemsOnly;
+
+    switch (mode)
+    {
+        case InitialOutputDataMode.InputAsIs:
+            foreach (var kvp in inputData) outputData[kvp.Key] = kvp.Value;
+            break;
+
+        case InitialOutputDataMode.ItemsOnly:
+            if (inputData.TryGetValue("items", out var items))
+                outputData["items"] = items;
+            break;
+
+        case InitialOutputDataMode.Empty:
+        default:
+            break;
+    }
+}</code></pre>
+
+  <table>
+    <thead><tr><th>Mode</th><th>Behavior</th><th>Default?</th></tr></thead>
+    <tbody>
+      <tr><td><code>ItemsOnly</code></td><td>Copies only the <code>items</code> key from InputData into OutputData, by reference (not cloned).</td><td>&#9989; Yes</td></tr>
+      <tr><td><code>InputAsIs</code></td><td>Copies <em>every</em> key from InputData into OutputData, by reference.</td><td>No</td></tr>
+      <tr><td><code>Empty</code></td><td>OutputData starts as a genuinely empty dictionary.</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>"By reference" matters</strong>
+    Neither mode clones anything. If a node doesn't go on to overwrite <code>items</code> itself, its OutputData's <code>items</code> is the literal same list object as whatever it received on InputData — mutating one mutates the other. Most nodes that touch <code>items</code> (Collection Operation, Data Mapping) always overwrite it themselves via <code>FinalizeOutputItems_WrapListIntoItems</code>, so this seed value is normally short-lived — but a node that reads <code>items</code> without rewriting it will silently pass the upstream reference straight through.
+  </div>
+
+  <h2>The Standard Envelope Shape</h2>
+  <p>Most nodes' real record output lives under one key, <code>items</code>, in this shape:</p>
+  <pre><code>{
+  "items": [
+    { "json": { /* record 1 */ } },
+    { "json": { /* record 2 */ } }
+  ],
+  "status": "success"
+}</code></pre>
+  <p>Whether a node's raw result becomes one item wrapping everything, or one item per record, is controlled by <code>TranslateOutputDataMode</code> (<code>Skip</code> / <code>Regular</code> / <code>SplitIntoArray</code> / <code>CopyFromInput</code>) via the shared <code>WrapJsonIntoItems</code> helper on <code>BaseNodeExecutor</code>. <code>SplitIntoArray</code> is what most list-producing nodes (Collection Operation, Data Mapping) override their default to, so each record becomes its own downstream item instead of the whole array being wrapped as one.</p>
+
+  <h2>Getting Data Out of OutputData Cleanly</h2>
+  <p>The shared <code>ResolveSourceRecords</code> / <code>ExtractRecordsFromItems</code> helpers on <code>BaseNodeExecutor</code> read either a node's configured <code>inlineDataSource</code> or InputData's <code>items</code>, and normalize either into a flat <code>List&lt;object?&gt;</code> of records (unwrapping each entry's <code>json</code> value). This is the same mechanism both Collection Operation and Data Mapping use, so both nodes accept either an upstream item list or manually-typed inline JSON, without either executor reimplementing the parsing.</p>
+
+  <div class="page-nav">
+    <a href="01-input-data.html">&#8592; Input Data</a>
+    <a href="03-node-execution-result.html">Next: Node Execution Result &#8594;</a>
+  </div>
+</main>
+</div>
+<script src="/search.js"></script></body>
+</html>

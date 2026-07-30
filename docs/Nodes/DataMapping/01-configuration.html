@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -17,6 +17,7 @@ th{background:var(--accent-light);padding:10px 14px;text-align:left;border:1px s
 td{padding:10px 14px;border:1px solid var(--border);font-size:13px;vertical-align:top;}
 code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-radius:4px;font-size:12px;}
 .callout-info{background:#e6f2fc;border-left:4px solid #0f6cbd;padding:14px 18px;border-radius:6px;margin:16px 0;color:#0a3d6b;}
+.callout-warning{background:#fff8e1;border-left:4px solid #f0b429;padding:14px 18px;border-radius:6px;margin:16px 0;color:#6b4400;}
 </style>
 </head>
 <body>
@@ -47,16 +48,18 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
   <div class="page-header">
     <div class="breadcrumb">Portal / Nodes / Data Mapping / Configuration</div>
     <h1>Configuration Reference</h1>
-    <p class="subtitle">All properties, the mappings array schema, and the full transform catalogue.</p>
+    <p class="subtitle">All settings, the dataMappings rule schema, and the full 22-transform catalogue.</p>
   </div>
 
-  <h2>Top-Level Properties</h2>
+  <h2>Top-Level Settings</h2>
   <table>
-    <thead><tr><th>Property</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
+    <thead><tr><th>Setting</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>source</code></td><td>object | string (expression)</td><td>No*</td><td>—</td><td>The source data object to map from. Can be a literal object or a BizFirst expression (<code>{@ $input.current }</code>). *Either <code>source</code> or <code>source_output</code> must be provided.</td></tr>
-      <tr><td><code>source_output</code></td><td>string</td><td>No*</td><td>—</td><td>Name of an upstream node whose output becomes the source. Shorthand for <code>source: "{@ output.NodeName }"</code>. Takes precedence over <code>source</code> if both are specified.</td></tr>
-      <tr><td><code>mappings</code></td><td>array of MappingRule</td><td>Yes</td><td>—</td><td>Ordered array of mapping rules. Each rule defines how a source field is read, transformed, and written to the target object. Rules are applied in order; later rules can overwrite earlier ones if they share a target field.</td></tr>
+      <tr><td><code>inlineDataSource</code></td><td>string (JSON)</td><td>No*</td><td><code>""</code></td><td>Inline JSON — a single object or an array of objects. Shared base-class setting (<code>InlineDataSource</code> on <code>BaseNodeExecutorSettings</code>, config key <code>inlineDataSource</code>) — not unique to this node. If non-empty, it wins outright over reading <code>InputData["items"]</code>. *Either this or a resolvable upstream <code>items</code> input must be present — see Validation on the Overview page.</td></tr>
+      <tr><td><code>dataMappings</code></td><td>array of MappingRule</td><td>Yes*</td><td><code>[]</code></td><td>Ordered array of mapping rules, applied to every resolved record. *Required and must be non-empty unless <code>dataMappingMode</code> is <code>"passthrough"</code>, in which case it may be empty. Rules are applied in the order given; later rules can overwrite earlier ones if they share a <code>targetField</code>.</td></tr>
+      <tr><td><code>dataMappingMode</code></td><td>string</td><td>No</td><td><code>""</code></td><td><code>""</code> (Default) applies <code>dataMappings</code> normally to every record. <code>"passthrough"</code> skips all mapping rules and copies each resolved record straight to output.</td></tr>
+      <tr><td><code>sourceDirectivePath</code> / <code>sourceDataRootPath</code> / <code>sourceDataLeafPath</code></td><td>string (SmartPath)</td><td>No</td><td>—</td><td>SmartPath fallback, rarely needed. The node already resolves source records from <code>inlineDataSource</code> or <code>InputData["items"]</code> by default via the shared <code>ResolveSourceRecords</code> helper.</td></tr>
+      <tr><td><code>targetDirectivePath</code> / <code>targetDataRootPath</code></td><td>string (SmartPath)</td><td>No</td><td>—</td><td>Optional write-back of the mapped record(s) to another location. Not commonly needed since the output already includes every mapped record under <code>items[].json</code>.</td></tr>
     </tbody>
   </table>
 
@@ -64,78 +67,110 @@ code{background:var(--code-bg);color:var(--code-text);padding:2px 6px;border-rad
   <table>
     <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>source_field</code></td><td>string</td><td>Yes</td><td>Dot-notation path to the field in the source object. Supports array indexing. Examples: <code>user.address.city</code>, <code>items[0].price</code>, <code>meta.tags[2]</code>.</td></tr>
-      <tr><td><code>target_field</code></td><td>string</td><td>Yes</td><td>Name of the field in the output <code>mapped_data</code> object. Simple names only (no dot notation for nested targets in the current version).</td></tr>
-      <tr><td><code>transform</code></td><td>string</td><td>No</td><td>Name of the built-in transform to apply. See the transform catalogue below. If omitted, the source value is copied without modification.</td></tr>
-      <tr><td><code>transform_params</code></td><td>object</td><td>No</td><td>Parameters for transforms that require them (e.g., <code>substring</code>, <code>regexReplace</code>, <code>dateFormat</code>). See per-transform documentation below.</td></tr>
-      <tr><td><code>default_value</code></td><td>any</td><td>No</td><td>Fallback value used when the source field is <code>null</code>, <code>undefined</code>, or the path does not exist in the source object. The transform is <strong>not</strong> applied to the default value.</td></tr>
-    </tbody>
-  </table>
-
-  <h2>Built-In Transforms</h2>
-  <table>
-    <thead><tr><th>Transform</th><th>Parameters</th><th>Input → Output</th><th>Description</th></tr></thead>
-    <tbody>
-      <tr><td><code>uppercase</code></td><td>—</td><td><code>"hello"</code> → <code>"HELLO"</code></td><td>Converts the string to upper case.</td></tr>
-      <tr><td><code>lowercase</code></td><td>—</td><td><code>"HELLO"</code> → <code>"hello"</code></td><td>Converts the string to lower case.</td></tr>
-      <tr><td><code>trim</code></td><td>—</td><td><code>"  hi  "</code> → <code>"hi"</code></td><td>Removes leading and trailing whitespace.</td></tr>
-      <tr><td><code>trimLeft</code></td><td>—</td><td><code>"  hi  "</code> → <code>"hi  "</code></td><td>Removes leading whitespace only.</td></tr>
-      <tr><td><code>trimRight</code></td><td>—</td><td><code>"  hi  "</code> → <code>"  hi"</code></td><td>Removes trailing whitespace only.</td></tr>
-      <tr><td><code>toInt</code></td><td>—</td><td><code>"42"</code> → <code>42</code></td><td>Parses the value as a 32-bit integer. Returns <code>null</code> if parsing fails.</td></tr>
-      <tr><td><code>toFloat</code></td><td>—</td><td><code>"3.14"</code> → <code>3.14</code></td><td>Parses the value as a floating-point number. Returns <code>null</code> if parsing fails.</td></tr>
-      <tr><td><code>toDate</code></td><td>—</td><td><code>"2026-05-23"</code> → <code>DateTime</code></td><td>Parses the value as a UTC DateTime. Accepts ISO 8601 and common formats.</td></tr>
-      <tr><td><code>toString</code></td><td>—</td><td><code>42</code> → <code>"42"</code></td><td>Converts any value to its string representation.</td></tr>
-      <tr><td><code>toBoolean</code></td><td>—</td><td><code>"true"</code> → <code>true</code></td><td>Parses <code>"true"/"false"</code> strings and numeric <code>1/0</code> to boolean.</td></tr>
-      <tr><td><code>base64Encode</code></td><td>—</td><td><code>"hello"</code> → <code>"aGVsbG8="</code></td><td>Base64-encodes a UTF-8 string.</td></tr>
-      <tr><td><code>base64Decode</code></td><td>—</td><td><code>"aGVsbG8="</code> → <code>"hello"</code></td><td>Decodes a Base64-encoded string to UTF-8.</td></tr>
-      <tr><td><code>substring</code></td><td><code>start</code> (int), <code>length</code> (int)</td><td><code>"Hello World"</code> → <code>"Hello"</code></td><td>Extracts a substring from <code>start</code> position for <code>length</code> characters.</td></tr>
-      <tr><td><code>regexReplace</code></td><td><code>pattern</code> (string), <code>replacement</code> (string)</td><td><code>"(512) 555-1234"</code> → <code>"5125551234"</code></td><td>Replaces all matches of the regex <code>pattern</code> with <code>replacement</code>. Supports capture groups.</td></tr>
-      <tr><td><code>defaultValue</code></td><td><code>fallback</code> (any)</td><td><code>null</code> → <code>"N/A"</code></td><td>Returns <code>fallback</code> if the source value is null or undefined. Equivalent to <code>default_value</code> at the rule level but applied as part of the transform chain.</td></tr>
-      <tr><td><code>dateFormat</code></td><td><code>format</code> (string, .NET format)</td><td><code>DateTime</code> → <code>"23 May 2026"</code></td><td>Formats a DateTime value using a .NET format string (e.g., <code>dd MMM yyyy</code>, <code>yyyy-MM-dd</code>, <code>MM/dd/yyyy</code>).</td></tr>
-      <tr><td><code>numberFormat</code></td><td><code>decimals</code> (int), <code>locale</code> (string)</td><td><code>1234.5</code> → <code>"1,234.50"</code></td><td>Formats a number with the specified decimal places and locale-aware thousands separator. Locale defaults to <code>en-US</code>.</td></tr>
+      <tr><td><code>sourceField</code></td><td>string</td><td>Yes</td><td>Dot-notation path to the field in the current source record, plus array indexing. Examples: <code>user.address.city</code>, <code>items[0].price</code>, <code>data.users[2].email</code>. No negative indices for field paths (only <code>substring</code>'s <code>start</code> parameter supports negative offsets — see below).</td></tr>
+      <tr><td><code>targetField</code></td><td>string</td><td>Yes</td><td>Flat key name written into the output record. Plain dictionary key assignment — no nested/dot-notation writing on the target side.</td></tr>
+      <tr><td><code>transform</code></td><td>string</td><td>No</td><td>One transform string from the catalogue below, applied to the value before writing it to <code>targetField</code>. If omitted, the value is copied unchanged.</td></tr>
+      <tr><td><code>transformExpression</code></td><td>string (JS)</td><td>Only when <code>transform</code> is <code>"expression"</code></td><td>Ignored for every other transform. A JS expression with <code>item</code> (the full current record) and <code>value</code> (this rule's extracted <code>sourceField</code> value) bound as variables — lets one rule read/combine other fields on the same record, not just its own <code>sourceField</code>.</td></tr>
     </tbody>
   </table>
 
   <div class="callout-info">
-    <strong><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>Transform Ordering</strong>
-    <p style="margin:8px 0 0;">Only one transform can be applied per mapping rule. If you need to chain multiple transforms (e.g., trim then uppercase), use two sequential Data Mapping nodes, or use a CodeExecute node for complex multi-step transformations.</p>
+    <strong><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>No separate parameters object for named transforms</strong>
+    <p style="margin:8px 0 0;">Unlike some other transform systems, there is no <code>transform_params</code> sibling field. Every named transform is a single string; any parameters are colon-suffixed directly onto that same string — e.g. <code>"substring:0:5"</code>, <code>"regexreplace:[^0-9]:"</code>, <code>"defaultvalue:N/A"</code>. Only one transform can be applied per rule (including <code>"expression"</code>); to chain multiple transforms, use two sequential DataMapping nodes.</p>
   </div>
+
+  <h2>Built-In Transforms (22)</h2>
+  <table>
+    <thead><tr><th>Transform string</th><th>Input → Output</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>"uppercase"</code></td><td><code>"london"</code> → <code>"LONDON"</code></td><td><code>str.ToUpperInvariant()</code>.</td></tr>
+      <tr><td><code>"lowercase"</code></td><td><code>"SMITH"</code> → <code>"smith"</code></td><td><code>str.ToLowerInvariant()</code>.</td></tr>
+      <tr><td><code>"trim"</code></td><td><code>"  hi  "</code> → <code>"hi"</code></td><td><code>str.Trim()</code>.</td></tr>
+      <tr><td><code>"tostring"</code></td><td><code>42</code> → <code>"42"</code></td><td>Identity string conversion of the value.</td></tr>
+      <tr><td><code>"toint"</code></td><td><code>"42"</code> → <code>42</code></td><td><code>int.TryParse</code>; on failure returns the <strong>original value unchanged</strong> — not null, not an error.</td></tr>
+      <tr><td><code>"todecimal"</code></td><td><code>"19.99"</code> → <code>19.99</code></td><td><code>decimal.TryParse</code> (invariant culture); same graceful fallback-to-original on failure.</td></tr>
+      <tr><td><code>"toboolean"</code></td><td><code>"true"</code> → <code>true</code></td><td><code>bool.TryParse</code> — only literal <code>"true"</code>/<code>"false"</code> (case-insensitive), <strong>not</strong> <code>"1"</code>/<code>"yes"</code>. Fallback to original on failure.</td></tr>
+      <tr><td><code>"tofloat"</code></td><td><code>"3.14"</code> → <code>3.14</code></td><td><code>double.TryParse</code> (invariant culture); fallback to original on failure.</td></tr>
+      <tr><td><code>"todouble"</code></td><td><code>"3.14"</code> → <code>3.14</code></td><td>Exact alias of <code>tofloat</code> — same switch case, identical behavior.</td></tr>
+      <tr><td><code>"todate"</code></td><td><code>"2026-05-23T10:00:00Z"</code> → <code>DateTime</code></td><td><code>DateTime.TryParse</code> with <code>RoundtripKind</code>; fallback to original on failure.</td></tr>
+      <tr><td><code>"todatetime"</code></td><td><code>"2026-05-23T10:00:00Z"</code> → <code>DateTime</code></td><td>Exact alias of <code>todate</code> — identical behavior.</td></tr>
+      <tr><td><code>"base64encode"</code></td><td><code>"hello"</code> → <code>"aGVsbG8="</code></td><td>UTF-8 → Base64 string.</td></tr>
+      <tr><td><code>"base64decode"</code></td><td><code>"aGVsbG8="</code> → <code>"hello"</code></td><td>Base64 → UTF-8. Returns the original string unchanged if it is not valid Base64.</td></tr>
+      <tr><td><code>"jsonstringify"</code></td><td><code>{ a: 1 }</code> → <code>"{\"a\":1}"</code></td><td>Serializes the <strong>original value</strong> (not its string form) via <code>JsonSerializer.Serialize</code>.</td></tr>
+      <tr><td><code>"jsonparse"</code></td><td><code>"{\"a\":1}"</code> → <code>{ a: 1 }</code></td><td>Parses the string as JSON. Returns the original string unchanged if invalid.</td></tr>
+      <tr><td><code>"nulltoempty"</code></td><td><code>null</code> → <code>""</code></td><td>Special-cased to run even when the value is <code>null</code> — <code>value ?? ""</code>.</td></tr>
+      <tr><td><code>"emptytonull"</code></td><td><code>""</code> → <code>null</code></td><td>Empty string → <code>null</code>; any other value unchanged.</td></tr>
+      <tr><td><code>"defaultvalue:N/A"</code></td><td><code>null</code> → <code>"N/A"</code></td><td>Returns the text after the first colon (the fallback) if the value is <code>null</code> or an empty string; otherwise passes the value through unchanged. Also special-cased to run on null input.</td></tr>
+      <tr><td><code>"concat:_suffix"</code></td><td><code>"abc"</code> → <code>"abc_suffix"</code></td><td>Appends the literal text after the colon to the stringified value.</td></tr>
+      <tr><td><code>"substring:0:5"</code></td><td><code>"Hello World"</code> → <code>"Hello"</code></td><td><code>start[:length]</code>. If <code>length</code> is omitted, takes to the end of the string.</td></tr>
+      <tr><td><code>"substring:-3"</code></td><td><code>"Hello World"</code> → <code>"rld"</code></td><td>Negative <code>start</code> counts from the end (Python-style, e.g. <code>-3</code> = last 3 characters).</td></tr>
+      <tr><td><code>"regexreplace:[^0-9]:"</code></td><td><code>"(512) 555-1234"</code> → <code>"5125551234"</code></td><td><code>pattern:replacement</code> (replacement may be empty, as shown). 200ms regex timeout to prevent ReDoS; returns the original string unchanged on timeout or invalid pattern.</td></tr>
+      <tr><td><code>"expression"</code></td><td><code>item.firstName + ' ' + item.lastName</code> → <code>"Jane Doe"</code></td><td>Evaluates <code>transformExpression</code> via the same per-record JS expression engine (Jint) CollectionOperation uses for filter/map/reduce. Runs even when <code>value</code> is <code>null</code> (an expression usually reads from <code>item</code>, not necessarily this rule's own <code>value</code>). Falls back to the original value on any evaluation error.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout-warning">
+    <strong><i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>Silent fallback on bad numeric/date/expression input</strong>
+    <p style="margin:8px 0 0;"><code>toint</code>, <code>todecimal</code>, <code>toboolean</code>, <code>tofloat</code>/<code>todouble</code>, <code>todate</code>/<code>todatetime</code>, and <code>expression</code> never throw on a parse or evaluation failure — they return the original, untransformed value instead. This means a failed conversion does <strong>not</strong> route to the <code>error</code> port; the raw (wrong-typed) value simply passes through to <code>targetField</code>. The same applies to an unknown/misspelled transform name: the value passes through unchanged with no error.</p>
+    <p style="margin:8px 0 0;">Separately, every transform except <code>nulltoempty</code>, <code>defaultvalue:</code>, and <code>expression</code> returns <code>null</code> immediately if the input value is <code>null</code> — none of their conversion logic runs on a null input.</p>
+  </div>
+
+  <h2>Passthrough Mode &amp; the Data Assigner</h2>
+  <p>When <code>dataMappingMode</code> is <code>"passthrough"</code>, <code>dataMappings</code> is not evaluated at all — every resolved record (from <code>inlineDataSource</code> or upstream <code>items</code>) is written directly to the output, unchanged. Validation permits an empty <code>dataMappings</code> array specifically for this mode. The <strong>Data Assigner</strong> node in the palette (Template ID <code>10000108</code>, design class <code>data-mapping-passthrough</code>) is this exact node type pre-configured with <code>dataMappingMode: "passthrough"</code> and <code>dataMappings: []</code>.</p>
+
+  <h2>Designer Forms</h2>
+  <p>This node's configuration is split across independent top-level Atlas Forms:</p>
+  <table>
+    <thead><tr><th>Form</th><th>FormID</th><th>Holds</th></tr></thead>
+    <tbody>
+      <tr><td>Data Mapping Node</td><td><code>11010</code></td><td><code>dataMappingMode</code> (select: Default / Pass Through) and <code>dataMappings</code> (<code>enhanced-json-editor</code> array editor with a <code>sourceField</code>/<code>targetField</code>/<code>transform</code>/<code>transformExpression</code> schema).</td></tr>
+      <tr><td>Initial Data Source (JSON editor)</td><td><code>100804</code></td><td><code>inlineDataSource</code>, rendered via a formatted <code>enhanced-json-editor</code> control. This is the active form for this setting.</td></tr>
+    </tbody>
+  </table>
+  <p><em>Note:</em> an older plain-textarea variant of the same <code>inlineDataSource</code> field (Form <code>100803</code>) previously existed alongside <code>100804</code> and rendered as a visible duplicate control in the designer. It has been disabled — do not re-enable it without also removing <code>100804</code>, or the duplicate will reappear.</p>
 
   <h2>Full JSON Configuration Example</h2>
   <pre style="background:var(--code-bg);color:var(--code-text);padding:20px;border-radius:6px;overflow-x:auto;font-size:13px;line-height:1.6;"><code>{
-  "node_type": "DataMapping",
+  "nodeType": "data-mapping",
   "name": "NormaliseContact",
-  "config": {
-    "source_output": "GetContactFromCRM",
-    "mappings": [
+  "settings": {
+    "dataMappingMode": "",
+    "dataMappings": [
       {
-        "source_field": "contact.fullName",
-        "target_field": "displayName",
+        "sourceField": "contact.fullName",
+        "targetField": "displayName",
         "transform": "trim"
       },
       {
-        "source_field": "contact.emailAddress",
-        "target_field": "email",
+        "sourceField": "contact.emailAddress",
+        "targetField": "email",
         "transform": "lowercase"
       },
       {
-        "source_field": "contact.phone",
-        "target_field": "phoneE164",
-        "transform": "regexReplace",
-        "transform_params": { "pattern": "[^0-9]", "replacement": "" }
+        "sourceField": "contact.phone",
+        "targetField": "phoneE164",
+        "transform": "regexreplace:[^0-9]:"
       },
       {
-        "source_field": "contact.createdAt",
-        "target_field": "memberSince",
-        "transform": "dateFormat",
-        "transform_params": { "format": "dd MMM yyyy" }
+        "sourceField": "contact.createdAt",
+        "targetField": "memberSince",
+        "transform": "todate"
       },
       {
-        "source_field": "contact.accountBalance",
-        "target_field": "balanceFormatted",
-        "transform": "numberFormat",
-        "transform_params": { "decimals": 2, "locale": "en-US" },
-        "default_value": "0.00"
+        "sourceField": "contact.accountBalance",
+        "targetField": "balanceFormatted",
+        "transform": "todecimal"
+      },
+      {
+        "sourceField": "contact.middleName",
+        "targetField": "middleName",
+        "transform": "defaultvalue:N/A"
+      },
+      {
+        "sourceField": "contact.firstName",
+        "targetField": "fullName",
+        "transform": "expression",
+        "transformExpression": "item.contact.firstName + ' ' + item.contact.lastName"
       }
     ]
   }

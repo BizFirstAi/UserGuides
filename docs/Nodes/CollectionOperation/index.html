@@ -37,6 +37,9 @@ h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:#1a2332;}
   <div class="sidebar-brand">CollectionOperation<span>Data Transform Node</span></div>
   <div class="sidebar-section">This Page</div>
   <a href="index.html" class="active">Overview &amp; Reference</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-input-output.html">Input &amp; Output</a>
+  <a href="03-examples.html">Examples</a>
   <div class="sidebar-section">Data Transform Nodes</div>
   <a href="../VariableAssignment/">VariableAssignment</a>
   <a href="../DataMapping/">DataMapping</a>
@@ -51,96 +54,150 @@ h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:#1a2332;}
   <div class="page-header">
     <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / CollectionOperation</div>
     <h1>CollectionOperation <span style="display:inline-block;font-size:11px;font-weight:600;background:#f0f4f8;color:#555;border-radius:4px;padding:2px 8px;margin-left:8px;font-family:monospace;">NodeTypeCode: collection-operation</span></h1>
-    <p class="subtitle">Apply functional array operations — filter, map, reduce, sort, distinct, count, first, last, reverse — to any collection in the workflow without writing custom code.</p>
+    <p class="subtitle">Apply functional array operations — filter, map, reduce, sort, distinct, count, first, last, reverse — to any collection in the workflow without writing custom code. Per-item errors are tolerated and reported, not fatal by default.</p>
+  </div>
+
+  <h2>The Standard Node Data Envelope</h2>
+  <p>Every node's input and output — CollectionOperation included — travels inside the same standard envelope. Run metadata sits at the top level; the real payload lives under <code>items</code>, each entry wrapping its record in <code>"json"</code>:</p>
+  <pre><code>{
+  "timestamp": "2026-07-24T01:02:27.8652562Z",
+  "triggerTime": "2026-07-24T01:02:27.8652562Z",
+  "resource": "trigger",
+  "operation": "manual-trigger",
+  "status": "success",
+  "portName": "main",
+  "items": [
+    {
+      "json": {
+        "timestamp": "2026-07-24T01:02:27.8652562Z",
+        "triggerTime": "2026-07-24T01:02:27.8652562Z",
+        "resource": "trigger",
+        "operation": "manual-trigger",
+        "status": "success",
+        "portName": "main"
+      }
+    }
+  ],
+  "success": true
+}</code></pre>
+  <p>CollectionOperation resolves the collection to operate on from <code>InputData["items"]</code> by default, unwrapping each entry's <code>"json"</code> value into one element — the same shared <code>ResolveSourceRecords</code>/<code>ExtractRecordsFromItems</code> helper DataMapping uses.</p>
+  <div class="callout info">
+    <strong><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>Inline test data does NOT need the envelope shape</strong>
+    <p style="margin:8px 0 0;">When you type a JSON array directly into <code>inlineDataSource</code> to test an operation, you write a plain array — <code>[{...}, {...}]</code> — not <code>{"items":[{"json":{...}}]}</code>. The node parses whatever you typed and normalizes it into the standard <code>items</code>/<code>json</code> shape before producing output. The envelope is the wire format between nodes; it is not what you author by hand.</p>
   </div>
 
   <h2>When to Use</h2>
   <ul>
-    <li><strong>Filter orders by status:</strong> An API returns all orders for a customer. Use <code>filter</code> with <code>item.status === "active"</code> to keep only the orders that need processing — no CodeExecute required.</li>
-    <li><strong>Map documents to extract just IDs:</strong> A database query returns full order objects. Use <code>map</code> with expression <code>item.orderId</code> to produce a clean array of order IDs for a bulk-cancel API call.</li>
-    <li><strong>Count total active items:</strong> Before routing to an approval workflow, use <code>count</code> with <code>item.isActive === true</code> to determine how many items require attention. Branch on the count with a downstream IfCondition node.</li>
-    <li><strong>Sort employees by timestamp descending:</strong> A queue of pending approvals needs to be processed oldest-first. Use <code>sort</code> with <code>Field: "createdAt"</code> and <code>Direction: "asc"</code> to order the array correctly.</li>
-    <li><strong>Get distinct values of a field:</strong> An event log contains multiple entries per region. Use <code>distinct</code> with <code>Field: "region"</code> to get a unique list of affected regions for targeted notifications.</li>
+    <li><strong>Filter orders by status:</strong> An upstream node returns all orders for a customer. Use <code>filter</code> with <code>item.status === "active"</code> to keep only the orders that need processing — no CodeExecute required.</li>
+    <li><strong>Map records to extract just IDs:</strong> A database query returns full order objects. Use <code>map</code> with expression <code>item.orderId</code> to produce a clean array of order IDs for a bulk-cancel API call.</li>
+    <li><strong>Sum or fold a collection to one value:</strong> Use <code>reduce</code> with <code>acc + item.total</code> and <code>initialValue: 0</code> to total up line-item amounts.</li>
+    <li><strong>Sort records by a field:</strong> A queue of pending approvals needs to be processed oldest-first. Use <code>sort</code> with <code>field: "createdAt"</code> and <code>direction: "asc"</code>.</li>
+    <li><strong>Get distinct values of a field:</strong> An event log contains multiple entries per region. Use <code>distinct</code> with <code>field: "region"</code> to get a unique list of affected regions for targeted notifications.</li>
+    <li><strong>Tolerate bad records instead of failing the whole batch:</strong> A collection with a handful of malformed items (a missing field, an unparsable value) shouldn't abort processing of the rest. The default <code>onError: "continue"</code> behavior skips only the failing items and reports them in <code>errorRecords</code>/<code>errorCount</code> — the node still succeeds.</li>
   </ul>
 
   <h2>Configuration</h2>
   <table>
     <tr><th style="width:180px;">Setting</th><th style="width:90px;">Required</th><th>Description</th></tr>
     <tr>
-      <td><code>Operation</code></td>
+      <td><code>operation</code></td>
       <td><span class="badge required">Required</span></td>
       <td>The operation to perform on the collection. One of: <code>filter</code>, <code>map</code>, <code>reduce</code>, <code>sort</code>, <code>distinct</code>, <code>count</code>, <code>first</code>, <code>last</code>, <code>reverse</code>.</td>
     </tr>
     <tr>
-      <td><code>Collection</code></td>
+      <td><code>inlineDataSource</code></td>
       <td><span class="badge optional">Optional</span></td>
-      <td>An inline JSON array literal. Use for static data or testing. If omitted, the node uses <code>SourceOutput</code> to locate the collection from a previous node's output.</td>
+      <td>An inline JSON array literal. Shared base-class setting (also used by DataMapping) — not unique to this node. If non-empty, it wins outright over reading <code>InputData["items"]</code>.</td>
     </tr>
     <tr>
-      <td><code>SourceOutput</code></td>
-      <td><span class="badge optional">Optional</span></td>
-      <td>The node key of an upstream node whose output array should be used as the collection. The node expects the output to be (or contain) an array.</td>
+      <td><code>expression</code></td>
+      <td><span class="badge optional">Optional*</span></td>
+      <td>A JavaScript expression evaluated per item (for <code>filter</code>, <code>map</code>) or per accumulation step (for <code>reduce</code>). The current element is <code>item</code>; <code>reduce</code> additionally exposes <code>acc</code>. *Required for <code>filter</code>, <code>map</code>, and <code>reduce</code> — validation fails without it.</td>
     </tr>
     <tr>
-      <td><code>Expression</code></td>
+      <td><code>field</code></td>
       <td><span class="badge optional">Optional</span></td>
-      <td>A JavaScript-compatible expression evaluated per item (for <code>filter</code>, <code>map</code>) or per accumulator step (for <code>reduce</code>). Access the current element as <code>item</code>. For <code>reduce</code>, use <code>acc</code> and <code>item</code>. Required for <code>filter</code>, <code>map</code>, and <code>reduce</code>.</td>
+      <td>Field name used by <code>sort</code> (the field to sort by) and <code>distinct</code> (the field to deduplicate on). Omit for arrays of primitives.</td>
     </tr>
     <tr>
-      <td><code>Field</code></td>
-      <td><span class="badge optional">Optional</span></td>
-      <td>Field name used by <code>sort</code> (the field to sort by) and <code>distinct</code> (the field to deduplicate on). For primitive arrays, omit this field.</td>
-    </tr>
-    <tr>
-      <td><code>Direction</code></td>
+      <td><code>direction</code></td>
       <td><span class="badge optional">Optional</span></td>
       <td>Sort direction for the <code>sort</code> operation. <code>"asc"</code> (default) or <code>"desc"</code>.</td>
     </tr>
     <tr>
-      <td><code>InitialValue</code></td>
+      <td><code>initialValue</code></td>
       <td><span class="badge optional">Optional</span></td>
-      <td>The starting accumulator value for the <code>reduce</code> operation. Common values: <code>0</code> (sum), <code>""</code> (string concatenation), <code>[]</code> (array building). Defaults to <code>null</code> if omitted.</td>
+      <td>The starting accumulator value for the <code>reduce</code> operation, given as a plain string that's parsed into a number, boolean, or left as a string (e.g. <code>"0"</code> for sum, <code>""</code> for concatenation). Defaults to <code>null</code> if omitted.</td>
+    </tr>
+    <tr>
+      <td><code>onError</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Shared base-class setting (also on DataMapping). <code>"continue"</code> (default) skips failing items and never fails the node on error count alone. <code>"error"</code> fails the node once <code>errorCount</code> exceeds <code>maxErrorCount</code>. See Error Handling below.</td>
+    </tr>
+    <tr>
+      <td><code>maxErrorCount</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Default <code>0</code>. Only consulted when <code>onError</code> is <code>"error"</code>: the node fails once <code>errorCount</code> exceeds this value. <code>0</code> means "fail on any error."</td>
+    </tr>
+    <tr>
+      <td><code>maxErrorsToCollect</code></td>
+      <td><span class="badge optional">Optional</span></td>
+      <td>Default <code>0</code> (unlimited). Safety cap: once this many item errors have occurred, the operation stops processing further items and the node fails — <strong>regardless of <code>onError</code></strong>. Protects against a systemically-broken expression burning through a huge collection before anyone notices.</td>
     </tr>
   </table>
 
   <h2>Operations Reference</h2>
   <table>
-    <tr><th style="width:130px;">Operation</th><th style="width:200px;">Expression Variables</th><th style="width:160px;">Returns</th><th>Description</th></tr>
-    <tr><td><code>filter</code></td><td><code>item</code> — current element</td><td>Array (subset)</td><td>Evaluates the expression for each element. Keeps only elements where the expression is truthy. <code>item.status === "active"</code> keeps only active items.</td></tr>
-    <tr><td><code>map</code></td><td><code>item</code> — current element</td><td>Array (transformed)</td><td>Transforms each element by evaluating the expression. <code>item.id</code> returns an array of ID strings. <code>{ id: item.id, label: item.name }</code> returns reshaped objects.</td></tr>
-    <tr><td><code>reduce</code></td><td><code>acc</code> — accumulator, <code>item</code> — current element</td><td>Scalar or object</td><td>Folds the collection to a single value. <code>acc + item.total</code> with <code>InitialValue: 0</code> produces a sum. <code>acc + item.name + ", "</code> concatenates names.</td></tr>
-    <tr><td><code>sort</code></td><td>n/a — uses <code>Field</code> and <code>Direction</code></td><td>Array (sorted)</td><td>Sorts by the specified field in ascending or descending order. Uses natural comparison for strings and numeric comparison for numbers.</td></tr>
-    <tr><td><code>distinct</code></td><td>n/a — uses <code>Field</code></td><td>Array (deduplicated)</td><td>Returns unique elements. For object arrays, specify <code>Field</code> to deduplicate by field value. For primitive arrays, omit <code>Field</code>.</td></tr>
-    <tr><td><code>count</code></td><td><code>item</code> — optional filter expression</td><td>Integer</td><td>Returns the total number of elements. When <code>Expression</code> is provided, counts only elements where the expression is truthy.</td></tr>
-    <tr><td><code>first</code></td><td><code>item</code> — optional filter expression</td><td>Object or null</td><td>Returns the first element. When <code>Expression</code> is provided, returns the first element matching the expression.</td></tr>
-    <tr><td><code>last</code></td><td><code>item</code> — optional filter expression</td><td>Object or null</td><td>Returns the last element. When <code>Expression</code> is provided, returns the last element matching the expression.</td></tr>
-    <tr><td><code>reverse</code></td><td>n/a</td><td>Array (reversed)</td><td>Returns the array in reverse order. Does not sort — simply reverses the existing element order.</td></tr>
+    <tr><th style="width:130px;">Operation</th><th style="width:200px;">Expression Variables</th><th style="width:160px;">Result Shape</th><th>Description</th></tr>
+    <tr><td><code>filter</code></td><td><code>item</code> — current element</td><td>List (subset), via <code>items</code></td><td>Evaluates the expression for each element. Keeps only elements where the expression is truthy. <code>item.status === "active"</code> keeps only active items.</td></tr>
+    <tr><td><code>map</code></td><td><code>item</code> — current element</td><td>List (transformed), via <code>items</code></td><td>Transforms each element by evaluating the expression. <code>item.id</code> returns an array of ID strings. <code>{ id: item.id, label: item.name }</code> returns reshaped objects. A result of <code>NaN</code> (e.g. arithmetic on a missing/non-numeric field) is treated as a per-item error, not silently written through.</td></tr>
+    <tr><td><code>reduce</code></td><td><code>acc</code> — accumulator, <code>item</code> — current element</td><td>Scalar or object, via a single output item</td><td>Folds the collection to a single value. <code>acc + item.total</code> with <code>initialValue: "0"</code> produces a sum. A <code>NaN</code> result at any step is a per-item error (that step is skipped; <code>acc</code> keeps its prior value).</td></tr>
+    <tr><td><code>sort</code></td><td>n/a — uses <code>field</code> and <code>direction</code></td><td>List (sorted), via <code>items</code></td><td>Sorts by the specified field in ascending or descending order. Uses natural comparison for strings and numeric comparison for numbers.</td></tr>
+    <tr><td><code>distinct</code></td><td>n/a — uses <code>field</code></td><td>List (deduplicated), via <code>items</code></td><td>Returns unique elements, keeping the first occurrence. For object arrays, specify <code>field</code> to deduplicate by field value. For primitive arrays, omit <code>field</code>.</td></tr>
+    <tr><td><code>count</code></td><td>n/a</td><td>Integer, via a single output item</td><td>Returns the total number of elements in the resolved collection.</td></tr>
+    <tr><td><code>first</code></td><td>n/a</td><td>Element or <code>null</code>, via a single output item</td><td>Returns the first element, or <code>null</code> if the collection is empty.</td></tr>
+    <tr><td><code>last</code></td><td>n/a</td><td>Element or <code>null</code>, via a single output item</td><td>Returns the last element, or <code>null</code> if the collection is empty.</td></tr>
+    <tr><td><code>reverse</code></td><td>n/a</td><td>List (reversed), via <code>items</code></td><td>Returns the collection in reverse order. Does not sort — simply reverses the existing element order.</td></tr>
   </table>
+
+  <h2>Error Handling: Per-Item Failures Don't Abort the Batch</h2>
+  <p><code>filter</code>, <code>map</code>, and <code>reduce</code> evaluate a JS expression once per item. A single bad item — a thrown expression error, or a <code>NaN</code> arithmetic result — never aborts the whole operation. It's recorded as a failure in <code>errorRecords</code>/<code>errorCount</code>, and processing continues with the next item.</p>
+  <table>
+    <tr><th style="width:220px;">Setting</th><th>Effect</th></tr>
+    <tr><td><code>onError: "continue"</code> (default)</td><td>Failing items are skipped and counted. The node always succeeds regardless of how many items failed (unless <code>maxErrorsToCollect</code> triggers a circuit-break — see below).</td></tr>
+    <tr><td><code>onError: "error"</code></td><td>The node fails (routes to <code>error</code>) once <code>errorCount</code> exceeds <code>maxErrorCount</code>. With the default <code>maxErrorCount: 0</code>, that means <em>any single item failure</em> fails the node.</td></tr>
+    <tr><td><code>maxErrorsToCollect &gt; 0</code></td><td>A safety cap that applies <strong>regardless of <code>onError</code></strong>: once this many failures have occurred, the operation stops processing further items immediately and the node fails, reporting <code>"...stopped after N item error(s) reached maxErrorsToCollect"</code>.</td></tr>
+  </table>
+  <p>Even in <code>onError: "continue"</code> mode, the failed items are not silently dropped from the record — each one appears in <code>errorRecords</code> as <code>{"item": &lt;original item&gt;, "error": "&lt;message&gt;"}</code>, capped at <code>maxErrorsToCollect</code> entries (or unlimited if it's <code>0</code>) even though <code>errorCount</code> keeps counting every failure beyond that cap.</p>
 
   <h2>Output Ports</h2>
   <table>
     <tr><th style="width:120px;">Port</th><th>When It Fires</th></tr>
-    <tr><td><code>success</code></td><td>The operation completed without error. The result is available in the <code>result</code> output field.</td></tr>
-    <tr><td><code>error</code></td><td>The collection could not be resolved, the expression contains a syntax error, or a runtime evaluation error occurs during filter/map/reduce. Error details include the expression that failed and the element at which the error occurred.</td></tr>
+    <tr><td><code>success</code></td><td>The operation completed. This includes the case where some items failed under <code>onError: "continue"</code> — check <code>errorCount</code> to detect partial failures even on the success port.</td></tr>
+    <tr><td><code>error</code></td><td>The collection could not be resolved at all (no <code>inlineDataSource</code> and no upstream <code>items</code>), the operation name is missing/invalid, the operation-specific expression is missing, or the error-handling thresholds above (<code>onError: "error"</code> + <code>maxErrorCount</code>, or <code>maxErrorsToCollect</code>) were exceeded.</td></tr>
   </table>
 
   <h2>Output Fields</h2>
   <table>
     <tr><th style="width:180px;">Field</th><th style="width:80px;">Type</th><th>Description</th></tr>
-    <tr><td><code>result</code></td><td>any</td><td>The result of the operation. An array for filter/map/sort/distinct/reverse; a scalar or object for reduce/count/first/last.</td></tr>
-    <tr><td><code>operation</code></td><td>string</td><td>The operation name that was executed (e.g., <code>"filter"</code>). Useful for logging in generic processing pipelines.</td></tr>
-    <tr><td><code>count</code></td><td>integer</td><td>For array-returning operations, the number of elements in the result array. For the <code>count</code> operation, the count value itself.</td></tr>
+    <tr><td><code>status</code></td><td>string</td><td>Literal <code>"success"</code> on the success path.</td></tr>
+    <tr><td><code>successCount</code></td><td>integer</td><td>Number of items that processed without error.</td></tr>
+    <tr><td><code>errorCount</code></td><td>integer</td><td>Total number of items that failed, including any beyond the <code>maxErrorsToCollect</code> cap.</td></tr>
+    <tr><td><code>errorRecords</code></td><td>array</td><td>Up to <code>maxErrorsToCollect</code> failed items, each as <code>{"item": &lt;original&gt;, "error": "&lt;message&gt;"}</code>.</td></tr>
+    <tr><td><code>count</code></td><td>integer</td><td>Only present for list-shaped operations (<code>filter</code>/<code>map</code>/<code>sort</code>/<code>distinct</code>/<code>reverse</code>) — the number of successful result records, i.e. <code>successCount</code>.</td></tr>
+    <tr><td><code>items</code></td><td>array</td><td>Standard <code>[{ "json": &lt;record&gt; }, ...]</code> shape. For list operations, one item per successful result record. For scalar operations (<code>reduce</code>/<code>count</code>/<code>first</code>/<code>last</code>), a single item wrapping the scalar or element value.</td></tr>
   </table>
 
   <h2>Sample Configurations</h2>
 
-  <h3>Filter — only active orders</h3>
+  <h3>Filter — only active orders, tolerate bad records</h3>
   <pre><code>{
   "nodeType": "collection-operation",
   "settings": {
-    "Operation": "filter",
-    "SourceOutput": "getOrdersNode",
-    "Expression": "item.status === \"active\""
+    "operation": "filter",
+    "expression": "item.status === \"active\"",
+    "onError": "continue",
+    "maxErrorsToCollect": 10
   }
 }</code></pre>
 
@@ -148,9 +205,8 @@ h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:#1a2332;}
   <pre><code>{
   "nodeType": "collection-operation",
   "settings": {
-    "Operation": "map",
-    "SourceOutput": "getOrdersNode",
-    "Expression": "item.orderId"
+    "operation": "map",
+    "expression": "item.orderId"
   }
 }</code></pre>
 
@@ -158,10 +214,9 @@ h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:#1a2332;}
   <pre><code>{
   "nodeType": "collection-operation",
   "settings": {
-    "Operation": "reduce",
-    "SourceOutput": "getLineItemsNode",
-    "Expression": "acc + item.amount",
-    "InitialValue": 0
+    "operation": "reduce",
+    "expression": "acc + item.amount",
+    "initialValue": "0"
   }
 }</code></pre>
 
@@ -169,99 +224,65 @@ h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:#1a2332;}
   <pre><code>{
   "nodeType": "collection-operation",
   "settings": {
-    "Operation": "sort",
-    "SourceOutput": "getRecordsNode",
-    "Field": "createdAt",
-    "Direction": "desc"
+    "operation": "sort",
+    "field": "createdAt",
+    "direction": "desc"
   }
 }</code></pre>
 
-  <h2>Sample Output</h2>
-  <h3>Success Port</h3>
+  <h2>Sample Output — filter with partial errors</h2>
   <pre><code>{
-  "results": [
-    { "id": "item_001", "name": "Widget A", "processedAt": "2025-03-15T10:00:00Z", "status": "processed" },
-    { "id": "item_002", "name": "Widget B", "processedAt": "2025-03-15T10:00:01Z", "status": "processed" },
-    { "id": "item_003", "name": "Widget C", "processedAt": "2025-03-15T10:00:02Z", "status": "skipped", "skipReason": "already_exists" }
+  "status": "success",
+  "successCount": 2,
+  "errorCount": 1,
+  "errorRecords": [
+    { "item": { "id": "item_003", "status": null }, "error": "Cannot read properties of null (reading 'toLowerCase')" }
   ],
-  "summary": {
-    "totalItems": 3,
-    "processedCount": 2,
-    "skippedCount": 1,
-    "errorCount": 0,
-    "durationMs": 847
-  }
+  "count": 2,
+  "items": [
+    { "json": { "id": "item_001", "status": "active" } },
+    { "json": { "id": "item_002", "status": "active" } }
+  ]
 }</code></pre>
 
   <h2>Expression Reference</h2>
   <table>
     <tr><th style="width:360px;">Expression</th><th>Value</th></tr>
-    <tr><td><code>{{ $output.collectionOp.result }}</code></td><td>The full result (array or scalar) of the operation.</td></tr>
-    <tr><td><code>{{ $output.collectionOp.count }}</code></td><td>The count of result items — useful for downstream IfCondition branching on empty results.</td></tr>
-    <tr><td><code>{{ $output.collectionOp.operation }}</code></td><td>The operation name string for logging.</td></tr>
+    <tr><td><code>{{ $output.collectionOp.items[0].json }}</code></td><td>The first result record (or the scalar/element for reduce/count/first/last).</td></tr>
+    <tr><td><code>{{ $output.collectionOp.successCount }}</code></td><td>How many items processed without error — useful for downstream IfCondition branching.</td></tr>
+    <tr><td><code>{{ $output.collectionOp.errorCount }}</code></td><td>How many items failed. Check this even on the success port to detect partial failures under <code>onError: "continue"</code>.</td></tr>
   </table>
 
   <h2>Node Policies &amp; GuardRails</h2>
   <table>
     <tr><th style="width:280px;">Policy</th><th>Rationale</th></tr>
-    <tr><td>Check <code>count</code> before iterating the result</td><td>A <code>filter</code> or <code>first</code> operation may return an empty array or null. Always add a downstream IfCondition checking <code>{{ $output.collectionOp.count }} > 0</code> before a Loop node to prevent empty-iteration errors.</td></tr>
-    <tr><td>Use <code>item</code> variable — not the source field name — in expressions</td><td>Every element in the collection is exposed as <code>item</code> regardless of the field names in the source object. Write <code>item.status</code>, not <code>order.status</code> or <code>$.status</code>.</td></tr>
-    <tr><td>Use <code>reduce</code> with explicit <code>InitialValue</code></td><td>Without an initial value, <code>reduce</code> uses the first element as the starting accumulator, which can produce unexpected results when the first element is an object. Always provide a typed initial value matching your expected accumulation type.</td></tr>
-    <tr><td>For complex multi-step transformations, use CodeExecute or Function</td><td>CollectionOperation is designed for single-operation array manipulation. When you need to chain multiple operations (filter then map then sort), either use multiple CollectionOperation nodes in sequence or a single CodeExecute/Function node.</td></tr>
+    <tr><td>Check <code>errorCount</code> even on the success port</td><td>Under the default <code>onError: "continue"</code>, the node still reports <code>success</code> even when some items failed — the failures are visible only in <code>errorCount</code>/<code>errorRecords</code>, not by port routing.</td></tr>
+    <tr><td>Use <code>item</code> (and <code>acc</code> for reduce) — not the source field name — in expressions</td><td>Every element in the collection is exposed as <code>item</code> regardless of the field names in the source object. Write <code>item.status</code>, not <code>order.status</code>.</td></tr>
+    <tr><td>Set <code>onError: "error"</code> only when any single bad item should hard-fail the workflow</td><td>The default <code>"continue"</code> is almost always right for exploratory/bulk operations. Reserve <code>"error"</code> + a tuned <code>maxErrorCount</code> for pipelines where partial success is unacceptable.</td></tr>
+    <tr><td>Set a <code>maxErrorsToCollect</code> cap on large or untrusted collections</td><td>Without a cap, a systemically-broken expression (e.g. referencing a field that doesn't exist on any item) still runs to completion before you find out — every item fails, one at a time. A cap stops the operation early.</td></tr>
+    <tr><td>Always provide an explicit <code>initialValue</code> for <code>reduce</code></td><td>Without one, the accumulator starts as <code>null</code>, which can produce unexpected results (e.g. <code>null + item.total</code> evaluating to <code>NaN</code> on the first item, recorded as an error) rather than the numeric/string seed you intended.</td></tr>
+    <tr><td>For complex multi-step transformations, chain multiple CollectionOperation nodes or use CodeExecute</td><td>CollectionOperation is designed for single-operation array manipulation. When you need to chain multiple operations (filter then map then sort), either use multiple nodes in sequence or a single CodeExecute node.</td></tr>
   </table>
 
   <h2>Pattern Examples</h2>
+  <p>See <a href="03-examples.html">Examples</a> for elaborate, realistic worked examples including error-handling behavior and <code>inlineDataSource</code> usage.</p>
 
-  <h3>Pattern 1 — Filter Active Subscriptions, Then Extract IDs for Bulk Email</h3>
-  <pre><code>// Node 1: CollectionOperation — filter active only
-{
-  "Operation": "filter",
-  "SourceOutput": "getAllSubscriptionsNode",
-  "Expression": "item.status === \"active\" && item.tier === \"premium\""
-}
-// result: array of premium active subscription objects
+  <h3>Pattern 1 — Filter Active Subscriptions, Then Extract Emails for Bulk Send</h3>
+  <pre><code>// Node 1: CollectionOperation — filter active premium subscriptions
+{ "operation": "filter", "expression": "item.status === \"active\" && item.tier === \"premium\"" }
+// items: premium active subscription records only
 
 // Node 2: CollectionOperation — extract customer email addresses
-{
-  "Operation": "map",
-  "SourceOutput": "filterActiveNode",
-  "Expression": "item.customerEmail"
-}
-// result: array of email strings ready for bulk email send</code></pre>
+{ "operation": "map", "expression": "item.customerEmail" }
+// items: one item per email string, ready for bulk email send</code></pre>
 
-  <h3>Pattern 2 — Count Pending Approvals and Branch on Threshold</h3>
-  <pre><code>// CollectionOperation — count pending items
-{
-  "Operation": "count",
-  "SourceOutput": "getPendingApprovalsNode",
-  "Expression": "item.status === \"pending\""
-}
-
-// Downstream VariableAssignment — store the count
-{
-  "VariableName": "pendingCount",
-  "ValueExpression": "{{ $output.countNode.count }}"
-}
-
-// Downstream IfCondition — route differently if count exceeds threshold
-// Condition: {{ $var.pendingCount }} > 50</code></pre>
-
-  <h3>Pattern 3 — Sum Invoice Totals and Get Distinct Regions</h3>
+  <h3>Pattern 2 — Sum Invoice Totals and Get Distinct Regions</h3>
   <pre><code>// Node 1: Sum all invoice amounts
-{
-  "Operation": "reduce",
-  "SourceOutput": "getInvoicesNode",
-  "Expression": "acc + item.totalAmount",
-  "InitialValue": 0
-}
+{ "operation": "reduce", "expression": "acc + item.totalAmount", "initialValue": "0" }
 
 // Node 2: Get distinct billing regions from the same invoices
-{
-  "Operation": "distinct",
-  "SourceOutput": "getInvoicesNode",
-  "Field": "billingRegion"
-}
-// result: ["EMEA", "APAC", "AMER"] (unique regions only)</code></pre>
+{ "operation": "distinct", "field": "billingRegion" }
+// items: ["EMEA", "APAC", "AMER"] (unique regions only), one item per region</code></pre>
 </main>
 <script src="/search.js"></script>
 </body>
