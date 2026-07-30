@@ -38,6 +38,8 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <div class="sidebar-brand">S3<span>Storage Node</span></div>
   <div class="sidebar-section">Overview</div>
   <a href="index.html">Overview</a>
+  <div class="sidebar-section">Connection</div>
+  <a href="s3-server-satellite.html">S3 Server (satellite)</a>
   <div class="sidebar-section">Bucket</div>
   <a href="bucket-create.html" class="active">bucket/create</a>
   <a href="bucket-delete.html">bucket/delete</a>
@@ -49,6 +51,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <a href="object-copy.html">object/copy</a>
   <a href="object-delete.html">object/delete</a>
   <a href="object-getmany.html">object/get-many</a>
+  <a href="object-exists.html">object/exists</a>
   <div class="sidebar-section">Folder</div>
   <a href="folder-create.html">folder/create</a>
   <a href="folder-delete.html">folder/delete</a>
@@ -79,13 +82,10 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <h2>Configuration</h2>
 
   <h3>Connection</h3>
-  <table>
-    <tr><th style="width:180px;">Field</th><th style="width:90px;">Required</th><th>Description</th></tr>
-    <tr><td><code>accessKeyId</code></td><td><span class="badge required">Required</span></td><td>AWS Access Key ID. Pattern: <code>^[A-Z0-9]+$</code>, 16–128 characters. Store in BizFirst Credentials Manager.</td></tr>
-    <tr><td><code>secretKey</code></td><td><span class="badge required">Required</span></td><td>AWS Secret Access Key. Never log or expose. Use Credentials Manager.</td></tr>
-    <tr><td><code>sessionToken</code></td><td><span class="badge optional">Optional</span></td><td>STS session token for temporary credentials.</td></tr>
-    <tr><td><code>region</code></td><td><span class="badge required">Required</span></td><td>Target AWS region (e.g. <code>us-east-1</code>). The bucket will be created in this region.</td></tr>
-  </table>
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>&nbsp;
+    <strong>Credentials and region are not fields on this operation.</strong> Wire an <a href="s3-server-satellite.html">S3 Server</a> satellite node into this node's input. The satellite holds the vault credential (<code>ApiKey</code> type — Username = access key ID, Password = secret key), the target AWS region, and an optional Service URL override for S3-compatible backends. Its values are merged onto this node at execution time and take precedence over anything set locally. See <a href="s3-server-satellite.html">S3 Server (satellite)</a> for the full field reference.
+  </div>
 
   <h3>Operation Fields</h3>
   <table>
@@ -102,34 +102,30 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   </table>
 
   <h2>Sample Configuration</h2>
-<pre><code>{
-  "connection": {
-    "accessKeyId": "{{ $credentials.s3_prod.accessKeyId }}",
-    "secretKey": "{{ $credentials.s3_prod.secretKey }}",
-    "region": "us-east-1"
-  },
-  "operation": {
-    "resource": "bucket",
-    "action": "create",
-    "bucketName": "acme-tenant-{{ $node.TenantOnboard.output.tenantSlug }}-docs",
-    "cannedAcl": "private",
-    "serverSideEncryption": "AES256",
-    "enableVersioning": true,
-    "blockPublicAcls": true,
-    "blockPublicPolicy": true,
-    "ignorePublicAcls": true,
-    "restrictPublicBuckets": true
-  }
+<pre><code>// Credentials + region resolved from the connected S3 Server satellite — see s3-server-satellite.html
+{
+  "resource": "bucket",
+  "operation": "create",
+  "bucketName": "acme-tenant-{{ $node.TenantOnboard.output.tenantSlug }}-docs",
+  "cannedAcl": "private",
+  "serverSideEncryption": "AES256",
+  "enableVersioning": true,
+  "blockPublicAcls": true,
+  "blockPublicPolicy": true,
+  "ignorePublicAcls": true,
+  "restrictPublicBuckets": true
 }</code></pre>
 
   <h2>Validation Errors</h2>
   <table>
     <tr><th style="width:240px;">Error Code</th><th>Cause &amp; Resolution</th></tr>
-    <tr><td><code>BucketAlreadyExists</code></td><td>A bucket with this name already exists in a different AWS account. S3 bucket names are globally unique — choose a different name.</td></tr>
-    <tr><td><code>BucketAlreadyOwnedByYou</code></td><td>The bucket already exists in your account. If the intent was idempotent provisioning, check downstream logic to skip creation when this error occurs.</td></tr>
-    <tr><td><code>InvalidBucketName</code></td><td>Bucket name violates naming rules. Ensure 3–63 lowercase alphanumeric characters or hyphens, no consecutive hyphens, does not start/end with a hyphen.</td></tr>
-    <tr><td><code>AccessDenied</code></td><td>The IAM identity lacks <code>s3:CreateBucket</code> permission. Update the IAM policy to include <code>s3:CreateBucket</code> and <code>s3:PutBucketPolicy</code> as needed.</td></tr>
-    <tr><td><code>InvalidLocationConstraint</code></td><td>The specified region is invalid or the bucket creation request conflicts with the region constraint. Verify the <code>region</code> field value.</td></tr>
+    <tr><td><code>MISSING_BUCKET_NAME</code></td><td>Design-time validation: <code>bucketName</code> was left blank. Fails before any request is sent.</td></tr>
+    <tr><td><code>INVALID_BUCKET_NAME</code></td><td>Design-time validation: name fails length (3–63 chars), character set (lowercase/digits/hyphens/dots), start/end, consecutive-dot, <code>xn--</code>-prefix, <code>-s3alias</code>-suffix, or IPv4-shape checks.</td></tr>
+    <tr><td><code>MISSING_KMS_KEY</code> / <code>INVALID_KMS_KEY</code></td><td>Design-time validation: <code>serverSideEncryption</code> is <code>aws:kms</code> but <code>kmsKeyId</code> is blank or outside the 8–2048 char range.</td></tr>
+    <tr><td><code>BucketAlreadyExists</code></td><td>Raw AWS error: a bucket with this name already exists in a different AWS account. S3 bucket names are globally unique — choose a different name.</td></tr>
+    <tr><td><code>BucketAlreadyOwnedByYou</code></td><td>Raw AWS error: the bucket already exists in your account. If the intent was idempotent provisioning, check downstream logic to skip creation when this error occurs.</td></tr>
+    <tr><td><code>AccessDenied</code></td><td>Raw AWS error: the IAM identity lacks <code>s3:CreateBucket</code> permission. Update the IAM policy to include <code>s3:CreateBucket</code> and <code>s3:PutBucketPolicy</code> as needed.</td></tr>
+    <tr><td><code>InvalidLocationConstraint</code></td><td>Raw AWS error: the specified region is invalid or the bucket creation request conflicts with the region constraint. Verify the connected satellite's <code>region</code> value.</td></tr>
   </table>
 
   <h2>Output</h2>
