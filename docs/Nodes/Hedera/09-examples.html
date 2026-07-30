@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Examples | Hedera — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Hedera<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-networks.html">Networks</a>
+  <a href="03-account-operations.html">Account Operations</a>
+  <a href="04-token-operations.html">Token Operations</a>
+  <a href="05-topic-operations.html">Topic Operations</a>
+  <a href="06-transaction-operations.html">Transaction Operations</a>
+  <a href="07-utility-operations.html">Utility Operations</a>
+  <a href="08-input-output.html">Input &amp; Output</a>
+  <a href="09-examples.html" class="active">Examples</a>
+  <a href="10-troubleshooting.html">Troubleshooting</a>
+  <a href="11-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      Hedera
+    </div>
+    <h1>Examples</h1>
+    <p class="subtitle">Four worked workflow patterns built from the operations covered in this guide.</p>
+  </div>
+
+  <h2>1. Check an Account's HBAR Balance Before a Payout Step</h2>
+  <p>Before a workflow triggers an off-ledger payout (e.g. releasing funds, marking an invoice paid, or unlocking a service), confirm that the treasury account actually holds enough HBAR to cover it.</p>
+  <pre><code>{
+  "resource": "account",
+  "operation": "getBalance",
+  "network": "mainnet",
+  "accountId": "0.0.900321"
+}</code></pre>
+  <div class="callout info">
+    <strong>Workflow pattern:</strong> Feed <code>tinybars</code> from the response into an <em>If Condition</em> node comparing it against the required payout amount (converted to tinybars via <a href="07-utility-operations.html">utility.convertUnits</a>). Route to the payout step only when the balance is sufficient; otherwise route to an alert/notification path so an operator can top up the treasury account before customers are affected.
+  </div>
+
+  <h2>2. Poll an HCS Topic for New Messages as a Trigger Pattern</h2>
+  <p>Because this node's <code>topic.getMessages</code> operation is a synchronous read rather than a push-based subscription, the standard way to react to new HCS activity is to poll on a schedule and track the last sequence number seen.</p>
+  <pre><code>// Scheduled Trigger fires this every 30 seconds
+{
+  "resource": "topic",
+  "operation": "getMessages",
+  "network": "mainnet",
+  "topicId": "0.0.987654",
+  "sequenceFrom": "{{ $vars.lastSequenceSeen + 1 }}",
+  "limit": 50
+}</code></pre>
+  <div class="callout info">
+    <strong>Workflow pattern:</strong> Pair a <em>Scheduled Trigger</em> node with a <em>Variable Assignment</em> node that persists <code>lastSequenceSeen</code> between runs. On each run, if <code>messages</code> is non-empty, loop over it with a <em>Loop</em> node to process each event (e.g. parsing a JSON payload out of <code>message</code>) and update <code>lastSequenceSeen</code> to the highest <code>sequenceNumber</code> returned before the workflow ends. This turns an HCS topic into a lightweight, ordered event queue for any downstream automation.
+  </div>
+
+  <h2>3. Look Up Token Metadata and an Account's Token Balances Together</h2>
+  <p>Raw token balances are just IDs and integers — pairing <code>token.getBalances</code> with <code>token.getInfo</code> resolves each holding into a human-readable name, symbol, and correctly-scaled amount.</p>
+  <pre><code>// Step 1 — list what the account holds
+{
+  "resource": "token",
+  "operation": "getBalances",
+  "network": "testnet",
+  "accountId": "0.0.1234567",
+  "limit": 25
+}
+
+// Step 2 — for each tokenId in the result, resolve its metadata
+{
+  "resource": "token",
+  "operation": "getInfo",
+  "network": "testnet",
+  "tokenId": "{{ $item.tokenId }}"
+}</code></pre>
+  <div class="callout info">
+    <strong>Workflow pattern:</strong> Feed the <code>balances</code> array from step 1 into a <em>Loop</em> node. Inside the loop, call <code>token.getInfo</code> for the current item's <code>tokenId</code>, then use a <em>Data Mapping</em> node to combine <code>balance</code> / <code>decimals</code> from step 1 with <code>name</code> / <code>symbol</code> from step 2 into a single display-ready row — e.g. <code>"1,000.00 WDG (Widget Token)"</code>.
+  </div>
+
+  <h2>4. Convert a User-Entered HBAR Amount to Tinybar Before a Downstream Step</h2>
+  <p>When a workflow accepts a human-entered amount (from a Form node, a chat message, or an approval step) in HBAR, convert it to tinybars before comparing it against any balance or fee value returned by other operations — those are always expressed in tinybars.</p>
+  <pre><code>{
+  "resource": "utility",
+  "operation": "convertUnits",
+  "amount": "{{ $form.requestedAmount }}",
+  "fromUnit": "hbar",
+  "toUnit": "tinybar"
+}</code></pre>
+  <div class="callout info">
+    <strong>Workflow pattern:</strong> Place this node right after the <em>Form</em> or <em>Chat</em> node that collects the user's HBAR amount, and before the <em>If Condition</em> node that compares it against a balance from <code>account.getBalance</code>. Comparing like-for-like units (tinybar to tinybar) avoids an entire class of off-by-100,000,000 bugs.
+  </div>
+
+  <div class="callout warning">
+    <strong>All four patterns above are read-only.</strong> None of them move value or submit anything to the ledger — they only inform decisions inside the workflow. See <a href="11-roadmap.html">Roadmap</a> for planned signed-write operations that would actually execute a transfer, mint, or topic submission.
+  </div>
+
+</main>
+</body>
+</html>

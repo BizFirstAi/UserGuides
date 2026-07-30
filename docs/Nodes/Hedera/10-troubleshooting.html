@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Troubleshooting | Hedera — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Hedera<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-networks.html">Networks</a>
+  <a href="03-account-operations.html">Account Operations</a>
+  <a href="04-token-operations.html">Token Operations</a>
+  <a href="05-topic-operations.html">Topic Operations</a>
+  <a href="06-transaction-operations.html">Transaction Operations</a>
+  <a href="07-utility-operations.html">Utility Operations</a>
+  <a href="08-input-output.html">Input &amp; Output</a>
+  <a href="09-examples.html">Examples</a>
+  <a href="10-troubleshooting.html" class="active">Troubleshooting</a>
+  <a href="11-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      Hedera
+    </div>
+    <h1>Troubleshooting</h1>
+    <p class="subtitle">Common errors, what causes them, and how to fix them.</p>
+  </div>
+
+  <h2>Unconfigured Network</h2>
+  <div class="callout danger">
+    <strong><code>HederaNetworkNotConfiguredException</code></strong>
+  </div>
+  <p><strong>Cause:</strong> The <code>network</code> config key (or the resolved <code>Hedera:DefaultNetwork</code> value, when <code>network</code> is omitted) doesn't match any key under <code>Hedera:Networks</code> in application settings. This happens most often from a typo (<code>testnett</code>), a network referenced before it's added to configuration, or case mismatches.</p>
+  <p><strong>Fix:</strong> Confirm the exact spelling of the network name against the keys in <code>Hedera:Networks</code> — see <a href="02-networks.html">Networks</a>. If you're pointing at a custom network entry, verify it was actually added to configuration in the environment the workflow is running in (a network added only in local <code>appsettings.Development.json</code> won't exist in production).</p>
+
+  <h2>Invalid Address / ID Format</h2>
+  <div class="callout danger">
+    <strong>Malformed account, token, topic, or transaction ID</strong>
+  </div>
+  <p><strong>Cause:</strong> A field like <code>accountId</code>, <code>tokenId</code>, or <code>topicId</code> was not supplied in the expected native <code>shard.realm.num</code> form (e.g. <code>0.0.1234567</code>), or a <code>transactionId</code> didn't match either of the two accepted formats — see <a href="06-transaction-operations.html">Transaction Operations</a>.</p>
+  <p><strong>Fix:</strong> Run the value through <a href="07-utility-operations.html">utility.validateAddress</a> before using it in any other operation, especially when the value comes from user input, a form, or an external system rather than a hard-coded configuration. For transaction IDs, accept either the native <code>@</code> form or the dash form, but don't mix separators within a single ID.</p>
+
+  <h2>Mirror Node Rate Limiting (HTTP 429)</h2>
+  <div class="callout warning">
+    <strong>Too Many Requests</strong>
+  </div>
+  <p><strong>Cause:</strong> The public Mirror Nodes are shared, free infrastructure and apply rate limits per client IP. A workflow that polls frequently (e.g. a tight <a href="09-examples.html">HCS polling loop</a>) or that fans out many parallel lookups can trip these limits, especially against <code>testnet</code> where limits tend to be lower than <code>mainnet</code>.</p>
+  <p><strong>Fix:</strong></p>
+  <ul>
+    <li>Increase the interval between polling calls — for HCS message polling, 15–30 seconds is a reasonable starting point rather than sub-second polling.</li>
+    <li>Batch lookups where possible — request a larger <code>limit</code> in one call instead of many small calls in a loop.</li>
+    <li>Apply exponential backoff on retry: on a 429, wait, then retry with an increasing delay (e.g. 1s, 2s, 4s, 8s) rather than retrying immediately in a tight loop.</li>
+    <li>For sustained high-volume production usage, consider pointing <code>Hedera:Networks</code> at a self-hosted or commercially-hosted Mirror Node instead of the public community endpoints — see <a href="02-networks.html">Networks</a> for how to add a custom network entry.</li>
+  </ul>
+
+  <h2>Eventual Consistency — "It's Not There Yet"</h2>
+  <div class="callout warning">
+    <strong>A transaction, message, or balance change doesn't show up immediately</strong>
+  </div>
+  <p><strong>Cause:</strong> The Mirror Node ingests consensus events asynchronously and typically lags live Hedera consensus by a few seconds. This is expected, normal behavior of the Mirror Node REST API — not a bug in the node or a sign the transaction failed.</p>
+  <p><strong>Fix:</strong> Don't chain a submission (via another tool/SDK) directly into a <code>transaction.get</code>, <code>account.getBalance</code>, or <code>topic.getMessages</code> call and expect the result to reflect it instantly. Instead:</p>
+  <ul>
+    <li>Add a short delay (a few seconds) between submitting a transaction and querying for its result.</li>
+    <li>If you need to react to it, poll with a short retry loop (e.g. up to 5 attempts, a couple of seconds apart) rather than a single immediate lookup.</li>
+    <li>For HCS-based triggers specifically, favor the incremental <code>sequenceFrom</code> polling pattern in <a href="09-examples.html">Examples</a> over expecting a single message to appear the instant it's submitted.</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Still stuck?</strong> Double-check the operation's exact field requirements on its own page — <a href="03-account-operations.html">Account</a>, <a href="04-token-operations.html">Token</a>, <a href="05-topic-operations.html">Topic</a>, <a href="06-transaction-operations.html">Transaction</a>, <a href="07-utility-operations.html">Utility</a> — and confirm the ID you're querying actually exists on the network you configured, not just on a different one.
+  </div>
+
+</main>
+</body>
+</html>
