@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -29,12 +29,14 @@ pre{background:#1e2736;color:#c8d4e0;border-radius:8px;padding:18px 20px;overflo
   </div>
 </div>
 <nav class="sidebar">
-  <div class="sidebar-brand">AWS S3<span>Storage Node</span></div>
+  <div class="sidebar-brand">S3<span>Storage Node</span></div>
   <div class="sidebar-section">This Node</div>
   <a href="index.html">Overview</a>
   <a href="01-configuration.html">Configuration</a>
   <a href="02-input-output.html">Input &amp; Output</a>
   <a href="03-examples.html" class="active">Examples</a>
+  <div class="sidebar-section">Connection</div>
+  <a href="s3-server-satellite.html">S3 Server (satellite)</a>
   <div class="sidebar-section">Storage Nodes</div>
   <a href="../MongoDB/">MongoDB</a>
   <a href="../Stripe/">Stripe</a>
@@ -46,123 +48,84 @@ pre{background:#1e2736;color:#c8d4e0;border-radius:8px;padding:18px 20px;overflo
   <div class="page-header">
     <div class="breadcrumb"><a href="../../" style="color:inherit;text-decoration:none;">Portal</a> / <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> / <a href="index.html" style="color:inherit;text-decoration:none;">AWS S3</a> / Examples</div>
     <h1>Examples</h1>
-    <p class="subtitle">Four examples: invoice upload, pre-signed download URL, customer direct-upload URL, and partner file ingestion pipeline.</p>
+    <p class="subtitle">Five worked workflow patterns using the real 13-operation resource/operation model.</p>
   </div>
 
   <div class="example-block">
-    <h3><i class="fa-solid fa-file-arrow-up"></i> Example 1 — Upload Invoice PDF</h3>
-    <p>After generating an invoice PDF (base64-encoded), upload it to S3 with a structured key path and custom metadata.</p>
-    <table>
-      <tr><th>Property</th><th>Value</th></tr>
-      <tr><td>operation</td><td><code>upload</code></td></tr>
-      <tr><td>credential_id</td><td><code>aws-prod</code></td></tr>
-      <tr><td>bucket</td><td><code>bizfirst-invoices</code></td></tr>
-      <tr><td>key</td><td><code>invoices/$ctx.year/$ctx.month/$ctx.invoice_id.pdf</code></td></tr>
-      <tr><td>content</td><td><code>$ctx.pdf_base64</code></td></tr>
-      <tr><td>content_encoding</td><td><code>base64</code></td></tr>
-      <tr><td>content_type</td><td><code>application/pdf</code></td></tr>
-      <tr><td>acl</td><td><code>private</code></td></tr>
-      <tr><td>metadata</td><td><code>{"invoice-id": "$ctx.invoice_id", "customer-id": "$ctx.customer_id"}</code></td></tr>
-    </table>
-    <div class="callout success">Success output includes <code>object_url</code> — store this in your database and include in the invoice email to the customer.</div>
+    <h3><i class="fa-solid fa-plug-circle-check"></i> Example 1 — Read-Only Connectivity Check</h3>
+    <p>The fastest way to confirm a satellite's credential, region, and (if set) Service URL actually work before building anything real.</p>
+    <ol>
+      <li>Drop an <strong>S3 Server</strong> satellite node — vault credential, Region <code>us-east-1</code>, Service URL blank (real AWS) or set (S3-compatible backend).</li>
+      <li>Wire into one <a href="bucket-listall.html">bucket/list-all</a> node.</li>
+      <li>Run. Success returns <code>bucketNames</code> (array). Failure → check <code>errorCode</code> against the per-operation Validation Errors table.</li>
+    </ol>
   </div>
 
   <div class="example-block">
-    <h3><i class="fa-solid fa-link"></i> Example 2 — Generate Pre-Signed Download URL</h3>
-    <p>Generate a 24-hour download link for a private contract PDF. The link is emailed to the customer for temporary access.</p>
-    <table>
-      <tr><th>Property</th><th>Value</th></tr>
-      <tr><td>operation</td><td><code>getPresignedUrl</code></td></tr>
-      <tr><td>credential_id</td><td><code>aws-prod</code></td></tr>
-      <tr><td>bucket</td><td><code>bizfirst-contracts</code></td></tr>
-      <tr><td>key</td><td><code>contracts/$ctx.contract_id/signed.pdf</code></td></tr>
-      <tr><td>url_action</td><td><code>get</code></td></tr>
-      <tr><td>expires_in</td><td><code>86400</code> (24 hours)</td></tr>
-    </table>
-    <p>The <code>url</code> field in the success output is sent via an Email node. When the 24-hour window expires, the link returns a 403 — enforcing the access window without any additional access management.</p>
+    <h3><i class="fa-solid fa-diagram-project"></i> Example 2 — Full Upload → Verify → Download → Delete Pipeline</h3>
+    <p>A safe test order that never leaves orphaned resources if the workflow stops midway. Same shape whether the connected satellite targets real AWS or an S3-compatible backend.</p>
+    <ol>
+      <li><a href="bucket-create.html">bucket/create</a> — fresh bucket, all defaults (private, AES256, versioning off).</li>
+      <li><a href="folder-create.html">folder/create</a> — <code>folderPath: invoices/2026/</code>.</li>
+      <li><a href="object-upload.html">object/upload</a> — <code>objectKey: invoices/2026/hello.txt</code>, <code>dataMode: text</code>, File Data <code>hello world</code>.</li>
+      <li><a href="object-exists.html">object/exists</a> — same key, confirm <code>exists: true</code> before trusting downstream reads.</li>
+      <li><a href="object-download.html">object/download</a> — same key.</li>
+      <li><a href="object-copy.html">object/copy</a> — duplicate to <code>invoices/2026/hello-copy.txt</code> (same bucket).</li>
+      <li><a href="object-delete.html">object/delete</a> — remove the copy.</li>
+      <li><a href="folder-delete.html">folder/delete</a> — <code>folderPath: invoices/</code>, clears the remaining original + folder marker.</li>
+      <li><a href="bucket-delete.html">bucket/delete</a> — Verify Empty on (default) — destroys the now-empty bucket.</li>
+    </ol>
   </div>
 
   <div class="example-block">
-    <h3><i class="fa-solid fa-cloud-arrow-up"></i> Example 3 — Customer Direct Upload URL</h3>
-    <p>Generate a PUT pre-signed URL so a customer can upload a file directly to S3 from their browser — without the file passing through your servers.</p>
-    <table>
-      <tr><th>Property</th><th>Value</th></tr>
-      <tr><td>operation</td><td><code>getPresignedUrl</code></td></tr>
-      <tr><td>credential_id</td><td><code>aws-prod</code></td></tr>
-      <tr><td>bucket</td><td><code>bizfirst-uploads</code></td></tr>
-      <tr><td>key</td><td><code>uploads/$ctx.customer_id/$ctx.timestamp/$ctx.filename</code></td></tr>
-      <tr><td>url_action</td><td><code>put</code></td></tr>
-      <tr><td>expires_in</td><td><code>900</code> (15 minutes)</td></tr>
-      <tr><td>content_type</td><td><code>application/pdf</code></td></tr>
-    </table>
-    <pre>// Downstream: return URL to the API caller for direct browser upload
+    <h3><i class="fa-solid fa-right-left"></i> Example 3 — Chaining Download Straight Into Upload</h3>
+    <p>Move an object between two buckets without <a href="object-copy.html">object/copy</a> — useful when a transform step needs to sit in between.</p>
+<pre><code>// Node: FetchSource (S3 — object/download)
 {
-  "upload_url": "$ctx.url",
-  "expires_at": "$ctx.expires_at",
-  "instructions": "PUT your file to this URL with Content-Type: application/pdf"
-}</pre>
+  "bucketName": "acme-ingest-landing",
+  "objectKey": "{{ $node.ListFiles.output.currentKey }}"
+  // downloadPath left blank — only the in-workflow bytes are needed
+}
+// Node: TransformFile (Code Execute) — optional processing step
+
+// Node: WriteDestination (S3 — object/upload)
+// Input Data Key stays at its default ("data") — reads FetchSource's raw
+// bytes output directly. No re-encoding step, regardless of Data Mode.
+{
+  "bucketName": "acme-processed-archive",
+  "objectKey": "processed/{{ $node.ListFiles.output.currentKey }}"
+}</code></pre>
   </div>
 
   <div class="example-block">
-    <h3><i class="fa-solid fa-boxes-stacked"></i> Example 4 — Partner File Ingestion Pipeline</h3>
-    <p>A scheduled workflow lists new files in a partner's S3 prefix, downloads each one, processes the data, then moves the file to an archive prefix.</p>
-    <ol>
-      <li><strong>ScheduledTrigger</strong> — runs every 15 minutes</li>
-      <li><strong>S3 (list)</strong> — bucket: <code>partner-drops</code>, prefix: <code>incoming/</code>, max_keys: <code>50</code></li>
-      <li><strong>Loop</strong> — iterates over <code>$ctx.objects</code></li>
-      <li><strong>S3 (download)</strong> — key: <code>$loop.key</code>, output_format: <code>text</code></li>
-      <li><strong>CodeExecute</strong> — parse CSV rows, validate, insert into database</li>
-      <li><strong>S3 (copy)</strong> — source_key: <code>$loop.key</code>, destination: <code>archive/processed/</code></li>
-      <li><strong>S3 (delete)</strong> — delete original from <code>incoming/</code> after copy</li>
-    </ol>
-    <div class="callout info">This idiomatic pattern ensures each file is processed exactly once and archived before deletion — preventing duplicate processing on retry and maintaining a full audit trail.</div>
+    <h3><i class="fa-solid fa-layer-group"></i> Example 4 — Paginating a Large Bucket</h3>
+    <p><a href="object-getmany.html">object/get-many</a> (and <a href="bucket-search.html">bucket/search</a>) cap at 1000 keys per call. To walk a bucket with more objects than that:</p>
+<pre><code>// First call: no continuationToken
+{
+  "bucketName": "acme-archive",
+  "prefix": "reports/",
+  "maxKeys": 1000
+}
+// If nextContinuationToken is non-empty, loop back into the same node
+// with that value in continuationToken. Stop when it comes back empty.</code></pre>
   </div>
 
   <div class="example-block">
-    <h3><i class="fa-solid fa-copy"></i> Example 5 — Backup Before Overwrite</h3>
-    <p>Before overwriting an existing file (e.g. a configuration or template), copy the current version to a versioned backup path, then upload the new version. This gives you a complete history without needing S3 object versioning enabled.</p>
-    <ol>
-      <li><strong>WebhookTrigger</strong> — receives new template file content</li>
-      <li><strong>S3 (copy)</strong> — back up the existing file:<br>
-        <code>source_bucket: bizfirst-assets</code><br>
-        <code>source_key: templates/email-welcome.html</code><br>
-        <code>bucket: bizfirst-assets</code><br>
-        <code>dest_key: templates/backups/email-welcome-$ctx.timestamp.html</code></li>
-      <li><strong>S3 (upload)</strong> — upload new version:<br>
-        <code>key: templates/email-welcome.html</code><br>
-        <code>file_data: $ctx.new_content</code><br>
-        <code>content_type: text/html</code></li>
-      <li><strong>MongoDB (insert)</strong> — log the version event with backup key and author</li>
-    </ol>
+    <h3><i class="fa-solid fa-cloud"></i> Example 5 — Wiring to Backblaze B2 Instead of AWS</h3>
+    <p>Point the same operation nodes at a completely different, cheaper backend with zero changes to the operation nodes themselves — only the satellite changes.</p>
+    <table>
+      <tr><th style="width:200px;">Satellite Field</th><th>Value</th></tr>
+      <tr><td>Vault credential</td><td>Secret type <code>ApiKey</code>, Username = B2 <code>keyID</code>, Password = B2 <code>applicationKey</code></td></tr>
+      <tr><td>Region</td><td><code>us-east-1</code> (any value — signing-only)</td></tr>
+      <tr><td>Service URL</td><td><code>https://s3.us-east-005.backblazeb2.com</code> (your bucket's real B2 endpoint)</td></tr>
+      <tr><td>Force Path Style</td><td>Checked</td></tr>
+    </table>
+    <p>Every operation node wired to that satellite now talks to B2 — same field values as every example above. Full walkthrough: <a href="s3-server-satellite.html">S3 Server (satellite)</a>.</p>
   </div>
 
-  <div class="example-block">
-    <h3><i class="fa-solid fa-robot"></i> Example 6 — Store AI-Generated Report</h3>
-    <p>After a FlowAiAgent node generates a weekly business summary, upload it to S3, then generate a pre-signed URL and include it in a management email.</p>
-    <ol>
-      <li><strong>ScheduledTrigger</strong> — Monday 08:00</li>
-      <li><strong>FlowAiAgent</strong> — generate weekly management summary (markdown format)</li>
-      <li><strong>S3 (upload)</strong>:<br>
-        <code>bucket: bizfirst-reports</code><br>
-        <code>key: reports/$ctx.year/$ctx.month/weekly-summary-$ctx.date.md</code><br>
-        <code>file_data: $node.reportAgent.result</code><br>
-        <code>content_type: text/markdown</code><br>
-        <code>acl: private</code></li>
-      <li><strong>S3 (getPresignedUrl)</strong>:<br>
-        <code>key: $node.uploadReport.key</code><br>
-        <code>method: GET</code><br>
-        <code>expires_in: 604800</code> (7 days)</li>
-      <li><strong>EmailSmtp</strong> — send to management team with download link</li>
-      <li><strong>Slack</strong> — post notification in #management channel with URL</li>
-    </ol>
-    <pre>// Email body snippet
-Weekly summary is ready: <a href="{@ $node.presign.url }">Download Report</a>
-Generated: {@ $ctx.date } | Valid until: {@ $node.presign.expires_at }</pre>
-  </div>
-
-  <h2>IAM Policy for This Workflow (Principle of Least Privilege)</h2>
-  <p>For a workflow that only needs to upload and generate pre-signed download URLs, use this minimal IAM policy:</p>
-  <pre><code>{
+  <h2>IAM Policy for a Minimal Upload + Read Workflow</h2>
+  <p>For a workflow that only needs to upload and read back objects in one bucket, scope the vault credential's underlying IAM identity to just that:</p>
+<pre><code>{
   "Version": "2012-10-17",
   "Statement": [
     {
@@ -172,16 +135,16 @@ Generated: {@ $ctx.date } | Valid until: {@ $node.presign.expires_at }</pre>
     }
   ]
 }</code></pre>
-  <p>Do not grant <code>s3:*</code> or bucket-level access. Scope permissions to the specific bucket and only the actions the workflow actually needs.</p>
+  <p>Do not grant <code>s3:*</code> or account-wide access. Scope permissions to the specific bucket and only the actions the workflow actually needs. This is an AWS IAM concern (attached to the credential itself, not visible to the node) — it does not apply when the connected satellite's Service URL points at a non-AWS backend, which has its own access-control model (e.g. B2's per-key bucket/file-prefix restrictions).</p>
 
-  <h2>Key Pattern Summary</h2>
+  <h2>Pattern Summary</h2>
   <table>
     <tr><th>Pattern</th><th>Operations Used</th><th>Notes</th></tr>
-    <tr><td>Upload and share</td><td>upload → getPresignedUrl</td><td>Always store to private, share via time-limited URL</td></tr>
-    <tr><td>Customer upload</td><td>getPresignedUrl (PUT)</td><td>15-30 min expiry; enforce content-type to prevent arbitrary uploads</td></tr>
-    <tr><td>List and process</td><td>list → Loop → download</td><td>Use continuation_token for buckets with &gt;1000 objects</td></tr>
-    <tr><td>Archive and delete</td><td>copy → delete</td><td>Always copy first — verify success before deleting source</td></tr>
-    <tr><td>Version before overwrite</td><td>copy → upload</td><td>Use timestamp in backup key for a sortable version history</td></tr>
+    <tr><td>Connectivity check</td><td>bucket/list-all</td><td>No fields besides the connected satellite — first thing to run against any new credential/backend.</td></tr>
+    <tr><td>Safe write-then-read</td><td>upload → exists → download</td><td>Confirm a write landed before trusting a downstream read.</td></tr>
+    <tr><td>List and process</td><td>get-many / search → Loop → download</td><td>Check <code>nextContinuationToken</code> for buckets with &gt;1000 objects.</td></tr>
+    <tr><td>Move without re-upload</td><td>copy → delete</td><td>Always copy first — verify success before deleting the source.</td></tr>
+    <tr><td>Zero-copy transform chain</td><td>download → upload</td><td>Raw bytes flow through the default Input Data Key with no re-encoding.</td></tr>
   </table>
 </main>
 <script src="/search.js"></script></body>
