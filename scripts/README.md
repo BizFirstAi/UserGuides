@@ -1,5 +1,6 @@
 # Docs build scripts
 
+
 GitHub Pages serves `docs/` directly from the `main` branch — there is
 no Actions build step. Anything these scripts generate must be
 committed and pushed like any other file.
