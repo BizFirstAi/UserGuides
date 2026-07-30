@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Input &amp; Output | Slack — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Slack<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-authentication.html">Authentication &amp; Setup</a>
+  <a href="03-message-operations.html">Message Operations</a>
+  <a href="04-channel-operations.html">Channel Operations</a>
+  <a href="05-file-operations.html">File Operations</a>
+  <a href="06-reaction-operations.html">Reaction Operations</a>
+  <a href="07-user-operations.html">User Operations</a>
+  <a href="08-usergroup-operations.html">User Group Operations</a>
+  <a href="09-input-output.html" class="active">Input &amp; Output</a>
+  <a href="10-examples.html">Examples</a>
+  <a href="11-troubleshooting.html">Troubleshooting</a>
+  <a href="12-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      Slack
+    </div>
+    <h1>Input &amp; Output</h1>
+    <p class="subtitle">The shared config-key pattern, output ports, and standard result fields</p>
+  </div>
+
+  <h2>Input Shape</h2>
+  <p>Every operation on this node reads its configuration through the same three-tier pattern:</p>
+  <ol>
+    <li><strong>Routing keys</strong> — <code>resource</code> and <code>operation</code> select which of the 42 feature partials handles the call.</li>
+    <li><strong>Credential keys</strong> — <code>botToken</code> (inline) or <code>credentialID</code> (vault). <code>message/search</code> and <code>user/updateProfile</code> use a user-level token instead — see <a href="02-authentication.html">Authentication &amp; Setup</a>.</li>
+    <li><strong>Operation-specific fields</strong> — documented per-operation on the five resource pages (<a href="03-message-operations.html">Message</a>, <a href="04-channel-operations.html">Channel</a>, <a href="05-file-operations.html">File</a>, <a href="06-reaction-operations.html">Reaction</a>, <a href="07-user-operations.html">User</a>, <a href="08-usergroup-operations.html">User Group</a>).</li>
+  </ol>
+  <p>Each operation is backed by a settings DTO (e.g. <code>SendMessageInfo</code>, <code>ChannelCreateInfo</code>) whose <code>LoadFrom(ConfigDataPropertyBag)</code> method reads the config keys, and whose <code>Validate()</code> method reports the first missing/invalid field.</p>
+
+  <h2>Output Ports</h2>
+  <p>Every Slack node instance is created with two output ports via <code>GetOrCreatePortSuccessAndError()</code>:</p>
+  <table>
+    <thead><tr><th>Port</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td><code>success</code></td><td>The Slack API call returned <code>"ok": true</code> and any operation-level validation passed.</td></tr>
+      <tr><td><code>error</code></td><td>Validation failed before the call (e.g. missing <code>channel</code>), the Slack API returned <code>"ok": false</code>, credential resolution failed, or an unhandled exception occurred.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Standard Success Shape</h2>
+  <p>Every successful operation writes at minimum:</p>
+  <pre><code>{
+  "status": "success",
+  "resource": "message",
+  "operation": "send",
+  "items": [ { /* operation-specific result fields */ } ]
+}</code></pre>
+  <p>The <code>items</code> array wraps the operation's specific result object so downstream nodes can iterate it uniformly, regardless of whether the operation returns a single record (e.g. <code>message/send</code>) or a list (e.g. <code>channel/getMany</code>).</p>
+
+  <h2>Standard Error Shape</h2>
+  <pre><code>{
+  "status": "error",
+  "errorCode": "MISSING_BOT_TOKEN",
+  "resource": "message",
+  "operation": "send",
+  "message": "botToken is required"
+}</code></pre>
+  <table>
+    <thead><tr><th>Error Code</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>MISSING_BOT_TOKEN</code></td><td>Neither <code>botToken</code> nor a resolvable <code>credentialID</code> was supplied.</td></tr>
+      <tr><td><code>CREDENTIAL_RESOLVER_NOT_CONFIGURED</code></td><td><code>credentialID</code> was set but no <code>ICredentialResolver</code> is registered in DI.</td></tr>
+      <tr><td><code>CREDENTIAL_NOT_FOUND</code></td><td><code>credentialID</code> does not resolve to a stored bearer-token credential.</td></tr>
+      <tr><td><code>ENGINE_NOT_SUPPORTED</code></td><td><code>message/sendAndWait</code> only — workflow suspension isn't implemented yet. See <a href="12-roadmap.html">Roadmap</a>.</td></tr>
+      <tr><td>(Slack error string, e.g. <code>channel_not_found</code>)</td><td>Passed through verbatim from Slack's <code>error</code> field when <code>"ok": false</code>. See <a href="11-troubleshooting.html">Troubleshooting</a>.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Tip:</strong> The Slack Web API always returns HTTP 200 — success or failure is signaled purely by the <code>ok</code> boolean in the JSON body. The Slack service layer (<code>SlackHttpHelper.ParseOk</code>) handles this transparently, so this node's <code>error</code> port behaves the same whether the failure came from Slack, from input validation, or from an exception.
+  </div>
+
+</main>
+</body>
+</html>

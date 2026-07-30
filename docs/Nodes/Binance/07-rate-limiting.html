@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rate Limiting | Binance — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="../../" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Binance<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-authentication.html">Authentication</a>
+  <a href="03-account-operations.html">Account Operations</a>
+  <a href="04-placing-orders.html">Placing Orders</a>
+  <a href="05-managing-orders.html">Managing Orders</a>
+  <a href="06-market-data-operations.html">Market Data Operations</a>
+  <a href="07-rate-limiting.html" class="active">Rate Limiting</a>
+  <a href="08-error-codes.html">Error Codes</a>
+  <a href="09-input-output.html">Input &amp; Output</a>
+  <a href="10-examples.html">Examples</a>
+  <a href="11-troubleshooting.html">Troubleshooting</a>
+  <a href="12-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Binance</a> /
+      Rate Limiting
+    </div>
+    <h1>Rate Limiting</h1>
+    <p class="subtitle">Request-weight budgets, proactive throttling, and IP bans</p>
+  </div>
+
+
+  <h2>Request-Weight Budget</h2>
+  <p>Binance meters usage per IP address as a <strong>request weight</strong>, not a raw call count —
+  different endpoints cost different weights. The node tracks this against
+  <code>Binance:WeightLimitPerMinute</code> (default <strong>6000</strong>, matching Binance's documented
+  standard-tier limit for the rolling 1-minute window).</p>
+
+  <h2>Proactive Throttling</h2>
+  <p><code>BinanceRateLimitHandler</code> (an <code>HttpClient</code> <code>DelegatingHandler</code>) reads
+  the <code>X-MBX-USED-WEIGHT-1M</code> header Binance returns on every response. Once usage crosses
+  <code>Binance:ProactiveThrottleThreshold</code> (default <strong>0.8</strong>, i.e. 80% of the weight
+  budget), it starts inserting a delay before the <em>next</em> request — slowing the node down before
+  Binance's own reactive rate limiting (429) would even trigger.</p>
+  <table>
+    <thead><tr><th>Setting</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>WeightLimitPerMinute</code></td><td>6000</td><td>The budget the proactive throttle measures usage against.</td></tr>
+      <tr><td><code>ProactiveThrottleThreshold</code></td><td>0.8</td><td>Fraction of the budget at which proactive delay kicks in.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Reactive Handling: 429 and 418</h2>
+  <table>
+    <thead><tr><th>HTTP Status</th><th>Meaning</th><th>Handler behavior</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>429 (rate limit exceeded)</td>
+        <td>You've exceeded a Binance rate limit despite proactive throttling.</td>
+        <td>Retried automatically, up to <strong>3 times</strong>, honoring the <code>Retry-After</code> response header.</td>
+      </tr>
+      <tr>
+        <td>418 (IP auto-banned)</td>
+        <td>Binance has temporarily banned your IP for continued rate-limit violations after repeated 429s.</td>
+        <td><strong>Hard-fails immediately — no retry.</strong> Binance's own guidance is that retrying during a ban makes it worse; the handler surfaces a <code>BinanceIpBannedException</code> instead.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout danger">
+    <strong>BinanceIpBannedException</strong> carries the ban's <code>Retry-After</code> duration on the
+    exception itself (Binance doesn't put it in the response body). <code>BinanceErrorMapper</code>
+    surfaces it directly in the error message as <code>BINANCE_IP_BANNED</code>, e.g. <em>"... Retry after
+    120s."</em> — see <a href="08-error-codes.html">Error Codes</a>.
+  </div>
+
+  <div class="callout warning">
+    <strong>Order-specific limits are separate:</strong> the request-weight budget above governs overall
+    API traffic. Order placement/cancellation also has its own, tighter per-order-count limits — check
+    them with <a href="03-account-operations.html">account.getOrderRateLimit</a> before
+    a burst of order calls.
+  </div>
+
+</main>
+</body>
+</html>

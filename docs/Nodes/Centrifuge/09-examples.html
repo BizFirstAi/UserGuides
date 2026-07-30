@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Examples | Centrifuge — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Centrifuge<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-networks.html">Networks</a>
+  <a href="03-account-operations.html">Account Operations</a>
+  <a href="04-chain-info.html">Chain Info</a>
+  <a href="05-address-operations.html">Address Operations</a>
+  <a href="06-conversion-operations.html">Conversion Operations</a>
+  <a href="07-currencies-and-units.html">Currencies &amp; Units</a>
+  <a href="08-input-output.html">Input &amp; Output</a>
+  <a href="09-examples.html" class="active">Examples</a>
+  <a href="10-troubleshooting.html">Troubleshooting</a>
+  <a href="11-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Centrifuge</a> /
+      Examples
+    </div>
+    <h1>Examples</h1>
+    <p class="subtitle">Worked workflow patterns using the Centrifuge node</p>
+  </div>
+
+  <h2>1. Check a Treasury Balance Before a Payout Step</h2>
+  <p>Guard a downstream payout/transfer action by confirming an account has enough free balance first.</p>
+  <ol>
+    <li><strong>Centrifuge</strong> node: <code>resource=account</code>, <code>operation=getBalance</code>, <code>network=centrifuge</code>, <code>address={{treasuryAddress}}</code></li>
+    <li><strong>Centrifuge</strong> node: <code>resource=utility</code>, <code>operation=convertUnits</code>, <code>amount={{freeBalance}}</code>, <code>fromUnit=base</code>, <code>toUnit=display</code>, <code>decimals=18</code> → human CFG figure</li>
+    <li><strong>Condition</strong> node: <code>freeBalanceDisplay &gt;= requiredAmount</code></li>
+    <li>If true, continue to the payout step; if false, route to an alert branch</li>
+  </ol>
+  <div class="callout info">
+    <strong>Why convert first:</strong> <code>freeBalance</code> comes back as a base-unit (Planck) string — comparing
+    it directly against a human threshold like "5 CFG" would be comparing <code>5000000000000000000</code> against
+    <code>5</code>. Convert before you compare.
+  </div>
+
+  <h2>2. Detect a Stalled Chain Before Trusting a Balance Read</h2>
+  <p>Centrifuge mainnet has been halted since 2026-06-28 — a workflow that blindly trusts every
+  <code>account.getBalance</code> success will silently treat 22+ day-old state as current.</p>
+  <ol>
+    <li><strong>Centrifuge</strong> node: <code>resource=utility</code>, <code>operation=chainInfo</code>, <code>network=centrifuge</code></li>
+    <li><strong>Condition</strong> node: <code>headBlockAgeSeconds &gt; 3600</code> (or your own staleness threshold)</li>
+    <li>If true, route to a "stale chain" warning branch before running any balance-dependent logic; if false, proceed normally</li>
+  </ol>
+
+  <h2>3. Re-encode an Address for a Cross-Chain Display</h2>
+  <p>Show a Centrifuge account's Polkadot-style address alongside its native one, e.g. in a report that links out to
+  a Polkadot-aware block explorer.</p>
+  <ol>
+    <li><strong>Centrifuge</strong> node: <code>resource=utility</code>, <code>operation=convertAddress</code>, <code>address={{centrifugeAddress}}</code>, <code>targetNetwork=polkadot</code></li>
+    <li>Display <code>convertedAddress</code> next to the original — both represent the same account, verifiable via matching <code>publicKeyHex</code>.</li>
+  </ol>
+
+  <h2>4. Validate a User-Entered Address Before Any Lookup</h2>
+  <ol>
+    <li><strong>Centrifuge</strong> node: <code>resource=utility</code>, <code>operation=validateAddress</code>, <code>address={{userInput}}</code></li>
+    <li><strong>Condition</strong> node: <code>isValid == true</code></li>
+    <li>If true, proceed to <code>account.getBalance</code>; if false, return a validation error to the user immediately instead of calling the network</li>
+  </ol>
+  <div class="callout success">
+    <strong>Tip:</strong> This is a free, instant, local check — always run it on user-supplied addresses before a
+    balance lookup, not just to avoid a wasted RPC round-trip, but because a prefix mismatch between a bad address
+    and your intended <code>network</code> would otherwise surface as the less-obvious
+    <code>VAL_NETWORK_MISMATCH</code>.
+  </div>
+
+  <h2>5. Convert a Pool Repayment Amount Without a 10<sup>12</sup> Error</h2>
+  <p>A form collects a repayment amount in a pool's stablecoin (say, USDC), and a later step needs it in base units.</p>
+  <ol>
+    <li><strong>Centrifuge</strong> node: <code>resource=utility</code>, <code>operation=convertUnits</code>, <code>amount={{userInputUsdc}}</code>, <code>fromUnit=display</code>, <code>toUnit=base</code>, <code>decimals=6</code></li>
+    <li>Pass <code>outputAmount</code> into the downstream step's input field.</li>
+  </ol>
+  <div class="callout warning">
+    <strong>Note the <code>decimals=6</code>, not 18.</strong> USDC and USDT use 6 decimals; hardcoding CFG's 18 here
+    would inflate the amount by a factor of a trillion. See <a href="07-currencies-and-units.html">Currencies &amp; Units</a>.
+  </div>
+
+  <h2>6. Convert a Loan's APR Into an On-Chain Rate</h2>
+  <p>A loan configuration form collects an interest rate as an APR percentage; the pool's on-chain configuration
+  needs the RAY per-second equivalent.</p>
+  <ol>
+    <li><strong>Centrifuge</strong> node: <code>resource=utility</code>, <code>operation=convertRate</code>, <code>rate={{userInputAprPercent}}</code>, <code>direction=aprToPerSec</code></li>
+    <li>Pass <code>outputRate</code> into the downstream step that configures the loan's interest rate.</li>
+  </ol>
+
+</main>
+</body>
+</html>

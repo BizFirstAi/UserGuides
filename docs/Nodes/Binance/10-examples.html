@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Examples | Binance — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="../../" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Binance<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-authentication.html">Authentication</a>
+  <a href="03-account-operations.html">Account Operations</a>
+  <a href="04-placing-orders.html">Placing Orders</a>
+  <a href="05-managing-orders.html">Managing Orders</a>
+  <a href="06-market-data-operations.html">Market Data Operations</a>
+  <a href="07-rate-limiting.html">Rate Limiting</a>
+  <a href="08-error-codes.html">Error Codes</a>
+  <a href="09-input-output.html">Input &amp; Output</a>
+  <a href="10-examples.html" class="active">Examples</a>
+  <a href="11-troubleshooting.html">Troubleshooting</a>
+  <a href="12-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Binance</a> /
+      Examples
+    </div>
+    <h1>Examples</h1>
+    <p class="subtitle">Worked workflow patterns using the Binance node</p>
+  </div>
+
+
+  <h2>1. Check Balance Before Placing an Order</h2>
+  <p>Guard a market-buy step by confirming there's enough quote-asset balance first.</p>
+  <ol>
+    <li><strong>Binance</strong> node: <code>resource=account</code>, <code>operation=getAccountInfo</code></li>
+    <li><strong>Transform</strong> step: find the entry in <code>items[]</code> where <code>asset == "USDT"</code>, read <code>free</code></li>
+    <li><strong>Condition</strong> node: <code>free &gt;= orderCost</code></li>
+    <li>If true, continue to <strong>Binance</strong> <code>order.placeMarketOrder</code>; if false, route to an alert branch</li>
+  </ol>
+
+  <h2>2. Quote a Price, Then Place a Limit Order Near It</h2>
+  <p>Fetch the current price and place a limit order a small offset away from it, rather than hardcoding a price.</p>
+  <ol>
+    <li><strong>Binance</strong> node: <code>resource=marketData</code>, <code>operation=getTickerPrice</code>, <code>symbol=BTCUSDT</code></li>
+    <li><strong>Transform</strong> step: <code>limitPrice = price * 0.99</code> (1% below market, for a buy)</li>
+    <li><strong>Binance</strong> node: <code>resource=order</code>, <code>operation=placeLimitOrder</code>, <code>symbol=BTCUSDT</code>, <code>side=BUY</code>, <code>timeInForce=GTC</code>, <code>quantity={{qty}}</code>, <code>price={{limitPrice}}</code></li>
+  </ol>
+
+  <h2>3. Poll Open Orders and Cancel Stale Ones</h2>
+  <p>Clean up limit orders that have sat unfilled too long.</p>
+  <ol>
+    <li><strong>Binance</strong> node: <code>resource=order</code>, <code>operation=getOpenOrders</code>, <code>symbol=BTCUSDT</code></li>
+    <li>For each item, compare its age against a threshold (using the order's placement time, tracked separately if not returned)</li>
+    <li>If stale: <strong>Binance</strong> node, <code>resource=order</code>, <code>operation=cancelOrder</code>, <code>symbol=BTCUSDT</code>, <code>orderId={{item.orderId}}</code></li>
+  </ol>
+  <div class="callout success">
+    <strong>Tip:</strong> Pair this with <a href="03-account-operations.html">account.getOrderRateLimit</a>
+    first if the loop might touch many orders in one run, so the workflow can slow itself down before
+    hitting Binance's own order-count limit.
+  </div>
+
+  <h2>4. Chart or Alert on Candlestick Data</h2>
+  <p>Pull recent candles for a lightweight monitoring/alerting step.</p>
+  <ol>
+    <li><strong>Binance</strong> node: <code>resource=marketData</code>, <code>operation=getKlines</code>, <code>symbol=ETHUSDT</code>, <code>interval=1h</code>, <code>limit=24</code></li>
+    <li><strong>Transform</strong> step: compute the % change between the first and last candle's <code>close</code></li>
+    <li><strong>Condition</strong> node: trigger a notification step if the change exceeds a threshold</li>
+  </ol>
+
+  <h2>5. Check the Order Book Before a Large Market Order</h2>
+  <p>Estimate slippage before submitting a sizeable market order.</p>
+  <ol>
+    <li><strong>Binance</strong> node: <code>resource=marketData</code>, <code>operation=getOrderBookDepth</code>, <code>symbol=BTCUSDT</code>, <code>limit=50</code></li>
+    <li><strong>Transform</strong> step: walk <code>asks[]</code> (for a buy) accumulating <code>quantity</code> until it covers the intended order size, and read the price at that depth</li>
+    <li><strong>Condition</strong> node: only proceed to <code>order.placeMarketOrder</code> if the estimated price is within an acceptable slippage bound</li>
+  </ol>
+
+</main>
+</body>
+</html>

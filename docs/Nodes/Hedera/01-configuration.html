@@ -51,14 +51,15 @@ nav.sidebar{top:40px;height:calc(100vh - 40px);}
     <div class="breadcrumb">
       <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
       <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
-      Hedera
+      <a href="index.html">Hedera</a> /
+      Configuration
     </div>
-    <h1>Configuration</h1>
-    <p class="subtitle">appsettings.json, the network config key, host registration, and how the node's projects are laid out.</p>
+    <h1>Hedera Configuration</h1>
+    <p class="subtitle">appsettings.json, the default network, and how the node registers itself</p>
   </div>
 
   <h2>appsettings.json</h2>
-  <p>The Hedera node reads its network endpoints from a <code>Hedera</code> section in application settings. Nothing else is required for read operations — there is no API key or credential to configure.</p>
+  <p>The node reads its network URLs from a <code>Hedera</code> section in application settings:</p>
   <pre><code>"Hedera": {
   "DefaultNetwork": "testnet",
   "Networks": {
@@ -69,44 +70,97 @@ nav.sidebar{top:40px;height:calc(100vh - 40px);}
 }</code></pre>
 
   <table>
-    <tr><th style="width:220px;">Setting</th><th>Description</th></tr>
-    <tr><td><code>Hedera:DefaultNetwork</code></td><td>Name of the network used when a node configuration omits the <code>network</code> field. Must match a key under <code>Hedera:Networks</code>. Typically <code>testnet</code> for development.</td></tr>
-    <tr><td><code>Hedera:Networks:{name}:MirrorRestUrl</code></td><td>Base URL of that network's Mirror Node REST API. The node appends the resource-specific path (e.g. <code>/api/v1/accounts/{id}</code>) when it calls out.</td></tr>
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>Type</th>
+        <th>Required</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>DefaultNetwork</code></td>
+        <td>text</td>
+        <td>✓ Yes</td>
+        <td>Network used when an operation doesn't set its own <code>network</code> field. One of <code>mainnet</code>, <code>testnet</code>, <code>previewnet</code>.</td>
+      </tr>
+      <tr>
+        <td><code>Networks</code></td>
+        <td>object</td>
+        <td>✓ Yes</td>
+        <td>Map of network name → Mirror Node REST base URL. See <a href="02-networks.html">Networks</a> for the built-in three and how to add more.</td>
+      </tr>
+    </tbody>
   </table>
 
-  <div class="callout info">
-    <strong>No credential required.</strong> Every operation currently shipped by this node is a read against the public Mirror Node REST API. There is nothing to store in the credentials manager and no signing key to configure — that changes only once the signed-write operations described in <a href="11-roadmap.html">Roadmap</a> ship.
+  <div class="callout warning">
+    <strong>Missing network:</strong> If an operation requests a <code>network</code> value with no matching entry under <code>Hedera:Networks</code>, the node throws a <code>HederaNetworkNotConfiguredException</code>. See <a href="10-troubleshooting.html">Troubleshooting</a>.
   </div>
 
-  <h2>The <code>network</code> Config Key</h2>
-  <p>Every operation on this node accepts an optional <code>network</code> config key alongside <code>resource</code> and <code>operation</code>:</p>
+  <h2>Per-Operation network Field</h2>
+  <p>Every operation accepts an optional <code>network</code> config key. When omitted, it falls back to <code>Hedera:DefaultNetwork</code>. Set it explicitly to target a specific network without changing the app-wide default:</p>
   <table>
-    <tr><th style="width:160px;">Field</th><th style="width:100px;">Required</th><th>Behavior</th></tr>
-    <tr><td><code>network</code></td><td>No</td><td>One of the keys configured under <code>Hedera:Networks</code> (out of the box: <code>mainnet</code>, <code>testnet</code>, <code>previewnet</code>). When omitted, the node resolves <code>Hedera:DefaultNetwork</code> and uses that network's <code>MirrorRestUrl</code>. If the resolved network name has no matching entry under <code>Hedera:Networks</code>, the call fails before any HTTP request is made — see <a href="10-troubleshooting.html">Troubleshooting</a> for the exact exception.</td></tr>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Type</th>
+        <th>Required</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>network</code></td>
+        <td>select</td>
+        <td>No</td>
+        <td><code>mainnet</code> | <code>testnet</code> | <code>previewnet</code>. Defaults to <code>Hedera:DefaultNetwork</code> when unset.</td>
+      </tr>
+    </tbody>
   </table>
-  <p>Because <code>network</code> is just another config key, it can be set per-node, per-environment, or driven from a workflow variable/expression — for example, pointing a staging workflow at <code>testnet</code> while the equivalent production workflow points at <code>mainnet</code>, without changing any other field.</p>
 
   <h2>Registration</h2>
-  <p><code>HederaDependency.RegisterDefaults(services)</code> wires up everything the node needs in a single call:</p>
+  <p><code>HederaDependency.RegisterDefaults(services)</code> registers everything the node needs:</p>
   <ul>
-    <li>The Mirror Node REST client (<code>HederaMirrorClient</code>, a typed <code>HttpClient</code>).</li>
-    <li>Per-resource services for account, token, topic, transaction, and utility operations.</li>
-    <li>The executor itself, registered with scoped lifetime.</li>
-    <li>An <code>ExecutorRegistry</code> entry for the <code>hedera</code> node type name, so <code>INodeExecutorFactory</code> can resolve it at runtime.</li>
+    <li>The Mirror Node REST client (<code>HederaMirrorClient</code>, a typed <code>HttpClient</code>)</li>
+    <li>Per-resource services (account, token, topic, transaction, utility)</li>
+    <li>The executor itself, scoped</li>
+    <li>The <code>ExecutorRegistry</code> entry for <code>hedera</code></li>
   </ul>
-  <div class="callout warning">
-    <strong>Host apps must also call registration explicitly.</strong> Add <code>new HederaDependency().RegisterDefaults(services);</code> to the host's node-plugin bootstrap — the <code>Plugins_RegisterAllNodes(...)</code> method in <code>ServiceCollectionExtensionsForAI.cs</code> — so the Hedera assembly is force-loaded and its executor is discoverable at runtime. Without this call the assembly may never load, and the <code>hedera</code> node type will not appear in the executor registry even though the NuGet/project reference is present.
+
+  <div class="callout info">
+    <strong>Host apps must also add an explicit registration call:</strong> alongside the standard DI
+    registration, add <code>new HederaDependency().RegisterDefaults(services);</code> to your
+    node-plugin bootstrap (<code>Plugins_RegisterAllNodes(...)</code> in
+    <code>ServiceCollectionExtensionsForAI.cs</code>) so the assembly is force-loaded and discoverable
+    at runtime. Without this line the node type won't appear in the workflow designer even though the
+    package is referenced.
   </div>
 
   <h2>Project Layout</h2>
-  <p>The node ships as three .NET 9 projects, split by dependency weight:</p>
+  <p>The node ships as three .NET 9 projects:</p>
   <table>
-    <tr><th style="width:340px;">Project</th><th>Responsibility</th></tr>
-    <tr><td><code>BizFirst.Integration.Hedera.Domain</code></td><td>Sealed result records and network options. Zero external dependencies.</td></tr>
-    <tr><td><code>BizFirst.Integration.Hedera.Services</code></td><td>The Mirror Node REST client (<code>HederaMirrorClient</code>, a typed <code>HttpClient</code>) plus one service per resource (account, token, topic, transaction, utility).</td></tr>
-    <tr><td><code>BizFirst.Ai.ExecutionNodes.Blockchain.Hedera</code></td><td>The executor — request routing by <code>resource</code>/<code>operation</code>, config validation, and the operation-specific DTOs.</td></tr>
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>BizFirst.Integration.Hedera.Domain</code></td>
+        <td>Sealed result records and network options. Zero external dependencies.</td>
+      </tr>
+      <tr>
+        <td><code>BizFirst.Integration.Hedera.Services</code></td>
+        <td>The Mirror Node REST client and one service per resource (account/token/topic/transaction/utility).</td>
+      </tr>
+      <tr>
+        <td><code>BizFirst.Ai.ExecutionNodes.Blockchain.Hedera</code></td>
+        <td>The executor: operation routing, config parsing, operation-info DTOs.</td>
+      </tr>
+    </tbody>
   </table>
-  <p>This mirrors the layering used by other integration nodes: a dependency-free domain layer, a services layer that talks to the outside world, and an executor layer that adapts the services to the ProcessEngine node contract.</p>
 
 </main>
 </body>

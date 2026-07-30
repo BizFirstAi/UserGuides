@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Input &amp; Output | Ondo — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Ondo<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-asset-pricing-operations.html">Asset Pricing</a>
+  <a href="03-asset-market-operations.html">Asset Markets &amp; Dividends</a>
+  <a href="04-asset-reference-operations.html">Asset Addresses &amp; Metadata</a>
+  <a href="05-attestation-operations.html">Attestation Operations</a>
+  <a href="06-chain-operations.html">Chain Operations</a>
+  <a href="07-limit-operations.html">Limit Operations</a>
+  <a href="08-status-operations.html">Status Operations</a>
+  <a href="09-ticker-operations.html">Ticker Operations</a>
+  <a href="10-input-output.html" class="active">Input &amp; Output</a>
+  <a href="11-examples.html">Examples</a>
+  <a href="12-troubleshooting.html">Troubleshooting</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Ondo</a> /
+      Input &amp; Output
+    </div>
+    <h1>Input &amp; Output</h1>
+    <p class="subtitle">The shared config-key pattern across every operation, and the standard result envelope</p>
+  </div>
+
+  <h2>Shared Input Pattern</h2>
+  <p>Every operation on this node takes the same three top-level config keys, plus its own
+  operation-specific fields:</p>
+  <table>
+    <thead><tr><th>Key</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>resource</code></td><td>✓ Yes</td><td>One of <code>assets</code>, <code>attestations</code>, <code>chains</code>, <code>limits</code>, <code>status</code>, <code>tickers</code>.</td></tr>
+      <tr><td><code>operation</code></td><td>✓ Yes</td><td>The camelCase operation within that resource, e.g. <code>getPrice</code>.</td></tr>
+      <tr><td><code>credentialID</code></td><td>✓ Yes</td><td>Vault reference resolved to a Bearer token for every call — see <a href="01-configuration.html">Configuration</a>.</td></tr>
+    </tbody>
+  </table>
+  <p>Everything else is specific to the chosen resource + operation pair — see that resource's page
+  for the exact field list.</p>
+
+  <h2>Standard Output Envelope</h2>
+  <p>A successful call always returns the same wrapper, with the operation-specific fields nested
+  under <code>result</code>:</p>
+  <pre><code>{
+  "status": "success",
+  "result": { /* operation-specific fields — see that operation's page */ },
+  "timestamp": "2026-07-29T14:00:00Z"
+}</code></pre>
+  <p>A failed call routes to the node's <strong>error</strong> output port with this shape:</p>
+  <pre><code>{
+  "status": "error",
+  "errorCode": "VAL_MISSING_SYMBOL",
+  "resource": "assets",
+  "operation": "getPrice",
+  "message": "Symbol is required (e.g., 'AAPLon')"
+}</code></pre>
+
+  <h2>The "Closed Market" Result</h2>
+  <p>Three operations — <code>attestations.createAttestation</code>,
+  <code>attestations.createAttestationQuote</code>, and <code>limits.getTradingLimits</code> — have a
+  third outcome besides plain success/error: <code>status: "closed_market"</code> with error code
+  <code>MARKET_CLOSED</code>, returned when the relevant market isn't open for that action. Treat this
+  as a distinct, expected branch in your workflow rather than a generic failure.</p>
+
+  <h2>How Errors Surface</h2>
+  <table>
+    <thead><tr><th>Situation</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Missing/invalid <code>credentialID</code></td>
+        <td>Fails fast with <code>AUTH_MISSING_KEY</code> before any HTTP call is made.</td>
+      </tr>
+      <tr>
+        <td>Missing required operation field (e.g. <code>symbol</code>)</td>
+        <td>Fails fast with a <code>VAL_MISSING_*</code> code before any HTTP call is made — see each operation's fields table.</td>
+      </tr>
+      <tr>
+        <td>Ondo API returns 4xx/5xx</td>
+        <td>Mapped to a semantic error code — see the table on <a href="01-configuration.html">Configuration</a>.</td>
+      </tr>
+      <tr>
+        <td>Ondo API rate limiting (429)</td>
+        <td>Retried automatically (3 attempts, exponential backoff) before surfacing <code>RATE_LIMIT_EXCEEDED</code> — see <a href="12-troubleshooting.html">Troubleshooting</a>.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Idempotent reads, non-idempotent writes:</strong> Every operation under
+    <code>assets</code>, <code>chains</code>, <code>status</code>, and <code>tickers</code> is a
+    read — safe to call repeatedly. <code>attestations.createAttestation</code> mints a new signed,
+    time-limited attestation on every call, so calling it twice produces two distinct attestations,
+    not a cached repeat of the first.
+  </div>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wallet Operations | Bitcoin — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Bitcoin<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-networks.html">Networks</a>
+  <a href="03-address-operations.html">Address Operations</a>
+  <a href="04-transaction-operations.html">Transaction Operations</a>
+  <a href="05-block-operations.html">Block Operations</a>
+  <a href="06-mempool-operations.html">Mempool Operations</a>
+  <a href="07-fee-operations.html">Fee Estimates</a>
+  <a href="08-psbt-signing-pipeline.html">PSBT Signing Pipeline</a>
+  <a href="09-wallet-operations.html" class="active">Wallet Operations</a>
+  <a href="10-input-output.html">Input &amp; Output</a>
+  <a href="11-examples.html">Examples</a>
+  <a href="12-troubleshooting.html">Troubleshooting</a>
+  <a href="13-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Bitcoin</a> /
+      Wallet Operations
+    </div>
+    <h1>Wallet Operations</h1>
+    <p class="subtitle">resource: <code>wallet</code> — key-derived addresses and BIP-137 message signing/verification</p>
+  </div>
+
+  <h2>deriveAddress</h2>
+  <p>Derives a Bitcoin address either from a vault-resolved signing credential (mnemonic), or from a
+  watch-only extended public key (<code>xpub</code>) with no credential at all.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Determines the SLIP-44 coin_type used in the default derivation path — see <a href="02-networks.html">Networks</a>.</td></tr>
+      <tr><td><code>walletType</code></td><td>select</td><td>No (default <code>readOnly</code>)</td><td><code>readOnly</code> (requires <code>xpub</code>) or <code>mnemonic</code> (requires <code>credentialID</code>).</td></tr>
+      <tr><td><code>xpub</code></td><td>text</td><td>Conditional</td><td>Extended public key — required when <code>walletType</code> is <code>readOnly</code>.</td></tr>
+      <tr><td><code>credentialID</code></td><td>number</td><td>Conditional</td><td>Vault reference to a mnemonic credential — required when <code>walletType</code> is <code>mnemonic</code>.</td></tr>
+      <tr><td><code>addressType</code></td><td>select</td><td>No (default <code>p2wpkh</code>)</td><td><code>p2wpkh</code> (BIP-84) or <code>p2tr</code> (BIP-86).</td></tr>
+      <tr><td><code>derivationPath</code></td><td>text</td><td>No</td><td>Overrides the default SLIP-44 path.</td></tr>
+    </tbody>
+  </table>
+  <p>Example response:</p>
+  <pre><code>{
+  "address": "bc1q...",
+  "addressType": "p2wpkh",
+  "derivationPath": "m/84'/0'/0'/0/0",
+  "publicKeyHex": "03a1b2..."
+}</code></pre>
+
+  <div class="callout success">
+    <strong>Watch-only mode needs no credential.</strong> Supplying just <code>xpub</code> with
+    <code>walletType: readOnly</code> derives an address without ever touching a private key or vault
+    secret — useful for monitoring-only workflows.
+  </div>
+
+  <h2>signMessage</h2>
+  <p>Signs an arbitrary text message with a P2WPKH-derived private key using
+  <a href="https://github.com/bitcoin/bips/blob/master/bip-0137.mediawiki" target="_blank">BIP-137</a> — the
+  standard "sign this message to prove address ownership" scheme most wallets support. Implemented directly
+  against NBitcoin's low-level primitives, since NBitcoin ships no built-in message-signing helper.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Fund-adjacent — key derivation depends on it.</td></tr>
+      <tr><td><code>message</code></td><td>text</td><td>✓ Yes</td><td>The message to sign.</td></tr>
+      <tr><td><code>walletType</code></td><td>select</td><td>✓ Yes</td><td><code>wif</code> or <code>mnemonic</code> — <code>readOnly</code> cannot sign.</td></tr>
+      <tr><td><code>credentialID</code></td><td>number</td><td>✓ Yes</td><td>Vault reference to the signing key/mnemonic.</td></tr>
+      <tr><td><code>addressType</code></td><td>select</td><td>No (default <code>p2wpkh</code>)</td><td>Must be <code>p2wpkh</code> — see warning below.</td></tr>
+      <tr><td><code>derivationPath</code></td><td>text</td><td>No</td><td>Overrides the default SLIP-44 path when <code>walletType</code> is <code>mnemonic</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>P2WPKH only — no Taproot support.</strong> BIP-137 has no defined encoding for Taproot (P2TR)
+    addresses. Requesting <code>addressType: p2tr</code> fails with
+    <code>WALLET_MESSAGE_SIGNING_UNSUPPORTED_FOR_ADDRESS_TYPE</code> — resolve a P2WPKH wallet for this
+    operation instead.
+  </div>
+
+  <p>Example response:</p>
+  <pre><code>{
+  "address": "bc1q...",
+  "message": "Proving ownership of this address for order #4471",
+  "signature": "H6ZW...base64..."
+}</code></pre>
+
+  <h2>verifySignature</h2>
+  <p>Verifies a BIP-137 signature against a message and address — pure computation, no network call and no
+  credential required.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Selects address-decoding rules.</td></tr>
+      <tr><td><code>address</code></td><td>text</td><td>✓ Yes</td><td>The claimed signing address.</td></tr>
+      <tr><td><code>message</code></td><td>text</td><td>✓ Yes</td><td>The original message.</td></tr>
+      <tr><td><code>signature</code></td><td>text</td><td>✓ Yes</td><td>The base64 BIP-137 signature to verify.</td></tr>
+    </tbody>
+  </table>
+  <p>Example response:</p>
+  <pre><code>{ "matches": true }</code></pre>
+
+  <div class="callout info">
+    <strong>No credential, no network call:</strong> Verification recovers the public key from the signature
+    itself and checks it against the claimed address — it never touches the vault or Esplora. Safe to run
+    freely, including against untrusted/external signatures.
+  </div>
+
+</main>
+</body>
+</html>

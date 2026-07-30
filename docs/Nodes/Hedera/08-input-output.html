@@ -51,37 +51,60 @@ nav.sidebar{top:40px;height:calc(100vh - 40px);}
     <div class="breadcrumb">
       <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
       <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
-      Hedera
+      <a href="index.html">Hedera</a> /
+      Input &amp; Output
     </div>
     <h1>Input &amp; Output</h1>
-    <p class="subtitle">The config-key pattern shared by every operation, the general output shape, and how errors surface.</p>
+    <p class="subtitle">The shared config-key pattern across every operation, and how errors surface</p>
   </div>
 
-  <h2>The Common Config Pattern</h2>
-  <p>Every Hedera node configuration — regardless of resource or operation — is built from the same three-part shape:</p>
+  <h2>Shared Input Pattern</h2>
+  <p>Every operation on this node takes the same three top-level config keys, plus its own
+  operation-specific fields:</p>
   <table>
-    <tr><th style="width:160px;">Config key</th><th>Present on</th><th>Purpose</th></tr>
-    <tr><td><code>resource</code></td><td>Every operation</td><td>Selects which family of functionality to invoke: <code>account</code>, <code>token</code>, <code>topic</code>, <code>transaction</code>, or <code>utility</code>.</td></tr>
-    <tr><td><code>operation</code></td><td>Every operation</td><td>Selects the specific action within that resource, e.g. <code>getBalance</code> vs. <code>getInfo</code> under <code>account</code>.</td></tr>
-    <tr><td><code>network</code></td><td>Every operation except the two <code>utility</code> operations</td><td>Which Hedera network's Mirror Node to call. Optional — falls back to <code>Hedera:DefaultNetwork</code>. See <a href="02-networks.html">Networks</a>.</td></tr>
-    <tr><td>operation-specific fields</td><td>Varies</td><td>e.g. <code>accountId</code>, <code>tokenId</code>, <code>topicId</code>, <code>transactionId</code>, <code>amount</code> — see each operation's own page for the exact field list.</td></tr>
+    <thead><tr><th>Key</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>resource</code></td><td>✓ Yes</td><td>One of <code>account</code>, <code>token</code>, <code>topic</code>, <code>transaction</code>, <code>utility</code>.</td></tr>
+      <tr><td><code>operation</code></td><td>✓ Yes</td><td>The operation within that resource, e.g. <code>getBalance</code>.</td></tr>
+      <tr><td><code>network</code></td><td>No</td><td>Ignored by <code>utility</code> operations (they don't call the network). Defaults to <code>Hedera:DefaultNetwork</code> for everything else.</td></tr>
+    </tbody>
   </table>
-  <p>This means learning any one operation on this node teaches you the shape of all of them — only the operation-specific fields change.</p>
+  <p>Everything else is specific to the chosen resource + operation pair — see that resource's page
+  for the exact field list.</p>
 
-  <h2>General Output Shape</h2>
-  <p>Every successful call returns a flat JSON object scoped to that operation's own concerns — there is no deeply-nested "Hedera SDK response" wrapper to unwrap. Most responses also echo back the <code>network</code> that was queried, so downstream nodes and logs can tell at a glance which ledger the data came from. Collection-returning operations (<a href="04-token-operations.html">token.getBalances</a>, <a href="05-topic-operations.html">topic.getMessages</a>) nest their rows under a single named array (<code>balances</code>, <code>messages</code>) rather than returning a bare array, so additional top-level metadata can be added later without a breaking change.</p>
+  <h2>Shared Output Shape</h2>
+  <p>A successful call returns a JSON object whose shape is documented on each operation's page. There's
+  no additional wrapper envelope beyond what's shown there — the fields listed on each resource page
+  <em>are</em> the output.</p>
 
   <h2>How Errors Surface</h2>
-  <p>Because every read operation is ultimately an HTTP call to the Mirror Node REST API, errors generally trace back to one of two HTTP outcomes:</p>
   <table>
-    <tr><th style="width:120px;">Mirror Node status</th><th>Typical cause</th><th>What you see</th></tr>
-    <tr><td><code>404</code></td><td>The requested account, token, topic, or transaction ID doesn't exist on the queried network — including a real ID queried against the <em>wrong</em> network (e.g. a mainnet account ID looked up on testnet).</td><td>A not-found style error surfaces on the node's error output, with the resource type and ID included in the message so it's clear what wasn't found.</td></tr>
-    <tr><td><code>400</code></td><td>The ID or parameter was malformed before it even reached the ledger — e.g. an account ID missing a segment, or a <code>limit</code> outside the 1–100 range.</td><td>A validation-style error surfaces, generally before any HTTP call is even made for field-shape problems the executor can catch locally (like an out-of-range <code>limit</code>).</td></tr>
+    <thead><tr><th>Situation</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Unknown/unconfigured <code>network</code></td>
+        <td>Node throws <code>HederaNetworkNotConfiguredException</code> before any HTTP call is made.</td>
+      </tr>
+      <tr>
+        <td>Mirror Node returns 404 (e.g. account/token/topic/transaction doesn't exist)</td>
+        <td>Surfaces as a node-level error result — check the ID and network are correct.</td>
+      </tr>
+      <tr>
+        <td>Mirror Node returns 400 (malformed ID)</td>
+        <td>Surfaces as a validation-style error — run <code>utility.validateAddress</code> first if the ID comes from user input.</td>
+      </tr>
+      <tr>
+        <td>Mirror Node rate limiting (429)</td>
+        <td>See <a href="10-troubleshooting.html">Troubleshooting</a> for backoff guidance.</td>
+      </tr>
+    </tbody>
   </table>
-  <p>See <a href="10-troubleshooting.html">Troubleshooting</a> for the specific exception types raised for configuration problems (like an unconfigured network) versus ledger-level lookup failures, plus guidance on rate limiting and retries.</p>
 
   <div class="callout info">
-    <strong>Fail fast on config problems.</strong> Structural problems the node can detect without a network call — an unknown <code>resource</code>/<code>operation</code> combination, a missing required field, or an unconfigured <code>network</code> — are rejected immediately, before any HTTP request goes out. Only once the request shape is valid does the node call the Mirror Node and interpret its HTTP response.
+    <strong>Idempotent by nature:</strong> Because every current operation is a read, calling the same
+    operation twice with the same input is always safe — there's no risk of double-submitting a
+    transaction or double-charging a fee. That changes once signed writes ship — see
+    <a href="11-roadmap.html">Roadmap</a>.
   </div>
 
 </main>

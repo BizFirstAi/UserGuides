@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Input &amp; Output | IPFS — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">IPFS<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-connecting.html">Connecting</a>
+  <a href="03-content-operations.html">Content Operations</a>
+  <a href="04-pin-operations.html">Pin Operations</a>
+  <a href="05-files-operations.html">Files (MFS) Operations</a>
+  <a href="06-dag-operations.html">Dag Operations</a>
+  <a href="07-block-operations.html">Block Operations</a>
+  <a href="08-name-operations.html">Name (IPNS) Operations</a>
+  <a href="09-key-operations.html">Key Operations</a>
+  <a href="10-swarm-operations.html">Swarm Operations</a>
+  <a href="11-bootstrap-operations.html">Bootstrap Operations</a>
+  <a href="12-system-operations.html">System Operations</a>
+  <a href="13-repo-operations.html">Repo Operations</a>
+  <a href="14-cluster-operations.html">Cluster Operations</a>
+  <a href="15-storage-operations.html">Storage Operations</a>
+  <a href="16-input-output.html" class="active">Input &amp; Output</a>
+  <a href="17-examples.html">Examples</a>
+  <a href="18-troubleshooting.html">Troubleshooting</a>
+  <a href="19-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">IPFS</a> /
+      Input &amp; Output
+    </div>
+    <h1>Input &amp; Output</h1>
+    <p class="subtitle">The shared output contract, binary I/O resolution, and how errors surface</p>
+  </div>
+
+  <h2>Shared Input Pattern</h2>
+  <p>Every operation takes <code>resource</code> and <code>operation</code> as the top-level config keys
+  that select the DTO, plus the Kubo connection fields (and, for some, the Cluster connection fields) — see
+  <a href="01-configuration.html">Configuration</a>. Everything else is specific to the chosen resource +
+  operation pair.</p>
+
+  <h2>Shared Output Shape</h2>
+  <p>Every operation writes an <code>outputData</code> object with:</p>
+  <table>
+    <thead><tr><th>Field</th><th>Present On</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>status</code></td><td>All</td><td><code>"success"</code> on the success path.</td></tr>
+      <tr><td><code>resource</code></td><td>All</td><td>Echoes the operation's <code>resource</code>.</td></tr>
+      <tr><td><code>operation</code></td><td>All</td><td>Echoes the operation's <code>operation</code>.</td></tr>
+      <tr><td><code>count</code></td><td>List-shaped operations only</td><td>Number of items in the list (e.g. <code>pin/list</code>, <code>swarm/peers</code>, <code>bootstrap/list</code>).</td></tr>
+      <tr><td><code>items</code></td><td>All</td><td>An array wrapping the result record(s) — a single-object result uses <code>WrapSingleObjectIntoItems</code>, a list result uses <code>WrapListIntoItems</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Binary I/O</h2>
+  <p>Operations that move raw bytes follow one of two symmetric patterns:</p>
+  <table>
+    <thead><tr><th>Direction</th><th>Operations</th><th>Mechanism</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Input</strong> (upload)</td><td><code>content/add</code>, <code>dag/put</code>, <code>dag/import</code>, <code>block/put</code>, <code>files/write</code>, <code>key/import</code>, <code>cluster/add</code>, <code>storage/uploadAndPin</code></td><td>Bytes resolved from the upstream node's <code>InputData[inputDataKey]</code> (already-<code>byte[]</code> passes through as-is; a string is decoded per <code>dataMode</code>), falling back to <code>inlineContent</code> when the input key is empty.</td></tr>
+      <tr><td><strong>Output</strong> (download)</td><td><code>content/cat</code>, <code>content/get</code>, <code>block/get</code>, <code>files/read</code>, <code>dag/export</code></td><td>The raw <code>byte[]</code> is placed directly under <code>data</code> in the items record for downstream nodes to consume.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Binary-Input Error Codes</h2>
+  <table>
+    <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>MISSING_CONTENT</code> / <code>MISSING_FILE_DATA</code></td><td>Nothing found under <code>InputData[inputDataKey]</code> and no <code>inlineContent</code> fallback provided.</td></tr>
+      <tr><td><code>INVALID_CONTENT_ENCODING</code> / <code>INVALID_FILE_DATA_ENCODING</code></td><td>The resolved string content could not be decoded per <code>dataMode</code> (e.g. malformed base64).</td></tr>
+    </tbody>
+  </table>
+
+  <h2>How Errors Surface</h2>
+  <table>
+    <thead><tr><th>Situation</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td>Missing required config field</td><td>A <code>CFG_MISSING_*</code> (or <code>CFG_CONFIRM_*</code>) validation error, routed to the <code>error</code> output port before any network call.</td></tr>
+      <tr><td>Missing/malformed binary content</td><td><code>MISSING_CONTENT</code>/<code>INVALID_CONTENT_ENCODING</code> (see above), also before any network call.</td></tr>
+      <tr><td>Kubo/Cluster returns a non-2xx response</td><td>Surfaces as <code>"&lt;resource&gt;/&lt;operation&gt; failed: &lt;message&gt; (&lt;code&gt;)"</code> on the error port.</td></tr>
+      <tr><td>Kubo returns 200 with an embedded per-item error (e.g. <code>block/remove</code>)</td><td>Surfaces as an <code>ok: false</code>/similar field in a successful response — see the operation's own page.</td></tr>
+      <tr><td>Transient network failure or 408/429/5xx</td><td>Retried automatically (up to 3 attempts, exponential backoff) before surfacing as an error — see <a href="02-connecting.html">Connecting</a>.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Idempotent-by-design retries:</strong> because retried operations are either idempotent
+    (pin/unpin/stat/list) or content-addressed (identical bytes always yield the identical CID), a
+    transparent retry never produces a divergent result — you don't need to build your own dedup logic
+    around network blips.
+  </div>
+
+</main>
+</body>
+</html>

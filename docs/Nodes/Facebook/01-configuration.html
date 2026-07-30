@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Configuration | Facebook — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Facebook<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html" class="active">Configuration</a>
+  <a href="02-authentication.html">Authentication</a>
+  <a href="03-page-operations.html">Page Operations</a>
+  <a href="04-post-operations.html">Post Operations</a>
+  <a href="05-message-operations.html">Message Operations</a>
+  <a href="06-reactions-operations.html">Reactions</a>
+  <a href="07-moderation-operations.html">Moderation</a>
+  <a href="08-media-operations.html">Media Operations</a>
+  <a href="09-input-output.html">Input &amp; Output</a>
+  <a href="10-examples.html">Examples</a>
+  <a href="11-troubleshooting.html">Troubleshooting</a>
+  <a href="12-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Facebook</a> /
+      Configuration
+    </div>
+    <h1>Facebook Configuration</h1>
+    <p class="subtitle">Dependency registration, HTTP clients, and rate-limit handling</p>
+  </div>
+
+  <h2>Registration</h2>
+  <p><code>FacebookExecutorDependency.RegisterDefaults(services)</code> registers everything the node needs:</p>
+  <ul>
+    <li><code>FacebookServicesExtensions.AddFacebookServices()</code> — typed <code>HttpClient</code>s for each resource service, the shared rate-limit handler, and the webhook signature validator</li>
+    <li>The executor itself (<code>FacebookNodeExecutor</code>), scoped</li>
+    <li>The <code>ExecutorRegistry</code> entry for <code>facebook</code></li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Host apps must also add an explicit registration call:</strong> alongside the standard DI
+    registration, host bootstrap must force-load this assembly (e.g. via
+    <code>Plugins_RegisterAllNodes(...)</code> in <code>ServiceCollectionExtensionsForAI.cs</code>) so the
+    <code>facebook</code> node type is discoverable at runtime and appears in the workflow designer.
+  </div>
+
+  <h2>HTTP Clients</h2>
+  <p>Each resource service gets its own named <code>HttpClient</code>, all sharing the same rate-limit
+  handler:</p>
+  <table>
+    <thead><tr><th>Service</th><th>Timeout</th><th>Backs Resource</th></tr></thead>
+    <tbody>
+      <tr><td><code>FacebookPageService</code></td><td>30s</td><td><code>page</code></td></tr>
+      <tr><td><code>FacebookPostService</code></td><td>30s</td><td><code>post</code></td></tr>
+      <tr><td><code>FacebookMessageService</code></td><td>30s</td><td><code>message</code></td></tr>
+      <tr><td><code>FacebookReactionService</code></td><td>30s</td><td><code>reactions</code></td></tr>
+      <tr><td><code>FacebookModerationService</code></td><td>30s</td><td><code>moderation</code></td></tr>
+      <tr><td><code>FacebookMediaService</code></td><td>120s</td><td><code>media</code> (longer timeout for photo/video upload calls)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Rate-Limit Handler</h2>
+  <p><code>FacebookRateLimitHandler</code> is attached as a <code>DelegatingHandler</code> on every one of
+  the clients above. On any HTTP 429 or 5xx response, it automatically retries — up to <strong>3
+  times</strong>, honoring the Graph API's <code>Retry-After</code> header when present and capping the
+  wait at <strong>60 seconds</strong> otherwise. Request bodies are cloned before each retry so POST/upload
+  calls resend correctly.</p>
+
+  <h2>API Endpoint</h2>
+  <p>All requests target a fixed, versioned Graph API base URL:</p>
+  <pre><code>https://graph.facebook.com/v25.0</code></pre>
+  <p>This is a compile-time constant (<code>FacebookHttpHelper.ApiBase</code>) — there is no per-environment
+  or per-network override, unlike a blockchain node's mainnet/testnet split. Every call goes to the live
+  Graph API.</p>
+
+  <h2>Project Layout</h2>
+  <p>The node ships as three .NET 9 projects:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>BizFirst.Integration.Facebook.Domain</code></td>
+        <td>Sealed result records per operation, the webhook payload model, and Graph API response shapes. Zero external dependencies.</td>
+      </tr>
+      <tr>
+        <td><code>BizFirst.Integration.Facebook.Services</code></td>
+        <td>One service per resource (page/post/message/reactions/moderation/media), the shared HTTP helper, rate-limit handler, input validator/normalizer, cursor paginator, and webhook signature validator.</td>
+      </tr>
+      <tr>
+        <td><code>BizFirst.Ai.ExecutionNodes.Social.Facebook</code></td>
+        <td>The executor: operation routing, config/credential handling, and per-operation info DTOs.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>No appsettings.json section required:</strong> Unlike nodes that target a configurable network
+    or environment, this node has no dedicated appsettings block — the Graph API base URL is fixed in code,
+    and the Page access token comes entirely from the credential vault or inline config per call. See
+    <a href="02-authentication.html">Authentication</a>.
+  </div>
+
+</main>
+</body>
+</html>

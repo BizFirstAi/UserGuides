@@ -51,63 +51,73 @@ nav.sidebar{top:40px;height:calc(100vh - 40px);}
     <div class="breadcrumb">
       <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
       <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
-      Hedera
+      <a href="index.html">Hedera</a> /
+      Networks
     </div>
     <h1>Networks</h1>
-    <p class="subtitle">mainnet, testnet, and previewnet — their URLs, how the default resolves, and how to add another.</p>
+    <p class="subtitle">Mainnet, testnet, previewnet — and how to add your own</p>
   </div>
 
-  <h2>Built-In Networks</h2>
   <table>
-    <tr><th style="width:130px;">Network</th><th style="width:110px;">Default?</th><th>Mirror Node REST URL</th></tr>
-    <tr><td><code>mainnet</code></td><td>&mdash;</td><td><code>https://mainnet-public.mirrornode.hedera.com</code></td></tr>
-    <tr><td><code>testnet</code></td><td><span class="badge" style="background:#e8f4ff;color:#0a72d6;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;">Default</span></td><td><code>https://testnet.mirrornode.hedera.com</code></td></tr>
-    <tr><td><code>previewnet</code></td><td>&mdash;</td><td><code>https://previewnet.mirrornode.hedera.com</code></td></tr>
+    <thead>
+      <tr>
+        <th>Network</th>
+        <th>Mirror REST URL</th>
+        <th>Use For</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>mainnet</code></td>
+        <td><code>https://mainnet-public.mirrornode.hedera.com</code></td>
+        <td>Production. Real HBAR, real fees on any future write operations.</td>
+      </tr>
+      <tr>
+        <td><code>testnet</code></td>
+        <td><code>https://testnet.mirrornode.hedera.com</code></td>
+        <td><strong>Default network.</strong> Free faucet HBAR available — safe for development and CI.</td>
+      </tr>
+      <tr>
+        <td><code>previewnet</code></td>
+        <td><code>https://previewnet.mirrornode.hedera.com</code></td>
+        <td>Early-access features not yet on testnet/mainnet.</td>
+      </tr>
+    </tbody>
   </table>
-  <p>All three are free, public, community-operated Mirror Nodes maintained for the Hedera ecosystem. No API key is needed to query them.</p>
 
-  <h2>How the Default Resolves</h2>
-  <p>When a node configuration omits the <code>network</code> field, the executor reads <code>Hedera:DefaultNetwork</code> from application settings and uses that network's <code>MirrorRestUrl</code>. Out of the box this is set to <code>testnet</code>, so a bare configuration like:</p>
-  <pre><code>{
-  "resource": "utility",
-  "operation": "validateAddress",
-  "address": "0.0.1234567"
-}</code></pre>
-  <p>runs against <strong>testnet</strong> without any explicit <code>network</code> field. To target a different network for a specific call, set <code>network</code> explicitly:</p>
-  <pre><code>{
-  "resource": "account",
-  "operation": "getBalance",
-  "network": "mainnet",
-  "accountId": "0.0.1234567"
-}</code></pre>
+  <div class="callout success">
+    <strong>Testnet faucet:</strong> Hedera provides a public testnet faucet for free HBAR, so you can
+    exercise account/token/topic operations end to end without spending real funds. Point
+    <code>DefaultNetwork</code> at <code>testnet</code> (the default) while developing.
+  </div>
 
-  <h2>Adding a Custom or Additional Network</h2>
-  <p>The <code>Hedera:Networks</code> section is a plain dictionary — add any additional entry to make it selectable from the <code>network</code> config key. This is useful for pointing at a self-hosted Mirror Node, a regional mirror, or a future Hedera network.</p>
+  <h2>How Network Selection Works</h2>
+  <ol>
+    <li>Each operation call may include a <code>network</code> config key.</li>
+    <li>If set, the node resolves that network's <code>MirrorRestUrl</code> from
+      <code>Hedera:Networks</code> and calls it.</li>
+    <li>If unset, the node uses whatever <code>Hedera:DefaultNetwork</code> points to.</li>
+    <li>If the resolved network name has no matching entry under <code>Hedera:Networks</code>, the
+      node throws <code>HederaNetworkNotConfiguredException</code> rather than silently falling back.</li>
+  </ol>
+
+  <h2>Adding a Custom Network</h2>
+  <p>Add any additional entry under <code>Hedera:Networks</code> — the key becomes the value workflows
+  pass in the <code>network</code> field:</p>
   <pre><code>"Hedera": {
   "DefaultNetwork": "testnet",
   "Networks": {
-    "mainnet":    { "MirrorRestUrl": "https://mainnet-public.mirrornode.hedera.com" },
-    "testnet":    { "MirrorRestUrl": "https://testnet.mirrornode.hedera.com" },
-    "previewnet": { "MirrorRestUrl": "https://previewnet.mirrornode.hedera.com" },
-    "myMirror":   { "MirrorRestUrl": "https://hedera-mirror.internal.example.com" }
+    "testnet":     { "MirrorRestUrl": "https://testnet.mirrornode.hedera.com" },
+    "my-local-net": { "MirrorRestUrl": "https://mirror.my-internal-hedera-net.example" }
   }
 }</code></pre>
-  <p>Once added, reference it by name from any Hedera node configuration:</p>
-  <pre><code>{
-  "resource": "topic",
-  "operation": "getMessages",
-  "network": "myMirror",
-  "topicId": "0.0.987654"
-}</code></pre>
+  <p>No code change or redeploy of the node itself is required — this is a pure configuration addition.</p>
 
-  <div class="callout warning">
-    <strong>Names must match exactly.</strong> <code>network</code> and <code>Hedera:DefaultNetwork</code> are matched against the keys under <code>Hedera:Networks</code> as configured — there is no built-in fallback or fuzzy matching. A typo, or a network referenced before it's added to the section, fails fast rather than silently querying the wrong endpoint. See <a href="10-troubleshooting.html">Troubleshooting</a>.
-  </div>
-
-  <h2>Testnet Faucet</h2>
-  <p>Because <code>testnet</code> is the default network and the natural place to build and test workflows, it's worth knowing that Hedera provides a free public testnet faucet. It dispenses test HBAR to any testnet account so you can experiment with balances, token transfers, and topic activity without spending real value. Use it to fund an account you control before wiring up examples like the ones in <a href="09-examples.html">Examples</a>.</p>
   <div class="callout info">
-    <strong>Tip:</strong> Test HBAR from the faucet has no monetary value and only exists on <code>testnet</code> — it cannot be used against <code>mainnet</code> or <code>previewnet</code> endpoints, and testnet balances are unrelated to any mainnet account with the same ID format.
+    <strong>Only Mirror Node URLs are configurable here.</strong> This node's current operations are all
+    Mirror Node REST reads, so the only per-network setting needed is <code>MirrorRestUrl</code>. Signed
+    write operations (see <a href="11-roadmap.html">Roadmap</a>) will need consensus node endpoints too,
+    once implemented.
   </div>
 
 </main>

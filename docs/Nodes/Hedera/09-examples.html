@@ -51,77 +51,63 @@ nav.sidebar{top:40px;height:calc(100vh - 40px);}
     <div class="breadcrumb">
       <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
       <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
-      Hedera
+      <a href="index.html">Hedera</a> /
+      Examples
     </div>
     <h1>Examples</h1>
-    <p class="subtitle">Four worked workflow patterns built from the operations covered in this guide.</p>
+    <p class="subtitle">Worked workflow patterns using the Hedera node</p>
   </div>
 
-  <h2>1. Check an Account's HBAR Balance Before a Payout Step</h2>
-  <p>Before a workflow triggers an off-ledger payout (e.g. releasing funds, marking an invoice paid, or unlocking a service), confirm that the treasury account actually holds enough HBAR to cover it.</p>
-  <pre><code>{
-  "resource": "account",
-  "operation": "getBalance",
-  "network": "mainnet",
-  "accountId": "0.0.900321"
-}</code></pre>
+  <h2>1. Check a Balance Before a Payout Step</h2>
+  <p>Guard a downstream payout/transfer action by confirming the treasury account has enough HBAR first.</p>
+  <ol>
+    <li><strong>Hedera</strong> node: <code>resource=account</code>, <code>operation=getBalance</code>, <code>accountId={{treasuryAccountId}}</code></li>
+    <li><strong>Condition</strong> node: <code>balanceHbar &gt;= requiredAmount</code></li>
+    <li>If true, continue to the payout step; if false, route to an alert/notification branch</li>
+  </ol>
   <div class="callout info">
-    <strong>Workflow pattern:</strong> Feed <code>tinybars</code> from the response into an <em>If Condition</em> node comparing it against the required payout amount (converted to tinybars via <a href="07-utility-operations.html">utility.convertUnits</a>). Route to the payout step only when the balance is sufficient; otherwise route to an alert/notification path so an operator can top up the treasury account before customers are affected.
+    <strong>Why here:</strong> This is a read-only pre-check — it doesn't move funds itself, it just
+    protects a later step (today, likely an off-chain payout or a manual approval) from firing against an
+    account that can't cover it.
   </div>
 
-  <h2>2. Poll an HCS Topic for New Messages as a Trigger Pattern</h2>
-  <p>Because this node's <code>topic.getMessages</code> operation is a synchronous read rather than a push-based subscription, the standard way to react to new HCS activity is to poll on a schedule and track the last sequence number seen.</p>
-  <pre><code>// Scheduled Trigger fires this every 30 seconds
-{
-  "resource": "topic",
-  "operation": "getMessages",
-  "network": "mainnet",
-  "topicId": "0.0.987654",
-  "sequenceFrom": "{{ $vars.lastSequenceSeen + 1 }}",
-  "limit": 50
-}</code></pre>
-  <div class="callout info">
-    <strong>Workflow pattern:</strong> Pair a <em>Scheduled Trigger</em> node with a <em>Variable Assignment</em> node that persists <code>lastSequenceSeen</code> between runs. On each run, if <code>messages</code> is non-empty, loop over it with a <em>Loop</em> node to process each event (e.g. parsing a JSON payload out of <code>message</code>) and update <code>lastSequenceSeen</code> to the highest <code>sequenceNumber</code> returned before the workflow ends. This turns an HCS topic into a lightweight, ordered event queue for any downstream automation.
+  <h2>2. Poll an HCS Topic as a Workflow Trigger</h2>
+  <p>Use a topic as a lightweight event bus: an external system submits messages to it, and a workflow
+  polls for new ones.</p>
+  <ol>
+    <li>Store the last processed <code>sequenceNumber</code> somewhere the workflow can read/write (a variable, a small table row).</li>
+    <li>On each run: <strong>Hedera</strong> node, <code>resource=topic</code>, <code>operation=getMessages</code>, <code>topicId={{topicId}}</code>, <code>sequenceFrom={{lastSeen + 1}}</code></li>
+    <li>For each message returned, parse the JSON payload and branch on its <code>event</code> field.</li>
+    <li>Update the stored <code>sequenceNumber</code> to the highest one seen this run.</li>
+  </ol>
+  <div class="callout success">
+    <strong>Tip:</strong> Keep <code>limit</code> modest (25–50) on a frequent poll — you'll catch up
+    quickly across a few runs rather than requesting a huge page every time.
   </div>
 
-  <h2>3. Look Up Token Metadata and an Account's Token Balances Together</h2>
-  <p>Raw token balances are just IDs and integers — pairing <code>token.getBalances</code> with <code>token.getInfo</code> resolves each holding into a human-readable name, symbol, and correctly-scaled amount.</p>
-  <pre><code>// Step 1 — list what the account holds
-{
-  "resource": "token",
-  "operation": "getBalances",
-  "network": "testnet",
-  "accountId": "0.0.1234567",
-  "limit": 25
-}
+  <h2>3. Look Up a Token and an Account's Holdings Together</h2>
+  <p>Combine token metadata with a specific account's balance, e.g. to display "Account X holds 500
+  EXT (Example Token)" in a report.</p>
+  <ol>
+    <li><strong>Hedera</strong> node: <code>resource=token</code>, <code>operation=getInfo</code>, <code>tokenId={{tokenId}}</code> → get <code>symbol</code>, <code>decimals</code>, <code>name</code></li>
+    <li><strong>Hedera</strong> node: <code>resource=token</code>, <code>operation=getBalances</code>, <code>accountId={{accountId}}</code> → find the entry matching <code>tokenId</code></li>
+    <li><strong>Transform</strong> step: <code>displayAmount = balance / (10 ^ decimals)</code>, format as <code>"{displayAmount} {symbol}"</code></li>
+  </ol>
 
-// Step 2 — for each tokenId in the result, resolve its metadata
-{
-  "resource": "token",
-  "operation": "getInfo",
-  "network": "testnet",
-  "tokenId": "{{ $item.tokenId }}"
-}</code></pre>
-  <div class="callout info">
-    <strong>Workflow pattern:</strong> Feed the <code>balances</code> array from step 1 into a <em>Loop</em> node. Inside the loop, call <code>token.getInfo</code> for the current item's <code>tokenId</code>, then use a <em>Data Mapping</em> node to combine <code>balance</code> / <code>decimals</code> from step 1 with <code>name</code> / <code>symbol</code> from step 2 into a single display-ready row — e.g. <code>"1,000.00 WDG (Widget Token)"</code>.
-  </div>
+  <h2>4. Convert a User-Entered HBAR Amount Before a Downstream Step</h2>
+  <p>A form collects an amount in HBAR from a user; a later step (today, an off-chain ledger entry;
+  eventually, a signed transfer — see <a href="11-roadmap.html">Roadmap</a>) needs tinybar.</p>
+  <ol>
+    <li><strong>Hedera</strong> node: <code>resource=utility</code>, <code>operation=convertUnits</code>, <code>amount={{userInputHbar}}</code>, <code>fromUnit=hbar</code>, <code>toUnit=tinybar</code></li>
+    <li>Pass <code>result</code> (the tinybar amount) into the downstream step's input field.</li>
+  </ol>
 
-  <h2>4. Convert a User-Entered HBAR Amount to Tinybar Before a Downstream Step</h2>
-  <p>When a workflow accepts a human-entered amount (from a Form node, a chat message, or an approval step) in HBAR, convert it to tinybars before comparing it against any balance or fee value returned by other operations — those are always expressed in tinybars.</p>
-  <pre><code>{
-  "resource": "utility",
-  "operation": "convertUnits",
-  "amount": "{{ $form.requestedAmount }}",
-  "fromUnit": "hbar",
-  "toUnit": "tinybar"
-}</code></pre>
-  <div class="callout info">
-    <strong>Workflow pattern:</strong> Place this node right after the <em>Form</em> or <em>Chat</em> node that collects the user's HBAR amount, and before the <em>If Condition</em> node that compares it against a balance from <code>account.getBalance</code>. Comparing like-for-like units (tinybar to tinybar) avoids an entire class of off-by-100,000,000 bugs.
-  </div>
-
-  <div class="callout warning">
-    <strong>All four patterns above are read-only.</strong> None of them move value or submit anything to the ledger — they only inform decisions inside the workflow. See <a href="11-roadmap.html">Roadmap</a> for planned signed-write operations that would actually execute a transfer, mint, or topic submission.
-  </div>
+  <h2>5. Validate a User-Entered Account ID Before Any Lookup</h2>
+  <ol>
+    <li><strong>Hedera</strong> node: <code>resource=utility</code>, <code>operation=validateAddress</code>, <code>address={{userInput}}</code></li>
+    <li><strong>Condition</strong> node: <code>isValid == true</code></li>
+    <li>If true, proceed to <code>account.getBalance</code> or <code>account.getInfo</code>; if false, return a validation error to the user immediately instead of calling the network.</li>
+  </ol>
 
 </main>
 </body>

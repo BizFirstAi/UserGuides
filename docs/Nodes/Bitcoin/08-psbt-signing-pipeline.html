@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PSBT Signing Pipeline | Bitcoin — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Bitcoin<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-networks.html">Networks</a>
+  <a href="03-address-operations.html">Address Operations</a>
+  <a href="04-transaction-operations.html">Transaction Operations</a>
+  <a href="05-block-operations.html">Block Operations</a>
+  <a href="06-mempool-operations.html">Mempool Operations</a>
+  <a href="07-fee-operations.html">Fee Estimates</a>
+  <a href="08-psbt-signing-pipeline.html" class="active">PSBT Signing Pipeline</a>
+  <a href="09-wallet-operations.html">Wallet Operations</a>
+  <a href="10-input-output.html">Input &amp; Output</a>
+  <a href="11-examples.html">Examples</a>
+  <a href="12-troubleshooting.html">Troubleshooting</a>
+  <a href="13-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Bitcoin</a> /
+      PSBT Signing Pipeline
+    </div>
+    <h1>PSBT Signing Pipeline</h1>
+    <p class="subtitle">resource: <code>psbt</code> — build, sign, combine, finalize, extract: the full write path</p>
+  </div>
+
+  <div class="callout warning">
+    <strong>These operations move real Bitcoin.</strong> Read this whole page — especially
+    <a href="#sign">psbt/sign</a>'s fund-safety rule — before wiring this pipeline into a production
+    workflow.
+  </div>
+
+  <h2>Why a Pipeline?</h2>
+  <p>Bitcoin has no single-call "sign this transaction" primitive. The natural unit of work is a
+  <strong>PSBT</strong> (Partially Signed Bitcoin Transaction, <a href="https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki" target="_blank">BIP-174</a>) — a portable, base64-encoded
+  artifact that passes through a multi-step pipeline, each step its own operation:</p>
+  <pre><code>psbt/build     → unsigned PSBT (coin selection + fee calculation)
+psbt/sign      → +1 signature (call once per required signature)
+psbt/combine   → merges independently-signed copies (multisig only)
+psbt/finalize  → final scriptSig/witness (re-validates every UTXO is still unspent)
+psbt/extract   → raw transaction hex
+transaction/broadcast → submits to the network</code></pre>
+
+  <h2>build</h2>
+  <p>Creates an unsigned PSBT: selects UTXOs to cover the requested outputs plus fee, computes change, and
+  serializes the result.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Fund-moving — must be explicit.</td></tr>
+      <tr><td><code>fromAddress</code></td><td>text</td><td>Conditional</td><td>Address to spend from — the node fetches its UTXOs automatically. Required unless an explicit <code>utxos[]</code> list is supplied instead.</td></tr>
+      <tr><td><code>utxos[]</code></td><td>array</td><td>No</td><td>Explicit UTXOs to spend instead of auto-selecting: <code>{txid, vout, valueSats, redeemScript?, address?}</code>. <code>address</code> is required per-entry when it differs from <code>fromAddress</code>, or when <code>fromAddress</code> itself is omitted. Not needed for a P2WSH multisig UTXO — <code>redeemScript</code> alone determines its scriptPubKey.</td></tr>
+      <tr><td><code>outputs[]</code></td><td>array</td><td>✓ Yes</td><td>At least one destination: <code>{address, amountSats}</code>.</td></tr>
+      <tr><td><code>changeAddress</code></td><td>text</td><td>No</td><td>Where leftover value returns. If omitted and change is generated, the build fails validation rather than silently picking an address.</td></tr>
+      <tr><td><code>feeRateSatVb</code></td><td>decimal</td><td>No</td><td>Sat/vB fee rate. If omitted, consults <a href="07-fee-operations.html">fee/getEstimates</a>'s fastest target automatically.</td></tr>
+      <tr><td><code>addressType</code></td><td>select</td><td>No (default <code>p2wpkh</code>)</td><td><code>p2wpkh</code> or <code>p2tr</code>.</td></tr>
+      <tr><td><code>enableRbf</code></td><td>boolean</td><td>No (default <code>true</code>)</td><td>Signal Replace-By-Fee, allowing this transaction to be fee-bumped before confirmation.</td></tr>
+      <tr><td><code>locktime</code></td><td>number</td><td>No (default 0)</td><td>Transaction nLockTime.</td></tr>
+      <tr><td><code>reservationTimeoutSeconds</code></td><td>number</td><td>No</td><td>Overrides <code>Bitcoin:UtxoReservation:LockTimeoutSeconds</code> for this build — use a longer value for human-in-the-loop multisig approval flows.</td></tr>
+      <tr><td><code>idempotencyKey</code></td><td>text</td><td>No</td><td>Safe-retry key for this build call.</td></tr>
+    </tbody>
+  </table>
+  <p>Example response:</p>
+  <pre><code>{
+  "psbtBase64": "cHNidP8BAHECAAAAAd...",
+  "inputsSelected": [ { "txid": "8f3c...", "vout": 0, "valueSats": 500000, "confirmed": true } ],
+  "totalInputSats": 500000,
+  "feeSats": 1400,
+  "feeRateSatVb": 12.5,
+  "changeSats": 88600,
+  "changeAddress": "bc1q...",
+  "expectedOutputsHash": "a94f...b21"
+}</code></pre>
+  <div class="callout warning">
+    <strong>Carry <code>changeAddress</code>/<code>changeSats</code> forward.</strong> If
+    <code>changeSats &gt; 0</code>, include <code>{ "address": changeAddress, "amountSats": changeSats }</code>
+    as one of <code>psbt/sign</code>'s <code>expectedOutputs[]</code> entries — see below.
+  </div>
+
+  <h2 id="sign">sign</h2>
+  <p>Adds one signature to the PSBT (call once per required signature — e.g. twice for a 2-of-3 multisig).</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Fund-moving — must be explicit.</td></tr>
+      <tr><td><code>psbtBase64</code></td><td>text</td><td>✓ Yes</td><td>The PSBT from <code>psbt/build</code> (or a prior <code>sign</code>/<code>combine</code> step).</td></tr>
+      <tr><td><code>walletType</code></td><td>select</td><td>✓ Yes</td><td><code>wif</code> or <code>mnemonic</code> — <code>readOnly</code> cannot produce a signature.</td></tr>
+      <tr><td><code>credentialID</code></td><td>number</td><td>✓ Yes</td><td>Vault reference to the signing key/mnemonic.</td></tr>
+      <tr><td><code>addressType</code></td><td>select</td><td>No (default <code>p2wpkh</code>)</td><td><code>p2wpkh</code> or <code>p2tr</code>.</td></tr>
+      <tr><td><code>derivationPath</code></td><td>text</td><td>No</td><td>Overrides the default SLIP-44 path (see <a href="02-networks.html">Networks</a>) when <code>walletType</code> is <code>mnemonic</code>.</td></tr>
+      <tr><td><code>expectedOutputs[]</code></td><td>array</td><td>✓ Yes</td><td>The <strong>complete, exact</strong> set of outputs the PSBT must contain: <code>{address, amountSats}</code> per entry. See the fund-safety callout below.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Fund-safety rule — read this before your first send:</strong> <code>expectedOutputs[]</code> is
+    required and must be an <strong>exact set match</strong> against the PSBT's real outputs — same count,
+    every output's address and amount matching one expected entry exactly. Without this check, a signing
+    operation would blindly sign whatever PSBT it was handed, with no verification it matches what was
+    originally built or approved — a validly-signed transaction to a substituted destination is exactly as
+    valid, and exactly as irreversible once confirmed, as one to the intended destination. If
+    <code>psbt/build</code> produced a change output (<code>changeSats &gt; 0</code>), its
+    <code>changeAddress</code>/<code>changeSats</code> <strong>must</strong> be included in
+    <code>expectedOutputs[]</code> — there is no implicit "leftover output" tolerance of any kind. A
+    mismatch fails with <code>PSBT_OUTPUT_MISMATCH</code>.
+  </div>
+
+  <p>Example response:</p>
+  <pre><code>{
+  "psbtBase64": "cHNidP8BAHECAAAAAd...",
+  "signaturesAddedForInputs": [0]
+}</code></pre>
+
+  <h2>combine</h2>
+  <p>Merges two or more independently-signed copies of the same PSBT — only needed for out-of-band
+  multisig where different signers each sign their own copy separately.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Fund-moving — must be explicit.</td></tr>
+      <tr><td><code>psbtBase64List[]</code></td><td>array of text</td><td>✓ Yes</td><td>At least two signed PSBT copies to merge.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>finalize</h2>
+  <p>Produces the final scriptSig/witness for each input. Re-validates that every input UTXO is still
+  unspent immediately before finalizing — Bitcoin consensus itself is the real safety net here, but this
+  check distinguishes a genuine race/expired reservation from a call that already succeeded on a prior
+  attempt whose response was lost.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Fund-moving — must be explicit.</td></tr>
+      <tr><td><code>psbtBase64</code></td><td>text</td><td>✓ Yes</td><td>The fully-signed PSBT.</td></tr>
+    </tbody>
+  </table>
+  <p>Example response:</p>
+  <pre><code>{
+  "psbtBase64": "cHNidP8BAHECAAAAAd...",
+  "allInputsFinalized": true,
+  "alreadyBroadcastTxid": null,
+  "inputOutpoints": [ { "txid": "8f3c...", "vout": 0 } ]
+}</code></pre>
+  <table>
+    <thead><tr><th>Response Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>alreadyBroadcastTxid</code></td><td>Set when this exact call already succeeded on a prior attempt — treat as success, not a fresh finalize.</td></tr>
+      <tr><td><code>inputOutpoints</code></td><td>Lets the caller release the UTXO reservation early on success rather than waiting out the full reservation timeout.</td></tr>
+    </tbody>
+  </table>
+  <p>An input whose UTXO was spent elsewhere between <code>build</code> and <code>finalize</code> fails with
+  <code>PSBT_UTXO_NO_LONGER_AVAILABLE</code> — see <a href="12-troubleshooting.html">Troubleshooting</a>.</p>
+
+  <h2>extract</h2>
+  <p>Extracts the final raw transaction hex from a finalized PSBT — the direct input to
+  <a href="04-transaction-operations.html">transaction/broadcast</a>.</p>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Fund-moving — must be explicit.</td></tr>
+      <tr><td><code>psbtBase64</code></td><td>text</td><td>✓ Yes</td><td>The finalized PSBT.</td></tr>
+    </tbody>
+  </table>
+  <p>Example response:</p>
+  <pre><code>{
+  "rawTransactionHex": "02000000000101...",
+  "txid": "8f3c...e21a"
+}</code></pre>
+
+  <h2>buildTaprootScriptPathInput</h2>
+  <div class="callout warning">
+    <strong>Not fully implemented.</strong> NBitcoin's <code>PSBTInput</code> has no leaf-script/control-block
+    fields the way it does for key-path Taproot, so this operation's actual mechanism needs a dedicated spike
+    before it's safe to ship. It's implemented as a best-effort field-attach for the timelock-leaf case only;
+    the script-multisig-leaf case fails fast with <code>PSBT_TAPROOT_SPIKE_PENDING</code>. Key-path Taproot
+    (P2TR) signing via <code>psbt/build</code>/<code>psbt/sign</code> is fully implemented and unaffected —
+    this limitation only applies to Taproot <em>script-path</em> spends. See <a href="13-roadmap.html">Roadmap</a>.
+  </div>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>network</code></td><td>select</td><td>✓ Yes</td><td>Fund-moving — must be explicit.</td></tr>
+      <tr><td><code>psbtBase64</code></td><td>text</td><td>✓ Yes</td><td>PSBT to attach the script-path input to.</td></tr>
+      <tr><td><code>inputIndex</code></td><td>number</td><td>No (default 0)</td><td>Which input to build.</td></tr>
+      <tr><td><code>leafType</code></td><td>select</td><td>No (default <code>timelock</code>)</td><td>Only <code>timelock</code> has best-effort support today.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Full Pipeline at a Glance</h2>
+  <table>
+    <thead><tr><th>Step</th><th>Operation</th><th>Role</th><th>Needs a credential?</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>psbt/build</code></td><td>Creator/Updater — coin selection, fee, change</td><td>No</td></tr>
+      <tr><td>2</td><td><code>psbt/sign</code></td><td>Signer — once per required signature</td><td>✓ Yes</td></tr>
+      <tr><td>3</td><td><code>psbt/combine</code></td><td>Combiner — multisig only</td><td>No</td></tr>
+      <tr><td>4</td><td><code>psbt/finalize</code></td><td>Finalizer — re-validates UTXOs, builds final witness</td><td>No</td></tr>
+      <tr><td>5</td><td><code>psbt/extract</code></td><td>Extractor — raw hex</td><td>No</td></tr>
+      <tr><td>6</td><td><code>transaction/broadcast</code></td><td>Submits to the network</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <p>See <a href="11-examples.html">Examples</a> for a full worked send-Bitcoin workflow through this
+  pipeline end to end.</p>
+
+</main>
+</body>
+</html>

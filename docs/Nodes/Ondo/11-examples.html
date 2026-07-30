@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Examples | Ondo — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Ondo<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-asset-pricing-operations.html">Asset Pricing</a>
+  <a href="03-asset-market-operations.html">Asset Markets &amp; Dividends</a>
+  <a href="04-asset-reference-operations.html">Asset Addresses &amp; Metadata</a>
+  <a href="05-attestation-operations.html">Attestation Operations</a>
+  <a href="06-chain-operations.html">Chain Operations</a>
+  <a href="07-limit-operations.html">Limit Operations</a>
+  <a href="08-status-operations.html">Status Operations</a>
+  <a href="09-ticker-operations.html">Ticker Operations</a>
+  <a href="10-input-output.html">Input &amp; Output</a>
+  <a href="11-examples.html" class="active">Examples</a>
+  <a href="12-troubleshooting.html">Troubleshooting</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Ondo</a> /
+      Examples
+    </div>
+    <h1>Examples</h1>
+    <p class="subtitle">Worked workflow patterns using the Ondo node</p>
+  </div>
+
+  <h2>1. Check Trading Limits Before Creating an Attestation</h2>
+  <p>Guard a mint/redeem attempt by confirming the trade is within bounds before spending an
+  attestation slot.</p>
+  <ol>
+    <li><strong>Ondo</strong> node: <code>resource=limits</code>, <code>operation=getTradingLimits</code>, <code>symbol={{symbol}}</code>, <code>side=buy</code></li>
+    <li><strong>Condition</strong> node: <code>isAssetTradingOpen == true AND tokenAmount &lt;= maxTokens</code></li>
+    <li>If true, continue to <strong>Ondo</strong> <code>attestations.createAttestation</code>; if false, route to an alert/notification branch</li>
+  </ol>
+  <div class="callout info">
+    <strong>Why here:</strong> <code>getTradingLimits</code> is a read — it doesn't consume a
+    session slot or spend anything itself, so it's safe to call before every attestation attempt.
+  </div>
+
+  <h2>2. Preview a Price, Then Confirm It With a Signed Attestation</h2>
+  <p>Show a user an indicative price before committing to the trade that actually needs a
+  signature.</p>
+  <ol>
+    <li><strong>Ondo</strong> node: <code>resource=attestations</code>, <code>operation=createAttestationQuote</code>, <code>chainId={{chainId}}</code>, <code>symbol={{symbol}}</code>, <code>side=buy</code>, <code>tokenAmount={{amount}}</code> → show <code>price</code> to the user</li>
+    <li>User confirms</li>
+    <li><strong>Ondo</strong> node: <code>resource=attestations</code>, <code>operation=createAttestation</code> with the same parameters → get <code>attestationId</code>, <code>signature</code>, <code>expiration</code></li>
+    <li>Pass the signature and expiration into the downstream on-chain mint/redeem step</li>
+  </ol>
+  <div class="callout success">
+    <strong>Tip:</strong> Keep the confirmation step short — the soft quote's price is indicative
+    only and can drift before the signed attestation is created.
+  </div>
+
+  <h2>3. Build a Portfolio Report With Price, Market, and Dividend Data</h2>
+  <p>Combine three read-only calls into a single report row per asset.</p>
+  <ol>
+    <li><strong>Ondo</strong> node: <code>resource=assets</code>, <code>operation=getPrice</code>, <code>symbol={{symbol}}</code> → <code>tokenPrice</code>, <code>underlyingPrice</code></li>
+    <li><strong>Ondo</strong> node: <code>resource=assets</code>, <code>operation=getMarket</code>, <code>symbol={{symbol}}</code> → <code>constituentTokens</code></li>
+    <li><strong>Ondo</strong> node: <code>resource=assets</code>, <code>operation=getLatestDividend</code>, <code>symbol={{underlyingTicker}}</code> → <code>dividendYield</code>, <code>lastPaymentDate</code></li>
+    <li><strong>Transform</strong> step: assemble one row combining the three results</li>
+  </ol>
+  <div class="callout warning">
+    <strong>Watch the symbol switch:</strong> Steps 1–2 use the GM symbol (<code>AAPLon</code>);
+    step 3 needs the underlying stock ticker (<code>AAPL</code>) — use
+    <code>underlyingTicker</code> from step 2's result, not the original <code>symbol</code>.
+  </div>
+
+  <h2>4. Skip Paused Assets in a Batch Job</h2>
+  <p>Filter out assets that are currently paused before running per-asset logic in a loop.</p>
+  <ol>
+    <li><strong>Ondo</strong> node: <code>resource=status</code>, <code>operation=getAssetStatus</code> → <code>assetStatuses[]</code></li>
+    <li><strong>Transform</strong> step: build a set of paused symbols from entries where <code>status == "paused"</code></li>
+    <li><strong>Loop</strong> over your asset list, skipping any symbol in the paused set</li>
+  </ol>
+
+  <h2>5. Resolve a Symbol to a Contract Address, Then Read Its On-Chain Balance</h2>
+  <ol>
+    <li><strong>Ondo</strong> node: <code>resource=assets</code>, <code>operation=getAddresses</code>, <code>symbol={{symbol}}</code> → pick the entry matching your target <code>networkChainId</code></li>
+    <li><strong>Ondo</strong> node: <code>resource=chains</code>, <code>operation=getBalances</code>, <code>chainId={{networkChainId}}</code>, <code>tokenAddress={{address}}</code>, <code>userAddress={{holder}}</code></li>
+    <li>Read the matching entry in <code>balances[]</code></li>
+  </ol>
+
+</main>
+</body>
+</html>

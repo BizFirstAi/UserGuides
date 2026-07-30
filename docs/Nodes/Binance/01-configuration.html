@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Configuration | Binance — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="../../" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Binance<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html" class="active">Configuration</a>
+  <a href="02-authentication.html">Authentication</a>
+  <a href="03-account-operations.html">Account Operations</a>
+  <a href="04-placing-orders.html">Placing Orders</a>
+  <a href="05-managing-orders.html">Managing Orders</a>
+  <a href="06-market-data-operations.html">Market Data Operations</a>
+  <a href="07-rate-limiting.html">Rate Limiting</a>
+  <a href="08-error-codes.html">Error Codes</a>
+  <a href="09-input-output.html">Input &amp; Output</a>
+  <a href="10-examples.html">Examples</a>
+  <a href="11-troubleshooting.html">Troubleshooting</a>
+  <a href="12-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">Binance</a> /
+      Configuration
+    </div>
+    <h1>Configuration</h1>
+    <p class="subtitle">appsettings.json, rate-limit defaults, and how the node registers itself</p>
+  </div>
+
+
+  <h2>appsettings.json</h2>
+  <p>The node reads its HTTP client and rate-limit settings from a <code>Binance</code> section, bound
+  via <code>IOptions&lt;BinanceApiClientOptions&gt;</code>:</p>
+  <pre><code>"Binance": {
+  "BaseUrl": "https://api.binance.com/",
+  "RecvWindowMs": 5000,
+  "WeightLimitPerMinute": 6000,
+  "ProactiveThrottleThreshold": 0.8
+}</code></pre>
+
+  <table>
+    <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>BaseUrl</code></td><td>text</td><td><code>https://api.binance.com/</code></td><td>Spot v3 REST base URL. Override to point at a different environment (e.g. <code>https://testnet.binance.vision/api</code>) without a code change — see <a href="12-roadmap.html">Roadmap</a> for why there's no dedicated environment toggle yet.</td></tr>
+      <tr><td><code>RecvWindowMs</code></td><td>number</td><td><code>5000</code></td><td>Binance's documented <code>recvWindow</code> — guards signed requests against replay/clock-skew.</td></tr>
+      <tr><td><code>WeightLimitPerMinute</code></td><td>number</td><td><code>6000</code></td><td>Binance's per-IP request-weight budget for the rolling 1-minute window (standard tier). See <a href="07-rate-limiting.html">Rate Limiting</a>.</td></tr>
+      <tr><td><code>ProactiveThrottleThreshold</code></td><td>number (0-1)</td><td><code>0.8</code></td><td>Fraction of <code>WeightLimitPerMinute</code> at which the node starts proactively delaying requests, based on the most recent <code>X-MBX-USED-WEIGHT-1M</code> response header.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Properties use <code>set</code>, not <code>init</code>:</strong> required for
+    <code>Microsoft.Extensions.Configuration</code>'s binder to populate <code>BinanceApiClientOptions</code>
+    via <code>AddOptions().BindConfiguration("Binance")</code>. When the <code>Binance</code> section is
+    absent entirely, the hardcoded production defaults above apply.
+  </div>
+
+  <h2>Registration</h2>
+  <p><code>BinanceDependency.RegisterDefaults(services)</code> registers everything the node needs:</p>
+  <ul>
+    <li>The <code>Binance</code> named <code>HttpClient</code>, with <code>BinanceRateLimitHandler</code> chained on as a <code>DelegatingHandler</code></li>
+    <li><code>BinanceApiClient</code> — <strong>Singleton</strong> (safe: it holds no credential state; every call takes a <code>BinanceApiCredential</code> as a plain parameter)</li>
+    <li><code>BinanceAccountService</code>, <code>BinanceOrderService</code>, <code>BinanceMarketDataService</code> — <strong>Scoped</strong></li>
+    <li>The executor itself — <strong>Scoped</strong></li>
+    <li>The <code>ExecutorRegistry</code> entry for <code>binance</code></li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Host apps must also add an explicit registration call:</strong> referencing this project's
+    assembly is not sufficient on its own. This codebase's composition root
+    (<code>ServiceCollectionExtensionsForAI.cs</code>, <code>Plugins_RegisterAllNodes()</code>) is a
+    hardcoded list of <code>new {X}Dependency().RegisterDefaults(services)</code> calls — there is no
+    assembly-scanning auto-discovery. A <code>new BinanceDependency().RegisterDefaults(services);</code>
+    line must be added there, alongside a project reference from the host to this executor's csproj, or
+    the node type won't appear in the workflow designer even though the package is referenced.
+  </div>
+
+  <h2>Project Layout</h2>
+  <p>The node ships as three .NET 9 projects:</p>
+  <table>
+    <thead><tr><th>Project</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td><code>BizFirst.Integration.Binance.Domain</code></td><td>Pure data contracts — 11 sealed result records (one per operation) plus shared value/request records. Zero logic, zero I/O, zero project/NuGet references.</td></tr>
+      <tr><td><code>BizFirst.Integration.Binance.Services</code></td><td>HTTP client, HMAC-SHA256 request signing, rate-limit handling, response parsing, and one service per resource.</td></tr>
+      <tr><td><code>BizFirst.Ai.ExecutionNodes.Blockchain.Binance</code></td><td>The executor: operation routing, credential resolution, config parsing, operation-info DTOs.</td></tr>
+    </tbody>
+  </table>
+
+</main>
+</body>
+</html>

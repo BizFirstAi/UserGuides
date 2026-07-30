@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connecting | IPFS — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">IPFS<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <a href="01-configuration.html">Configuration</a>
+  <a href="02-connecting.html" class="active">Connecting</a>
+  <a href="03-content-operations.html">Content Operations</a>
+  <a href="04-pin-operations.html">Pin Operations</a>
+  <a href="05-files-operations.html">Files (MFS) Operations</a>
+  <a href="06-dag-operations.html">Dag Operations</a>
+  <a href="07-block-operations.html">Block Operations</a>
+  <a href="08-name-operations.html">Name (IPNS) Operations</a>
+  <a href="09-key-operations.html">Key Operations</a>
+  <a href="10-swarm-operations.html">Swarm Operations</a>
+  <a href="11-bootstrap-operations.html">Bootstrap Operations</a>
+  <a href="12-system-operations.html">System Operations</a>
+  <a href="13-repo-operations.html">Repo Operations</a>
+  <a href="14-cluster-operations.html">Cluster Operations</a>
+  <a href="15-storage-operations.html">Storage Operations</a>
+  <a href="16-input-output.html">Input &amp; Output</a>
+  <a href="17-examples.html">Examples</a>
+  <a href="18-troubleshooting.html">Troubleshooting</a>
+  <a href="19-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html">IPFS</a> /
+      Connecting
+    </div>
+    <h1>Connecting</h1>
+    <p class="subtitle">Kubo vs. Cluster, auth modes, SSRF policy, and the safety guards around destructive operations</p>
+  </div>
+
+  <h2>Two Daemons</h2>
+  <table>
+    <thead>
+      <tr><th>Daemon</th><th>Config Fields</th><th>Used By</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Kubo</strong> (reference IPFS implementation)</td><td><code>baseUrl</code>, <code>authMode</code>, <code>credentialID</code></td><td>All resources except <code>cluster</code>. The <code>storage</code> composites use Kubo too, alongside Cluster.</td></tr>
+      <tr><td><strong>IPFS Cluster</strong> (coordinated pinning across a set of IPFS peers)</td><td><code>clusterBaseUrl</code>, <code>clusterAuthMode</code>, <code>destinationCredentialID</code></td><td><code>cluster</code> resource, plus the <code>storage</code> composites.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Auth Modes</h2>
+  <p>Kubo itself has no native authentication — <code>authMode</code>/<code>clusterAuthMode</code> exist to
+  support a daemon sitting behind a reverse proxy that adds one:</p>
+  <table>
+    <thead><tr><th>Mode</th><th>Kubo</th><th>Cluster</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td><code>none</code></td><td>✓</td><td>✓</td><td>No <code>Authorization</code> header sent. Default.</td></tr>
+      <tr><td><code>bearer</code></td><td>✓</td><td>—</td><td>Sends <code>Authorization: Bearer &lt;token&gt;</code>, token resolved from <code>credentialID</code>.</td></tr>
+      <tr><td><code>basic</code></td><td>✓</td><td>✓</td><td>Sends HTTP Basic auth, username/password resolved from <code>credentialID</code> (Kubo) or <code>destinationCredentialID</code> (Cluster). A credential with neither field set is treated as absent rather than emitting a malformed header.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Non-blocking warning for public + unauthenticated targets:</strong> If an operation's
+    <code>baseUrl</code> (or <code>clusterBaseUrl</code>) resolves to a non-private host with
+    <code>authMode="none"</code> (or <code>clusterAuthMode="none"</code>), the node logs a runtime warning —
+    since Kubo has no native auth, an unauthenticated public daemon is exposed to anyone who can reach it.
+    This never blocks execution, it only warns.
+  </div>
+
+  <h2>SSRF Policy — Inverted From the Platform Default</h2>
+  <p>A generic outbound-HTTP node denies private/loopback targets by default to prevent SSRF against
+  internal infrastructure. An IPFS node is different: pointing at a self-hosted Kubo daemon on
+  <code>127.0.0.1</code> or a private LAN address is the <em>expected</em>, common case. So the IPFS base-URL
+  policy is deliberately inverted:</p>
+  <table>
+    <thead><tr><th>Target</th><th>Allowed?</th></tr></thead>
+    <tbody>
+      <tr><td>Loopback (<code>127.0.0.1</code>, <code>localhost</code>)</td><td>✓ Allowed</td></tr>
+      <tr><td>RFC-1918 private ranges (<code>10.0.0.0/8</code>, <code>172.16.0.0/12</code>, <code>192.168.0.0/16</code>) and IPv6 unique-local (<code>fc00::/7</code>)</td><td>✓ Allowed</td></tr>
+      <tr><td>Any other public host</td><td>✓ Allowed</td></tr>
+      <tr><td>Link-local (<code>169.254.0.0/16</code>, IPv6 <code>fe80::/10</code>)</td><td>✗ Denied</td></tr>
+      <tr><td>Cloud-metadata address (<code>169.254.169.254</code>, <code>fd00:ec2::254</code>)</td><td>✗ Denied</td></tr>
+    </tbody>
+  </table>
+  <p>Only the genuinely dangerous SSRF pivots — link-local and the cloud-metadata endpoint — are
+  unconditionally denied. IPv4-mapped IPv6 addresses (e.g. <code>::ffff:169.254.169.254</code>) are collapsed
+  to their IPv4 form before the check, so the mapped-address encoding cannot be used to bypass the deny list.</p>
+
+  <h2>Resilience (Retries)</h2>
+  <p>Outbound calls go through a shared retry handler: up to 3 retries on HTTP 408/429/5xx or a transient
+  network exception, exponential backoff starting at 100&nbsp;ms and capped at 8000&nbsp;ms, honoring a
+  server <code>Retry-After</code> header when present.</p>
+  <div class="callout info">
+    <strong>Why retries are safe here:</strong> the operations this handler retries are either idempotent by
+    nature (pin/unpin/stat/list) or content-addressed (re-sending identical bytes to <code>content/add</code>
+    yields the identical CID) — so a retry can never produce a divergent result.
+  </div>
+
+  <h2>Destructive Operations Require Confirmation</h2>
+  <p>Two operations can destroy data or connectivity and require an explicit <code>confirmDestructive</code>
+  flag before any network call is made:</p>
+  <table>
+    <thead><tr><th>Operation</th><th>Guard</th></tr></thead>
+    <tbody>
+      <tr><td><code>repo/garbageCollect</code></td><td>Requires <code>confirmDestructive=true</code> — this permanently deletes any unpinned blocks in the local repo.</td></tr>
+      <tr><td><code>bootstrap/remove</code> with <code>all=true</code></td><td>Requires <code>confirmDestructive=true</code> — clears the entire bootstrap peer list. Removing a single peer (<code>all=false</code>, a specific <code>peerAddress</code>) needs no confirmation.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Secrets Are Never Emitted</h2>
+  <p>Three categories of sensitive material are structurally excluded from output, <code>ToDictionary()</code>,
+  and logs:</p>
+  <ul>
+    <li><strong>IPNS private key material</strong> (<code>key/generate</code>, <code>key/import</code>) — the generate result has no field capable of holding private bytes; import's key material lives only in a short-scoped local variable and is never serialized.</li>
+    <li><strong>Remote pinning-service API keys</strong> (<code>pin/remoteServiceAdd</code>) — accepted as input, forwarded to Kubo, never included in the output record. Kubo itself stores the key write-only.</li>
+    <li><strong>Vault credentials</strong> (bearer tokens, Basic auth pairs) — resolved once per execution and passed to the Services layer as plain strings; typed HTTP clients also disable default URI logging so a remote-pin API key carried in a query string can't leak through framework request logs.</li>
+  </ul>
+
+</main>
+</body>
+</html>
