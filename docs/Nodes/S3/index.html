@@ -42,6 +42,8 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <div class="sidebar-brand">S3<span>Storage Node</span></div>
   <div class="sidebar-section">Overview</div>
   <a href="index.html" class="active">Overview</a>
+  <div class="sidebar-section">Connection</div>
+  <a href="s3-server-satellite.html">S3 Server (satellite)</a>
   <div class="sidebar-section">Bucket</div>
   <a href="bucket-create.html">bucket/create</a>
   <a href="bucket-delete.html">bucket/delete</a>
@@ -53,6 +55,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <a href="object-copy.html">object/copy</a>
   <a href="object-delete.html">object/delete</a>
   <a href="object-getmany.html">object/get-many</a>
+  <a href="object-exists.html">object/exists</a>
   <div class="sidebar-section">Folder</div>
   <a href="folder-create.html">folder/create</a>
   <a href="folder-delete.html">folder/delete</a>
@@ -73,10 +76,10 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
 
   <div class="callout info">
     <i class="fa-solid fa-circle-info"></i>&nbsp;
-    <strong>What this node does:</strong> The S3 node provides full lifecycle management for AWS S3 across three resources: <strong>bucket</strong>, <strong>object</strong>, and <strong>folder</strong>. All operations authenticate via AWS IAM credentials (Access Key ID + Secret Access Key). Use IAM roles with least-privilege policies scoped to the specific S3 actions your workflow requires.
+    <strong>What this node does:</strong> The S3 node provides full lifecycle management across three resources: <strong>bucket</strong>, <strong>object</strong>, and <strong>folder</strong>. Credentials, region, and an optional S3-compatible endpoint override live on a connected <a href="s3-server-satellite.html">S3 Server</a> satellite node, not on the operation nodes themselves — the same operation nodes work unchanged against real AWS S3 or against Backblaze B2, MinIO, Cloudflare R2, DigitalOcean Spaces, and LocalStack. Object and folder keys are automatically isolated per tenant under a <code>tenants/&#123;tenantId&#125;/</code> prefix.
   </div>
 
-  <h2>Resources &amp; Operations (12 total)</h2>
+  <h2>Resources &amp; Operations (13 total)</h2>
 
   <h3><span class="resource-badge">bucket</span> 4 Operations</h3>
   <div class="op-grid">
@@ -102,7 +105,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
     </div>
   </div>
 
-  <h3><span class="resource-badge">object</span> 5 Operations</h3>
+  <h3><span class="resource-badge">object</span> 6 Operations</h3>
   <div class="op-grid">
     <div class="op-card">
       <h4>object/upload</h4>
@@ -129,6 +132,11 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
       <p>List objects in a bucket with optional prefix filtering and paginated results.</p>
       <a href="object-getmany.html">View documentation &rarr;</a>
     </div>
+    <div class="op-card">
+      <h4>object/exists</h4>
+      <p>HEAD-probe whether an object exists — returns a boolean, never downloads the object body.</p>
+      <a href="object-exists.html">View documentation &rarr;</a>
+    </div>
   </div>
 
   <h3><span class="resource-badge">folder</span> 3 Operations</h3>
@@ -150,22 +158,16 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
     </div>
   </div>
 
-  <h2>Authentication</h2>
-  <p>All S3 operations require AWS IAM credentials. The node supports both long-term IAM user credentials and temporary STS credentials for role-based access.</p>
-  <table>
-    <tr><th style="width:180px;">Field</th><th style="width:100px;">Required</th><th>Description</th></tr>
-    <tr><td><code>accessKeyId</code></td><td>Required</td><td>AWS Access Key ID. Pattern: <code>^[A-Z0-9]+$</code>, 16–128 characters. Store in BizFirst Credentials Manager — never hardcode.</td></tr>
-    <tr><td><code>secretKey</code></td><td>Required</td><td>AWS Secret Access Key. Never log or expose this value. Use the Credentials Manager.</td></tr>
-    <tr><td><code>sessionToken</code></td><td>Optional</td><td>STS session token for temporary credentials obtained via <code>AssumeRole</code> or <code>GetSessionToken</code>.</td></tr>
-    <tr><td><code>region</code></td><td>Required</td><td>AWS region identifier (e.g. <code>us-east-1</code>). Must match the bucket's region for all bucket/object operations.</td></tr>
-  </table>
+  <h2>Authentication &amp; Connection</h2>
+  <p>Operation nodes have <strong>no</strong> credential or region fields. Every S3 operation is wired to a connected <a href="s3-server-satellite.html">S3 Server</a> satellite node, which holds the vault credential (an <code>ApiKey</code>-type record — Username = access key ID, Password = secret key, with an optional STS session token via a secondary vault alias), the AWS region, and an optional Service URL endpoint override for S3-compatible backends. The satellite's values are merged onto every connected operation node at execution time. Full field reference: <a href="s3-server-satellite.html">S3 Server (satellite)</a>.</p>
 
   <div class="callout warning">
     <i class="fa-solid fa-triangle-exclamation"></i>&nbsp;
-    <strong>IAM Least-Privilege:</strong> Always create a dedicated IAM user or role for this node. Grant only the specific S3 actions the workflow needs (e.g. <code>s3:PutObject</code>, <code>s3:GetObject</code>) scoped to specific bucket ARNs. Avoid attaching <code>AmazonS3FullAccess</code> to automation credentials.
+    <strong>IAM Least-Privilege:</strong> Scope the underlying IAM identity to only the specific S3 actions the workflow needs (e.g. <code>s3:PutObject</code>, <code>s3:GetObject</code>), restricted to specific bucket ARNs. Avoid attaching <code>AmazonS3FullAccess</code> to automation credentials.
   </div>
 
   <h2>Supported AWS Regions</h2>
+  <p>Set on the connected <a href="s3-server-satellite.html">S3 Server</a> satellite. This exact list of 15 is enforced even when Service URL redirects to a non-AWS backend — see <a href="s3-server-satellite.html">S3 Server (satellite)</a> for why.</p>
   <table>
     <tr><th>Region ID</th><th>Location</th></tr>
     <tr><td><code>us-east-1</code></td><td>US East (N. Virginia)</td></tr>
@@ -206,14 +208,14 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <h2>Node Policies &amp; GuardRails</h2>
   <table>
     <tr><th style="width:240px;">Policy Area</th><th>Recommendation</th></tr>
-    <tr><td>Credential Storage</td><td>Store <code>accessKeyId</code> and <code>secretKey</code> in BizFirst Credentials Manager. Never hardcode credentials in workflow configuration or expression fields.</td></tr>
+    <tr><td>Credential Storage</td><td>Store the access key ID / secret key pair in the BizFirst vault as an <code>ApiKey</code> record on the connected <a href="s3-server-satellite.html">S3 Server</a> satellite. Never hardcode credentials in workflow configuration or expression fields.</td></tr>
     <tr><td>IAM Least-Privilege</td><td>Grant only the specific S3 actions the workflow needs, scoped to specific bucket ARNs. Avoid <code>AmazonS3FullAccess</code>.</td></tr>
     <tr><td>Default ACL</td><td>Always default to <code>private</code> ACL. Never use <code>public-read-write</code> without an explicit, reviewed business requirement.</td></tr>
     <tr><td>Encryption</td><td>Enable server-side encryption (<code>AES256</code> minimum) for all buckets containing PII, financial data, or business-sensitive content.</td></tr>
     <tr><td>Versioning</td><td>Enable versioning on critical data buckets before automating deletions. Versioning protects against accidental overwrites and provides point-in-time recovery.</td></tr>
     <tr><td>Audit Trail</td><td>Log <code>objectKey</code> and <code>eTag</code> values in workflow execution context for a complete audit trail of all S3 operations.</td></tr>
     <tr><td>Key Expression Safety</td><td>Use specific <code>objectKey</code> expressions — avoid expressions that could resolve to an unexpected key and overwrite or delete the wrong object.</td></tr>
-    <tr><td>Large File Uploads</td><td>For files exceeding 100 MB, consider multipart upload patterns. The node handles standard single-part uploads; chunked patterns require orchestration via multiple nodes.</td></tr>
+    <tr><td>Large File Uploads</td><td><a href="object-upload.html">object/upload</a> automatically switches to a multipart PUT above 5 MB — no manual chunking or extra nodes needed. The upload payload is still capped by the connected satellite's <code>maxUploadBytes</code> (default 100 MB, up to 5 GB).</td></tr>
   </table>
 </main>
 <script src="/search.js"></script>

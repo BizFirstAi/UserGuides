@@ -38,6 +38,8 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <div class="sidebar-brand">S3<span>Storage Node</span></div>
   <div class="sidebar-section">Overview</div>
   <a href="index.html">Overview</a>
+  <div class="sidebar-section">Connection</div>
+  <a href="s3-server-satellite.html">S3 Server (satellite)</a>
   <div class="sidebar-section">Bucket</div>
   <a href="bucket-create.html">bucket/create</a>
   <a href="bucket-delete.html">bucket/delete</a>
@@ -49,6 +51,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <a href="object-copy.html">object/copy</a>
   <a href="object-delete.html">object/delete</a>
   <a href="object-getmany.html">object/get-many</a>
+  <a href="object-exists.html">object/exists</a>
   <div class="sidebar-section">Folder</div>
   <a href="folder-create.html">folder/create</a>
   <a href="folder-delete.html">folder/delete</a>
@@ -84,28 +87,19 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <h2>Configuration</h2>
 
   <h3>Connection</h3>
-  <table>
-    <tr><th style="width:180px;">Field</th><th style="width:90px;">Required</th><th>Description</th></tr>
-    <tr><td><code>accessKeyId</code></td><td><span class="badge required">Required</span></td><td>AWS Access Key ID. Store in BizFirst Credentials Manager.</td></tr>
-    <tr><td><code>secretKey</code></td><td><span class="badge required">Required</span></td><td>AWS Secret Access Key. Never log or expose.</td></tr>
-    <tr><td><code>sessionToken</code></td><td><span class="badge optional">Optional</span></td><td>STS session token for temporary credentials.</td></tr>
-    <tr><td><code>region</code></td><td><span class="badge required">Required</span></td><td>AWS region for the API endpoint. The response includes buckets from all regions.</td></tr>
-  </table>
+  <div class="callout info">
+    <i class="fa-solid fa-circle-info"></i>&nbsp;
+    <strong>Credentials and region are not fields on this operation.</strong> Wire an <a href="s3-server-satellite.html">S3 Server</a> satellite node into this node's input. The satellite holds the vault credential (<code>ApiKey</code> type — Username = access key ID, Password = secret key), the target AWS region, and an optional Service URL override for S3-compatible backends. Its values are merged onto this node at execution time and take precedence over anything set locally. See <a href="s3-server-satellite.html">S3 Server (satellite)</a> for the full field reference. Note: this call enumerates buckets in whichever single endpoint the satellite targets — it does not aggregate across regions or across multiple accounts/backends.
+  </div>
 
   <h3>Operation Fields</h3>
-  <p>No additional fields are required. This operation uses only the connection credentials.</p>
+  <p>No additional fields — this operation only needs the connected satellite's credential.</p>
 
   <h2>Sample Configuration</h2>
-<pre><code>{
-  "connection": {
-    "accessKeyId": "{{ $credentials.s3_audit.accessKeyId }}",
-    "secretKey": "{{ $credentials.s3_audit.secretKey }}",
-    "region": "us-east-1"
-  },
-  "operation": {
-    "resource": "bucket",
-    "action": "listAll"
-  }
+<pre><code>// Credentials + region resolved from the connected S3 Server satellite — see s3-server-satellite.html
+{
+  "resource": "bucket",
+  "operation": "list-all"
 }</code></pre>
 
   <h2>Validation Errors</h2>
@@ -124,7 +118,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
     <tr><td><code>status</code></td><td>string</td><td><code>success</code> on successful enumeration.</td></tr>
     <tr><td><code>errorCode</code></td><td>string</td><td>Empty string on success.</td></tr>
     <tr><td><code>bucketCount</code></td><td>int</td><td>Total number of buckets returned.</td></tr>
-    <tr><td><code>bucketNames</code></td><td>string</td><td>Comma-separated list of all bucket names, e.g. <code>bucket-a,bucket-b,bucket-c</code>.</td></tr>
+    <tr><td><code>bucketNames</code></td><td>array</td><td>Array of bucket name strings, e.g. <code>["bucket-a", "bucket-b", "bucket-c"]</code>. Loop nodes can iterate this directly — no split step needed.</td></tr>
   </table>
 
   <h3>Error Port</h3>
@@ -135,14 +129,14 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   "status": "success",
   "errorCode": "",
   "bucketCount": 5,
-  "bucketNames": "acme-prod-documents,acme-staging-documents,acme-dev-documents,acme-compliance-archive-2026-Q2,ci-artifacts-shared"
+  "bucketNames": ["acme-prod-documents", "acme-staging-documents", "acme-dev-documents", "acme-compliance-archive-2026-Q2", "ci-artifacts-shared"]
 }</code></pre>
 
   <h2>Expression Reference</h2>
   <table>
     <tr><th style="width:340px;">Expression</th><th>Result</th></tr>
     <tr><td><code>{{ $node.ListBuckets.output.bucketCount }}</code></td><td>Total bucket count — use in report generation or health check assertions.</td></tr>
-    <tr><td><code>{{ $node.ListBuckets.output.bucketNames }}</code></td><td>Comma-separated bucket names — split for iteration or include in an audit report body.</td></tr>
+    <tr><td><code>{{ $node.ListBuckets.output.bucketNames }}</code></td><td>Array of bucket names — iterate directly in a Loop node, or join for an audit report body.</td></tr>
     <tr><td><code>{{ $node.ListBuckets.output.status }}</code></td><td>Confirm success before processing the list in downstream nodes.</td></tr>
   </table>
 
@@ -153,7 +147,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
     <tr><td>IAM Permissions</td><td>Grant <code>s3:ListAllMyBuckets</code> on resource <code>*</code> — this is the minimum required. Do not grant additional write permissions to audit-only credentials.</td></tr>
     <tr><td>Read-Only Audit Credentials</td><td>Use a dedicated read-only IAM user for compliance and audit workflows. Separate from credentials used for write operations.</td></tr>
     <tr><td>Scheduled Audit Frequency</td><td>Run compliance bucket listing on a schedule (weekly or monthly) rather than on every workflow execution to reduce unnecessary API calls.</td></tr>
-    <tr><td>Output Handling</td><td>The <code>bucketNames</code> output is a comma-separated string. Use a JSON Transform or Code Execute node to split into an array for iteration workflows.</td></tr>
+    <tr><td>Output Handling</td><td>The <code>bucketNames</code> output is already an array — wire it directly into a Loop node for iteration workflows, no split/transform step required.</td></tr>
     <tr><td>Cross-Account Awareness</td><td>Credentials only return buckets accessible to that IAM identity. For multi-account setups, use separate credential sets per account and aggregate results downstream.</td></tr>
     <tr><td>Sensitive Output</td><td>Bucket names may reveal organizational structure. Treat the output as sensitive — do not expose in public-facing logs or notifications.</td></tr>
   </table>
@@ -171,9 +165,9 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
   <p>Assert that the three expected environment buckets are present before a deployment proceeds.</p>
 <pre><code>// Node: ListBuckets (S3 — bucket/list-all)
 // Node: CheckBucketsPresent (If Condition)
-// Condition: bucketNames contains "myapp-prod-assets"
-//            AND bucketNames contains "myapp-staging-assets"
-//            AND bucketNames contains "myapp-dev-assets"
+// Condition: bucketNames includes "myapp-prod-assets"
+//            AND bucketNames includes "myapp-staging-assets"
+//            AND bucketNames includes "myapp-dev-assets"
 // True path: Proceed with deployment
 // False path: Abort and alert DevOps team</code></pre>
 
@@ -182,7 +176,7 @@ h3{font-size:17px;font-weight:700;margin:28px 0 10px;color:var(--text);}
 <pre><code>// Node: ListBuckets (S3 — bucket/list-all)
 // Node: GetActiveTenantBuckets (Database query → array of expected bucket names)
 // Node: FindOrphans (Code Execute)
-// Logic: compare bucketNames array against active tenant bucket list
+// Logic: compare bucketNames (array) against active tenant bucket list
 // Node: AlertOpsTeam with orphaned bucket names for review</code></pre>
 </main>
 <script src="/search.js"></script>
