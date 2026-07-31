@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trigger / Polling | Odoo — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://www.bizfirstai.com/website/assets/Logo/logo.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">Odoo<span>Node Reference</span></div>
+  <div class="sidebar-section">This Node</div>
+  <a href="index.html">Overview</a>
+  <div class="sidebar-subsection">Setup</div>
+  <a href="01-connecting-and-authentication.html">Connecting &amp; Authentication</a>
+  <div class="sidebar-subsection">Resources</div>
+  <a href="02-contacts.html">Contacts</a>
+  <a href="03-leads-and-opportunities.html">Leads &amp; Opportunities</a>
+  <a href="04-activities.html">Activities</a>
+  <a href="05-custom-resource.html">Custom Resource</a>
+  <a href="06-lookup-tables.html">Lookup Tables</a>
+  <a href="07-trigger-polling.html" class="active">Trigger / Polling</a>
+  <div class="sidebar-subsection">Reference</div>
+  <a href="08-input-output.html">Input &amp; Output</a>
+  <a href="09-examples.html">Examples</a>
+  <a href="10-troubleshooting.html">Troubleshooting</a>
+  <a href="11-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; All Nodes</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Nodes</a> /
+      <a href="index.html" style="color:inherit;text-decoration:none;">Odoo</a> /
+      Trigger / Polling
+    </div>
+    <h1>Trigger / Polling</h1>
+    <p class="subtitle">Fire a workflow when Odoo records change, without a webhook — exactly-once, with a watermark cursor</p>
+  </div>
+
+  <div class="callout info">
+    <strong>resource: <code>trigger</code></strong> — polls a chosen target (<code>lead</code>,
+    <code>contact</code>, <code>activity</code>, or <code>custom</code>) for records whose
+    <code>write_date</code> has advanced since the last cycle.
+  </div>
+
+  <h2>Configuration</h2>
+  <table>
+    <thead><tr><th>Config Key</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>targetResource</code></td><td>Which resource to watch: <code>lead</code>, <code>contact</code>, <code>activity</code>, or <code>custom</code></td></tr>
+      <tr><td><code>customModel</code></td><td>Odoo model name, only used when <code>targetResource</code> is <code>custom</code></td></tr>
+      <tr><td><code>domain</code></td><td>Optional filter, AND-ed with the mandatory watermark clause</td></tr>
+      <tr><td><code>fieldsList</code></td><td>Fields to include on each emitted record</td></tr>
+      <tr><td><code>pollIntervalSeconds</code></td><td>How often the trigger checks for changes</td></tr>
+      <tr><td><code>pageSize</code></td><td>Max records drained per poll cycle — default 500</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Why write_date</h2>
+  <p>Every standard Odoo model carries a <code>write_date</code> timestamp via the base <code>_log_access</code>
+  mixin, set on both create and update — there's no separate "created" stream to watch. One filter catches
+  both new and modified records. The tradeoff: the trigger knows a record <em>changed</em>, never
+  <em>what</em> field changed. A workflow that needs field-level deltas has to keep its own previous-value
+  state and diff on receipt.</p>
+
+  <h2>Activating on an Existing Instance</h2>
+  <div class="callout warning">
+    <strong>The first poll cycle seeds the cursor at "now" and emits nothing.</strong> Without this, turning
+    on a trigger against a mature CRM with years of history would replay every historical record as if it
+    had just changed — potentially tens of thousands of events at once. Changes made <em>before</em> the
+    trigger was activated are not delivered; if you need those, run a
+    <a href="03-leads-and-opportunities.html">Get Many</a> over the historical range separately.
+  </div>
+
+  <h2>Exactly-Once Delivery — the Bulk-Import Problem</h2>
+  <p>PostgreSQL's <code>now()</code> returns transaction-start time, so <strong>every record written in one
+  transaction shares the exact same <code>write_date</code></strong> — a 50,000-row bulk import produces
+  50,000 identical timestamps, not a microsecond spread. Since the poll query is inclusive
+  (<code>&gt;=</code>, so no boundary record is ever missed), a bare watermark alone would re-emit every
+  record at that instant on every subsequent cycle, forever.</p>
+  <p>The trigger closes this gap by also tracking which record IDs were already emitted at the current
+  watermark instant, clearing that set only once the watermark strictly advances past it. This is why the
+  persisted cursor is more than just a timestamp.</p>
+
+  <h2>Failure Holds the Cursor</h2>
+  <p>If a poll cycle fails (network error, Odoo-side fault), the cursor is <strong>not</strong> advanced —
+  the next cycle re-queries the exact same window. Worst case, records are re-fetched and re-deduplicated;
+  nothing is skipped because of a transient outage.</p>
+
+  <h2>Bounded Pages, Not Unbounded Drains</h2>
+  <p><code>pageSize</code> (default 500) caps how many records one poll cycle processes. This isn't only
+  about payload size: an unbounded read of a large change batch would hit the platform's result-set ceiling
+  and fail outright — and because a failed poll holds the cursor, every following cycle would re-query the
+  same oversized window and fail identically, wedging the trigger permanently. A bounded page drains a large
+  batch across several cycles instead of failing on the first one.</p>
+
+  <div class="callout danger">
+    <strong>Production requirement: persistent cursor storage.</strong> The trigger's cursor is stored via
+    the platform's distributed cache abstraction. Under the default in-memory cache provider, that state is
+    lost on every process restart — after which the trigger finds no state, treats the next cycle as a first
+    run, reseeds at "now," and <strong>silently skips every change made before the restart</strong>. Any
+    deployment relying on this trigger for completeness must configure a persistent provider (Redis, SQL
+    Server) for the distributed cache. See <a href="11-roadmap.html">Roadmap</a>.
+  </div>
+
+</main>
+</body>
+</html>
