@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Examples | RealEstate — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://docs.bizfirstai.com/images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">RealEstate<span>Developer Guide</span></div>
+  <div class="sidebar-section">Start Here</div>
+  <a href="index.html">Overview</a>
+  <div class="sidebar-section">Data &amp; API</div>
+  <a href="01-data-model.html">Data Model</a>
+  <a href="02-properties-api.html">Properties API</a>
+  <a href="03-agents-directory.html">Agents Directory</a>
+  <a href="04-media-and-features.html">Media &amp; Features</a>
+  <a href="05-lookups-and-code-lists.html">Lookups &amp; Code Lists</a>
+  <div class="sidebar-section">Integration</div>
+  <a href="06-connecting-to-odoo-and-crm.html">Connecting to Odoo &amp; CRM</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="07-input-output.html">Input &amp; Output</a>
+  <a href="08-examples.html" class="active">Examples</a>
+  <a href="09-troubleshooting.html">Troubleshooting</a>
+  <a href="10-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; Developer Guides</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Developer Guides</a> /
+      RealEstate
+    </div>
+    <h1>Examples</h1>
+    <p class="subtitle">A worked end-to-end flow: import → media → features → CRM link → search</p>
+  </div>
+
+  <div class="example-block">
+    <h3>1. Import an MLS listing</h3>
+    <p><code>POST /api/v1/realestate/properties/create-listing</code></p>
+    <pre><code>{
+  "mlsNumber": "MLS-2026-004821",
+  "propertyTypeID": 1,          // Residential
+  "propertyCategoryID": 3,      // Single Family (must belong to PropertyTypeID 1)
+  "listingTypeID": 1,           // For Sale
+  "listingStatusID": 2,         // Active
+  "addressLine1": "412 Maple Grove Ln", "city": "Austin", "stateProvince": "TX",
+  "postalCode": "78704", "country": "USA",
+  "listPrice": 649000, "bedrooms": 4, "bathrooms": 2.5, "squareFootage": 2380,
+  "publicRemarks": "Beautifully updated craftsman close to downtown.",
+  "privateRemarks": "Lockbox code 4471. Tenant occupied until the 15th.",
+  "listAgentName": "Dana Whitfield", "listAgentMlsId": "TX-88213", "listOfficeName": "Whitfield Realty Group"
+}</code></pre>
+    <p>Response returns the new <code>PropertyID</code>. Note <code>listAgentID</code> is still null — the raw feed values are captured, but nothing has matched them to a local <code>Agent</code> row yet.</p>
+  </div>
+
+  <div class="example-block">
+    <h3>2. Attach photos</h3>
+    <p>Upload the bytes to BizFirst's object store first (outside this API), then attach each by CID:</p>
+    <pre><code>POST /api/v1/realestate/property-media/attach
+{ "propertyID": 4821, "mediaTypeID": 1, "mediaCID": "bafy...front-exterior", "displayOrder": 0 }
+
+PATCH /api/v1/realestate/property-media/primary
+{ "propertyMediaID": 9001 }   // promotes it to the gallery hero image</code></pre>
+  </div>
+
+  <div class="example-block">
+    <h3>3. Tag features</h3>
+    <p>Save a whole checklist in one call:</p>
+    <pre><code>POST /api/v1/realestate/property-features/set-many
+{
+  "propertyID": 4821,
+  "features": [
+    { "featureTypeID": 10, "featureValue": "1" },     // Pool (Boolean)
+    { "featureTypeID": 11, "featureValue": "2" },      // GarageSpaces (Number)
+    { "featureTypeID": 12, "featureValue": "Granite countertops, tankless water heater" } // Text
+  ]
+}</code></pre>
+  </div>
+
+  <div class="example-block">
+    <h3>4. Match the listing agent, then link the property to Odoo</h3>
+    <pre><code>POST /api/v1/realestate/agents/match
+{ "listAgentMlsId": "TX-88213", "listAgentName": "Dana Whitfield", "listOfficeName": "Whitfield Realty Group", "createIfNotFound": true }
+// -> { agentID: 55, wasAmbiguous: false, wasCreated: true }
+
+PATCH /api/v1/realestate/properties/listing-agent
+{ "propertyID": 4821, "listAgentID": 55 }
+
+PATCH /api/v1/realestate/properties/external-link
+{ "propertyID": 4821, "externalProviderID": 1, "externalRecordID": "odoo-crm-lead-9931" }</code></pre>
+    <p>
+      <code>externalRecordID</code> here is the id of the corresponding record over in Odoo — created/found via the
+      <a href="https://bizfirstai.github.io/UserGuides/Nodes/Odoo/">Odoo community node</a>'s Lead/Contact
+      operations in a workflow, not by RealEstate itself.
+    </p>
+  </div>
+
+  <div class="example-block">
+    <h3>5. Consumer search</h3>
+    <pre><code>POST /api/v1/realestate/properties/search
+{ "city": "Austin", "minBedrooms": 3, "maxListPrice": 700000, "listingStatusID": 2 }</code></pre>
+  </div>
+
+  <div class="example-block">
+    <h3>6. Close the deal</h3>
+    <pre><code>PATCH /api/v1/realestate/properties/listing-status
+{ "propertyID": 4821, "listingStatusID": 6, "closeDate": "2026-08-14" }  // Sold, with an explicit close date</code></pre>
+  </div>
+
+</main>
+</body>
+</html>

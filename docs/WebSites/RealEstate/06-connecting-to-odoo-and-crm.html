@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connecting to Odoo &amp; CRM | RealEstate — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://docs.bizfirstai.com/images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">RealEstate<span>Developer Guide</span></div>
+  <div class="sidebar-section">Start Here</div>
+  <a href="index.html">Overview</a>
+  <div class="sidebar-section">Data &amp; API</div>
+  <a href="01-data-model.html">Data Model</a>
+  <a href="02-properties-api.html">Properties API</a>
+  <a href="03-agents-directory.html">Agents Directory</a>
+  <a href="04-media-and-features.html">Media &amp; Features</a>
+  <a href="05-lookups-and-code-lists.html">Lookups &amp; Code Lists</a>
+  <div class="sidebar-section">Integration</div>
+  <a href="06-connecting-to-odoo-and-crm.html" class="active">Connecting to Odoo &amp; CRM</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="07-input-output.html">Input &amp; Output</a>
+  <a href="08-examples.html">Examples</a>
+  <a href="09-troubleshooting.html">Troubleshooting</a>
+  <a href="10-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; Developer Guides</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Developer Guides</a> /
+      RealEstate
+    </div>
+    <h1>Connecting to Odoo &amp; CRM</h1>
+    <p class="subtitle">Why RealEstate is an addon to a CRM, not a CRM itself</p>
+  </div>
+
+  <div class="callout success">
+    <strong>RealEstate is an industry vertical. Odoo is an agent.</strong> RealEstate owns the
+    property/listing domain — addresses, pricing, RESO/MLS fields, media, features — entirely
+    itself, "not any CRM, so it stays portable across CRM providers" (straight from the source
+    comments on the <code>Property</code> entity). Contact and lead management stay with a CRM —
+    Odoo by default, reachable through the <a href="https://bizfirstai.github.io/UserGuides/Nodes/Odoo/">Odoo community node</a>.
+    The two are designed to sit side by side, connected by one explicit link, not merged into one system.
+  </div>
+
+  <h2>The mechanism: ExternalProvider + ExternalRecordID</h2>
+  <p>
+    Every <code>Property</code> carries two nullable fields:
+  </p>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Purpose</th></tr>
+    <tr><td><code>ExternalProviderID</code></td><td>int?, FK → ExternalProvider</td><td>Which external CRM/system this property is linked to</td></tr>
+    <tr><td><code>ExternalRecordID</code></td><td>nvarchar(255)?</td><td>That property's record id in the external CRM. A <strong>string</strong>, not an int, because not every provider uses integer ids</td></tr>
+  </table>
+  <p>
+    Both are NULL until a property is synced/linked — a draft listing created locally, before any
+    CRM sync, is perfectly valid with no external link at all.
+  </p>
+
+  <h2>ExternalProvider is a real, seeded lookup table</h2>
+  <p>
+    <code>RealEstate_ExternalProviders</code> ships pre-seeded with:
+  </p>
+  <table>
+    <tr><th>ExternalProviderID</th><th>Name</th><th>Description</th></tr>
+    <tr><td>1</td><td><strong>Odoo</strong></td><td>Self-hosted Odoo Community CRM</td></tr>
+  </table>
+  <p>
+    The schema's own design comments explicitly name Odoo, Twenty, and EspoCRM as the kind of
+    systems this table is meant to hold — Odoo ships first because the
+    <a href="https://bizfirstai.github.io/UserGuides/Nodes/Odoo/">Odoo community node</a> already
+    exists (Contacts/Leads/Activities/CRM pipeline actions). Adding support for another CRM is a new
+    <code>ExternalProvider</code> row plus whatever sync logic targets it — RealEstate's own schema
+    and API don't change.
+  </p>
+
+  <h2>What actually gets linked — and what doesn't</h2>
+  <ul>
+    <li><strong>Properties link to external records.</strong> A property's listing data can point at a matching record in Odoo (or another CRM) via <code>ExternalProviderID</code>/<code>ExternalRecordID</code>.</li>
+    <li><strong>Agents do not.</strong> <code>Agent</code> is a local directory, deliberately not a CRM contact record — it is not linked via ExternalProvider. If you need a real-estate agent as a CRM contact too, that's a separate Odoo <code>res.partner</code> record, related by convention (e.g. matching email) rather than a foreign key RealEstate maintains.</li>
+    <li><strong>The link is per-property, not per-tenant.</strong> Different properties in the same tenant can link to different providers, or to none at all.</li>
+  </ul>
+
+  <h2>Working with the link</h2>
+  <table>
+    <tr><th>Operation</th><th>Route</th></tr>
+    <tr><td>Link a property to an external record</td><td><code>PATCH api/v1/realestate/properties/external-link</code></td></tr>
+    <tr><td>Clear a property's link</td><td><code>POST api/v1/realestate/properties/external-unlink</code></td></tr>
+    <tr><td>Find the property for a known external record</td><td><code>POST api/v1/realestate/properties/by-external-record</code> — returns a LIST, the pair is indexed but not unique</td></tr>
+    <tr><td>Every property linked to a given provider</td><td><code>POST api/v1/realestate/properties/by-external-provider</code></td></tr>
+    <tr><td>The sync backlog — properties not yet linked to anything</td><td><code>POST api/v1/realestate/properties/unlinked</code></td></tr>
+  </table>
+
+  <h2>Design intent</h2>
+  <p>
+    This shape is deliberate: RealEstate never queries Odoo directly, and Odoo's node never knows
+    about <code>RealEstate_*</code> tables. Whatever process syncs a property to a CRM record
+    (an import job, a workflow built on the Odoo node, a manual link) is the only thing that needs
+    to know about both sides — RealEstate itself just stores the pointer. That keeps RealEstate
+    reusable for a future vertical's analogous entity, and keeps it working the same way whether the
+    CRM behind <code>ExternalProviderID</code> is Odoo, Twenty, EspoCRM, or something else entirely.
+  </p>
+
+</main>
+</body>
+</html>

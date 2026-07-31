@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Troubleshooting | RealEstate — BizFirstAI</title>
+<link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+.bfai-topbar-logo img{height:26px;display:block;}.bfai-topbar{position:fixed;top:0;left:0;right:0;z-index:200;background:#1e2736;border-bottom:1px solid #2d3a4a;height:40px;display:flex;align-items:center;padding:0 20px;}
+.bfai-topbar-right{margin-left:auto;display:flex;gap:6px;}
+.bfai-topbar-right a{font-size:12px;color:#b0c4d8;text-decoration:none;padding:4px 12px;border-radius:5px;display:flex;align-items:center;gap:6px;transition:background 0.15s,color 0.15s;}
+.bfai-topbar-right a:hover{background:rgba(255,255,255,0.08);color:#fff;}
+body{padding-top:40px;}
+nav.sidebar{top:40px;height:calc(100vh - 40px);}
+</style>
+</head>
+<body>
+
+<div class="bfai-topbar">
+  <a href="https://bizfirstai.com" target="_blank" class="bfai-topbar-logo">
+    <img src="https://docs.bizfirstai.com/images/icons/BizFirstAiFull.png" alt="BizFirstAI">
+  </a>
+  <div class="bfai-topbar-right">
+    <a href="https://bizfirstai.github.io/UserGuides/" target="_top"><i class="fa-solid fa-house"></i> Portal</a>
+    <a href="https://community.bizfirstai.com" target="_blank"><i class="fa-solid fa-people-group"></i> Community</a>
+  </div>
+</div>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">RealEstate<span>Developer Guide</span></div>
+  <div class="sidebar-section">Start Here</div>
+  <a href="index.html">Overview</a>
+  <div class="sidebar-section">Data &amp; API</div>
+  <a href="01-data-model.html">Data Model</a>
+  <a href="02-properties-api.html">Properties API</a>
+  <a href="03-agents-directory.html">Agents Directory</a>
+  <a href="04-media-and-features.html">Media &amp; Features</a>
+  <a href="05-lookups-and-code-lists.html">Lookups &amp; Code Lists</a>
+  <div class="sidebar-section">Integration</div>
+  <a href="06-connecting-to-odoo-and-crm.html">Connecting to Odoo &amp; CRM</a>
+  <div class="sidebar-section">Reference</div>
+  <a href="07-input-output.html">Input &amp; Output</a>
+  <a href="08-examples.html">Examples</a>
+  <a href="09-troubleshooting.html" class="active">Troubleshooting</a>
+  <a href="10-roadmap.html">Roadmap</a>
+  <div class="sidebar-section">Navigation</div>
+  <a href="../">&#8592; Developer Guides</a>
+  <a href="../../">&#8592; Portal</a>
+</nav>
+
+<main>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="../../" style="color:inherit;text-decoration:none;">BizFirstAI Portal</a> /
+      <a href="../" style="color:inherit;text-decoration:none;">Developer Guides</a> /
+      RealEstate
+    </div>
+    <h1>Troubleshooting</h1>
+    <p class="subtitle">Gotchas that come from the schema's design, not bugs</p>
+  </div>
+
+  <div class="callout warning">
+    <strong>"By MLS number" / "by parcel number" / "by external record" all return lists, not a single record.</strong>
+    None of <code>MLSNumber</code>, <code>ParcelNumber</code>, or the
+    (<code>ExternalProviderID</code>, <code>ExternalRecordID</code>) pair carry a uniqueness
+    constraint. Code that assumes exactly one result and grabs the first element will silently pick
+    an arbitrary row when duplicates exist from repeated imports.
+  </div>
+
+  <div class="callout warning">
+    <strong>Agent.MlsId is not unique either.</strong> <code>/agents/by-mls-id</code> can legitimately
+    return more than one agent. <code>/agents/match</code> reports whether its match was ambiguous
+    instead of silently guessing — check that flag rather than assuming the first result is correct.
+  </div>
+
+  <div class="callout warning">
+    <strong>Soft-deleting a Property does not remove its media or features.</strong> The database
+    cascade only fires on a hard delete. If you soft-delete via <code>DELETE /{id}</code> instead of
+    <code>POST /delete-with-children</code>, the property's <code>PropertyMedia</code> and
+    <code>PropertyFeature</code> rows are left live and orphaned-looking — use
+    <code>delete-with-children</code> unless you specifically want that.
+  </div>
+
+  <div class="callout warning">
+    <strong>PropertyCategoryID is not validated against PropertyTypeID by the database.</strong> Both
+    are independent FKs. If you write directly to the database (bypassing <code>CreateListing</code>
+    /<code>Reclassify</code>), nothing stops you from pairing a category that belongs to a different
+    type — the mismatch is only caught by the service layer's own validation, not a SQL constraint.
+  </div>
+
+  <div class="callout warning">
+    <strong>Status changes don't auto-stamp lifecycle dates.</strong> <code>RealEstate_ListingStatuses</code>
+    has no stable <code>Code</code> column, only an auto-increment id and a display name — so moving a
+    listing to whatever id represents "Sold" does <em>not</em> automatically set <code>CloseDate</code>.
+    You must pass it explicitly on <code>PATCH /listing-status</code>. If you need status-driven
+    stamping, that requires a schema change (a <code>Code</code> column or agreed well-known ids) — see
+    <a href="10-roadmap.html">Roadmap</a>.
+  </div>
+
+  <div class="callout info">
+    <strong>PrivateRemarks will leak if you build a public projection carelessly.</strong> There is no
+    field-level authorization on the Property entity itself — any code building a consumer-facing view
+    from the raw entity must explicitly strip <code>PrivateRemarks</code>. It exists specifically to
+    separate agent-only notes from public marketing copy (<code>PublicRemarks</code>); nothing enforces
+    that separation automatically at the API layer.
+  </div>
+
+  <div class="callout info">
+    <strong>IsPrimary is not DB-constrained to one row per property.</strong> Legacy or imported data
+    can hold more than one "primary" photo. <code>/property-media/primary</code> returns a list for
+    exactly this reason — don't assume a single result.
+  </div>
+
+  <div class="callout info">
+    <strong>Setting a feature via the wrong endpoint fails the unique constraint.</strong> Use
+    <code>POST /property-features/set</code> or <code>/set-many</code> (upserts) for anything
+    import-driven — the generic Create endpoint will violate
+    <code>UQ_RealEstate_PropertyFeatures_PropertyID_FeatureTypeID</code> on a second write for the
+    same property+feature pair.
+  </div>
+
+</main>
+</body>
+</html>
